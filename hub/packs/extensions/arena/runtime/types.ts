@@ -1,7 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-PanCode-1.0
-// SPDX-FileCopyrightText: 2026 Anthony Kougkas
-import type { FactSum } from "../../core/telemetry/fact.js";
-import type { PricingSum } from "../../core/telemetry/pricing.js";
+import type { FactSum, PricingSum } from "./render.ts";
 
 /**
  * The arena records what each contender did and what the human preferred. It

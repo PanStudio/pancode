@@ -31,7 +31,7 @@ export function emptyUsageDiagnostics(): UsageDiagnostics {
 const TASK_WORKTREES = `${sep}.pancode${sep}worktrees${sep}`;
 
 /**
- * The project a working directory's usage counts toward. A fleet or arena task worktree under
+ * The project a working directory's usage counts toward. A fleet task or extension worktree under
  * `<project>/.pancode/worktrees/` is that project's work, so its sessions and runs roll up there and a project's
  * window agrees with the every-project total. A worktree placed off disk (`fleet.worktrees.root`) names no project
  * in its path and counts as its own directory.

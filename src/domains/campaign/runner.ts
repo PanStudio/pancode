@@ -47,7 +47,7 @@ export interface CampaignInput {
 	/** An extension command whose `--json` result is recorded as the desk's final status after each run. */
 	probe: CampaignProbe | null;
 	/**
-	 * The operator's PanCode config root. Every entry runs against it directly, as an arena contender does, so its
+	 * The operator's PanCode config root. Every entry runs against it directly, as an extension's run does, so its
 	 * targets, installed extensions and credential store are the operator's own: no secret is copied under `out`,
 	 * and an OAuth refresh an entry makes lands in the operator's store under its lock instead of in a copy that
 	 * is thrown away, which would strand a rotated refresh token.

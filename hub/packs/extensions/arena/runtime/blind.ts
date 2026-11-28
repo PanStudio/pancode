@@ -1,6 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-PanCode-1.0
-// SPDX-FileCopyrightText: 2026 Anthony Kougkas
-import { ARENA_LABELS, type ArenaChoice, type ArenaLabel, type ArenaMatch } from "./types.js";
+import { ARENA_LABELS, type ArenaChoice, type ArenaLabel, type ArenaMatch } from "./types.ts";
 
 /** mulberry32: a small seeded generator, so a match's order is reproducible from its stored seed. */
 function mulberry32(seed: number): () => number {

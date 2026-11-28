@@ -64,13 +64,24 @@ export function ArenaPage({ client }: { client: Client }) {
 		queryFn: ({ signal }) =>
 			client.call(routes.arenaStandings, { params: { id: selection.id }, query: {}, body: {} }, undefined, signal),
 	});
+	const packError =
+		matches.error instanceof ApiProblem && matches.error.problem.code === "unsupported"
+			? matches.error
+			: standings.error instanceof ApiProblem && standings.error.problem.code === "unsupported"
+				? standings.error
+				: null;
 	return (
 		<section className="arena-page">
 			<PanelHeading
 				panel={ARENA_PANEL}
 				level={1}
 				action={
-					<button type="button" className="primary" disabled={!selection.id} onClick={() => setComposing(true)}>
+					<button
+						type="button"
+						className="primary"
+						disabled={!selection.id || !!packError}
+						onClick={() => setComposing(true)}
+					>
 						New match
 					</button>
 				}
@@ -83,7 +94,18 @@ export function ArenaPage({ client }: { client: Client }) {
 				<WorkspacePicker selection={selection} />
 			</div>
 			{!selection.id && <PanelEmpty>{emptyState.unread("arena for this workspace")}</PanelEmpty>}
-			{selection.id && composing && (
+			{selection.id && packError && (
+				<InspectionError
+					title="Arena extension is required"
+					error={packError}
+					busy={matches.isFetching || standings.isFetching}
+					retry={() => {
+						void matches.refetch();
+						void standings.refetch();
+					}}
+				/>
+			)}
+			{selection.id && !packError && composing && (
 				<NewMatch
 					client={client}
 					workspaceId={selection.id}
@@ -94,7 +116,7 @@ export function ArenaPage({ client }: { client: Client }) {
 					}}
 				/>
 			)}
-			{selection.id && (
+			{selection.id && !packError && (
 				<div className="arena-layout">
 					<MatchList
 						matches={matches.data?.matches}

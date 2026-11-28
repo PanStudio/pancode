@@ -103,7 +103,6 @@ const LONG_RUNNING = new Set([
 	"gui",
 	"run",
 	"worker",
-	"arena run",
 	"campaign run",
 	"research start",
 	"research resume",
@@ -112,15 +111,7 @@ const LONG_RUNNING = new Set([
 	"fleet events",
 ]);
 
-const MODEL_WORK = new Set([
-	"run",
-	"acp",
-	"arena run",
-	"campaign run",
-	"research start",
-	"research resume",
-	"fleet run",
-]);
+const MODEL_WORK = new Set(["run", "acp", "campaign run", "research start", "research resume", "fleet run"]);
 const READ_VERBS = new Set([
 	"list",
 	"show",

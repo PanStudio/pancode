@@ -9,7 +9,6 @@ import { Type } from "typebox";
 import { runHeadlessMainAgent } from "../../src/cli/modes/print.js";
 import { DEFAULT_SETTINGS } from "../../src/core/defaults.js";
 import { ToolNames } from "../../src/core/tool-names.js";
-import { readArenaStream } from "../../src/domains/arena/facts.js";
 import {
 	EMPTY_CAPABILITIES,
 	type ProvidersContract,
@@ -1264,17 +1263,15 @@ it("calls the output limit cut off count as no call and no tool error and read a
 		});
 		const resumed = lastTurnSummaryFromLedger(f.entries());
 		ok(resumed);
-		const arena = readArenaStream(f.events.map((event) => JSON.stringify(event)).join("\n"));
 		const lastTurn = JSON.parse(readFileSync(path, "utf8")).lastTurn;
 		deepStrictEqual(
 			{
 				live: [tally.toolCount, tally.toolErrorCount],
 				summary: [summary.toolCount, summary.toolErrorCount],
 				ledger: [resumed.toolCount, resumed.toolErrorCount],
-				arena: [arena.toolCalls, arena.toolErrors],
 				sessionFile: [lastTurn.toolCalls, lastTurn.failedToolCalls],
 			},
-			{ live: [0, 0], summary: [0, 0], ledger: [0, 0], arena: [0, 0], sessionFile: [0, 0] },
+			{ live: [0, 0], summary: [0, 0], ledger: [0, 0], sessionFile: [0, 0] },
 		);
 		const replay = createChatPanel({ getOutputStyle: () => "detailed" });
 		rehydrateChatPanelFromTurns(replay, f.entries());

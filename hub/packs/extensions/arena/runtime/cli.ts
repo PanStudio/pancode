@@ -1,33 +1,17 @@
-// SPDX-License-Identifier: LicenseRef-PanCode-1.0
-// SPDX-FileCopyrightText: 2026 Anthony Kougkas
-import { resolve } from "node:path";
-import { readLayeredSettings } from "../core/settings-layers.js";
+import { isArenaChoice } from "./blind.ts";
+import { formatColumns } from "./render.ts";
+import { computeStandings } from "./standings.ts";
+import { ArenaVoteError, isArenaMatchId, listMatches, readMatch, readVote, recordVote } from "./store.ts";
 import {
 	ARENA_MAX_CONTENDERS,
+	ARENA_MIN_CONTENDERS,
+	type ArenaAutonomy,
 	type ArenaContenderSpec,
-	type ArenaMatchView,
-	ArenaRevealRefused,
-	ArenaVoteError,
-	arenaMatchView,
-	arenaRoot,
-	computeStandings,
-	isArenaChoice,
-	isArenaMatchId,
-	listMatches,
-	readMatch,
-	readVote,
-	recordVote,
-	runArenaMatch,
-	validateArenaRunInput,
-} from "../domains/arena/index.js";
-import { type RunEnvPolicy, selfPancodeLaunch } from "../domains/extensions/services/run-env.js";
-import { containedYoloRefusal } from "../domains/safety/contained-yolo.js";
-import { formatColumns, printError } from "./argv.js";
-import { writeCliFailure } from "./kit/json-out.js";
-import type { ErrorSlug } from "./kit/slugs.js";
-import { installStopSignals } from "./stop-signals.js";
+	type ArenaMatch,
+} from "./types.ts";
+import { type ArenaMatchView, ArenaRevealRefused, arenaMatchView, fitArenaView } from "./view.ts";
 
-const HELP = `Usage:
+export const HELP = `Usage:
   pancode arena run --contender <target>/<model> --contender <target>/<model> [...] [options] <prompt>
   pancode arena show <match-id> [--reveal] [--json]
   pancode arena vote <match-id> A|B|C|D|tie|both-bad [--note <text>] [--replace] [--json]
@@ -42,8 +26,9 @@ come from your votes.
 run options:
   --contender <target>/<model>  a contender; split at the first "/", repeat 2 to ${ARENA_MAX_CONTENDERS} times
   --cwd <dir>                   project to run in (default: current directory)
-  --timeout <seconds>           each contender's run --timeout (default 600)
-  --max-cost-usd <N>            each contender's run --max-cost-usd; unpriced routes are not bounded
+  --timeout <seconds>           each contender's run --timeout (default 600, at most 86400)
+  --max-cost-usd <N>            each contender's run --max-cost-usd (default and at most 1000);
+                                unpriced routes are not bounded
   --check <verifier-id>         dry-run this verifier in each contender's worktree when it finishes
   --suite <name>                tag the match; list and standings can filter on it
   --seed <n>                    seed for the blind order (default random, stored with the match)
@@ -67,16 +52,55 @@ choice per match, and --replace changes it; every vote stays in the journal.
 standings counts wins, losses, ties and both-bad per target/model, and shows an
 Elo rating once an identity has 5 or more votes.
 
-Matches live under <project>/.pancode/arena/<match-id>/.`;
+Matches live under <project>/.pancode/data/arena/<match-id>/.`;
 
-class UsageError extends Error {
-	constructor(
-		message: string,
-		readonly slug: ErrorSlug = "usage",
-	) {
+/** What a match run takes from the command line; the runner adds the place and the host services. */
+export interface ArenaRunRequest {
+	prompt: string;
+	contenders: ArenaContenderSpec[];
+	seed?: number;
+	suite: string | null;
+	timeoutSeconds: number;
+	maxCostUsd: number | null;
+	check: string | null;
+	readOnly: boolean;
+	autonomy: ArenaAutonomy;
+}
+
+/** The host side of the command: where matches live and how a match runs. */
+export interface ArenaHost {
+	/** The project's match directory. */
+	root: string;
+	/** Null when contained yolo can run here, else why not. */
+	yoloRefusal(): Promise<string | null>;
+	/** Run one match; a usage problem found before it starts throws ArenaUsageError, a refusal ArenaCommandError. */
+	run(request: ArenaRunRequest): Promise<ArenaMatch>;
+	/** True once the operator asked to stop; the answer is still printed. */
+	interrupted?(): boolean;
+}
+
+export interface ArenaCliResult {
+	stdout: string;
+	stderr: string;
+	exitCode: number;
+}
+
+type Slug = "usage" | "unknown_flag" | "unknown_command";
+
+export class ArenaUsageError extends Error {
+	readonly slug: Slug;
+	constructor(message: string, slug: Slug = "usage") {
 		super(message);
+		this.slug = slug;
 	}
 }
+
+/** A failure the command reports as `error: <message>` with exit 1. */
+export class ArenaCommandError extends Error {}
+
+/** The run ceilings the manifest declares for `runtime.services.runs`. */
+const MAX_TIMEOUT_SECONDS = 86_400;
+const MAX_COST_USD = 1000;
 
 interface Parsed {
 	positional: string[];
@@ -96,8 +120,9 @@ const VALUE_FLAGS = new Set([
 	"--autonomy",
 ]);
 const BOOLEAN_FLAGS = new Set(["--json", "--reveal", "--replace", "--read-only"]);
+const VERBS = ["run", "show", "vote", "list", "standings"];
 
-function parse(
+export function parse(
 	args: ReadonlyArray<string>,
 	allowedValues: ReadonlyArray<string>,
 	allowedFlags: ReadonlyArray<string>,
@@ -109,7 +134,7 @@ function parse(
 			parsed.positional.push(...args.slice(i + 1));
 			break;
 		}
-		// C4: `--flag value` or `--flag=value`, and a value flag never takes the next flag as its value (I-21).
+		// `--flag value` or `--flag=value`, and a value flag never takes the next flag as its value.
 		const equals = arg.startsWith("--") ? arg.indexOf("=") : -1;
 		const name = equals === -1 ? arg : arg.slice(0, equals);
 		if (VALUE_FLAGS.has(name) && allowedValues.includes(name)) {
@@ -117,7 +142,7 @@ function parse(
 			if (equals !== -1) value = arg.slice(equals + 1);
 			else {
 				value = args[i + 1];
-				if (value === undefined || value.startsWith("--")) throw new UsageError(`${name} requires a value`);
+				if (value === undefined || value.startsWith("--")) throw new ArenaUsageError(`${name} requires a value`);
 				i++;
 			}
 			parsed.values.set(name, [...(parsed.values.get(name) ?? []), value]);
@@ -127,7 +152,7 @@ function parse(
 			parsed.flags.add(arg);
 			continue;
 		}
-		if (arg.startsWith("-")) throw new UsageError(`unknown flag: ${name}`, "unknown_flag");
+		if (arg.startsWith("-")) throw new ArenaUsageError(`unknown flag: ${name}`, "unknown_flag");
 		parsed.positional.push(arg);
 	}
 	return parsed;
@@ -135,14 +160,14 @@ function parse(
 
 function single(parsed: Parsed, flag: string): string | undefined {
 	const values = parsed.values.get(flag);
-	if (values !== undefined && values.length > 1) throw new UsageError(`${flag} given more than once`);
+	if (values !== undefined && values.length > 1) throw new ArenaUsageError(`${flag} given more than once`);
 	return values?.[0];
 }
 
 function contenderSpec(value: string): ArenaContenderSpec {
 	const slash = value.indexOf("/");
 	if (slash <= 0 || slash === value.length - 1) {
-		throw new UsageError(`--contender takes <target>/<model>, got '${value}'`);
+		throw new ArenaUsageError(`--contender takes <target>/<model>, got '${value}'`);
 	}
 	return { target: value.slice(0, slash), model: value.slice(slash + 1) };
 }
@@ -150,18 +175,14 @@ function contenderSpec(value: string): ArenaContenderSpec {
 function positiveInteger(flag: string, value: string | undefined, fallback: number): number {
 	if (value === undefined) return fallback;
 	const parsed = Number(value);
-	if (!Number.isInteger(parsed) || parsed <= 0) throw new UsageError(`${flag} takes a positive whole number`);
+	if (!Number.isInteger(parsed) || parsed <= 0) throw new ArenaUsageError(`${flag} takes a positive whole number`);
 	return parsed;
-}
-
-function workingDir(parsed: Parsed): string {
-	return resolve(single(parsed, "--cwd") ?? process.cwd());
 }
 
 function matchIdArg(parsed: Parsed, verb: string): string {
 	const id = parsed.positional[0];
-	if (id === undefined) throw new UsageError(`arena ${verb} needs a match id`);
-	if (!isArenaMatchId(id)) throw new UsageError(`'${id}' is not an arena match id`);
+	if (id === undefined) throw new ArenaUsageError(`arena ${verb} needs a match id`);
+	if (!isArenaMatchId(id)) throw new ArenaUsageError(`'${id}' is not an arena match id`);
 	return id;
 }
 
@@ -172,7 +193,7 @@ function indent(text: string, maxLines: number): string {
 	return shown.join("\n");
 }
 
-function renderView(view: ArenaMatchView): string {
+export function renderView(view: ArenaMatchView): string {
 	const out: string[] = [];
 	out.push(
 		`match ${view.id}  ${view.status}  ${view.isolation}${view.autonomy === "yolo" ? "  autonomy yolo (contained)" : ""}${view.suite ? `  suite ${view.suite}` : ""}`,
@@ -214,19 +235,33 @@ function renderView(view: ArenaMatchView): string {
 	return `${out.join("\n")}\n`;
 }
 
-function parentEnv(): Record<string, string> {
-	const env: Record<string, string> = {};
-	for (const [key, value] of Object.entries(process.env)) if (value !== undefined) env[key] = value;
-	return env;
+/** A match view as the command prints it, cut to fit what a command may answer. */
+function answer(view: ArenaMatchView, json: boolean): string {
+	return fitArenaView(view, (fitted) => (json ? `${JSON.stringify(fitted)}\n` : renderView(fitted)));
 }
 
-/** The targets each contender's credentials are scoped by, as `run --cwd` resolves them, and the operator's pass list. */
-function arenaEnvPolicy(cwd: string): RunEnvPolicy {
-	const { settings } = readLayeredSettings(cwd);
-	return { targets: settings.targets, passEnv: settings.safety.sandboxPassEnv };
+class Out {
+	stdout = "";
+	stderr = "";
+	write(text: string): void {
+		this.stdout += text;
+	}
+	error(message: string): void {
+		this.stderr += `error: ${message}\n`;
+	}
 }
 
-async function runCommand(args: string[]): Promise<number> {
+export function validateRunShape(contenders: ArenaContenderSpec[], prompt: string): void {
+	if (prompt.trim().length === 0) throw new ArenaUsageError("arena run needs a prompt");
+	const count = contenders.length;
+	if (count < ARENA_MIN_CONTENDERS || count > ARENA_MAX_CONTENDERS) {
+		throw new ArenaUsageError(
+			`arena run takes ${ARENA_MIN_CONTENDERS} to ${ARENA_MAX_CONTENDERS} contenders, got ${count}`,
+		);
+	}
+}
+
+async function runCommand(args: string[], host: ArenaHost, out: Out): Promise<number> {
 	const parsed = parse(
 		args,
 		["--contender", "--cwd", "--timeout", "--max-cost-usd", "--check", "--suite", "--seed", "--autonomy"],
@@ -235,118 +270,98 @@ async function runCommand(args: string[]): Promise<number> {
 	const contenders = (parsed.values.get("--contender") ?? []).map(contenderSpec);
 	const prompt = parsed.positional.join(" ");
 	const timeoutSeconds = positiveInteger("--timeout", single(parsed, "--timeout"), 600);
+	if (timeoutSeconds > MAX_TIMEOUT_SECONDS)
+		throw new ArenaUsageError(`--timeout takes at most ${MAX_TIMEOUT_SECONDS} seconds`);
 	const costText = single(parsed, "--max-cost-usd");
 	const maxCostUsd = costText === undefined ? null : Number(costText);
 	if (maxCostUsd !== null && (!Number.isFinite(maxCostUsd) || maxCostUsd <= 0)) {
-		throw new UsageError("--max-cost-usd takes a positive number");
+		throw new ArenaUsageError("--max-cost-usd takes a positive number");
 	}
+	if (maxCostUsd !== null && maxCostUsd > MAX_COST_USD)
+		throw new ArenaUsageError(`--max-cost-usd takes at most ${MAX_COST_USD}`);
 	const seedText = single(parsed, "--seed");
 	const seed = seedText === undefined ? undefined : Number(seedText);
 	if (seed !== undefined && (!Number.isInteger(seed) || seed < 0 || seed > 0xffffffff)) {
-		throw new UsageError("--seed takes a whole number from 0 to 4294967295");
+		throw new ArenaUsageError("--seed takes a whole number from 0 to 4294967295");
 	}
 	const autonomy = single(parsed, "--autonomy") ?? "default";
-	if (autonomy !== "default" && autonomy !== "yolo") throw new UsageError("--autonomy takes default or yolo");
-	try {
-		validateArenaRunInput({ contenders, prompt, timeoutSeconds });
-	} catch (error) {
-		throw new UsageError(error instanceof Error ? error.message : String(error));
-	}
+	if (autonomy !== "default" && autonomy !== "yolo") throw new ArenaUsageError("--autonomy takes default or yolo");
+	validateRunShape(contenders, prompt);
 	if (autonomy === "yolo") {
-		const refusal = containedYoloRefusal("arena");
-		if (refusal !== null) throw new UsageError(refusal);
+		const refusal = await host.yoloRefusal();
+		if (refusal !== null) throw new ArenaUsageError(refusal);
 	}
 	const json = parsed.flags.has("--json");
-	const check = single(parsed, "--check");
-	const suite = single(parsed, "--suite");
-	const entry = process.argv[1];
-	if (entry === undefined) throw new Error("cannot locate the pancode entry point to start contenders");
-	// Each contender leads its own process group, so a signal to this one reaches them only through the abort.
-	const controller = new AbortController();
-	const stops = installStopSignals(controller);
-	const match = await runArenaMatch({
-		cwd: workingDir(parsed),
+	const match = await host.run({
 		prompt,
 		contenders,
+		...(seed !== undefined ? { seed } : {}),
+		suite: single(parsed, "--suite") ?? null,
 		timeoutSeconds,
 		maxCostUsd,
-		...(seed !== undefined ? { seed } : {}),
-		...(check !== undefined ? { check } : {}),
-		...(suite !== undefined ? { suite } : {}),
+		check: single(parsed, "--check") ?? null,
 		readOnly: parsed.flags.has("--read-only"),
 		autonomy,
-		pancode: selfPancodeLaunch(entry),
-		env: parentEnv(),
-		envPolicy: arenaEnvPolicy(workingDir(parsed)),
-		signal: controller.signal,
-		onStarted: (started) => process.stderr.write(`pancode arena: match ${started.id} started\n`),
-		onProgress: (line) => process.stderr.write(`pancode arena: ${line}\n`),
-	}).finally(() => stops.dispose());
-	const root = arenaRoot(match.root);
-	const view = arenaMatchView(root, match, null);
-	process.stdout.write(json ? `${JSON.stringify(view)}\n` : renderView(view));
-	if (stops.received() !== null) return stops.exitCode();
+	});
+	out.write(answer(arenaMatchView(host.root, match, null), json));
+	if (host.interrupted?.() === true) return 1;
 	return match.status === "complete" ? 0 : 1;
 }
 
-function showCommand(args: string[]): number {
+function showCommand(args: string[], host: ArenaHost, out: Out): number {
 	const parsed = parse(args, ["--cwd"], ["--json", "--reveal"]);
 	const id = matchIdArg(parsed, "show");
-	const root = arenaRoot(workingDir(parsed));
-	const match = readMatch(root, id);
+	const match = readMatch(host.root, id);
 	if (match === null) {
-		printError(`no arena match ${id} under ${root}`);
+		out.error(`no arena match ${id} under ${host.root}`);
 		return 1;
 	}
 	try {
-		const view = arenaMatchView(root, match, readVote(root, id), { reveal: parsed.flags.has("--reveal") });
-		process.stdout.write(parsed.flags.has("--json") ? `${JSON.stringify(view)}\n` : renderView(view));
+		const view = arenaMatchView(host.root, match, readVote(host.root, id), { reveal: parsed.flags.has("--reveal") });
+		out.write(answer(view, parsed.flags.has("--json")));
 		return 0;
 	} catch (error) {
 		if (error instanceof ArenaRevealRefused) {
-			printError(error.message);
+			out.error(error.message);
 			return 1;
 		}
 		throw error;
 	}
 }
 
-function voteCommand(args: string[]): number {
+async function voteCommand(args: string[], host: ArenaHost, out: Out): Promise<number> {
 	const parsed = parse(args, ["--cwd", "--note"], ["--json", "--replace"]);
 	const id = matchIdArg(parsed, "vote");
 	const choice = parsed.positional[1];
 	if (choice === undefined || !isArenaChoice(choice) || parsed.positional.length > 2) {
-		throw new UsageError("arena vote takes one choice: A, B, C, D, tie or both-bad");
+		throw new ArenaUsageError("arena vote takes one choice: A, B, C, D, tie or both-bad");
 	}
-	const root = arenaRoot(workingDir(parsed));
 	try {
-		const vote = recordVote(root, id, {
+		const vote = await recordVote(host.root, id, {
 			choice,
 			note: single(parsed, "--note") ?? null,
 			replace: parsed.flags.has("--replace"),
 		});
-		if (parsed.flags.has("--json")) process.stdout.write(`${JSON.stringify(vote)}\n`);
+		if (parsed.flags.has("--json")) out.write(`${JSON.stringify(vote)}\n`);
 		else
-			process.stdout.write(
+			out.write(
 				`recorded ${vote.choice} for match ${id}${vote.replaced ? " (replaced the earlier vote)" : ""}; arena show ${id} reveals who is who\n`,
 			);
 		return 0;
 	} catch (error) {
 		if (error instanceof ArenaVoteError) {
-			printError(error.message);
+			out.error(error.message);
 			return 1;
 		}
 		throw error;
 	}
 }
 
-function listCommand(args: string[]): number {
+function listCommand(args: string[], host: ArenaHost, out: Out): number {
 	const parsed = parse(args, ["--cwd", "--suite"], ["--json"]);
-	if (parsed.positional.length > 0) throw new UsageError(`unexpected argument: ${parsed.positional[0]}`);
+	if (parsed.positional.length > 0) throw new ArenaUsageError(`unexpected argument: ${parsed.positional[0]}`);
 	const suite = single(parsed, "--suite");
-	const entries = listMatches(arenaRoot(workingDir(parsed))).filter(
-		({ match }) => suite === undefined || match.suite === suite,
-	);
+	const entries = listMatches(host.root).filter(({ match }) => suite === undefined || match.suite === suite);
 	// Identities appear only for voted matches, so the list never unblinds a pending one.
 	const rows = entries.map(({ match, vote }) => ({
 		id: match.id,
@@ -359,11 +374,11 @@ function listCommand(args: string[]): number {
 		identities: vote === null ? null : match.contenders.map((c) => `${c.target}/${c.model}`),
 	}));
 	if (parsed.flags.has("--json")) {
-		process.stdout.write(`${JSON.stringify({ matches: rows })}\n`);
+		out.write(`${JSON.stringify({ matches: rows })}\n`);
 		return 0;
 	}
 	if (rows.length === 0) {
-		process.stdout.write("no arena matches yet; start one with pancode arena run\n");
+		out.write("no arena matches yet; start one with pancode arena run\n");
 		return 0;
 	}
 	const table = [
@@ -377,20 +392,20 @@ function listCommand(args: string[]): number {
 			row.prompt.length > 60 ? `${row.prompt.slice(0, 57)}...` : row.prompt,
 		]),
 	];
-	process.stdout.write(`${formatColumns(table)}\n`);
+	out.write(`${formatColumns(table)}\n`);
 	return 0;
 }
 
-function standingsCommand(args: string[]): number {
+function standingsCommand(args: string[], host: ArenaHost, out: Out): number {
 	const parsed = parse(args, ["--cwd", "--suite"], ["--json"]);
-	if (parsed.positional.length > 0) throw new UsageError(`unexpected argument: ${parsed.positional[0]}`);
-	const standings = computeStandings(listMatches(arenaRoot(workingDir(parsed))), single(parsed, "--suite") ?? null);
+	if (parsed.positional.length > 0) throw new ArenaUsageError(`unexpected argument: ${parsed.positional[0]}`);
+	const standings = computeStandings(listMatches(host.root), single(parsed, "--suite") ?? null);
 	if (parsed.flags.has("--json")) {
-		process.stdout.write(`${JSON.stringify(standings)}\n`);
+		out.write(`${JSON.stringify(standings)}\n`);
 		return 0;
 	}
 	if (standings.standings.length === 0) {
-		process.stdout.write(`no voted matches yet (${standings.matches} recorded)\n`);
+		out.write(`no voted matches yet (${standings.matches} recorded)\n`);
 		return 0;
 	}
 	const table = [
@@ -405,51 +420,51 @@ function standingsCommand(args: string[]): number {
 			s.score === null ? `n/a (<${standings.minVotesForScore} votes)` : String(s.score),
 		]),
 	];
-	process.stdout.write(
+	out.write(
 		`${formatColumns(table)}\n${standings.votedMatches} voted of ${standings.matches} matches${standings.suite ? ` in suite ${standings.suite}` : ""}. These are your recorded votes; PanCode does not judge.\n`,
 	);
 	return 0;
 }
 
-export async function runArenaCommand(args: string[]): Promise<number> {
+/** `pancode arena <verb> ...`: help, usage errors and every verb, as text the host prints. */
+export async function runArenaCli(args: string[], host: () => ArenaHost): Promise<ArenaCliResult> {
+	const out = new Out();
 	const [verb, ...rest] = args;
 	// Help is an option, so a literal "--help" after "--" is prompt text, not a request for help.
 	const end = args.indexOf("--");
 	const options = end === -1 ? args : args.slice(0, end);
 	if (verb === undefined || options.includes("--help") || options.includes("-h")) {
-		process.stdout.write(`${HELP}\n`);
-		return 0;
+		return { stdout: `${HELP}\n`, stderr: "", exitCode: 0 };
 	}
+	const done = (exitCode: number): ArenaCliResult => ({ stdout: out.stdout, stderr: out.stderr, exitCode });
 	try {
 		switch (verb) {
 			case "run":
-				return await runCommand(rest);
+				return done(await runCommand(rest, host(), out));
 			case "show":
-				return showCommand(rest);
+				return done(showCommand(rest, host(), out));
 			case "vote":
-				return voteCommand(rest);
+				return done(await voteCommand(rest, host(), out));
 			case "list":
-				return listCommand(rest);
+				return done(listCommand(rest, host(), out));
 			case "standings":
-				return standingsCommand(rest);
+				return done(standingsCommand(rest, host(), out));
 			default:
-				if (verb === "--json") throw new UsageError("name a subcommand");
-				if (verb.startsWith("-")) throw new UsageError(`unknown flag: ${verb}`, "unknown_flag");
-				throw new UsageError(`unknown arena command: ${verb}`, "unknown_command");
+				if (verb === "--json") throw new ArenaUsageError("name a subcommand");
+				if (verb.startsWith("-")) throw new ArenaUsageError(`unknown flag: ${verb}`, "unknown_flag");
+				throw new ArenaUsageError(`unknown arena command: ${verb}`, "unknown_command");
 		}
 	} catch (error) {
-		if (error instanceof UsageError) {
-			// One diagnostic and a pointer to help, never the whole page (C3).
-			const known = ["run", "show", "vote", "list", "standings"].includes(verb);
-			writeCliFailure({
-				path: known ? ["arena", verb] : ["arena"],
-				slug: error.slug,
-				message: error.message,
-				json: options.includes("--json"),
-			});
-			return 2;
+		if (error instanceof ArenaUsageError) {
+			// One diagnostic and a pointer to help, never the whole page.
+			const command = VERBS.includes(verb) ? `pancode arena ${verb}` : "pancode arena";
+			if (options.includes("--json")) {
+				out.write(`${JSON.stringify({ version: 1, ok: false, error: { code: error.slug, message: error.message } })}\n`);
+			}
+			out.stderr += `${command}: ${error.message}\nsee: ${command} --help\n`;
+			return done(2);
 		}
-		printError(error instanceof Error ? error.message : String(error));
-		return 1;
+		out.error(error instanceof Error ? error.message : String(error));
+		return done(1);
 	}
 }

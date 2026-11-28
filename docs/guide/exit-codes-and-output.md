@@ -58,7 +58,7 @@ A run that left its evidence obligation unmet is the one exception to "no automa
 | `campaign run` | `0` every entry was run, whatever each entry's status (with `--exit-code`, `0` only when every entry completed and `1` otherwise), `1` the campaign itself failed, `2` usage (including an invalid roster or answers file, a missing fixture, or an `--out` that holds files or lies inside the fixture), the signal's code when stopped ([campaign.ts](../../src/cli/campaign.ts)). |
 | `telemetry tokens` | `0` report printed, `1` unknown or unreadable session, `2` usage ([telemetry-tokens.ts](../../src/cli/telemetry-tokens.ts)). |
 | `context working-set` | `0` summary printed, or `--verify` found no mismatch (attempts read `verified`, `not-verifiable`, or `external`), `1` `--verify` found an attempt whose request differs from its receipt, or the session could not be read, `2` usage ([context-working-set.ts](../../src/cli/context-working-set.ts)). |
-| `arena run\|show\|vote` | `0` success, `1` match failed / unknown match / `show --reveal` before vote / duplicate `vote` without `--replace`, `2` usage, `129`/`130`/`143` signal ([arena.ts](../../src/cli/arena.ts)). |
+| `arena run\|show\|vote` | `0` success, `1` match failed / unknown match / `show --reveal` before vote / duplicate `vote` without `--replace`, `2` usage or the arena pack not installed, `129`/`130`/`143` signal ([arena pack](../../hub/packs/extensions/arena/README.md#exit-codes)). |
 
 ## `--help` and flag positioning
 

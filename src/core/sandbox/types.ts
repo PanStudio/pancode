@@ -95,10 +95,10 @@ export interface SandboxMaskedPath {
 	path: string;
 	kind: "directory" | "file";
 	/**
-	 * Bubblewrap only: subtrees of a directory mask bound back read-only on top
-	 * of its empty tmpfs, each `source` (a physical path) at `target`.
+	 * Subtrees of a directory mask bound back on top of its empty tmpfs (or re-allowed under Seatbelt),
+	 * each `source` (a physical path) at `target`. Read-only unless `writable` is true.
 	 */
-	reveal?: ReadonlyArray<{ source: string; target: string }>;
+	reveal?: ReadonlyArray<{ source: string; target: string; writable?: boolean }>;
 	/** Bubblewrap only: a directory mask remounted read-only, so nothing can be created in it. */
 	readOnly?: true;
 }

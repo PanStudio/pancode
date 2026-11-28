@@ -23,6 +23,7 @@ import { abbreviateModelId, modelNickname } from "../theme/labels.js";
 import { thinkingNoteWords } from "../thinking-note.js";
 import type { ThinkingRailFacts } from "./context-rail.js";
 import type { FooterDashboardRenderState } from "./dashboard.js";
+import type { ExtensionFact } from "./extension-facts.js";
 import type { ComposerKeyContext, KeyHintFacts } from "./key-hints.js";
 import { routeFirstOutput, silenceNoteForms } from "./silence-note.js";
 import { footerTelemetry } from "./spend.js";
@@ -42,7 +43,7 @@ export interface FooterRenderUiContext {
 	readonly fleetBoardOpen?: boolean;
 	readonly whisper?: string | null;
 	readonly contextualMoment?: string | null;
-	readonly extensionFacts?: ReadonlyArray<string>;
+	readonly extensionFacts?: ReadonlyArray<ExtensionFact>;
 	readonly workspaceLine?: string | null;
 	readonly keyContext?: ComposerKeyContext;
 	readonly keyHintFacts?: KeyHintFacts;

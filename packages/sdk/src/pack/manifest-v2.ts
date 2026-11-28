@@ -155,7 +155,11 @@ export interface ExtensionRuntimeDeclarationV2 {
 	workspaces: ExtensionWorkspaceDeclaration[];
 	access: ExtensionContentAccess[];
 	permissions: ExtensionPermissionsDeclaration;
-	state: { session: boolean; store: boolean };
+	/**
+	 * Host-kept state: `session` and `store` key/value tables, and `project`, a directory in the project the runtime
+	 * reads and writes as `ctx.projectDir` (`<repository root>/.pancode/data/<id>/`).
+	 */
+	state: { session: boolean; store: boolean; project: boolean };
 	/** Host services reachable over the extension IPC only after operator consent. */
 	services?: ExtensionServicesDeclaration;
 	config: ExtensionConfigField[];
@@ -233,9 +237,10 @@ export type ExtensionCapabilityEnvelope = Pick<
 	takesOver?: string[];
 	/**
 	 * Host-held state the package keeps: per-session values and the cross-session
-	 * store. Absent when it keeps neither, which keeps those digests stable.
+	 * store, and a project directory. Absent when it keeps none, and `project` absent unless declared, which keeps
+	 * those digests stable.
 	 */
-	state?: ExtensionRuntimeDeclarationV2["state"];
+	state?: { session: boolean; store: boolean; project?: true };
 	/** Absent when the package declares no service, which keeps those digests stable. */
 	services?: ExtensionServicesDeclaration;
 	tools: Array<Pick<ExtensionRuntimeToolDeclaration, "name" | "actionClass">>;

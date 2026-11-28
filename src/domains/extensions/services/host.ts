@@ -123,6 +123,12 @@ export function createExtensionWorkHost(services: ExtensionWorkServices): Extens
 			),
 		wait: (service, request) => service.wait(request.text("id")),
 		cancel: (service, request) => service.cancel(request.text("id")).then(() => null),
+		refusal: (service, request) => {
+			const autonomy = request.optionalText("autonomy");
+			if (autonomy !== undefined && autonomy !== "default" && autonomy !== "yolo")
+				throw new Error("runs.refusal: autonomy must be default or yolo");
+			return service.refusal(omitUndefined({ autonomy, readOnly: request.optionalFlag("readOnly") }));
+		},
 	});
 	const worktrees = dispatcher("worktrees", services.worktrees, {
 		create: (service, request, scope) =>
@@ -155,6 +161,7 @@ export function createExtensionWorkHost(services: ExtensionWorkServices): Extens
 	});
 	const verify = dispatcher("verify", services.verify, {
 		list: (service, request) => service.list(request.place()),
+		resolve: (service, request) => service.resolve(request.text("id"), request.place()),
 		check: (service, request, scope) => service.check(request.text("id"), request.place(), scope),
 		measure: (service, request, scope) =>
 			service.measure(request.text("id"), request.text("metric"), request.place(), scope),

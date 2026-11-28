@@ -157,7 +157,6 @@ export interface InteractivePresentationDeps {
 	/** Session facts that dim or omit palette rows, such as `/panes` without a pane host. */
 	commandUnavailable?: (command: string) => string | undefined;
 	commandHidden?: (command: string) => boolean;
-	getExtensionStatus?: () => ReadonlyArray<string>;
 	/** What an active extension workspace draws in place of the host's parts. */
 	workspaceSurfaces?: WorkspaceSurfaces;
 	getLifecycleHint?: () => string | null;
@@ -720,7 +719,6 @@ export function createInteractivePresentation(deps: InteractivePresentationDeps)
 		getLastShell: () => lastShell,
 		getLastCompactionStop: () => lastCompactionStop,
 		getExtensionStats,
-		...(deps.getExtensionStatus ? { getExtensionStatus: deps.getExtensionStatus } : {}),
 		...(deps.getLifecycleHint ? { getLifecycleHint: deps.getLifecycleHint } : {}),
 		...(deps.getConnections ? { getConnections: deps.getConnections } : {}),
 		...(deps.getTaskMemoryStatus ? { getTaskMemoryStatus: deps.getTaskMemoryStatus } : {}),
@@ -798,7 +796,7 @@ export function createInteractivePresentation(deps: InteractivePresentationDeps)
 		...(deps.getLastCommand ? { getLastCommand: deps.getLastCommand } : {}),
 		...(deps.workspaceSurfaces
 			? {
-					getExtensionFacts: (width: number) => deps.workspaceSurfaces?.statusFacts(width) ?? [],
+					getExtensionFacts: () => deps.workspaceSurfaces?.statusFacts() ?? [],
 					getWorkspaceLine: (width: number) => deps.workspaceSurfaces?.footerLine(width) ?? null,
 				}
 			: {}),

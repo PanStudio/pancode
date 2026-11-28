@@ -29,6 +29,25 @@ entries:
           session: investigates, proposes two or three genuinely different
           approaches with trade-offs, recommends, lets the user decide, and
           writes the decision doc. Not a task-by-task plan; use…"
+  - kind: extension
+    publisher: pancode
+    name: arena
+    description: Run one prompt on 2 to 4 target/models side by side, compare their
+      work blind, vote, and keep standings.
+    version: 0.1.0
+    sourceUrl: packs/extensions/arena
+    sha256: 41079852225ff939ac0fb5ca6cf9f8175e1425b282ba472e08f571d8c43ec548
+    license: LicenseRef-PanCode-1.0
+    tier: core
+    envelopeDigest: 7e656e63c5f05e76e019d4a108aead6e5de6e8cf5ccd7aa1a25141b63738fc04
+    verbs:
+      - arena
+    provides:
+      - kind: extension
+        name: arena
+        description: Run one prompt on 2 to 4 target/models side by side, compare their
+          work blind, vote, and keep standings.
+    default: true
   - kind: skill
     publisher: pancode
     name: arxiv-literature
@@ -574,7 +593,7 @@ entries:
     description: Focus radio in a dock pane below PanCode, played by cliamp.
     version: 0.1.0
     sourceUrl: packs/extensions/music
-    sha256: c3e47082733ac732109b294766128ccac40b6a2d7a978265b20fa191cdd0b936
+    sha256: 81d455455a1e7cf11b161b31a5c43c2920501983cfd8a0aa6944c92c75d9e1a4
     license: LicenseRef-PanCode-1.0
     tier: core
     envelopeDigest: 702a742056b471cfe660da7ecb98e6813ec5ca54e7f429f9a40bcac51c4797d3

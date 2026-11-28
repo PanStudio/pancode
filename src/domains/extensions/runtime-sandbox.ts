@@ -5,6 +5,7 @@ import path from "node:path";
 import type { ExtensionRuntimeDeclarationV2 } from "@pancode/sdk/pack";
 import { canonicalizeExistingPath } from "../../core/path-canonical.js";
 import { isSameOrDescendant } from "../../core/path-containment.js";
+import { repositoryRoot } from "../../core/project-root.js";
 import { sandboxAvailability } from "../../core/sandbox/availability.js";
 import { discoverSecretMasks } from "../../core/sandbox/secret-files.js";
 import {
@@ -22,6 +23,7 @@ import {
 } from "../../core/sandbox/worker-process.js";
 import { workspaceTrustDirectory } from "../../core/workspace-trust.js";
 import { pancodeConfigDir } from "../../core/xdg.js";
+import { isExtensionId } from "./discovery.js";
 
 /**
  * The declaration a runtime starts with in a read-only session, which leaves
@@ -65,6 +67,8 @@ export interface ExtensionLaunchRoots {
 	packageCopy: string;
 	storeDir: string;
 	bootstrap: string;
+	/** The project directory of a runtime that declares `runtime.state.project`, and whether this session may write it. */
+	project?: { dir: string; writable: boolean };
 }
 
 export interface ExtensionLaunch {
@@ -117,22 +121,74 @@ export function prepareDeclaredWriteRoots(declaration: ExtensionRuntimeDeclarati
 	const created: string[] = [];
 	for (const entry of declaration.permissions.fs.write) {
 		if (entry === "store") continue;
-		let current = home;
-		for (const segment of entry.split("/")) {
-			if (segment === ".") continue;
-			current = path.join(current, segment);
-			try {
-				mkdirSync(current);
-				created.push(current);
-			} catch (error) {
-				// An existing component is checked below; any other failure leaves the root unusable.
-				if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
-			}
-			if (!lstatSync(current).isDirectory())
-				throw new Error(`declared write root ${entry} passes through ${current}, which is not a plain directory`);
-		}
+		created.push(...plainDirectories(home, entry.split("/"), `declared write root ${entry}`));
 	}
 	return created;
+}
+
+/** Create `segments` below `base` one component at a time, refusing a component that is not a plain directory. */
+function plainDirectories(base: string, segments: ReadonlyArray<string>, label: string): string[] {
+	const created: string[] = [];
+	let current = base;
+	for (const segment of segments) {
+		if (segment === ".") continue;
+		current = path.join(current, segment);
+		try {
+			mkdirSync(current);
+			created.push(current);
+		} catch (error) {
+			// An existing component is checked below; any other failure leaves the root unusable.
+			if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+		}
+		if (!lstatSync(current).isDirectory())
+			throw new Error(`${label} passes through ${current}, which is not a plain directory`);
+	}
+	return created;
+}
+
+/**
+ * The project directory `runtime.state.project` grants: `<repository root>/.pancode/data/<id>/`, or the workspace's
+ * own `.pancode/data/<id>/` outside a repository. The default `.pancode/.gitignore` already keeps `data/` untracked.
+ */
+export function extensionProjectDir(workspace: string, extensionId: string): { root: string; dir: string } {
+	if (!isExtensionId(extensionId)) throw new Error(`invalid extension id '${extensionId}' for project directory`);
+	const home = canonicalizeExistingPath(workspace);
+	const root = repositoryRoot(home) ?? home;
+	const dataRoot = path.join(root, ".pancode", "data");
+	const dir = path.join(dataRoot, extensionId);
+	if (path.dirname(dir) !== dataRoot || path.basename(dir) !== extensionId)
+		throw new Error(`project directory for '${extensionId}' escapes .pancode/data/`);
+	return { root, dir };
+}
+
+/** Create the project directory before launch so the sandbox binds exactly it; the components it created. */
+export function prepareProjectDir(project: { root: string; dir: string }): string[] {
+	return plainDirectories(
+		project.root,
+		path.relative(project.root, project.dir).split(path.sep),
+		"the project directory",
+	);
+}
+
+/**
+ * Verify that any existing components of `project.dir` below `project.root` are plain directories, without creating
+ * missing ones. Used in read-only sessions so a symlink along `.pancode/data/<id>` is still refused.
+ */
+export function assertPlainProjectDir(project: { root: string; dir: string }): void {
+	let current = project.root;
+	for (const segment of path.relative(project.root, project.dir).split(path.sep)) {
+		if (segment === "" || segment === ".") continue;
+		current = path.join(current, segment);
+		let stat: ReturnType<typeof lstatSync>;
+		try {
+			stat = lstatSync(current);
+		} catch (error) {
+			if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
+			throw error;
+		}
+		if (!stat.isDirectory())
+			throw new Error(`the project directory passes through ${current}, which is not a plain directory`);
+	}
 }
 
 /**
@@ -161,6 +217,37 @@ function settingsMasks(roots: ExtensionLaunchRoots, writable: Iterable<string>):
 	const needed = [roots.workspace, roots.packageCopy, roots.bootstrap, roots.storeDir, ...writable];
 	if (needed.some((entry) => isSameOrDescendant(canonicalizeExistingPath(entry), config))) return settingsFileMasks();
 	return [{ path: config, kind: "directory" }];
+}
+
+/**
+ * Hide other extensions' `.pancode/data/<other>/` directories behind an empty tmpfs over `.pancode/data/`, revealing
+ * only this runtime's own `project` directory when it exists. Keeps an extension with workspace read or exec access
+ * from reading another extension's project data.
+ */
+function projectDataMask(
+	workspace: string,
+	project: { dir: string; writable: boolean } | undefined,
+): SandboxMaskedPath[] {
+	const dataDir = path.join(repositoryRoot(workspace) ?? workspace, ".pancode", "data");
+	try {
+		if (!lstatSync(dataDir).isDirectory()) return [];
+	} catch {
+		return [];
+	}
+	const reveal: Array<{ source: string; target: string; writable?: boolean }> = [];
+	if (project !== undefined) {
+		try {
+			if (lstatSync(project.dir).isDirectory())
+				reveal.push({
+					source: project.dir,
+					target: project.dir,
+					...(project.writable ? { writable: true } : {}),
+				});
+		} catch {
+			// In a read-only session the directory may not exist yet: keep the data root masked with nothing revealed.
+		}
+	}
+	return [{ path: dataDir, kind: "directory", ...(reveal.length > 0 ? { reveal } : {}) }];
 }
 
 /**
@@ -236,7 +323,12 @@ function planLaunch(input: {
 	let invocation: ReturnType<typeof composeWorkerSandboxInvocation>;
 	try {
 		// An extension never reads PanCode's settings, which can hold target auth headers, so they are masked always.
-		const base = [...workerSandboxMasks(), ...settingsMasks(roots, writable)];
+		// `.pancode/data/` is masked to hide sibling extensions' project data, revealing only this extension's own dir.
+		const base = [
+			...workerSandboxMasks(),
+			...settingsMasks(roots, writable),
+			...projectDataMask(workspace, roots.project),
+		];
 		invocation = composeWorkerSandboxInvocation(
 			{
 				version: WORKER_SANDBOX_SPEC_VERSION,
@@ -245,8 +337,14 @@ function planLaunch(input: {
 				// Re-bound read-only after the writable roots, so a root that is a parent of the
 				// project cannot rewrite Git metadata, installed resources, state or policy.
 				readOnlyPaths: [path.join(workspace, ".git"), ...managedPaths(workspace)],
-				gitWritablePaths: [],
-				readableRoots: [workspace, path.dirname(roots.packageCopy), path.dirname(roots.bootstrap)],
+				// The project directory sits under a managed `.pancode/`, so it is bound writable after those.
+				gitWritablePaths: roots.project?.writable ? [roots.project.dir] : [],
+				readableRoots: [
+					workspace,
+					path.dirname(roots.packageCopy),
+					path.dirname(roots.bootstrap),
+					...(roots.project !== undefined ? [roots.project.dir] : []),
+				],
 				network: net,
 				...(input.unixSockets !== undefined && input.unixSockets !== "block" ? { unixSockets: input.unixSockets } : {}),
 			},

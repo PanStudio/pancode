@@ -505,8 +505,8 @@ function mutationRevision(parsed: ParsedAuthoringArgs): VerifierRevision | Error
 }
 
 /**
- * Run a check as the verify tool does in a session: its command runs project code, which a model may have written (an
- * arena contender's worktree is scored this way), so it runs in the sandbox host verification uses for the project.
+ * Run a check as the verify tool does in a session: its command runs project code, which a model may have written (a
+ * check an extension runs in its worktree is scored this way), so it runs in the sandbox host verification uses for the project.
  */
 function dryRunCheck(id: string): ReturnType<typeof verifyTool.run> {
 	const shellSandbox = hostVerificationSandbox(readSettings(), process.cwd());

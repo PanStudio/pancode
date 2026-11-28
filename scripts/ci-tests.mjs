@@ -182,7 +182,6 @@ export const coreTests = [
 	"plugin-engine",
 	"plugin-verified-tree",
 	"claims-ledger",
-	"arena",
 	"research-campaign",
 	"cli-leaf-help",
 	"mux-platform-win32",

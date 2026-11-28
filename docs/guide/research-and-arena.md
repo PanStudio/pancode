@@ -6,24 +6,15 @@ PanCode has two ways to compare work by evidence instead of by impression:
   runs PanCode's own agent again and again and keeps a change only when the measurement shows a real improvement and every
   correctness check still passes.
 - **`pancode arena`** gives one prompt to 2 to 4 target/model pairs side by side. You see their answers and diffs
-  without knowing which model produced which, vote, and get standings from your votes.
+  without knowing which model produced which, vote, and get standings from your votes. It is the first-party
+  `extension:arena` pack, installed with PanCode; its [README](../../hub/packs/extensions/arena/README.md) is its guide.
 
-Both commands work headless with `--json`. Both build on the project verifier catalog, `.pancode/verifiers.yaml`
-(see [Project quality policies](quality-policy.md)). Both run every agent as a normal `pancode run` in a Git worktree,
+Research works headless with `--json`. It builds on the project verifier catalog, `.pancode/verifiers.yaml`
+(see [Project quality policies](quality-policy.md)), and runs every agent as a normal `pancode run` in a Git worktree,
 so the same safety policy, cost accounting and run evidence apply, and your checkout is never edited. Every flag is
 listed in [Commands and modes](commands-and-modes.md); this page explains how to use them and how they decide.
 
 ## Quick start
-
-To compare models on one task, name two `<target>/<model>` pairs from
-`pancode targets` and give them a prompt:
-
-```bash
-pancode arena run --contender <target>/<model> --contender <target>/<model> \
-  -- "Fix the bug in calc.py so test_calc.py passes."
-pancode arena show <match-id>          # the id run printed; answers and diffs under blind labels
-pancode arena vote <match-id> A        # or B, tie, both-bad
-```
 
 To improve a number, declare a check that prints it as JSON in
 `.pancode/verifiers.yaml` ([below](#declare-the-objective-and-the-gates)),
@@ -40,8 +31,8 @@ A kept change lands on the branch `pancode/research/<id>`, never on yours.
 | Pick a model or target for a kind of task in your own repository | `arena run`, then `arena vote` and `arena standings` |
 | See how two models approach the same bug before trusting either | `arena run --check <id>` |
 
-Neither command judges quality with a model. Research decides from your checks and the measurements. The arena records
-your vote and never grades a contender.
+Neither judges quality with a model. Research decides from your checks and the measurements. The arena records your
+vote and never grades a contender.
 
 ## Research: a verified hill climb
 
@@ -197,64 +188,15 @@ Research also writes to the [claims ledger](../architecture/evidence-and-memory.
 - Each measured iteration records the agent's hypothesis and prediction.
 - The research verdict itself (supported, refuted or inconclusive) comes from the grade and is kept in the journal.
 
-## Arena: blind side-by-side comparison
+## Arena
 
-### Run a match
+`pancode arena run`, `show`, `vote`, `list` and `standings` come from the `extension:arena` pack, which PanCode installs
+by default. Its [README](../../hub/packs/extensions/arena/README.md) covers running a match, voting blind, standings,
+storage under `.pancode/data/arena/`, limits and exit codes. `pancode hub remove extension:arena` removes it, and
+`pancode hub install extension:arena` brings it back.
 
-```bash
-pancode arena run --suite bugs --check unit \
-  --contender copilot/claude-haiku-5.5 \
-  --contender litellm/gateway/qwen3.8-27b \
-  -- "Fix the bug in calc.py so test_calc.py passes. Keep the change minimal."
-```
+## In the GUI
 
-A contender is `<target>/<model>`, split at the first `/`, so models with slashes in their names work. Inside Git, every
-contender runs in its own worktree from `HEAD`. Uncommitted changes are not part of the baseline, and the worktrees are
-removed after each contender's diff is saved. Outside Git, or with `--read-only`, contenders only read. Put `--` before a
-prompt that starts with `-`.
-
-`--check <id>` dry-runs one verifier in each contender's worktree when it finishes. The check runs in the sandbox host verification uses, rooted at the worktree, since it executes what the contender wrote. An id the project cannot resolve is
-refused before any contender starts. A sweep check takes one run, `--check <sweep>/<run>`. The project's
-`.pancode/verifiers.yaml` is copied into each worktree, committed or not, and replaces any copy a contender wrote. So
-are the uncommitted files the check names: untracked or changed files under each path on its command (the run
-directory of a sweep included), its `reference` or `baseline` file and a `reproduce` check's pinned inputs. They are
-copied before the contender starts and again before the check runs, so the check reads the project's bytes, and the
-diff leaves each one out while it still holds them. Ignored files and links are not copied, and a check that names
-more than 256 uncommitted files or 64 MiB is refused before any contender starts; commit those inputs instead. A file
-the check reads without naming it, such as one its script opens, must be committed.
-
-`--autonomy yolo` runs every contender as contained yolo, with the same rules as a research campaign: the sandbox, the
-judge and your autonomous caps stay on, and a call that would need you is refused back to the contender. All
-contenders in a match share the autonomy, and `match.json` records it. Before a vote, `show` adds each contender's count
-of open decisions and the cap or judge that paused it, if any, next to its blocks. The refused commands themselves stay
-in the contender's own stream. Unconfined yolo is refused here too, and `--read-only` still applies at yolo.
-
-### Vote blind, then reveal
-
-```bash
-pancode arena show <match-id>                   # labels A..D in a seeded random order
-pancode arena vote <match-id> A --note "smaller diff"
-pancode arena show <match-id> --reveal          # now shows who was who
-pancode arena standings --suite bugs
-```
-
-Before a vote, `show` lists each contender's answer, diff, turns, tool calls, writes, blocks and check result. It hides
-the target, model, duration, tokens and cost, and redacts identifying text such as session ids and worktree paths.
-`--reveal` before a vote is refused. One vote counts per match. `--replace` changes it, and the journal keeps both. The
-choices are a label, `tie` or `both-bad`.
-
-`arena list [--suite <name>]` lists the recorded matches with their status, contender count, vote, suite and prompt. It
-names the target/model pairs (under `--json`) only for a voted match, so it never unblinds a pending one.
-
-`standings` counts wins, losses, ties and both-bad votes per target/model. Once an identity has 5 votes, it also shows an
-Elo rating. Every identity starts at 1000, and the votes are replayed in match order with K 32, so the same records
-always give the same ratings. A win beats every other contender in the match, `tie` is a draw between each pair, and
-`both-bad` leaves ratings alone. In a 3- or 4-way match, K is split across the opponents.
-
-### In the GUI
-
-The GUI's Arena page runs the same commands. It has a New match form with live progress and Cancel, blind columns with
-answers, diffs and check output, a vote panel, and standings. See [Graphical application](gui.md#arena-page).
 The Research page browses a project's campaigns with their iteration timeline, regrades one, and starts or stops a
 campaign, one per project at a time. See [Graphical application](gui.md#research-page).
 
@@ -292,7 +234,7 @@ your config directory as it is (targets, credentials, installed extensions and M
 `pancode run` would: nothing secret is copied under `--out`, and a login an entry refreshes is saved to your
 credential store. Each also reads the runtime components you installed with `pancode tools install` (copilot-sdk,
 claude-sdk) from your own data directory, read-only, and an entry missing one names that directory in its install hint
-rather than offering to install under `--out`. Each entry's environment is filtered the way an arena contender's is (see [Limits](#limits)). The
+rather than offering to install under `--out`. Each entry's environment is filtered the way an extension's run is (see [Limits](#limits)). The
 entry runs headless `pancode run --cwd <copy> --target <target> --model <model> --answers <file> --output-format json`, with
 `--thinking`, `--timeout` and `--autonomy yolo` when given, and its output goes to `run.stdout.log` and
 `run.stderr.log` beside the copy. `--autonomy yolo` is contained yolo only. `--probe <extension>:<command>` then runs
@@ -318,8 +260,6 @@ which records its pass as `repetition` (from 0).
 | Research campaigns | `.pancode/research/<id>/`: `campaign.json` (the frozen spec, checks with their digest, seed and PanCode version), `journal.jsonl`, `samples/`, `slate.json` and, while a run holds it, `run.lock` |
 | Research worktrees | `.pancode/worktrees/research-<id>-base/` and `research-<id>-it-NNNN/`, removed after grading unless `--keep` |
 | Research results | The branch `pancode/research/<id>` |
-| Arena matches | `.pancode/arena/<match-id>/`: `match.json`, each contender's `contender-N.ndjson` stream and `contender-N.diff`, and `vote.json` |
-| Arena vote journal | `.pancode/arena/votes.jsonl`, every vote including replaced ones |
 | Model campaigns | The `--out` directory you name: per entry `<NN>-<label>/` holds `project/`, `home/`, `run.stdout.log`, `run.stderr.log` and `entry.json` |
 
 The full list is in [Artifact placement](../architecture/artifact-placement.md).
@@ -328,16 +268,17 @@ The full list is in [Artifact placement](../architecture/artifact-placement.md).
 
 - Research optimizes one metric of one check, or of one run of a sweep, at a time and runs one candidate per
   iteration. It does not run candidates in parallel. `research resume` keeps the campaign's budget; it cannot raise it.
-- `--autonomy yolo` is contained yolo only. Neither command runs unconfined yolo. Each agent run is launched with `PANCODE_YOLO_CONFINEMENT=contained`, so it stays contained even if your settings turn unconfined while the campaign or match runs. The pin also reaches every `pancode` such a run starts from bash, and setting it to another value does not widen it.
+- `--autonomy yolo` is contained yolo only. Research never runs unconfined yolo. Each agent run is launched with `PANCODE_YOLO_CONFINEMENT=contained`, so it stays contained even if your settings turn unconfined while the campaign runs. The pin also reaches every `pancode` such a run starts from bash, and setting it to another value does not widen it.
 - Started from the bash of a session below yolo (`PANCODE_AUTONOMY_CEILING` is set), `--autonomy yolo` is refused with exit 2: a delegated run never gets more autonomy than its dispatcher.
-- Arena contenders do not inherit your whole environment. Each gets the safe command variables (`PATH`, `HOME`, `USER`,
+- Model campaign entries and the runs an extension starts, arena contenders among them, do not inherit your whole
+  environment. Each gets the safe command variables (`PATH`, `HOME`, `USER`,
   `LANG`, `TMPDIR`, the XDG base dirs), PanCode's own `PANCODE_*`, `LC_*`, `TERM`, `SHELL`, `TZ`, `NODE_OPTIONS`, proxy
   and CA variables, git author and committer names and emails, and the names in `safety.sandboxPassEnv`. From the credentials it
   gets only its own target's: the target's `auth.apiKeyEnvVar`, its runtime's default key variable, and that runtime's
   own variables (`CLAUDE_CONFIG_DIR` and the Anthropic selectors for `claude-code`, also every `ANTHROPIC_*` and
   `CLAUDE_CODE_*` for `claude-sdk`; `CODEX_HOME` for `codex-cli`; `OPENCODE_CONFIG*` and the keys its config names for
   `opencode-cli`; `PI_CODING_AGENT_DIR` for `pi-cli`; `COPILOT_*`, `GH_HOST`, `GH_CONFIG_DIR` and the D-Bus address for
-  `copilot-sdk`; the Google key, project and credentials file for `google`). A contender loses
+  `copilot-sdk`; the Google key, project and credentials file for `google`). It loses
   everything else: other targets' keys, `GITHUB_TOKEN`/`GH_TOKEN`, `SSH_AUTH_SOCK`, cloud logins its runtime does not
   read, `HERDR_*`, `DISPLAY`, `EDITOR`, and toolchain variables such as `VIRTUAL_ENV`. Add a name it needs to
   `safety.sandboxPassEnv`.
@@ -350,10 +291,7 @@ The full list is in [Artifact placement](../architecture/artifact-placement.md).
 | --- | --- | --- | --- | --- |
 | `research start`, `research resume` | A budget cap ended the campaign | An error, a noisy A/A check, unenforceable spend, or a refused resume | Usage | 130 SIGINT, 143 SIGTERM, 129 SIGHUP |
 | `research report` | Every regrade agrees with the journal | A regrade disagrees, or the campaign is missing | Usage | |
-| `arena run` | Every contender finished | The match failed | Usage | 130 SIGINT, 143 SIGTERM, 129 SIGHUP |
-| `arena show`, `vote` | Done | Unknown match, reveal before a vote, or a second vote without `--replace` | Usage | |
 | `campaign run` | Every entry was run, whatever its status; with `--exit-code`, only when every entry completed | The campaign itself failed, or, with `--exit-code`, some entry did not complete | Usage, including an invalid roster or answers file | The signal's exit code |
 
-Implementation: [research](../../src/domains/research/index.ts), [arena](../../src/domains/arena/index.ts),
-[campaign](../../src/domains/campaign/index.ts), [research CLI](../../src/cli/research.ts), [arena CLI](../../src/cli/arena.ts)
-and [campaign CLI](../../src/cli/campaign.ts).
+Implementation: [research](../../src/domains/research/index.ts), [campaign](../../src/domains/campaign/index.ts),
+[research CLI](../../src/cli/research.ts) and [campaign CLI](../../src/cli/campaign.ts).

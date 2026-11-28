@@ -7,7 +7,7 @@ import type { ToolRoundRecord } from "../../engine/types.js";
  *
  * These frames are not a public stream. A run under
  * `--output-format json|stream-json` writes them underneath and the schema v2 writer (`run-failure.ts`) reframes
- * them; `run --agent` and the arena read the same shapes. Every line is one compact JSON object matching
+ * them; `run --agent` and an extension's run service read the same shapes. Every line is one compact JSON object matching
  * `RunJsonFrame`; the first is the `session` header, which carries `schemaVersion`.
  * This module holds types and the version constant only, so any surface can
  * import it without pulling the chat loop or a renderer into its graph.

@@ -75,6 +75,16 @@ function buildSeatbeltProfile(spec: SandboxInvocationSpec): { profile: string; p
 		"MASKED_DIR",
 		spec.maskedPaths.filter((mask) => mask.kind === "directory").map((mask) => mask.path),
 	);
+	const revealedRead = define(
+		"REVEAL_READ",
+		spec.maskedPaths.flatMap((mask) => (mask.kind === "directory" ? (mask.reveal ?? []).map((r) => r.target) : [])),
+	);
+	const revealedWrite = define(
+		"REVEAL_WRITE",
+		spec.maskedPaths.flatMap((mask) =>
+			mask.kind === "directory" ? (mask.reveal ?? []).filter((r) => r.writable).map((r) => r.target) : [],
+		),
+	);
 	const maskedFiles = define(
 		"MASKED_FILE",
 		spec.maskedPaths.filter((mask) => mask.kind === "file").map((mask) => mask.path),
@@ -99,8 +109,10 @@ function buildSeatbeltProfile(spec: SandboxInvocationSpec): { profile: string; p
 		);
 	}
 	if (gitWritable > 0) lines.push(`(allow file-write* ${paramRule("GIT_WRITABLE_PATH", gitWritable)})`);
-	// A later matching rule takes precedence in SBPL, so masks come last.
+	// A later matching rule takes precedence in SBPL, so masks come last, with revealed subtrees re-opened before file masks.
 	if (maskedDirs > 0) lines.push(`(deny file-read* file-write* ${paramRule("MASKED_DIR", maskedDirs)})`);
+	if (revealedRead > 0) lines.push(`(allow file-read* ${paramRule("REVEAL_READ", revealedRead)})`);
+	if (revealedWrite > 0) lines.push(`(allow file-write* ${paramRule("REVEAL_WRITE", revealedWrite)})`);
 	if (maskedFiles > 0) lines.push(`(deny file-read* file-write* ${literalRule("MASKED_FILE", maskedFiles)})`);
 	// Without a network grant, `(deny default)` already refuses every socket,
 	// Unix-domain ones included.

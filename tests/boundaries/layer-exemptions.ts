@@ -28,7 +28,6 @@ export const LAYER_EXEMPTIONS: {
 		["src/domains/agents -> src/domains/gateway", 2],
 		["src/domains/agents -> src/domains/resources", 6],
 		["src/domains/agents -> src/domains/safety", 5],
-		["src/domains/arena -> src/domains/extensions", 1],
 		["src/domains/attach -> src/domains/session", 1],
 		["src/domains/campaign -> src/domains/extensions", 1],
 		["src/domains/campaign -> src/domains/lifecycle", 1],

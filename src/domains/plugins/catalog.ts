@@ -399,6 +399,10 @@ export function parseHubIndexRows(
 		}
 		const serves =
 			item.kind === "extension" && typeof item.plugin === "string" && isPluginId(item.plugin) ? item.plugin : undefined;
+		const verbs =
+			item.kind === "extension" && Array.isArray(item.verbs)
+				? item.verbs.filter((verb): verb is string => typeof verb === "string" && /^[a-z][a-z0-9-]*$/u.test(verb))
+				: [];
 		const publisher =
 			typeof item.publisher === "string"
 				? item.publisher
@@ -430,6 +434,7 @@ export function parseHubIndexRows(
 					: {}),
 				...(Array.isArray(item.requires) ? { requires: item.requires as HubRequirementRef[] } : {}),
 				...(serves ? { plugin: serves } : {}),
+				...(verbs.length > 0 ? { verbs } : {}),
 				...(provides ? { provides } : {}),
 				index: path.resolve(file),
 			},

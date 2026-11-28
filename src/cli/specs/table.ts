@@ -28,7 +28,6 @@ export const COMMAND_SPECS = {
 	evidence: () => import("./evidence.js"),
 	memory: () => import("./memory.js"),
 	claims: () => import("./claims.js"),
-	arena: () => import("./arena.js"),
 	campaign: () => import("./campaign.js"),
 	research: () => import("./research.js"),
 	semantic: () => import("./semantic.js"),

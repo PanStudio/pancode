@@ -183,13 +183,27 @@ export function parseExtensionOutputV2(
 	declaration: ExtensionRuntimeDeclarationV2,
 	origin: OutputOrigin,
 ): ExtensionOutputV2 {
-	bounded(value, "runtime output", RUNTIME_V2_LIMITS.outputBytes);
-	const raw = record(value, "runtime output", ["text", ...AMBIENT_KEYS, "workspace", "interview", "prompt", "exitCode"]);
-	const operator = origin === "command" || origin === "action";
+	// A command answers only the operator, so it may carry more than an answer a model could read.
+	const command = origin === "command";
+	bounded(value, "runtime output", command ? RUNTIME_V2_LIMITS.commandOutputBytes : RUNTIME_V2_LIMITS.outputBytes);
+	const raw = record(value, "runtime output", [
+		"text",
+		...AMBIENT_KEYS,
+		"workspace",
+		"interview",
+		"prompt",
+		"exitCode",
+		"stderr",
+	]);
+	const operator = command || origin === "action";
 	const output: ExtensionOutputV2 = {
-		text: text(raw.text, "text", 32768, true),
+		text: text(raw.text, "text", command ? RUNTIME_V2_LIMITS.commandTextChars : 32768, true),
 		...ambient(raw, declaration),
 	};
+	if (raw.stderr !== undefined) {
+		if (!command) throw new Error("only a command may write stderr");
+		output.stderr = text(raw.stderr, "stderr", RUNTIME_V2_LIMITS.commandStderrChars, true);
+	}
 	if (raw.workspace !== undefined) {
 		if (!operator) throw new Error("only a command or an action may enter or leave a workspace");
 		const workspace = record(raw.workspace, "workspace", ["enter", "leave"]);

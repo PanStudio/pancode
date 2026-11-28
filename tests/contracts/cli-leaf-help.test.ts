@@ -40,7 +40,7 @@ function cli(
 	});
 }
 
-// The arena, interop and research routers answer --help before naming the leaf, so one row each covers them.
+// The interop and research routers answer --help before naming the leaf, so one row each covers them.
 const CASES: ReadonlyArray<{ args: string[]; usage: RegExp }> = [
 	...["inspect", "calls", "cache", "timeline", "why-stopped", "explain"].map((leaf) => ({
 		args: ["telemetry", leaf, "--help"],
@@ -56,7 +56,6 @@ const CASES: ReadonlyArray<{ args: string[]; usage: RegExp }> = [
 	{ args: ["interop", "adopt", "claude-code", "--yes", "--help"], usage: /pancode interop <subcommand>/ },
 	{ args: ["verifiers", "inspect", "--help"], usage: /pancode verifiers inspect --json/ },
 	{ args: ["version", "--help"], usage: /pancode version \[--worker-specs \| --build \| --sandbox \| --json\]/ },
-	{ args: ["arena", "run", "--help"], usage: /pancode arena run --contender / },
 	{ args: ["research", "start", "--help"], usage: /pancode research start / },
 	{ args: ["help", "--help"], usage: /pancode help --json / },
 	{ args: ["schema", "--help"], usage: /pancode schema <name>/ },
