@@ -17,6 +17,7 @@ import type { createShellEgress, OperatorAskQueue } from "../registry-operator-a
 import type { ToolResultDigest } from "../result-disposition.js";
 import type { ToolResult, ToolSpec } from "../tool-spec.js";
 import type { createRegistryAttempts } from "./attempts.js";
+import type { createRegistryDenials } from "./denials.js";
 import type { createFlowGates } from "./flow.js";
 import type { createOperatorScopes } from "./operator-scope.js";
 import type { createSnapshotGate } from "./snapshot.js";
@@ -91,4 +92,11 @@ export interface RegistryScope {
 		result?: ToolResult,
 		resultDigest?: ToolResultDigest,
 	) => ReadonlyArray<MiddlewareEffect>;
+	readonly withDenial: ReturnType<typeof createRegistryDenials>["withDenial"];
+	readonly parkDenial: ReturnType<typeof createRegistryDenials>["parkDenial"];
+	readonly escapeAnswerable: ReturnType<typeof createRegistryDenials>["escapeAnswerable"];
+	readonly firstEscapeRefusal: ReturnType<typeof createRegistryDenials>["firstEscapeRefusal"];
+	readonly deniedCalls: ReturnType<typeof createRegistryDenials>["deniedCalls"];
+	readonly invokeSingle: ReturnType<typeof createRegistryDenials>["invokeSingle"];
+	readonly invokeAdmitted: (call: ClassifierCall, options?: ToolInvokeOptions) => Promise<RegistryVerdict>;
 }
