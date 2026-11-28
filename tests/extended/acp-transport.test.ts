@@ -6,8 +6,8 @@ import { PassThrough, Writable } from "node:stream";
 import { test } from "node:test";
 import { setImmediate } from "node:timers/promises";
 import { promisify } from "node:util";
-import { AcpProcessError, AcpProtocolError } from "../../src/engine/acp/errors.js";
-import { AcpEventMapper } from "../../src/engine/acp/event-mapper.js";
+import { AcpProcessError, AcpProtocolError } from "../../src/acp/errors.js";
+import { AcpEventMapper } from "../../src/acp/event-mapper.js";
 import {
 	ACP_MAX_INPUT_LINE_BYTES,
 	boundAcpSessionUpdate,
@@ -15,7 +15,7 @@ import {
 	createStdioTransport,
 	routeNonJsonRpcStdout,
 	type StdioTransportOptions,
-} from "../../src/engine/acp/transport.js";
+} from "../../src/acp/transport.js";
 import { makeScratchHome } from "../harness/scratch-env.js";
 
 for (const scenario of ["drain", "overflow", "initial", "initial-ascii", "write-error", "fast"] as const) {

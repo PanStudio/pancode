@@ -6,7 +6,7 @@ import {
 	type WorkerContextPolicy,
 	type WorkerContextProvenance,
 } from "../domains/context/worker/contract.js";
-import { parseWorkerContextProvenance } from "../worker/context-seed.js";
+import { parseWorkerContextProvenance } from "../lib/worker-wire/context-seed.js";
 
 /**
  * Plan-scale dispatch detection and the operator-facing plan artifact.

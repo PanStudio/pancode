@@ -11,8 +11,8 @@ import path from "node:path";
 import { sha256Hex } from "../../core/hash.js";
 import { isRecord } from "../../core/type-guards.js";
 import { reviewExtensionEnvelope } from "../extensions/envelope-review.js";
-import { mcpServerDigest } from "../gateway/mcp/config.js";
-import type { McpTrustActionClass } from "../gateway/mcp/trust.js";
+import { mcpServerDigest } from "../mcp/config.js";
+import type { McpTrustActionClass } from "../mcp/trust.js";
 
 /** The pack's capability envelope digest, or undefined when it declares no runtime. */
 export function hubEnvelopeDigest(root: string): string | undefined {

@@ -8,9 +8,9 @@
  */
 
 import { isAbsolute } from "node:path";
-import { TURN_CONTROL_WORKFLOWS } from "../domains/turn-control/settings.js";
 import { AUTONOMY_LEVELS, YOLO_CONFINEMENTS } from "../lib/autonomy/autonomy.js";
 import { scratchRootProblem } from "../lib/scratch-roots/scratch-roots.js";
+import { TURN_CONTROL_WORKFLOWS } from "../lib/turn-control/settings.js";
 import { validationWrapperProblem } from "../lib/validation-wrappers/validation-wrappers.js";
 import type { PancodeSettings } from "./config.js";
 import {

@@ -58,7 +58,7 @@ function bundle(name = "fixture", version = "1.0.0"): string {
 			$schema: "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
 			name,
 			version,
-			description: "PanHub integrity fixture",
+			description: "The hub integrity fixture",
 		}),
 	);
 	writeFileSync(path.join(location, "assets", "evidence.txt"), `evidence ${version}`);
@@ -91,7 +91,7 @@ async function captureCli(args: string[]): Promise<{ code: number; output: strin
 	return { code: result.status ?? 1, output: result.stdout || result.stderr };
 }
 
-describe("plugin PanHub lifecycle", () => {
+describe("plugin hub lifecycle", () => {
 	beforeEach(() => {
 		root = mkdtempSync(path.join(tmpdir(), "pancode-plugin-hub-"));
 		previousConfig = process.env.PANCODE_CONFIG_DIR;
@@ -158,7 +158,7 @@ describe("plugin PanHub lifecycle", () => {
 			stringify({ "skill:gone": { sha256: "0".repeat(64), sourceUrl: "/missing" } }),
 		);
 		equal(hubEntryInstalled({ kind: "skill", name: "gone" }), false);
-		throws(() => hubInstallPath({ kind: "skill", name: "../outside" }), /invalid PanHub entry name/);
+		throws(() => hubInstallPath({ kind: "skill", name: "../outside" }), /invalid hub entry name/);
 	});
 
 	it("records scoped pins, reports drift, refuses repinning drift, and removes the selected scope", () => {
@@ -353,7 +353,7 @@ describe("plugin PanHub lifecycle", () => {
 		equal(readFileSync(path.join(backup, "assets", "evidence.txt"), "utf8"), "preserve this edit");
 	});
 
-	it("routes the plugin tab through PanHub slash surface", () => {
+	it("routes the plugin tab through the hub slash surface", () => {
 		deepStrictEqual(parseSlashCommand("/hub"), { kind: "resources", tab: "plugin" });
 		deepStrictEqual(parseSlashCommand("/hub plugin"), { kind: "resources", tab: "plugin" });
 		equal(parseSlashCommand("/hub plugin unsupported").kind, "usage-error");
@@ -619,7 +619,7 @@ describe("plugin PanHub lifecycle", () => {
 		// With old source removed from disk and default catalog still pointing to it, update fails
 		throws(
 			() => planHubUpdate("migrated-pkg"),
-			/unsupported plugin source|is not a PanHub pack or a local pack directory|unavailable/i,
+			/unsupported plugin source|is not a hub pack or a local pack directory|unavailable/i,
 		);
 
 		// 2. Configured catalog override repoints package to relocated canonical source
@@ -672,7 +672,7 @@ describe("plugin PanHub lifecycle", () => {
 
 		throws(
 			() => planHubUpdate("direct-pkg"),
-			/is not a PanHub pack or a local pack directory|unavailable|no update source/i,
+			/is not a hub pack or a local pack directory|unavailable|no update source/i,
 		);
 	});
 });

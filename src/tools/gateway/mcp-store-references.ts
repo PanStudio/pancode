@@ -23,7 +23,7 @@ import {
 	validateTagName,
 } from "../../core/store-paths.js";
 import { ToolNames } from "../../core/tool-names.js";
-import type { McpPathArgumentAccess } from "../../domains/gateway/mcp/index.js";
+import type { McpPathArgumentAccess } from "../../domains/mcp/index.js";
 import type { HostEffectCall } from "../registry-contract.js";
 import { prepareStoreAdmissionArguments, type StoreAccess, storeAccessRefusal } from "../store/surface.js";
 

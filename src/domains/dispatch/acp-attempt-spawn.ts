@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 
+import type { AcpDelegationRunHandle } from "../../acp/adapter.js";
 import { claudeAuthEnvironment, withClaudeCredential } from "../../core/claude-environment.js";
 import { readPancodeVersion } from "../../core/package-root.js";
 import { emitApproval } from "../../core/telemetry/approvals.js";
 import { isRecord } from "../../core/type-guards.js";
-import type { AcpDelegationRunHandle } from "../../engine/acp/adapter.js";
 import { isBuiltinClaudeAcp, resolveClaudeLaunchCredential } from "../providers/auth/index.js";
 import type { AdmittedDelegation } from "./acp-attempt-state.js";
 import type { DispatchRuntime } from "./bundle-runtime.js";

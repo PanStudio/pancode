@@ -19,9 +19,9 @@ import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { sha256Hex } from "../../core/hash.js";
 import { ToolNames } from "../../core/tool-names.js";
+import { effectiveToolCall } from "../../core/tool-surface.js";
 import { type TurnConstraints, turnAllowsContinuation, turnAllowsTool } from "../../core/turn-constraints.js";
 import { VERIFICATION_SCRIPT_FAMILY_HINT } from "../../core/verification-scripts.js";
-import { effectiveToolCall } from "../../tools/surface.js";
 import type {
 	CompletionFact,
 	MiddlewareEffect,

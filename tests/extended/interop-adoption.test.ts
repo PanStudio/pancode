@@ -8,11 +8,6 @@ import { afterEach, beforeEach, describe, it } from "node:test";
 import { pancodeConfigDir } from "../../src/core/xdg.js";
 import { renderPromptContext } from "../../src/domains/context/prompt-context.js";
 import {
-	loadMcpServerConfig,
-	mcpHeaderCredentialRef,
-	openMcpHeaderCredentialStore,
-} from "../../src/domains/gateway/mcp/index.js";
-import {
 	applyInteropAdoption,
 	planInteropAdoption,
 	renderInteropAdoptionPlan,
@@ -21,6 +16,11 @@ import { detectInteropAgents } from "../../src/domains/interop/detect.js";
 import { discoverInteropInventory } from "../../src/domains/interop/inventory.js";
 import { interopAgentKind } from "../../src/domains/interop/registry.js";
 import type { InteropAgentId, InteropInventory } from "../../src/domains/interop/types.js";
+import {
+	loadMcpServerConfig,
+	mcpHeaderCredentialRef,
+	openMcpHeaderCredentialStore,
+} from "../../src/domains/mcp/index.js";
 import { loadUserHooks } from "../../src/domains/middleware/hooks.js";
 import { readHookSources } from "../../src/domains/middleware/hooks-io.js";
 import {

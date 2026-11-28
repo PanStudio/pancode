@@ -62,7 +62,7 @@ const NOTES: Record<string, string> = {
 	"context.compaction.systemPrompt":
 		"PanCode reads this file when compacting context. Enter the path as you would in terminal settings.",
 	"integrations.hub.catalog":
-		"PanCode reads this catalog path when resolving PanHub packs. Saving the path does not install a pack.",
+		"PanCode reads this catalog path when resolving hub packs. Saving the path does not install a pack.",
 	"safety.review.enabled":
 		"Conversations in PanCode on the desktop run over ACP, and headless and ACP runs never fire the review. This setting changes terminal sessions only.",
 	"safety.review.target": "Used by terminal sessions only; ACP runs never fire the review.",

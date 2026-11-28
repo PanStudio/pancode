@@ -15,7 +15,7 @@ import type { ConfigureWizardHost } from "../../src/cli/configure-host.js";
 import { runOnboardingWizard } from "../../src/cli/configure-onboarding.js";
 import { SHARED_SETTINGS_AREAS } from "../../src/core/settings-areas.js";
 import { resetXdgCache } from "../../src/core/xdg.js";
-import { COPILOT_SDK_VERSION } from "../../src/domains/lifecycle/copilot-sdk-install.js";
+import { COPILOT_SDK_VERSION } from "../../src/domains/install/copilot-sdk-install.js";
 import { listProviderSupportEntries } from "../../src/domains/providers/index.js";
 import { getRuntimeRegistry } from "../../src/domains/providers/registry.js";
 import { registerBuiltinRuntimes } from "../../src/domains/providers/runtimes/builtins.js";

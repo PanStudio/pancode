@@ -194,7 +194,7 @@ const PROVIDED_NAME = /^[A-Za-z0-9][A-Za-z0-9._:-]*$/;
 function providedResources(value: unknown, name: string, diagnostics: string[]): HubProvidedResource[] | undefined {
 	if (value === undefined) return undefined;
 	if (!Array.isArray(value) || value.length > HUB_PROVIDES_LIMITS.entries) {
-		diagnostics.push(`PanHub index provides ignored (not a bounded list): ${name}`);
+		diagnostics.push(`The hub index provides ignored (not a bounded list): ${name}`);
 		return undefined;
 	}
 	const hints: HubProvidedResource[] = [];
@@ -210,7 +210,7 @@ function providedResources(value: unknown, name: string, diagnostics: string[]):
 			(item.description !== undefined &&
 				(typeof item.description !== "string" || item.description.length > HUB_PROVIDES_LIMITS.description))
 		) {
-			diagnostics.push(`PanHub index provides ignored (malformed hint): ${name}`);
+			diagnostics.push(`The hub index provides ignored (malformed hint): ${name}`);
 			return undefined;
 		}
 		const key = `${item.kind}:${item.name}`;
@@ -339,11 +339,11 @@ export function parseHubIndexRows(
 		: parsed && typeof parsed === "object" && Array.isArray((parsed as { entries?: unknown }).entries)
 			? (parsed as { entries: unknown[] }).entries
 			: undefined;
-	if (!rows) throw new Error("PanHub index must be a list or contain an entries list");
+	if (!rows) throw new Error("The hub index must be a list or contain an entries list");
 	const seen = new Set<string>();
 	return rows.flatMap((row): HubPackageEntry[] => {
 		if (!row || typeof row !== "object") {
-			diagnostics.push(`PanHub index entry malformed: ${file}`);
+			diagnostics.push(`The hub index entry malformed: ${file}`);
 			return [];
 		}
 		const item = row as Record<string, unknown>;
@@ -359,19 +359,19 @@ export function parseHubIndexRows(
 			!SHA256.test(item.sha256)
 		) {
 			diagnostics.push(
-				`PanHub index entry requires name, description, source or sourceUrl, version, and full-tree sha256: ${String(item.name ?? file)}`,
+				`The hub index entry requires name, description, source or sourceUrl, version, and full-tree sha256: ${String(item.name ?? file)}`,
 			);
 			return [];
 		}
 		const problems = hubRowProblems(item, mode);
 		if (problems.length > 0) {
-			diagnostics.push(`PanHub index row dropped (${item.kind}:${item.name}): ${problems.join("; ")}`);
+			diagnostics.push(`The hub index row dropped (${item.kind}:${item.name}): ${problems.join("; ")}`);
 			return [];
 		}
 		const identity = `${item.kind}:${item.name}`;
 		if (mode !== "operator") {
 			if (seen.has(identity)) {
-				diagnostics.push(`PanHub index row dropped (${item.kind}:${item.name}): a second row with the same kind and name`);
+				diagnostics.push(`The hub index row dropped (${item.kind}:${item.name}): a second row with the same kind and name`);
 				return [];
 			}
 			seen.add(identity);
@@ -387,7 +387,7 @@ export function parseHubIndexRows(
 		const sourceUrlText = typeof item.sourceUrl === "string" ? item.sourceUrl : "";
 		const remote = !source && /^(?:[a-z][a-z0-9+.-]*:\/\/|git@)/i.test(sourceUrlText);
 		if (remote && !parsePluginGithubSource(sourceUrlText)) {
-			diagnostics.push(`unsupported PanHub index source: ${sourceUrlText}`);
+			diagnostics.push(`unsupported hub index source: ${sourceUrlText}`);
 			return [];
 		}
 		const provides = providedResources(item.provides, item.name, diagnostics);
@@ -395,7 +395,7 @@ export function parseHubIndexRows(
 			item.plugin !== undefined &&
 			(item.kind !== "extension" || typeof item.plugin !== "string" || !isPluginId(item.plugin))
 		) {
-			diagnostics.push(`PanHub index plugin ignored (only an extension names a plugin it serves): ${item.name}`);
+			diagnostics.push(`The hub index plugin ignored (only an extension names a plugin it serves): ${item.name}`);
 		}
 		const serves =
 			item.kind === "extension" && typeof item.plugin === "string" && isPluginId(item.plugin) ? item.plugin : undefined;
@@ -451,7 +451,7 @@ export function readPluginCatalog(
 	try {
 		return parseHubIndexRows(parseYaml(readFileSync(file, "utf8")), file, diagnostics, options);
 	} catch (error) {
-		diagnostics.push(`PanHub index unreadable: ${error instanceof Error ? error.message : String(error)}`);
+		diagnostics.push(`The hub index unreadable: ${error instanceof Error ? error.message : String(error)}`);
 		return [];
 	}
 }
@@ -465,7 +465,7 @@ export function bundledPluginCatalog(diagnostics: string[]): HubPackageEntry[] {
 	try {
 		return readPluginCatalog(bundledHubIndexPath(), diagnostics, { mode: "bundled" });
 	} catch (error) {
-		diagnostics.push(`PanHub index unavailable: ${error instanceof Error ? error.message : String(error)}`);
+		diagnostics.push(`The hub index unavailable: ${error instanceof Error ? error.message : String(error)}`);
 		return [];
 	}
 }

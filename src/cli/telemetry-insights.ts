@@ -4,6 +4,7 @@ import { join, resolve } from "node:path";
 import { cwdHash } from "../core/cwd-hash.js";
 import { listStateDirectorySync, readStateFileSync } from "../core/state-boundary.js";
 import type { ObjectRef } from "../core/telemetry/schemas.js";
+import { expandChainMessages } from "../core/tool-surface.js";
 import { isRecord } from "../core/type-guards.js";
 import { pancodeStateDir } from "../core/xdg.js";
 import {
@@ -26,7 +27,6 @@ import {
 } from "../domains/telemetry/insights.js";
 import { CONTENT_SUBJECTS, readTelemetryObjectSync } from "../domains/telemetry/objects.js";
 import { telemetrySessionDirectory } from "../domains/telemetry/paths.js";
-import { expandChainMessages } from "../tools/surface.js";
 import { printError } from "./argv.js";
 
 export const INSIGHTS_HELP = `pancode telemetry insights [--project [<dir>]] [--json]

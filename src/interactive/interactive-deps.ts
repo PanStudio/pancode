@@ -24,7 +24,7 @@ import type { FleetNodeSnapshot } from "../domains/scheduling/cluster.js";
 import type { SchedulingContract } from "../domains/scheduling/contract.js";
 import type { DecisionLedgerEntry } from "../domains/session/entries.js";
 import type { SessionContract, SessionEntry, TaskBoardSnapshot } from "../domains/session/index.js";
-import type { ShareContract } from "../domains/share/index.js";
+import type { ShareArchiver } from "../domains/share/index.js";
 import type { SystemOne } from "../domains/system-one/index.js";
 import type { TelemetryContract, TelemetryRunReaderBinder } from "../domains/telemetry/index.js";
 import type { UserTasksStore } from "../domains/user-tasks/store.js";
@@ -93,7 +93,7 @@ export interface InteractiveDeps {
 	reloadClasses?: ReloadClassesController;
 	armRestartHandoff?: () => void;
 	interop?: InteropContract;
-	share?: ShareContract;
+	share?: ShareArchiver;
 	/**
 	 * Pane layer. A `none` contract still reaches the interactive surface so the
 	 * files preset can use its terminal chooser; every mux operation remains

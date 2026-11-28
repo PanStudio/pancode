@@ -186,7 +186,7 @@ export interface PluginInstallOptions extends PluginMutationOptions {
 	publisher?: string;
 }
 
-/** One kind-aware publication seam for PanHub and interop adapters. */
+/** One kind-aware publication seam for the hub and interop adapters. */
 export interface HubPackageInstallInput extends Omit<PluginInstallOptions, "expectedKind"> {
 	kind: HubEntryKind;
 	sourcePath: string;

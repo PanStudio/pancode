@@ -17,7 +17,7 @@
  * renewal stays within WORKER_PERMISSION_HOLD_LIMIT_MS of the ask opening.
  */
 
-import { WORKER_APPROVAL_BACKSTOP_MARGIN_MS, WORKER_PERMISSION_HOLD_LIMIT_MS } from "../../worker/protocol.js";
+import { WORKER_APPROVAL_BACKSTOP_MARGIN_MS, WORKER_PERMISSION_HOLD_LIMIT_MS } from "../../lib/worker-wire/protocol.js";
 
 /** The longest a first hold waits, counted from when the ask was opened; a renewal waits this long from the key that renewed it. */
 export const WORKER_APPROVAL_HOLD_CEILING_MS = 15 * 60_000;

@@ -36,7 +36,7 @@ or memory. Each uses your config directory as it is (targets, credentials,
 installed extensions), as your own \`pancode run\` would: nothing secret is
 copied under --out, and a login an entry refreshes is saved to your credential
 store. Each also reads the runtime components you installed with
-\`pancode tools install\` (copilot-sdk, claude-sdk) from your data directory,
+\`pancode programs install\` (copilot-sdk, claude-sdk) from your data directory,
 and never installs or writes one there. Each runs headless
 \`pancode run --answers\` in its fixture copy; run.stdout.log keeps the run's
 stream-json frames, whose run_end gives the entry its completion and

@@ -50,7 +50,7 @@ Trust previews show the captured project files and their digest. Approve only
 the reviewed digest with --hash, or remove a surface's approval with --revoke.
 Settings and safety reload on restart; project hooks also check trust before execution.
 Project extensions and plugins load only after their surface is approved; approve, then
-reload extensions or PanHub.
+reload extensions or the hub.
 `;
 
 export const CONFIG_GET_HELP = `pancode config get <path> [--scope effective|user|project] [--json]

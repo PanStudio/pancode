@@ -282,7 +282,7 @@
 	overflow-wrap: anywhere;
 }
 
-/* settings.css spaces the tab row only once Settings has loaded; PanHub must not depend on that. */
+/* settings.css spaces the tab row only once Settings has loaded; the hub must not depend on that. */
 .hub-page .settings-tabs {
 	margin-block-end: var(--space-6);
 }

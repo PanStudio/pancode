@@ -6,9 +6,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PassThrough } from "node:stream";
 import { test } from "node:test";
-import { serveDeferredAcp } from "../../src/engine/acp/deferred-boot.js";
-import { createAcpHandshake } from "../../src/engine/acp/server-handshake.js";
-import { createStdioServerTransport, createStdioTransport } from "../../src/engine/acp/transport.js";
+import { serveDeferredAcp } from "../../src/acp/deferred-boot.js";
+import { createAcpHandshake } from "../../src/acp/server-handshake.js";
+import { createStdioServerTransport, createStdioTransport } from "../../src/acp/transport.js";
 import { makeScratchHome } from "../harness/scratch-env.js";
 
 test("ACP binds the first session cwd before boot and refuses a different later cwd", async () => {

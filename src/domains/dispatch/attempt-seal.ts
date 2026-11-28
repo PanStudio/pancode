@@ -2,7 +2,6 @@
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 
 import { relative, resolve as resolvePath } from "node:path";
-import { changedCheckoutPaths } from "../../tools/checkout-changes.js";
 import { discardIdleTaskWorktree, settleTaskWorktree } from "../../tools/task-worktree.js";
 import { LEFT_UNCOMMITTED_LIST_LIMIT } from "../../tools/worktree-commit.js";
 import {
@@ -16,6 +15,7 @@ import { appendAgentLedgerReport } from "./agent-ledger-store.js";
 import type { FinalizingAttempt, LandedSettlement } from "./attempt-state.js";
 import type { DispatchRuntime } from "./bundle-runtime.js";
 import { runSettlementReceiptFields, sealRouteDecision } from "./bundle-support.js";
+import { changedCheckoutPaths } from "./checkout-changes.js";
 import { reportDispatchDiagnostic } from "./dispatch-diagnostic.js";
 import {
 	classifyFailure,

@@ -14,6 +14,7 @@ import {
 } from "@pancode/sdk/pack";
 import { Type } from "typebox";
 import type { DomainContext } from "../../src/core/domain-loader.js";
+import { directSurfaceNames } from "../../src/core/tool-surface.js";
 import { createExtensionsBundle } from "../../src/domains/extensions/extension.js";
 import { createExtensionRuntimeHookBridge } from "../../src/domains/extensions/runtime-hook-bridge.js";
 import { disableExtension, installExtension, listInstalledExtensions } from "../../src/domains/extensions/state.js";
@@ -31,7 +32,6 @@ import { buildExtensionRuntimeToolSpecs } from "../../src/tools/extension-runtim
 import { createGatewayTool } from "../../src/tools/gateway/index.js";
 import { createRegistry } from "../../src/tools/registry.js";
 import type { ToolRegistry } from "../../src/tools/registry-contract.js";
-import { directSurfaceNames } from "../../src/tools/surface.js";
 import type { ToolSpec } from "../../src/tools/tool-spec.js";
 import { middlewareOwner } from "../harness/middleware-owner.js";
 import { isolatePancodeEnv } from "../harness/scratch-env.js";

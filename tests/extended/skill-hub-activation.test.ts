@@ -95,7 +95,7 @@ it("activates every bundled skill from its native package in a workspace with pe
 });
 
 for (const scope of ["user", "project"] as const) {
-	it(`loads the native ${scope} PanHub skill after session refresh despite untrusted compatibility copies`, async () => {
+	it(`loads the native ${scope} hub skill after session refresh despite untrusted compatibility copies`, async () => {
 		const env = await isolatePancodeEnv("pancode-hub-skill-activation-");
 		try {
 			process.env.HOME = env.dir;

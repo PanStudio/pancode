@@ -5,9 +5,9 @@ import { sha256Hex } from "../../core/hash.js";
 import type { SandboxAvailability } from "../../core/sandbox/types.js";
 import { workerEgressMode, workerMcpNoNetworkNotice } from "../../core/sandbox/worker-policy.js";
 import { type ToolName, ToolNames } from "../../core/tool-names.js";
+import { endpointIdentityHash, toolSignatureOf } from "../../lib/worker-wire/protocol.js";
 import { toolPromptHintsForNames } from "../../tools/builtin-tool-catalog.js";
 import type { CheckoutRootLookup } from "../../tools/task-worktree.js";
-import { endpointIdentityHash, toolSignatureOf } from "../../worker/protocol.js";
 import { agentHasTrait } from "../agents/spec.js";
 import { workerHandbookAudience } from "../context/handbook-units.js";
 import {
@@ -16,7 +16,7 @@ import {
 	sisterRepositoryRoot,
 	sisterRepositoryRules,
 } from "../context/sister-repository.js";
-import { ensureClaudeAgentSdk } from "../lifecycle/claude-sdk-install.js";
+import { ensureClaudeAgentSdk } from "../install/claude-sdk-install.js";
 import { resolveClaudeLaunchCredential } from "../providers/auth/index.js";
 import { targetRequiresAuth } from "../providers/index.js";
 import { type WorkerMcpAttestation, workerPermissionModeForPermit } from "../safety/worker-permit.js";

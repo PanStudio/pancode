@@ -31,7 +31,7 @@ import type { ResourcesContract } from "../domains/resources/index.js";
 import { installSkill } from "../domains/resources/skills/marketplace.js";
 import type { SessionContract, SessionEntry } from "../domains/session/index.js";
 import { verifyRunRecordReport } from "../domains/session/view-artifacts.js";
-import { archiveCommandHost, type ShareContract } from "../domains/share/index.js";
+import { archiveCommandHost, type ShareArchiver } from "../domains/share/index.js";
 import type { TelemetryView } from "../domains/telemetry/contract.js";
 import type { UserTaskAcceptance } from "../domains/user-tasks/acceptance.js";
 import type { UserTasksStore } from "../domains/user-tasks/store.js";
@@ -118,7 +118,7 @@ type UserTurnStatus = import("./chat-transcript-model.js").UserTurnStatus;
 type SlashResources = Pick<ResourcesContract, "prompts" | "promptsForDisplay" | "expandPromptTemplate" | "reload">;
 type SlashExtensions = Pick<ExtensionsContract, "list">;
 type SlashAgents = Pick<AgentsContract, "getSpec" | "listSpecs">;
-type SlashShare = Pick<ShareContract, "writeArchive" | "planImport" | "importArchive">;
+type SlashShare = Pick<ShareArchiver, "writeArchive" | "planImport" | "importArchive">;
 
 export interface InteractiveSlashRuntimeDeps {
 	openTransientAskUser?: AskUserHandler;

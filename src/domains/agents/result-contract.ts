@@ -4,7 +4,7 @@
 import path from "node:path";
 import { sha256Hex } from "../../core/hash.js";
 import { isHoareAssurance } from "../../core/hoare.js";
-import { INTERNAL_HELPER_RESULT_KINDS } from "../../worker/protocol.js";
+import { INTERNAL_HELPER_RESULT_KINDS } from "../../lib/worker-wire/protocol.js";
 import {
 	parseResultSummaryMaxBytes,
 	resultContractOutputBytes,
@@ -42,7 +42,7 @@ import type {
 	ValidateRecipeResultInput,
 } from "./result-contract-types.js";
 
-export { INTERNAL_HELPER_RESULT_KINDS } from "../../worker/protocol.js";
+export { INTERNAL_HELPER_RESULT_KINDS } from "../../lib/worker-wire/protocol.js";
 
 /** Decode a helper value through exactly the ordinary contract and grounding checks. */
 export function validateStructuredHelperResult(

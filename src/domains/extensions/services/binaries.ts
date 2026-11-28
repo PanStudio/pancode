@@ -26,7 +26,7 @@ import {
 	type ToolPlatform,
 	type ToolResolution,
 	toolchainRoot,
-} from "../../toolchain/index.js";
+} from "../../../lib/programs/index.js";
 import { listInstalledExtensions } from "../state.js";
 
 /** A call's arguments, environment and output stay small: this is a control channel, not a shell. */
@@ -44,7 +44,7 @@ function packBinaryRoot(extensionId: string, root: string = toolchainRoot()): st
 	return path.join(root, "ext", extensionId);
 }
 
-/** The toolchain row a declaration stands for, so install and the resolution ladder are the ones `pancode tools` uses. */
+/** The toolchain row a declaration stands for, so install and the resolution ladder are the ones `pancode programs` uses. */
 function packBinaryTool(extensionId: string, binary: ExtensionBinaryDeclaration): PinnedTool {
 	const downloads: Partial<Record<ToolPlatform, PinnedToolDownload>> = {};
 	for (const [platform, asset] of Object.entries(binary.downloads)) {

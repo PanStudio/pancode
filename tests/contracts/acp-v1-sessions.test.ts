@@ -7,6 +7,23 @@ import { hostname } from "node:os";
 import { test } from "node:test";
 import type { TSchema } from "typebox";
 import { Value } from "typebox/value";
+import { acpUsageSums } from "../../src/acp/adapter.js";
+import { commandResultLines } from "../../src/acp/command-result.js";
+import type { AcpCommandControl } from "../../src/acp/commands.js";
+import { AcpRequestError } from "../../src/acp/errors.js";
+import { compactUsage, createAcpLiveTelemetry } from "../../src/acp/live-telemetry.js";
+import { servePancodeAcpAgent } from "../../src/acp/server.js";
+import type { AcpJsonRpcPeerTransport } from "../../src/acp/transport.js";
+import type { AcpUsageMeta } from "../../src/acp/types.js";
+import { AcpCompactUsageMetaSchema } from "../../src/acp/types.js";
+import {
+	ACP_UPSTREAM_V1,
+	ACP_V1_TOOL_CALL_STATUSES,
+	AcpV1InitializeResponseSchema,
+	AcpV1LoadSessionResponseSchema,
+	AcpV1NewSessionResponseSchema,
+	AcpV1ResumeSessionResponseSchema,
+} from "../../src/acp/upstream-schema.js";
 import { DEFAULT_SETTINGS } from "../../src/core/defaults.js";
 import type { TelemetryRecord } from "../../src/core/telemetry/envelope.js";
 import type { TelemetryHub } from "../../src/core/telemetry/hub.js";
@@ -19,23 +36,6 @@ import { buildContextLedger } from "../../src/domains/session/context-ledger.js"
 import type { SessionContract, SessionMeta } from "../../src/domains/session/contract.js";
 import type { SessionEntry } from "../../src/domains/session/entries.js";
 import { IN_RUN_CONTINUATION_ENTRY } from "../../src/domains/session/entries.js";
-import { acpUsageSums } from "../../src/engine/acp/adapter.js";
-import { commandResultLines } from "../../src/engine/acp/command-result.js";
-import type { AcpCommandControl } from "../../src/engine/acp/commands.js";
-import { AcpRequestError } from "../../src/engine/acp/errors.js";
-import { compactUsage, createAcpLiveTelemetry } from "../../src/engine/acp/live-telemetry.js";
-import { servePancodeAcpAgent } from "../../src/engine/acp/server.js";
-import type { AcpJsonRpcPeerTransport } from "../../src/engine/acp/transport.js";
-import type { AcpUsageMeta } from "../../src/engine/acp/types.js";
-import { AcpCompactUsageMetaSchema } from "../../src/engine/acp/types.js";
-import {
-	ACP_UPSTREAM_V1,
-	ACP_V1_TOOL_CALL_STATUSES,
-	AcpV1InitializeResponseSchema,
-	AcpV1LoadSessionResponseSchema,
-	AcpV1NewSessionResponseSchema,
-	AcpV1ResumeSessionResponseSchema,
-} from "../../src/engine/acp/upstream-schema.js";
 import { CURRENT_SESSION_FORMAT_VERSION } from "../../src/engine/session.js";
 import { budgetAlertNotice } from "../../src/interactive/bus-notices.js";
 import { stdioPeer } from "../harness/acp-fake-transport.js";

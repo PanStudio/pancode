@@ -3,17 +3,17 @@
 import { deepStrictEqual, ok, strictEqual } from "node:assert/strict";
 import { describe, it } from "node:test";
 import { Value } from "typebox/value";
-import type { AutonomyStatus } from "../../src/domains/safety/autonomy-window.js";
-import type { AcpAutonomyPosture } from "../../src/engine/acp/readouts.js";
-import { servePancodeAcpAgent } from "../../src/engine/acp/server.js";
-import type { AcpServerChat } from "../../src/engine/acp/server-options.js";
-import type { AcpJsonRpcPeerTransport } from "../../src/engine/acp/transport.js";
-import type { AcpReadoutsNotification as AcpReadoutsFrame } from "../../src/engine/acp/types-readouts.js";
+import type { AcpAutonomyPosture } from "../../src/acp/readouts.js";
+import { servePancodeAcpAgent } from "../../src/acp/server.js";
+import type { AcpServerChat } from "../../src/acp/server-options.js";
+import type { AcpJsonRpcPeerTransport } from "../../src/acp/transport.js";
+import type { AcpReadoutsNotification as AcpReadoutsFrame } from "../../src/acp/types-readouts.js";
 import {
 	ACP_ADMISSION_META_KEY,
 	ACP_READOUTS_NOTIFICATION,
 	AcpReadoutsNotification,
-} from "../../src/engine/acp/types-readouts.js";
+} from "../../src/acp/types-readouts.js";
+import type { AutonomyStatus } from "../../src/domains/safety/autonomy-window.js";
 
 type AdmissionListener = (event: { toolCallId: string; state: "judging" | "admitted" }) => void;
 

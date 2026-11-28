@@ -52,7 +52,7 @@ export const HARNESS_SLASH_COMMANDS: ReadonlyArray<BuiltinSlashCommand> = [
 		name: "reload",
 		rank: 3,
 		acp: { readOnlyRefuses: true },
-		description: "Reload settings, PanHub packs, extension runtimes, prompts and MCP servers with one report",
+		description: "Reload settings, hub packs, extension runtimes, prompts and MCP servers with one report",
 		group: "PanCode",
 		kinds: ["reload"],
 		args: {
@@ -195,7 +195,7 @@ export const HARNESS_SLASH_COMMANDS: ReadonlyArray<BuiltinSlashCommand> = [
 		kinds: ["resources", "agents"],
 		// The same verbs as `pancode hub`; each opens the review that command would apply.
 		subcommandDescriptions: {
-			inspect: "Open PanHub on one package or component",
+			inspect: "Open the hub on one package or component",
 			install: "Review installing one package, then apply it",
 			update: "Review updating one installed package, then apply it",
 			enable: "Review enabling one installed package, then apply it",
@@ -589,8 +589,8 @@ function mcpSlashLogin(id: string, ctx: SlashCommandContext): void {
 	pendingMcpSignIns.set(id, controller);
 	void (async () => {
 		try {
-			const mcp = await import("../../domains/gateway/mcp/index.js");
-			const { mcpOAuthLogin } = await import("../../domains/gateway/mcp/oauth-login.js");
+			const mcp = await import("../../domains/mcp/index.js");
+			const { mcpOAuthLogin } = await import("../../domains/mcp/oauth-login.js");
 			const server = mcp.resolveMcpServers({ cwd: process.cwd() }).servers.find((entry) => entry.id === id);
 			if (server === undefined) throw new Error(`no declared MCP server with id '${id}'`);
 			if (server.url === undefined) throw new Error(`server '${id}' is a local server; it takes no credentials`);

@@ -7,7 +7,7 @@ import { neutralizeFraming, neutralizeFramingValue } from "../../core/reminder-f
 import { workerSandboxApplies } from "../../core/sandbox/worker-process.js";
 import type { DynamicToolName } from "../../core/tool-names.js";
 import { isMcpResourceCapability, mcpToolName } from "../../core/tool-names.js";
-import { mcpToolActionClass, mcpToolConfirmationRule, mcpToolOwner } from "../../domains/gateway/mcp/action-classes.js";
+import { mcpToolActionClass, mcpToolConfirmationRule, mcpToolOwner } from "../../domains/mcp/action-classes.js";
 import type {
 	McpCatalogIdentity,
 	McpClient,
@@ -23,7 +23,7 @@ import type {
 	McpToolListing,
 	McpTrustActionClass,
 	ResolvedMcpServer,
-} from "../../domains/gateway/mcp/index.js";
+} from "../../domains/mcp/index.js";
 import {
 	approveMcpSurface,
 	canonicalProjectRoot,
@@ -51,7 +51,7 @@ import {
 	resolveMcpServers,
 	writeMcpServerCatalog,
 	writeMcpSkillCatalog,
-} from "../../domains/gateway/mcp/index.js";
+} from "../../domains/mcp/index.js";
 import { openAuthStorage } from "../../domains/providers/auth/index.js";
 import { acceptsImageInput } from "../../domains/providers/image-input.js";
 import type { ClassifierCall } from "../../domains/safety/action-classifier.js";
@@ -1173,7 +1173,7 @@ export function createMcpCapabilitySource(options: McpCapabilitySourceOptions): 
 		const sandboxNetwork = attestedNetwork(declaration.id);
 		// PERF W3: reserve ownership before the lazy import, so close can fence acquisition.
 		const loaded = (async () => {
-			const { createMcpConnection } = await import("../../domains/gateway/mcp/connection-lifecycle.js");
+			const { createMcpConnection } = await import("../../domains/mcp/connection-lifecycle.js");
 			return createMcpConnection({
 				signal: controller.signal,
 				acquire: () => {

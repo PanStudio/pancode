@@ -1,11 +1,10 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 
-import type { CheckoutSnapshot } from "../../tools/checkout-changes.js";
+import type { WorkerHookResultFrame } from "../../lib/worker-wire/protocol.js";
 import type { CheckoutRootLookup } from "../../tools/task-worktree.js";
 import type { TaskWorktreeOverlay } from "../../tools/task-worktree-overlay.js";
 import type { TaskWorktreePreview } from "../../tools/task-worktree-preview.js";
-import type { WorkerHookResultFrame } from "../../worker/protocol.js";
 import type { FlowRestrictionSet } from "../safety/information-flow.js";
 import type { TelemetrySessionLease } from "../telemetry/session-journals.js";
 import type { AgentLedgerAttribution } from "./agent-ledger-store.js";
@@ -19,6 +18,7 @@ import type { openAttemptRun } from "./attempt-run.js";
 import type { spawnAttemptWorker } from "./attempt-spawn.js";
 import type { verifyAttemptOnHost } from "./attempt-verify.js";
 import type { ProbeClaim } from "./bundle-types.js";
+import type { CheckoutSnapshot } from "./checkout-changes.js";
 import type {
 	DispatchAdmissionObserver,
 	DispatchPrefixGroup,

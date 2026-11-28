@@ -23,13 +23,13 @@
  */
 
 import { isProjectVerifierCheckId } from "../core/verification-scripts.js";
+import { loadProjectVerifierCatalog, PROJECT_VERIFIER_CATALOG_RELATIVE_PATH } from "../tools/verify/catalog.js";
 import {
 	type AuthoringCheck,
 	discoverVerifierAuthoring,
 	type VerifierProposalAuthority,
 	type VerifierSignalKind,
-} from "../tools/verify/authoring.js";
-import { loadProjectVerifierCatalog, PROJECT_VERIFIER_CATALOG_RELATIVE_PATH } from "../tools/verify/catalog.js";
+} from "./verifier-authoring.js";
 
 /** Wire bound on the emitted check list, independent of the catalog's own 128-check cap. */
 export const MAX_VERIFIERS_INSPECT_CHECKS = 64;

@@ -80,7 +80,7 @@ const DATA_FILES: ReadonlySet<ToolFileKind> = new Set(["csv", "tsv", "parquet", 
 /** Tools that are themselves software work when no research signal is present. */
 const SOFTWARE_TOOLS: ReadonlySet<string> = new Set(["bash", "git", "code_nav", "write", "edit"]);
 
-/** PanHub skills whose category is known; any other skill falls back to the name rules below. */
+/** The hub skills whose category is known; any other skill falls back to the name rules below. */
 const SKILL_CATEGORIES: Readonly<Record<string, InsightCategory>> = {
 	"arxiv-literature": "reading and knowledge acquisition",
 	"experiment-protocol": "design and development",

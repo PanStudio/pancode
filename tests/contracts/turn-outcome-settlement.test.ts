@@ -29,10 +29,10 @@ import { readCallJournal } from "../../src/domains/telemetry/call-journal.js";
 import type { TelemetryContract } from "../../src/domains/telemetry/contract.js";
 import { telemetrySessionDirectory } from "../../src/domains/telemetry/paths.js";
 import { createSessionJournals } from "../../src/domains/telemetry/session-journals.js";
-import type { TurnOutcomeRecord } from "../../src/domains/turn-control/index.js";
 import { callRepeatsAsRead } from "../../src/engine/loop-guard.js";
 import type { AgentEvent, AgentMessage } from "../../src/engine/types.js";
 import { createThrashOutcome } from "../../src/engine/worker-thrash-outcome.js";
+import type { TurnOutcomeRecord } from "../../src/lib/turn-control/index.js";
 import type { CreateChatLoopDeps } from "../../src/session-control/chat-loop.js";
 import { createChatLoop } from "../../src/session-control/chat-loop.js";
 import { createTurnOutcomeCollector } from "../../src/session-control/turn-outcome-collector.js";
@@ -514,7 +514,7 @@ it("continuation state has one owner: a nudge per prompt, carried or resubmitted
 		'import type { ChatTurnState } from "./turn-state.js";',
 	])
 		ok(checkTurnStateOwnership(module, source)[0]?.startsWith("rule16:"), source);
-	deepStrictEqual(checkTurnStateOwnership("src/engine/acp/server.ts", "active.continuation = null;"), []);
+	deepStrictEqual(checkTurnStateOwnership("src/acp/server.ts", "active.continuation = null;"), []);
 	deepStrictEqual(checkTurnStateOwnership("src/session-control/turn-state.ts", "state.turnStop = null;"), []);
 });
 

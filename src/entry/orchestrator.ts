@@ -4,6 +4,18 @@ import { randomBytes } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import chalk from "chalk";
+import type { AcpHostReport } from "../acp/commands.js";
+import {
+	bindBoardActions,
+	createAcpElicitationChannel,
+	createAcpInterviewChannel,
+	createHostToolEvents,
+	followWorkerRuns,
+	oracleBriefingFromEntries,
+	runHostDispatch,
+} from "../acp/host-members.js";
+import type { AcpHandoffControl } from "../acp/server-options.js";
+import { createStdioServerTransport } from "../acp/transport.js";
 import { modelBootstrapGenerate, resolveBootstrapRoute } from "../cli/bootstrap-generate.js";
 import { writeHeadlessNoticesToStderr } from "../cli/headless-notices.js";
 import { mcpLiveStatuses } from "../cli/mcp.js";
@@ -23,7 +35,6 @@ import {
 } from "../core/defaults.js";
 import { writeDiagnostic } from "../core/diagnostics.js";
 import { type LoadResult, loadDomains } from "../core/domain-loader.js";
-import { detectSupportedImageMimeType } from "../core/file-references.js";
 import { setAutonomousCommitProcess, setCommitDecisionRefsProvider } from "../core/git-commit-attribution.js";
 import { configureGuardrails, guardrailValuesFromSettings } from "../core/guardrails.js";
 import { HEADLESS_PERMISSION_DENIED_REASON } from "../core/headless-permission.js";
@@ -59,6 +70,7 @@ import { registerResearchTraceSink } from "../core/telemetry/research-trace.js";
 import { getTerminationCoordinator, resolveShutdownHookBudgetMs } from "../core/termination.js";
 import { yieldToEventLoop } from "../core/timers.js";
 import { ToolNames } from "../core/tool-names.js";
+import { surfaceSpecPlacement } from "../core/tool-surface.js";
 import { narrowTurnConstraints, templateTurnConstraints, turnAllowsTool } from "../core/turn-constraints.js";
 import { captureProjectSurface, projectSurfaceTrustNotice } from "../core/workspace-trust.js";
 import { pancodeDataDir, pancodeStateDir } from "../core/xdg.js";
@@ -95,13 +107,13 @@ import {
 	isLoadableExtension,
 } from "../domains/extensions/index.js";
 import { ExtensionsDomainModule } from "../domains/extensions/module.js";
-import { InteropDomainModule } from "../domains/interop/module.js";
 import {
 	describeUpgradeNotice,
 	ensurePancodeState,
 	takeContainedYoloNotice,
 	takeUpgradeNotice,
-} from "../domains/lifecycle/index.js";
+} from "../domains/install/index.js";
+import { InteropDomainModule } from "../domains/interop/module.js";
 import {
 	createBackgroundCallJournal,
 	createBackgroundMemoryRouting,
@@ -257,8 +269,7 @@ import { writeTranscriptExport } from "../domains/session/transcript-export.js";
 import { activePath } from "../domains/session/tree/active-path.js";
 import { latestUserImages } from "../domains/session/vision-images.js";
 import { probeWorkspaceAsync } from "../domains/session/workspace/index.js";
-import { archiveCommandHost } from "../domains/share/index.js";
-import { ShareDomainModule } from "../domains/share/module.js";
+import { archiveCommandHost, shareArchiver } from "../domains/share/index.js";
 import type { SystemOneInstance } from "../domains/system-one/index.js";
 import { createSystemOne, parseRouteList } from "../domains/system-one/index.js";
 import { READ_MODEL_FOLD } from "../domains/telemetry/index.js";
@@ -271,18 +282,6 @@ import {
 	pruneWorkspaceSnapshots,
 	workspaceSnapshotRepositoryPresent,
 } from "../domains/workspace-snapshots/index.js";
-import type { AcpHostReport } from "../engine/acp/commands.js";
-import {
-	bindBoardActions,
-	createAcpElicitationChannel,
-	createAcpInterviewChannel,
-	createHostToolEvents,
-	followWorkerRuns,
-	oracleBriefingFromEntries,
-	runHostDispatch,
-} from "../engine/acp/host-members.js";
-import type { AcpHandoffControl } from "../engine/acp/server-options.js";
-import { createStdioServerTransport } from "../engine/acp/transport.js";
 import {
 	declareRuntimeNoticeProducer,
 	EXIT_RELEASE_MS,
@@ -304,6 +303,7 @@ import {
 	effectiveYoloConfinement,
 	modelMayActivateSkills,
 } from "../lib/autonomy/autonomy.js";
+import { resizeImage } from "../lib/image/image-resize.js";
 import { createChatLoop, createTurnControlRunner, runOutOfTurnRound } from "../session-control/chat-loop.js";
 import {
 	answerExtensionLine,
@@ -320,8 +320,7 @@ import type { ReloadTarget } from "../session-control/reload-report.js";
 import type { RunIo } from "../session-control/slash-command-types.js";
 import { createTurnOutcomeCollector } from "../session-control/turn-outcome-collector.js";
 import { effectiveToolNames } from "../tools/agent-tools.js";
-import { surfaceSpecPlacement } from "../tools/surface.js";
-import { resizeImage } from "../utils/image-resize.js";
+import { detectSupportedImageMimeType } from "../tools/file-references.js";
 import type { BootOptions } from "./boot-options.js";
 import { createExtensionReloadCoordinator, extensionHookReceiptSink } from "./extension-reload.js";
 import {
@@ -770,7 +769,6 @@ export async function bootOrchestrator(options: BootOptions = {}): Promise<BootR
 							: {}),
 				}),
 			}),
-			ShareDomainModule,
 			createContextDomainModule({
 				noContextFiles: options.noContextFiles === true,
 				startupHintHost: {
@@ -985,7 +983,6 @@ export async function bootOrchestrator(options: BootOptions = {}): Promise<BootR
 	const agents = result.getContract("agents");
 	const resources = result.getContract("resources");
 	const extensions = result.getContract("extensions");
-	const share = result.getContract("share");
 	const mux = result.getContract("mux");
 	const contextDomain = result.getContract("context");
 	const interop = result.getContract("interop");
@@ -3068,7 +3065,7 @@ export async function bootOrchestrator(options: BootOptions = {}): Promise<BootR
 		// the session/update union (agent_message_chunk, agent_thought_chunk,
 		// tool_call*, plan, …) carries turn content, and notifications outside
 		// an active session/prompt would break strict clients (see the matching
-		// note in src/engine/acp/server-tool-updates.ts). The external-divergence and
+		// note in src/acp/server-tool-updates.ts). The external-divergence and
 		// target-removed notices therefore go to the session ledger as `custom`
 		// entries, where /resume and session tooling can surface them.
 		// ACP is operatorless too: bound a runaway turn with the shared
@@ -3123,8 +3120,8 @@ export async function bootOrchestrator(options: BootOptions = {}): Promise<BootR
 		// two fleets would race over one workspace.
 		let acpFleetInFlight: { name: string; fleetRootId: string } | null = null;
 		const [{ acpCommandControl }, { servePancodeAcpAgent }] = await Promise.all([
-			import("../engine/acp/commands.js"),
-			import("../engine/acp/server.js"),
+			import("../acp/commands.js"),
+			import("../acp/server.js"),
 		]);
 		try {
 			const transport = options.acp.transport ?? createStdioServerTransport(options.acp.transportOptions);
@@ -3447,7 +3444,7 @@ export async function bootOrchestrator(options: BootOptions = {}): Promise<BootR
 												}),
 										}
 									: {}),
-								...(share ? archiveCommandHost(share) : {}),
+								...archiveCommandHost(shareArchiver),
 								// `/report` previews as text and sends only on a second `/report send <id>`.
 								reportHost: lazyReportTextHost(reportSession),
 								getChatTarget: () => getCurrentSettings().chat.target,
@@ -4112,7 +4109,7 @@ export async function bootOrchestrator(options: BootOptions = {}): Promise<BootR
 		reloadClasses,
 		armRestartHandoff: () => armRestartHandoff(pancodeStateDir(), termination),
 		...(interop ? { interop } : {}),
-		...(share ? { share } : {}),
+		share: shareArchiver,
 		...(mux ? { mux } : {}),
 		...(panes ? { panes } : {}),
 		...(panes ? { attachYaziBridge: (bridge) => panes.attachYazi(bridge) } : {}),

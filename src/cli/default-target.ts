@@ -12,7 +12,7 @@ import {
 	type SetupFacts,
 	type SetupTargetFacts,
 	setupStatus,
-} from "../domains/lifecycle/setup-status.js";
+} from "../domains/install/setup-status.js";
 import { bootAuthStatus } from "../domains/providers/auth/boot-status.js";
 import { findBuiltinRuntimeBootMetadata } from "../domains/providers/runtimes/boot-manifest.js";
 

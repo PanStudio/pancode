@@ -23,7 +23,7 @@ import {
 	type McpFormElicitation,
 	type McpUrlElicitation,
 	readTypedValue,
-} from "../../domains/gateway/mcp/index.js";
+} from "../../domains/mcp/index.js";
 import type { AskUserAnswer, AskUserHandler, AskUserQuestion, AskUserResult } from "../ask-user.js";
 import { createHarnessHold, type HarnessHold, type ToolInvokeOptions } from "../registry-contract.js";
 

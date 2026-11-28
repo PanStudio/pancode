@@ -106,8 +106,8 @@ export const PANCODE_APP_KEYBINDINGS = {
 	},
 	"pancode.hub.toggle": {
 		defaultKeys: "alt+l",
-		label: "PanHub",
-		description: "PanHub: skills, agents, prompts, playbooks, plugins, extensions and servers",
+		label: "Hub",
+		description: "The hub: skills, agents, prompts, playbooks, plugins, extensions and servers",
 		command: "/hub",
 		scope: "composer",
 		kind: "toggle",

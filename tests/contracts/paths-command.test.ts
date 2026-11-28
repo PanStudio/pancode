@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 
 import { runPathsCommand } from "../../src/cli/paths.js";
-import { defaultInstallRoot } from "../../src/domains/lifecycle/install-method.js";
+import { defaultInstallRoot } from "../../src/domains/install/install-method.js";
 import { createLifecycleHome, runInHome } from "../harness/lifecycle-home.js";
 
 test("paths names the installer root, the launcher and the project, and creates nothing", async (t) => {

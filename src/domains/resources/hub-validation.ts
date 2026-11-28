@@ -9,7 +9,7 @@ import { recipeIdFromPath } from "../agents/recipe.js";
 import { parseAgentRecipeSchema } from "../agents/recipe-schema.js";
 import { assertAgentSpecPolicy, normalizeAgentSpec } from "../agents/spec.js";
 import { loadManifestFromRoot } from "../extensions/index.js";
-import { loadPluginMcpFile } from "../gateway/mcp/config.js";
+import { loadPluginMcpFile } from "../mcp/config.js";
 import { pluginResourcePath } from "../plugins/discovery.js";
 import type { PluginCandidate, PluginManifest } from "../plugins/types.js";
 import { readHubManifest } from "./hub-packages.js";

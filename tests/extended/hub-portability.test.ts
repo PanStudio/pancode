@@ -35,14 +35,14 @@ import { claudeMcpForm, generateClaudeMcpFiles, renderHubMarketplace } from "../
 const REPO_ROOT = resolve(import.meta.dirname, "../..");
 describe("the portable inclusion rule", () => {
 	/**
-	 * PanHub accepts agent-, prompt- and fleet-only packages, and the
+	 * The hub accepts agent-, prompt- and fleet-only packages, and the
 	 * composite authoring template puts a PanCode strict-v1 recipe in a top-level
 	 * `agents/` directory. Claude Code default-scans `agents/` with no manifest
 	 * and no marketplace field asking it to: publishing the composite template
 	 * on 2.1.267 produced `Agents (1) data-curator`, and `--strict` validation
 	 * raised nothing. So the generator publishes a package only when a host
 	 * would load a real skill surface from it and nothing else, and reports the
-	 * rest instead of failing the pin for the whole PanHub.
+	 * rest instead of failing the pin for the whole hub.
 	 */
 	const fixtures = mkdtempSync(join(tmpdir(), "pancode-portability-"));
 	after(() => rmSync(fixtures, { recursive: true, force: true }));
@@ -175,7 +175,7 @@ describe("canonical portable skill roots", () => {
 
 	it("ships the complete pinned skill inventory in canonical trees", () => {
 		const manifest = JSON.parse(readFileSync(join(REPO_ROOT, "package.json"), "utf8")) as { files: string[] };
-		ok(manifest.files.includes("hub/**"), "The package must include the canonical PanHub trees.");
+		ok(manifest.files.includes("hub/**"), "The package must include the canonical hub trees.");
 		const registry = parseYaml(readFileSync(join(REPO_ROOT, "hub/index.yaml"), "utf8")) as {
 			entries: Array<{ kind: string; name: string; sourceUrl: string; provides: Array<{ kind: string; name: string }> }>;
 		};

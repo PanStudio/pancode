@@ -1,6 +1,6 @@
 name: hub index
 
-# Signs and publishes the PanHub index after a change to hub/ lands on the version branch or main. The signing key
+# Signs and publishes the hub index after a change to hub/ lands on the version branch or main. The signing key
 # exists only as the HUB_SIGNING_KEY secret of the protected hub-signing environment, which the maintainer creates.
 # The checked-out tree is data: this job runs the index check and scripts/hub-sign.mjs, never a script from hub/.
 on:
@@ -22,7 +22,7 @@ jobs:
     name: sign hub index
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    # Off until the repository variable HUB_SIGNING is 'on': 0.9.0 compiles no PanHub root key, so no client could
+    # Off until the repository variable HUB_SIGNING is 'on': 0.9.0 compiles no hub root key, so no client could
     # verify a signed index, and the hub-signing environment and its key do not exist yet.
     if: vars.HUB_SIGNING == 'on'
     environment: hub-signing

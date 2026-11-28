@@ -22,7 +22,6 @@ import type { ResourcesContract } from "../domains/resources/contract.js";
 import type { SafetyContract } from "../domains/safety/contract.js";
 import type { SchedulingContract } from "../domains/scheduling/contract.js";
 import type { SessionContract } from "../domains/session/contract.js";
-import type { ShareContract } from "../domains/share/contract.js";
 import type { TelemetryContract } from "../domains/telemetry/contract.js";
 
 export interface DomainContractMap {
@@ -44,7 +43,6 @@ export interface DomainContractMap {
 	safety: SafetyContract;
 	scheduling: SchedulingContract;
 	session: SessionContract;
-	share: ShareContract;
 	telemetry: TelemetryContract;
 }
 

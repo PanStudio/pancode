@@ -8,7 +8,7 @@ import { parseSlashCommand } from "../../src/session-control/slash-commands.js";
 import { dispatchSlashCommand } from "../../src/session-control/slash-dispatch.js";
 import { commandReference } from "../../src/session-control/slash-reference.js";
 
-it("canonical category commands open the shared PanHub without submitting a turn", () => {
+it("canonical category commands open the shared hub without submitting a turn", () => {
 	const opened: unknown[] = [];
 	const ctx = {
 		openSkillsHub: (tab: unknown) => opened.push(tab),

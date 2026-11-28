@@ -486,7 +486,7 @@ export async function runPackVerb(
 
 /**
  * Why a verb a known extension declares does not run: its installed copy is disabled or does not load, or the bundled
- * PanHub index lists it and it is not installed. Null when no extension PanCode knows declares the verb.
+ * The hub index lists it and it is not installed. Null when no extension PanCode knows declares the verb.
  */
 function absentPackVerb(verb: string, workspace: string): string | null {
 	const installed = listInstalledExtensions(workspace, { all: true }).find((entry) =>
@@ -584,8 +584,8 @@ export async function runHomes(): Promise<NonNullable<ExtensionWorkOptions["home
 		{ OPERATOR_TOOLS_ENV, operatorToolchainRoot },
 		{ loadRunDigest },
 	] = await Promise.all([
-		import("../domains/lifecycle/components.js"),
-		import("../domains/toolchain/paths.js"),
+		import("../domains/install/components.js"),
+		import("../lib/programs/paths.js"),
 		import("../domains/session/run-digest.js"),
 	]);
 	return {
@@ -618,7 +618,7 @@ function cliServiceDomains(): { providers: () => Promise<ProvidersContract>; sto
 					import("../domains/providers/module.js"),
 					import("../domains/session/module.js"),
 					import("../domains/telemetry/module.js"),
-					import("../domains/lifecycle/index.js"),
+					import("../domains/install/index.js"),
 				]);
 				ensurePancodeState();
 				return loadDomains([ConfigDomainModule, ProvidersDomainModule, SessionDomainModule, TelemetryDomainModule]);

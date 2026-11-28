@@ -8,7 +8,7 @@ import {
 	copilotSdkSignInProbe,
 	listCopilotSdkModels,
 } from "../../engine/ai.js";
-import { ensureCopilotSdk, resolveCopilotSdkEntry } from "../lifecycle/copilot-sdk-install.js";
+import { ensureCopilotSdk, resolveCopilotSdkEntry } from "../install/copilot-sdk-install.js";
 import { COPILOT_SDK_DEFAULT_MODEL } from "./runtimes/copilot/copilot-sdk.js";
 
 export interface CopilotSetupIo {

@@ -2,14 +2,14 @@
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import { ACP_BOARD_MAX_ITEMS, type AcpBoardSource, projectSessionBoard } from "../../src/acp/board.js";
+import { AcpRequestError } from "../../src/acp/errors.js";
+import { createAcpLiveTelemetry } from "../../src/acp/live-telemetry.js";
+import { servePancodeAcpAgent } from "../../src/acp/server.js";
+import type { AcpJsonRpcPeerTransport } from "../../src/acp/transport.js";
 import type { DecisionLedgerEntry } from "../../src/domains/session/entries.js";
 import type { TaskBoardSnapshot } from "../../src/domains/session/task-board.js";
 import type { UserTask } from "../../src/domains/user-tasks/store.js";
-import { ACP_BOARD_MAX_ITEMS, type AcpBoardSource, projectSessionBoard } from "../../src/engine/acp/board.js";
-import { AcpRequestError } from "../../src/engine/acp/errors.js";
-import { createAcpLiveTelemetry } from "../../src/engine/acp/live-telemetry.js";
-import { servePancodeAcpAgent } from "../../src/engine/acp/server.js";
-import type { AcpJsonRpcPeerTransport } from "../../src/engine/acp/transport.js";
 import { goldenTelemetryRecords, telemetryViewOf } from "../harness/telemetry-view.js";
 
 // The terminal's /tasks, /decisions and /memory views had no ACP read path, so a GUI could add an

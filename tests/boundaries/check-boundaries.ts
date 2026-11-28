@@ -456,14 +456,14 @@ export function checkCostRendering(file: string, source: string): string[] {
 }
 
 /** The surfaces whose token and cost figures must be the read model's folds (#434 §11.3). */
-const SURFACE_TOTAL_ROOTS = ["src/interactive/", "src/engine/acp/", "src/cli/"];
+const SURFACE_TOTAL_ROOTS = ["src/interactive/", "src/acp/", "src/cli/"];
 /**
  * Functions on those surfaces that still fold token or cost fields, each with the reason it may. An exemption that
  * no longer matches a fold fails, so the list only shrinks.
  */
 const SURFACE_TOTAL_EXEMPTIONS: ReadonlyArray<{ file: string; functions: readonly string[]; reason: string }> = [
 	{
-		file: "src/engine/acp/server-tool-updates.ts",
+		file: "src/acp/server-tool-updates.ts",
 		functions: ["handleChatEvent"],
 		reason: "an ACP prompt's output tokens over its generation time make its tok/s rate, a division over measured facts",
 	},
@@ -788,7 +788,7 @@ const FUNCTION_LINE_EXEMPTIONS: ReadonlyMap<string, number> = new Map([
 	["src/domains/dispatch/execution-scheduler.ts#executePlan", 662],
 	["src/domains/dispatch/fleet-run.ts#runFleetHoldingWorkspace", 1043],
 	["src/domains/dispatch/worker-spawn.ts#attachWorkerChannel", 740],
-	["src/domains/gateway/mcp/http-transport.ts#createMcpHttpTransport", 642],
+	["src/domains/mcp/http-transport.ts#createMcpHttpTransport", 642],
 	["src/domains/memory/intervention.ts#createMemoryInterventionRegistration", 2148],
 	["src/domains/mux/contract.ts#createMuxRuntime", 734],
 	["src/domains/mux/socket-client.ts#createMuxClient", 553],
@@ -802,11 +802,11 @@ const FUNCTION_LINE_EXEMPTIONS: ReadonlyMap<string, number> = new Map([
 	["src/domains/telemetry/call-journal.ts#openCallJournal.<withStateFileLock callback>", 513],
 	["src/domains/telemetry/telemetry-live.ts#createLiveTelemetryModel", 607],
 	["src/domains/workspace-snapshots/store.ts#createWorkspaceSnapshots", 628],
-	["src/engine/acp/adapter.ts#startAcpDelegationRun", 721],
-	["src/engine/acp/server.ts#servePancodeAcpAgent", 3780],
+	["src/acp/adapter.ts#startAcpDelegationRun", 721],
+	["src/acp/server.ts#servePancodeAcpAgent", 3780],
 	["src/engine/loop-guard.ts#createLoopGuardRegistration", 1490],
 	["src/engine/worker-runtime.ts#startWorkerRun", 2346],
-	["src/entry/orchestrator.ts#bootOrchestrator", 3676],
+	["src/entry/orchestrator.ts#bootOrchestrator", 3674],
 	["src/interactive/chat-panel.ts#createChatPanel", 2064],
 	["src/interactive/chat-panel.ts#createChatPanel.applyEvent", 534],
 	["src/interactive/editor-submit.ts#createEditorSubmitController", 668],
@@ -1192,37 +1192,37 @@ const STAGE0_SEAMS: ReadonlyArray<Stage0Seam> = [
 		reason: "surface-neutral byte and display truncation shared by context markers and tools.",
 	},
 	{
-		module: "src/engine/acp/adapter.ts",
+		module: "src/acp/adapter.ts",
 		reason: "dispatch translates worker results through the engine-owned ACP protocol adapter.",
 	},
 	{
-		module: "src/engine/acp/server.ts",
+		module: "src/acp/server.ts",
 		reason: "the Stage 1 composition root owns the ACP server surface.",
 	},
 	{
-		module: "src/engine/acp/server-handshake.ts",
+		module: "src/acp/server-handshake.ts",
 		reason:
 			"the ACP CLI answers `initialize` before the orchestrator boots, so it negotiates the handshake through this module, which the ACP server seam already reached.",
 	},
 	{
-		module: "src/engine/acp/deferred-boot.ts",
+		module: "src/acp/deferred-boot.ts",
 		reason:
 			"the ACP CLI keeps its transport open while the first workspace request selects a root; deferred boot depends only on ACP protocol leaves.",
 	},
 	{
-		module: "src/engine/acp/commands.ts",
+		module: "src/acp/commands.ts",
 		reason:
 			"the Stage 1 composition root binds the operator-command control the ACP server takes by structure. The projection value-imports the slash registry, which the root already reaches directly, so it enters the Stage 0 overlap through the same door it already owns rather than through the ACP server seam.",
 		allowStage0OverlapFrom: [ORCHESTRATOR],
 	},
 	{
-		module: "src/engine/acp/host-members.ts",
+		module: "src/acp/host-members.ts",
 		reason:
 			"the ACP host's members for /share, /oracle and /council: the worker-run fold and the oracle briefing the terminal also uses, and the host-made dispatch call. Only the Stage 1 composition root reaches it, the same root that already overlaps Stage 0 through the chat loop.",
 		allowStage0OverlapFrom: [ORCHESTRATOR],
 	},
 	{
-		module: "src/engine/acp/transport.ts",
+		module: "src/acp/transport.ts",
 		reason: "the Stage 1 composition root owns ACP stdio transport construction.",
 	},
 	{
@@ -1402,7 +1402,7 @@ function isWorkerDeniedModule(relative: string): boolean {
 		relative === "src/domains/telemetry/read-model.ts" ||
 		relative === "src/domains/memory/intervention.ts" ||
 		relative.startsWith("src/domains/context/wiki/") ||
-		relative.startsWith("src/domains/gateway/") ||
+		relative.startsWith("src/domains/mcp/") ||
 		relative.startsWith("src/domains/resources/") ||
 		relative.startsWith("src/domains/plugins/") ||
 		relative === "src/core/settings-controls.ts"
@@ -2114,7 +2114,7 @@ function checkLayerEdges(edges: { core: LayerEdges; barrel: LayerEdges; dependsO
  *      Those are orchestrator-only; a worker reaches them by dynamic import
  *      at most, so they never load before the worker reads its spec.
  *   3. src/domains/<x> never imports src/domains/<y>/extension.ts for y != x.
- *   7. src/domains/turn-control/** imports no interactive, engine, tools or
+ *   7. src/lib/turn-control/** imports no interactive, engine, ACP, tools or
  *      worker modules, and reaches other domains only through index.ts.
  *   4. src/tools/** never imports src/interactive/**. The tool substrate is
  *      surface-agnostic: headless, interactive, ACP, and worker runs share it,
@@ -2129,7 +2129,7 @@ function checkLayerEdges(edges: { core: LayerEdges; barrel: LayerEdges; dependsO
  *      terminal a dependency of every surface.
  *  10. Root and GUI monetary display uses core/telemetry/render.ts;
  *      browser code consumes display strings rendered by the server.
- *  14. src/interactive/**, src/engine/acp/** and src/cli/** sum no token or
+ *  14. src/interactive/**, src/acp/** and src/cli/** sum no token or
  *      cost field: their figures are the read model's quantity displays,
  *      except the functions SURFACE_TOTAL_EXEMPTIONS names with a reason.
  *  16. Only src/session-control/chat-loop.ts (the composer) and turn-state.ts
@@ -2142,10 +2142,10 @@ function checkLayerEdges(edges: { core: LayerEdges; barrel: LayerEdges; dependsO
  *      OWNER_CAPABILITY_HOLDERS, and no getContract call passes a type
  *      argument: a published contract cannot install another domain's
  *      behavior, and its type comes from DomainContractMap.
- *   9. src/engine/** never imports src/interactive/**, type-only included.
+ *   9. src/engine/** and src/acp/** never import src/interactive/**, type-only included.
  *      The ACP server reaches session behavior through src/session-control.
  *   6. Any value importer outside the computed Stage 0 closure and its
- *      src/interactive/**, src/session-control/** and src/engine/** trees
+ *      src/interactive/**, src/session-control/**, src/engine/** and src/acp/** trees
  *      reaches those trees only
  *      through a declared seam in STAGE0_SEAMS. A seam may not lead back into
  *      Stage 0 unless that existing composition-root overlap is explicitly
@@ -2175,6 +2175,8 @@ function checkLayerEdges(edges: { core: LayerEdges; barrel: LayerEdges; dependsO
 export function runBoundaryCheck(projectRoot: string): BoundaryCheckResult {
 	const srcRoot = path.join(projectRoot, "src");
 	const engineRoot = path.join(srcRoot, "engine");
+	const acpRoot = path.join(srcRoot, "acp");
+	const turnControlRoot = path.join(srcRoot, "lib", "turn-control");
 	const workerRoot = path.join(srcRoot, "worker");
 	const domainsRoot = path.join(srcRoot, "domains");
 	const providersDomainRoot = path.join(domainsRoot, "providers");
@@ -2232,10 +2234,12 @@ export function runBoundaryCheck(projectRoot: string): BoundaryCheckResult {
 		const references = extractReferenceDirectives(source);
 
 		const inEngine = isWithin(filePath, engineRoot);
+		const inAcp = isWithin(filePath, acpRoot);
 		const inInteractive = isWithin(filePath, interactiveRoot);
 		const inWorker = isWithin(filePath, workerRoot);
 		const fromDomain = domainOf(filePath, domainsRoot);
 		const inTools = isWithin(filePath, toolsRoot);
+		const inTurnControl = isWithin(filePath, turnControlRoot);
 		const inSessionControl = isWithin(filePath, sessionControlRoot);
 		const isChatLoopModule = inSessionControl && isChatLoopTurnModule(filePath);
 		const inCli = isWithin(filePath, cliRoot);
@@ -2273,14 +2277,13 @@ export function runBoundaryCheck(projectRoot: string): BoundaryCheckResult {
 			const resolved = resolveRelativeImport(filePath, specifier);
 			const targetDomain = domainOf(resolved, domainsRoot);
 			if (
-				fromDomain === "turn-control" &&
+				inTurnControl &&
 				(isWithin(resolved, interactiveRoot) ||
 					isWithin(resolved, engineRoot) ||
+					isWithin(resolved, acpRoot) ||
 					isWithin(resolved, toolsRoot) ||
 					isWithin(resolved, workerRoot) ||
-					(targetDomain !== null &&
-						targetDomain !== fromDomain &&
-						resolved !== path.join(domainsRoot, targetDomain, "index.ts")))
+					(targetDomain !== null && resolved !== path.join(domainsRoot, targetDomain, "index.ts")))
 			) {
 				const qualifier = typeOnly ? " (type-only)" : "";
 				violations.push(
@@ -2306,10 +2309,10 @@ export function runBoundaryCheck(projectRoot: string): BoundaryCheckResult {
 				return;
 			}
 
-			if ((inSessionControl || inEngine) && isWithin(resolved, interactiveRoot)) {
+			if ((inSessionControl || inEngine || inAcp) && isWithin(resolved, interactiveRoot)) {
 				const qualifier = typeOnly ? " (type-only)" : "";
 				const rule = inSessionControl ? "rule8" : "rule9";
-				const owner = inSessionControl ? "the session contract" : "the engine";
+				const owner = inSessionControl ? "the session contract" : inAcp ? "the ACP server" : "the engine";
 				violations.push(
 					`${rule}: ${path.relative(projectRoot, filePath)} ${kind}${qualifier} ${specifier} which resolves inside src/interactive; ${owner} is shared by every surface and never depends on terminal rendering`,
 				);
@@ -2317,15 +2320,19 @@ export function runBoundaryCheck(projectRoot: string): BoundaryCheckResult {
 			}
 
 			const protectedTarget =
-				isWithin(resolved, interactiveRoot) || isWithin(resolved, sessionControlRoot) || isWithin(resolved, engineRoot);
-			const externalRuntimeReacher = !typeOnly && !inInteractive && !inSessionControl && !inEngine && !inStage0Closure;
+				isWithin(resolved, interactiveRoot) ||
+				isWithin(resolved, sessionControlRoot) ||
+				isWithin(resolved, engineRoot) ||
+				isWithin(resolved, acpRoot);
+			const externalRuntimeReacher =
+				!typeOnly && !inInteractive && !inSessionControl && !inEngine && !inAcp && !inStage0Closure;
 			if (protectedTarget && (inCli || externalRuntimeReacher)) {
 				const seamPath = path.relative(projectRoot, resolved).split(path.sep).join("/");
 				const seam = STAGE0_SEAMS_BY_MODULE.get(seamPath);
 				if (seam === undefined) {
 					const qualifier = typeOnly ? " (type-only)" : "";
 					violations.push(
-						`rule6: ${path.relative(projectRoot, filePath)} ${kind}${qualifier} ${specifier} which resolves to ${seamPath}; runtime importers outside the computed Stage 0 closure and its src/interactive/** and src/engine/** trees may enter those protected trees only through a seam declared in STAGE0_SEAMS (tests/boundaries/check-boundaries.ts). A new disjoint reacher makes esbuild split the merged chunk the instant shell's Stage 0 closure sits on. That closure is held to 32 chunks, 1,400,000 total bytes and 400,000 PanCode source bytes by tests/contracts/instant-shell-import-graph.test.ts, which only fails after a full build. Move the needed value into a leaf seam, route through an existing seam, or declare a legitimate edge with its reason.`,
+						`rule6: ${path.relative(projectRoot, filePath)} ${kind}${qualifier} ${specifier} which resolves to ${seamPath}; runtime importers outside the computed Stage 0 closure and its src/interactive/**, src/engine/** and src/acp/** trees may enter those protected trees only through a seam declared in STAGE0_SEAMS (tests/boundaries/check-boundaries.ts). A new disjoint reacher makes esbuild split the merged chunk the instant shell's Stage 0 closure sits on. That closure is held to 32 chunks, 1,400,000 total bytes and 400,000 PanCode source bytes by tests/contracts/instant-shell-import-graph.test.ts, which only fails after a full build. Move the needed value into a leaf seam, route through an existing seam, or declare a legitimate edge with its reason.`,
 					);
 				} else if (!typeOnly) {
 					const importers = valueReachedSeams.get(resolved) ?? new Set<string>();
@@ -2380,7 +2387,11 @@ export function runBoundaryCheck(projectRoot: string): BoundaryCheckResult {
 		const reached = [...valueImportClosure(seam)]
 			.filter((file) => file !== seam && stage0Closure.has(file))
 			.filter(
-				(file) => isWithin(file, interactiveRoot) || isWithin(file, sessionControlRoot) || isWithin(file, engineRoot),
+				(file) =>
+					isWithin(file, interactiveRoot) ||
+					isWithin(file, sessionControlRoot) ||
+					isWithin(file, engineRoot) ||
+					isWithin(file, acpRoot),
 			)
 			.map((file) => path.relative(projectRoot, file).split(path.sep).join("/"))
 			.sort();

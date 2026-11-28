@@ -71,8 +71,8 @@ type LiveElsewhereRow = {
 	canTakeOver: boolean;
 };
 const SURFACES = { tui: "terminal", run: "headless", acp: "app" } as const;
-// The engine's wire bounds (src/engine/acp/server.ts ACP_MAX_SESSION_ID_BYTES and ACP_MAX_LABEL_BYTES,
-// src/engine/acp/types.ts ACP_MAX_TARGET_ID_BYTES and ACP_MAX_MODEL_ID_BYTES); adapters cannot import either module.
+// The engine's wire bounds (src/acp/server.ts ACP_MAX_SESSION_ID_BYTES and ACP_MAX_LABEL_BYTES,
+// src/acp/types.ts ACP_MAX_TARGET_ID_BYTES and ACP_MAX_MODEL_ID_BYTES); adapters cannot import either module.
 const MAX_SESSION_ID_BYTES = 128,
 	MAX_LABEL_BYTES = 256,
 	MAX_TARGET_ID_BYTES = 128,
@@ -169,7 +169,7 @@ function historyRow(meta: StoredSession): HistoryRow {
 }
 /**
  * A workspace's saved sessions, read from the ledger in this thread rather than by booting an engine for ACP
- * `session/list`. It mirrors that method line by line (src/engine/acp/server.ts `workspaceHistory` and the
+ * `session/list`. It mirrors that method line by line (src/acp/server.ts `workspaceHistory` and the
  * `session/list` handler): a safe stored id, a recorded cwd that resolves to this workspace, and a transcript
  * holding a model turn, newest activity first, with each field bounded as the engine bounds it on the wire. The
  * engine also scrubs URL credentials from names and previews (`redactUrlCredentials`), a module adapters may not

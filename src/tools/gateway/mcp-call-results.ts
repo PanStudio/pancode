@@ -2,7 +2,6 @@
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 
 import { performance } from "node:perf_hooks";
-import { prepareBoundedImage } from "../../core/file-references.js";
 import { neutralizeFraming } from "../../core/reminder-framing.js";
 import type {
 	McpContentBlock,
@@ -11,7 +10,7 @@ import type {
 	McpToolCallResult,
 	McpToolDescriptor,
 	McpTrustActionClass,
-} from "../../domains/gateway/mcp/index.js";
+} from "../../domains/mcp/index.js";
 import {
 	DEFAULT_RESULT_TEXT_BYTES,
 	JSON_RPC_INVALID_PARAMS,
@@ -20,10 +19,11 @@ import {
 	MCP_RESOURCE_NOT_FOUND,
 	McpError,
 	renderMcpContent,
-} from "../../domains/gateway/mcp/index.js";
+} from "../../domains/mcp/index.js";
 import type { SafetyDecision } from "../../domains/safety/contract.js";
 import { mcpServerPolicyRefusal } from "../../domains/safety/denial.js";
 import type { ImageContent } from "../../engine/types.js";
+import { prepareBoundedImage } from "../file-references.js";
 import {
 	commitObservationReservation,
 	finalizeObservation,

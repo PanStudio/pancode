@@ -5,7 +5,6 @@ import path from "node:path";
 import { performance } from "node:perf_hooks";
 import { type PancodeSettings, readSettings } from "../core/config.js";
 import { loadDomains } from "../core/domain-loader.js";
-import { FileReferenceError, readFileArgsAsync } from "../core/file-references.js";
 import { setAutonomousCommitProcess } from "../core/git-commit-attribution.js";
 import { parseJsonObjectPayload } from "../core/json-payload.js";
 import { readPancodeVersion } from "../core/package-root.js";
@@ -28,6 +27,7 @@ import { SESSION_COST_CEILING_EXIT_CODE, SessionCostCeilingError } from "../doma
 import type { ImageContent } from "../engine/types.js";
 import type { HeadlessRunDeadline } from "../entry/boot-options.js";
 import { redactUrlCredentials } from "../lib/secrets/redaction.js";
+import { FileReferenceError, readFileArgsAsync } from "../tools/file-references.js";
 import { isToolProfileName } from "../tools/profiles.js";
 import { dispatchOnlyFlagConflict, type RunCliArgs, requestedRunLimits, sandboxRequiredRefusal } from "./args.js";
 import { classifyDefaultTarget } from "./default-target.js";
@@ -862,7 +862,7 @@ async function runDispatch(
 	const { configureRunEventJournal } = await import("../domains/dispatch/run-event-journal.js");
 	const { WORKER_PROCESS_CLEANUP_BOUND_MS } = await import("../domains/dispatch/worker-spawn.js");
 	const { ExtensionsDomainModule } = await import("../domains/extensions/module.js");
-	const { ensurePancodeState } = await import("../domains/lifecycle/index.js");
+	const { ensurePancodeState } = await import("../domains/install/index.js");
 	const { buildDispatchMemorySection } = await import("../domains/memory/index.js");
 	const { createPromptsDomainModule } = await import("../domains/prompts/module.js");
 	const { resolveEffectivePricing } = await import("../domains/providers/catalog.js");
@@ -1351,7 +1351,7 @@ function shadowStandInCommand(parsed: RunCliArgs, standIn: string): string {
  * loads only once a dispatched run has settled.
  */
 export async function mapExitCode(r: RunResult): Promise<number> {
-	const { WORKER_EXIT_PERMISSION_REQUIRED } = await import("../worker/spec-contract.js");
+	const { WORKER_EXIT_PERMISSION_REQUIRED } = await import("../lib/worker-wire/spec-contract.js");
 	const { compromisedSuccess } = await import("../domains/dispatch/gate-verdict.js");
 	// The run's assurance is the one value read here (fleet design 4.8): a compromised result (a verifier's failed
 	// verdict, a check the run saw fail after its last edit, a validation claimed and never run) makes

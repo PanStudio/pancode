@@ -28,7 +28,7 @@ import type { ToolCallStat } from "../../src/domains/dispatch/types.js";
 import type { ActionClass } from "../../src/domains/safety/action-classifier.js";
 import { readCallJournal } from "../../src/domains/telemetry/call-journal.js";
 import { telemetryRunDirectory } from "../../src/domains/telemetry/paths.js";
-import { WORKER_PROVIDER_HTTP_STATUS_MARKER } from "../../src/worker/spec-contract.js";
+import { WORKER_PROVIDER_HTTP_STATUS_MARKER } from "../../src/lib/worker-wire/spec-contract.js";
 import { settleStubBuilder } from "../harness/dispatch.js";
 import { BUILDER_GRADE, cleanGradeFacts, gradeWork } from "../harness/grade-facts.js";
 import { fixtureEnvelope, fixtureReceiptDraft } from "../harness/receipt.js";
@@ -314,7 +314,7 @@ describe("dispatch failure classification", () => {
 
 	it("does not retry a missing runtime SDK component and names the node-side install", () => {
 		const message =
-			"The copilot-sdk runtime needs @github/copilot-sdk@1.0.26. Run: pancode tools install copilot-sdk. This installs a separate component at /home/u/.local/share/pancode/components/copilot-sdk/1.0.26; it does not change PanCode's installation.";
+			"The copilot-sdk runtime needs @github/copilot-sdk@1.0.26. Run: pancode programs install copilot-sdk. This installs a separate component at /home/u/.local/share/pancode/components/copilot-sdk/1.0.26; it does not change PanCode's installation.";
 		const failureClass = classifyTail(`[worker] agent ended with stopReason=error: ${message}`);
 		strictEqual(failureClass, "deterministic-task");
 		strictEqual(decideRetry(failureClass, 0, 2).retry, false);

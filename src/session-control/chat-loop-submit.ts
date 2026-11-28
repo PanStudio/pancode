@@ -29,13 +29,13 @@ import { readPromptCompileRecords } from "../domains/session/prompt-manifest.js"
 import { classifyRecoveryFailure, isRetryableRecoveryFailure } from "../domains/session/retry.js";
 import { activePath, findLastEntry } from "../domains/session/tree/active-path.js";
 import type { TelemetrySessionLease } from "../domains/telemetry/session-journals.js";
-import type { TurnControlRecord } from "../domains/turn-control/index.js";
-import { reduceTurnOutcome } from "../domains/turn-control/index.js";
 import { replaceEngineMessages } from "../engine/agent.js";
 import { countImageBlocks } from "../engine/image-context.js";
 import { isLockedSynthesisFallbackOnly, lockedSynthesisRepromptMessages } from "../engine/loop-guard-synthesis.js";
 import type { AgentMessage, AnthropicMessagesCompat } from "../engine/types.js";
 import { modelMayActivateSkills } from "../lib/autonomy/autonomy.js";
+import type { TurnControlRecord } from "../lib/turn-control/index.js";
+import { reduceTurnOutcome } from "../lib/turn-control/index.js";
 import { resolveSessionTools } from "../tools/agent-tools.js";
 import { finalizeAskUserInterviewForHost } from "../tools/ask-user.js";
 import { scopedCapabilityShapes, scopeShapesDelta } from "../tools/gateway/scope-shapes.js";

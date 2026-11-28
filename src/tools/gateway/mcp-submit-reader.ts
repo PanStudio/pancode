@@ -7,7 +7,6 @@
  * server, so the model never reads it as the operator's own words.
  */
 
-import { prepareBoundedImage } from "../../core/file-references.js";
 import { neutralizeFraming } from "../../core/reminder-framing.js";
 import { mcpToolName } from "../../core/tool-names.js";
 import {
@@ -15,7 +14,7 @@ import {
 	type McpContentBlock,
 	type McpResourceContents,
 	resourceLinkLine,
-} from "../../domains/gateway/mcp/index.js";
+} from "../../domains/mcp/index.js";
 import type {
 	McpResourceCandidate,
 	McpSubmitAnswer,
@@ -23,6 +22,7 @@ import type {
 } from "../../domains/resources/submit-expansion.js";
 import { parseCommandArgs } from "../../engine/prompt-templates.js";
 import type { ImageContent } from "../../engine/types.js";
+import { prepareBoundedImage } from "../file-references.js";
 import type { McpCapabilitySource, McpPromptCommand } from "./mcp-capability-types.js";
 
 /** One resource's text in a turn; the rest is named, and the model reads it with the read capability. */

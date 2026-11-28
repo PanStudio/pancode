@@ -14,7 +14,7 @@ import {
 	type McpAddedServer,
 	type McpEditScope,
 	removeMcpServerDeclaration,
-} from "../domains/gateway/mcp/config-edit.js";
+} from "../domains/mcp/config-edit.js";
 import {
 	McpOAuthError,
 	type McpTrustOptions,
@@ -29,8 +29,8 @@ import {
 	revokeMcpUserTrust,
 	storeMcpOAuthClientSecret,
 	untrustMcpServer,
-} from "../domains/gateway/mcp/index.js";
-import { type McpOAuthLoginResult, mcpOAuthLogin } from "../domains/gateway/mcp/oauth-login.js";
+} from "../domains/mcp/index.js";
+import { type McpOAuthLoginResult, mcpOAuthLogin } from "../domains/mcp/oauth-login.js";
 import type { McpCommandOutput } from "./mcp.js";
 
 type Fail = (code: number, message: string) => McpCommandOutput;

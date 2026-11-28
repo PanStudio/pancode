@@ -75,7 +75,7 @@ export function capabilityWorthNaming(match: CapabilityMatch, task: string): boo
  * narrowed an ordinary change (R2-F11). An offer needs the operator's words to name the skill or reach two thirds of
  * the terms of one of its triggers. A skill that declares no triggers keeps the lexical ranking alone: `triggers` is
  * PanCode's field, so a skill in the plain Agent Skills format would otherwise be offered only when the operator already
- * spelled its id, and every PanHub skill declares triggers.
+ * spelled its id, and every hub skill declares triggers.
  */
 export function skillWorthOffering(match: CapabilityMatch, task: string): boolean {
 	const said = new Set(terms(task));

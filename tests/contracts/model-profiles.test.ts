@@ -9,7 +9,7 @@ import { stringify as stringifyYaml } from "yaml";
 import { DEFAULT_SETTINGS } from "../../src/core/defaults.js";
 import { resolvePancodeDirs } from "../../src/core/xdg.js";
 import { explicitToolCapability, targetToolCapability } from "../../src/domains/dispatch/target-resolution.js";
-import { runDoctorHarnessChecks, withDoctorCommand } from "../../src/domains/lifecycle/doctor.js";
+import { runDoctorHarnessChecks, withDoctorCommand } from "../../src/domains/install/doctor.js";
 import {
 	MODEL_CATALOG_DIRS_ENV,
 	resolveModelCatalogOverlayRoots,

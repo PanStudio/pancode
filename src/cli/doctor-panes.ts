@@ -3,11 +3,11 @@
 import { accessSync, constants } from "node:fs";
 import { readSettings } from "../core/config.js";
 import { resolvePancodeDirs } from "../core/xdg.js";
-import type { DoctorFinding } from "../domains/lifecycle/doctor.js";
+import type { DoctorFinding } from "../domains/install/doctor.js";
 import { detectMux, MUX_METHOD_MIN_PROTOCOL, resolveSocketCandidates } from "../domains/mux/index.js";
 import { isPancodeHostSocket } from "../domains/mux/workspace/platform.js";
 import { telemetryRunsDirectory } from "../domains/telemetry/index.js";
-import { findPinnedTool, toolStatus } from "../domains/toolchain/index.js";
+import { findPinnedTool, toolStatus } from "../lib/programs/index.js";
 import { paneHostFinding } from "./doctor-toolchain.js";
 import { workspaceEligibility } from "./workspace-launch.js";
 

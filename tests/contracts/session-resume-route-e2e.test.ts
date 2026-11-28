@@ -5,7 +5,7 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { after, before, describe, it } from "node:test";
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
-import { createStdioTransport } from "../../src/engine/acp/transport.js";
+import { createStdioTransport } from "../../src/acp/transport.js";
 import { type HeadlessScratch, headlessScratch, privateCliCopy, runCli } from "../harness/headless-run.js";
 import {
 	closeServer,

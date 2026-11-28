@@ -2,14 +2,14 @@
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import { deepStrictEqual, ok, strictEqual } from "node:assert/strict";
 import { describe, it } from "node:test";
-import { createTurnObservations, observeChatTurns } from "../../src/domains/extensions/bus-observations.js";
-import { servePancodeAcpAgent } from "../../src/engine/acp/server.js";
-import type { AcpServerChat } from "../../src/engine/acp/server-options.js";
+import { servePancodeAcpAgent } from "../../src/acp/server.js";
+import type { AcpServerChat } from "../../src/acp/server-options.js";
 import {
 	ACP_MAX_CHUNK_BYTES,
 	ACP_MAX_TOOL_PROGRESS_FRAMES_PER_CALL,
 	ACP_MIN_TOOL_PROGRESS_INTERVAL_MS,
-} from "../../src/engine/acp/types.js";
+} from "../../src/acp/types.js";
+import { createTurnObservations, observeChatTurns } from "../../src/domains/extensions/bus-observations.js";
 import { HOST_STATUS_NOTICE_KEY, THINKING_CLAMP_NOTICE_KEY } from "../../src/session-control/chat-loop-messages.js";
 import { CONTEXT_STATUS_NOTICE_KEY } from "../../src/session-control/compaction-lines.js";
 import { fakeTransport, stdioPeer } from "../harness/acp-fake-transport.js";

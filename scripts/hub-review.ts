@@ -350,7 +350,7 @@ export function changedSince(root: string, base: string): ChangedFile[] {
 }
 
 function renderReview(result: HubReviewResult): string {
-	const lines = [`## PanHub review: ${result.ok ? "pass" : "fail"}`, ""];
+	const lines = [`## Hub review: ${result.ok ? "pass" : "fail"}`, ""];
 	lines.push(`Reviewed: ${result.reviewed.length ? result.reviewed.join(", ") : "no row files"}`, "");
 	if (result.failures.length) {
 		lines.push("### Failures", "");

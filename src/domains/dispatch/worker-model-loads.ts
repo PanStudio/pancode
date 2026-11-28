@@ -14,7 +14,7 @@
  */
 
 import { adoptWorkerLoadedModel } from "../../engine/apis/residency.js";
-import type { WorkerModelLoad } from "../../worker/protocol.js";
+import type { WorkerModelLoad } from "../../lib/worker-wire/protocol.js";
 import type { RuntimeDescriptor, TargetDescriptor } from "../providers/index.js";
 import type { RunNodeIdentity } from "./types.js";
 

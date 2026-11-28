@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import { stripVTControlCharacters } from "node:util";
 import { GLYPH } from "../../core/glyphs.js";
-import { describeMissing, missingFromFailedCall } from "../../domains/lifecycle/setup-status.js";
+import { describeMissing, missingFromFailedCall } from "../../domains/install/setup-status.js";
 import { redactSecretsText } from "../../lib/secrets/redact.js";
 import { redactStreamingSecretString, redactUrlCredentials } from "../../lib/secrets/redaction.js";
 

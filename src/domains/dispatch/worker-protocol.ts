@@ -4,7 +4,7 @@
  * Orchestrator-side worker protocol: attestation admission, lane bounds, and
  * the bounded event queue.
  *
- * The wire schema itself lives in src/worker/protocol.ts because the worker
+ * The wire schema itself lives in src/lib/worker-wire/protocol.ts because the worker
  * process may not value-import this domain. This module owns the half only the
  * orchestrator needs: the approved identity it derives from a worker spec, the
  * comparison that admits or refuses an attested worker, the queue that bounds
@@ -24,7 +24,7 @@ import {
 	WORKER_EVENT_QUEUE_MAX_FRAMES,
 	WORKER_PROTOCOL_VERSION,
 	type WorkerAttestation,
-} from "../../worker/protocol.js";
+} from "../../lib/worker-wire/protocol.js";
 
 /** Route and node identity the orchestrator approved before the spawn. */
 export interface ApprovedWorkerIdentity {

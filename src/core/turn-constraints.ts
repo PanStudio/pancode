@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
-import { COORDINATOR_DIRECT_TOOLS, toolPlacement } from "../tools/surface.js";
+
 import { resolveGuardrail, resolveTemplateCeiling, templateBudgetLimit } from "./guardrails.js";
 import { MODEL_TIERS, type ModelTier } from "./model-tier.js";
 import { ToolNames } from "./tool-names.js";
+import { COORDINATOR_DIRECT_TOOLS, toolPlacement } from "./tool-surface.js";
 
 export interface ToolSurfaceSource {
 	readonly tools: readonly string[];

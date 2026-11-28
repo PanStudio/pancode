@@ -3,9 +3,9 @@
 import { deepStrictEqual, notStrictEqual, ok, rejects, strictEqual } from "node:assert/strict";
 import { test } from "node:test";
 import { setImmediate } from "node:timers/promises";
-import { servePancodeAcpAgent } from "../../src/engine/acp/server.js";
-import type { AcpJsonRpcPeerTransport } from "../../src/engine/acp/transport.js";
-import { createStdioTransport } from "../../src/engine/acp/transport.js";
+import { servePancodeAcpAgent } from "../../src/acp/server.js";
+import type { AcpJsonRpcPeerTransport } from "../../src/acp/transport.js";
+import { createStdioTransport } from "../../src/acp/transport.js";
 import { makeScratchHome } from "../harness/scratch-env.js";
 
 test("ACP transport close waits for an admitted context command to settle", async () => {
@@ -80,8 +80,8 @@ test("ACP child accepts a new session after closing its bound session", async ()
 			"--input-type=module",
 			"--eval",
 			`
-			import { servePancodeAcpAgent } from "./src/engine/acp/server.js";
-			import { createStdioServerTransport } from "./src/engine/acp/transport.js";
+			import { servePancodeAcpAgent } from "./src/acp/server.js";
+			import { createStdioServerTransport } from "./src/acp/transport.js";
 			process.exitCode = await servePancodeAcpAgent({
 				transport: createStdioServerTransport(),
 				cwd: process.cwd(),

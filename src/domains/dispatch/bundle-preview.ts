@@ -5,13 +5,13 @@ import { DEFAULT_SETTINGS } from "../../core/defaults.js";
 import { sha256Hex } from "../../core/hash.js";
 import { UnsupportedResponseSchemaError } from "../../core/response-schema.js";
 import type { ToolName } from "../../core/tool-names.js";
-import type { CheckoutRootLookup } from "../../tools/task-worktree.js";
 import {
 	endpointIdentityHash,
 	toolSignatureOf,
 	WORKER_EXTENSION_HOOKS_MAX,
 	type WorkerExtensionHook,
-} from "../../worker/protocol.js";
+} from "../../lib/worker-wire/protocol.js";
+import type { CheckoutRootLookup } from "../../tools/task-worktree.js";
 import type { AgentRecipe } from "../agents/recipe.js";
 import {
 	type AgentSpec,

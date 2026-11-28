@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
-import type { DoctorFinding } from "../domains/lifecycle/doctor.js";
+import type { DoctorFinding } from "../domains/install/doctor.js";
 import { describeValidationContract, loadValidationContract } from "../domains/safety/validation-contract.js";
 
 /**

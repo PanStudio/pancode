@@ -11,8 +11,8 @@ import {
 	resolvePanesPresetId,
 } from "../domains/mux/operations.js";
 import { isPancodeHostSocket } from "../domains/mux/workspace/platform.js";
-import { pinnedToolMissing } from "../domains/toolchain/index.js";
 import type { ExtensionReloadOutcome } from "../entry/extension-reload.js";
+import { pinnedToolMissing } from "../lib/programs/index.js";
 import type { NoticeLevel } from "./notice-source.js";
 import type {
 	BuiltinSlashCommand,

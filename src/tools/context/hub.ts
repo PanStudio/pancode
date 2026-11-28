@@ -55,8 +55,8 @@ export interface HubScopeDeps {
 	getCwd(): string;
 	/**
 	 * False on every native worker registry. A worker has skill discovery
-	 * disabled and no admitted PanHub projection of its own, so this read
-	 * refuses there rather than handing it the global PanHub through a new
+	 * disabled and no admitted hub projection of its own, so this read
+	 * refuses there rather than handing it the global hub through a new
 	 * endpoint. Read-only is not an argument for exposure.
 	 */
 	skillMarketplace?: boolean;
@@ -65,7 +65,7 @@ export interface HubScopeDeps {
 }
 
 const WORKER_UNAVAILABLE =
-	"pancode_hub is unavailable in this run; a worker has no PanHub projection of its own and cannot install or activate anything. " +
+	"pancode_hub is unavailable in this run; a worker has no hub projection of its own and cannot install or activate anything. " +
 	"Work from the resources your assignment already bound, and record the gap with the limitation tool if it blocks the task.";
 
 const OPERATOR_NOTE =

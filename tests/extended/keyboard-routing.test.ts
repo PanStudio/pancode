@@ -134,7 +134,7 @@ function fixture(overrides: Record<string, string | string[]> = {}) {
 		counts.hub++;
 		const list = new ListOverlayView(
 			{
-				title: "PanHub",
+				title: "Hub",
 				items: [
 					{ id: "a", label: "alpha" },
 					{ id: "b", label: "beta" },
@@ -736,7 +736,7 @@ it("honors resume selection overrides and refreshes help while it remains open",
 	f.terminal.input("\x0e");
 	f.terminal.input("\x19");
 	assert.equal(resumed, "second");
-	f.mount("help", () => openHelpOverlay(f.tui, f.keys, f.close, "PanHub (composer)"));
+	f.mount("help", () => openHelpOverlay(f.tui, f.keys, f.close, "Hub (composer)"));
 	assert.match(composerText(f.editor, 120), /Alt\+L/);
 	f.keys.reload({ "pancode.hub.toggle": "alt+p" });
 	assert.equal(f.state(), "help");
@@ -805,7 +805,7 @@ it("docks the menu in the composer's slot at normal and small sizes, keeps the d
 		assert.match(stripTerminalSequences(dock[0] ?? ""), /━/u);
 		for (const line of dock.slice(1, -1)) assert.match(stripTerminalSequences(line), /^ {2}/u);
 		const text = composerText(f.editor, columns);
-		assert.match(text, /PanHub ·/);
+		assert.match(text, /Hub ·/);
 		assert.doesNotMatch(text, /skills-hub|cancel owner/);
 		assert.match(text, /\[↑↓\] select/);
 		assert.match(text, /\[ctrl\+x\/Esc\] close/i);
@@ -959,7 +959,7 @@ it("preserves literal boot input and queued submissions across the single-editor
 	assert.equal(editor.getText(), "new drafta");
 });
 
-it("cancels a real PanHub child review before its parent, without writes or global actions", () => {
+it("cancels a real hub child review before its parent, without writes or global actions", () => {
 	const f = fixture();
 	f.editor.setText("draft");
 	f.terminal.input("\x1bl");

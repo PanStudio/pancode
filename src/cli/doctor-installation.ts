@@ -7,8 +7,8 @@ import { runCommandVector } from "../core/safe-exec.js";
 import { packageManagerLaunch } from "../core/self-update.js";
 import { shellQuote } from "../core/shell-quote.js";
 import { resolvePancodeDirs } from "../core/xdg.js";
-import type { DoctorFinding } from "../domains/lifecycle/doctor.js";
-import { inspectInstallation } from "../domains/lifecycle/install-method.js";
+import type { DoctorFinding } from "../domains/install/doctor.js";
+import { inspectInstallation } from "../domains/install/install-method.js";
 import { inspectGuiBackground } from "./gui.js";
 
 export async function installationFindings(fix: boolean): Promise<DoctorFinding[]> {

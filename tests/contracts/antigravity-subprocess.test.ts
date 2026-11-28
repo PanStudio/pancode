@@ -18,7 +18,8 @@ import { dirname, join } from "node:path";
 import { Readable } from "node:stream";
 import { after, afterEach, before, describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
-
+import { createAntigravityShims } from "../../src/acp/antigravity-shims.js";
+import { ANTIGRAVITY_SIDEBAND_MAX_ROWS, readAntigravitySideband } from "../../src/acp/antigravity-sideband.js";
 import {
 	inventoryNote,
 	modelChoiceRefusal,
@@ -40,8 +41,6 @@ import antigravityCodeRuntime, {
 import deepseekRuntime from "../../src/domains/providers/runtimes/cloud/deepseek.js";
 import openaiCodexRuntime from "../../src/domains/providers/runtimes/cloud/openai-codex.js";
 import type { ProbeResult } from "../../src/domains/providers/types/runtime-descriptor.js";
-import { createAntigravityShims } from "../../src/engine/acp/antigravity-shims.js";
-import { ANTIGRAVITY_SIDEBAND_MAX_ROWS, readAntigravitySideband } from "../../src/engine/acp/antigravity-sideband.js";
 import {
 	ANTIGRAVITY_MAX_STREAM_BYTES,
 	ANTIGRAVITY_MAX_STREAM_LINE_BYTES,

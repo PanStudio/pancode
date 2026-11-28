@@ -22,7 +22,7 @@ import {
 	WORKER_RESOURCE_LABEL_MAX,
 	type WorkerResourceFacts,
 	type WorkerResourceValue,
-} from "./protocol.js";
+} from "../lib/worker-wire/protocol.js";
 
 /** Bound on the GPU probe so a wedged driver cannot delay the announce. */
 const GPU_PROBE_TIMEOUT_MS = 1000;

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 /**
- * The verified remote PanHub index. `refreshRemoteIndex` fetches the three
+ * The verified remote hub index. `refreshRemoteIndex` fetches the three
  * release assets the hub-index workflow publishes, verifies the key
  * certificate against the root keys this build ships with and the index
  * statement against the certificate, and only then replaces the kept copy in
@@ -242,7 +242,7 @@ export async function refreshRemoteIndex(options: HubTrustOptions = {}): Promise
 	if (typeof url === "string") return refuse(stateDir, base, "bad-url", `integrations.hub.index ${url}`, now);
 	const rootKeys = options.rootKeys ?? HUB_ROOT_PUBLIC_KEYS;
 	if (rootKeys.length === 0)
-		return refuse(stateDir, url.href, "no-root-key", "this build has no PanHub root key, so no index verifies", now);
+		return refuse(stateDir, url.href, "no-root-key", "this build has no hub root key, so no index verifies", now);
 	const fetchAsset = options.fetch ?? defaultHubAssetFetch;
 	const limits = { maxBytes: HUB_ASSET_MAX_BYTES, timeoutMs: HUB_ASSET_TIMEOUT_MS };
 	const assets: Uint8Array[] = [];
@@ -296,7 +296,7 @@ export async function refreshRemoteIndex(options: HubTrustOptions = {}): Promise
 			stateDir,
 			url.href,
 			"malformed",
-			`index.yaml is not a PanHub index: ${err instanceof Error ? err.message : String(err)}`,
+			`index.yaml is not a hub index: ${err instanceof Error ? err.message : String(err)}`,
 			now,
 		);
 	}
@@ -337,7 +337,7 @@ function hubIndexNeedsRefresh(options: { now?: () => Date; stateDir?: string } =
 /** One line naming the reason and the kept sequence. */
 export function describeRefusal(result: Extract<HubRefreshResult, { ok: false }>): string {
 	const kept = result.kept ? `keeping sequence ${result.kept.indexSequence}` : "no verified index kept";
-	return `PanHub index not refreshed (${result.reason}): ${result.message}; ${kept}`;
+	return `The hub index not refreshed (${result.reason}): ${result.message}; ${kept}`;
 }
 
 /**
@@ -370,7 +370,7 @@ export function remoteIndexRows(
 	const now = (options.now ?? (() => new Date()))().getTime();
 	if (!(now < Date.parse(state.expires))) {
 		diagnostics.push(
-			`PanHub remote index expired at ${state.expires}; run pancode hub refresh. Installed packs keep loading.`,
+			`The hub remote index expired at ${state.expires}; run pancode hub refresh. Installed packs keep loading.`,
 		);
 		return { rows: [], status: "expired", state };
 	}
@@ -382,7 +382,7 @@ export function remoteIndexRows(
 		return { rows: [], status: "damaged", state };
 	}
 	if (sha256Hex(bytes) !== state.indexSha256) {
-		diagnostics.push(`PanHub remote index ${file} does not match its verified digest; run pancode hub refresh`);
+		diagnostics.push(`The hub remote index ${file} does not match its verified digest; run pancode hub refresh`);
 		return { rows: [], status: "damaged", state };
 	}
 	try {
@@ -392,7 +392,7 @@ export function remoteIndexRows(
 		});
 		return { rows, status: "current", state };
 	} catch (err) {
-		diagnostics.push(`PanHub remote index unreadable: ${err instanceof Error ? err.message : String(err)}`);
+		diagnostics.push(`The hub remote index unreadable: ${err instanceof Error ? err.message : String(err)}`);
 		return { rows: [], status: "damaged", state };
 	}
 }

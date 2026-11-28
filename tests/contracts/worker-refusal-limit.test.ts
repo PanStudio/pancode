@@ -13,7 +13,7 @@ import type { PancodeWorkerEvent } from "../../src/engine/worker-events.js";
 import { workerRefusalReportDirective } from "../../src/engine/worker-refusals.js";
 import type { WorkerRunInput } from "../../src/engine/worker-run-types.js";
 import { startWorkerRun } from "../../src/engine/worker-runtime.js";
-import { WORKER_EXIT_PERMISSION_REQUIRED } from "../../src/worker/spec-contract.js";
+import { WORKER_EXIT_PERMISSION_REQUIRED } from "../../src/lib/worker-wire/spec-contract.js";
 import { closeServer, readRequestBody } from "../harness/openai-compat-fixture.js";
 import { isolatePancodeEnv } from "../harness/scratch-env.js";
 

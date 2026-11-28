@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import chalk from "chalk";
 import { readSettings } from "../core/config.js";
-import { ensureClaudeAgentSdk } from "../domains/lifecycle/claude-sdk-install.js";
+import { ensureClaudeAgentSdk } from "../domains/install/claude-sdk-install.js";
 import { authStoragePath } from "../domains/providers/auth/index.js";
 import { prepareCopilotSdk } from "../domains/providers/copilot-setup.js";
 import { isOrchestratorEligibleRuntime } from "../domains/providers/index.js";

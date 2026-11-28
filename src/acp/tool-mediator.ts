@@ -1,0 +1,712 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { homedir } from "node:os";
+import path from "node:path";
+import { performance } from "node:perf_hooks";
+import { fileURLToPath } from "node:url";
+import type { DelegationToolGovernance } from "../core/defaults.js";
+import { canonicalizeExistingPath } from "../core/path-canonical.js";
+import { ToolNames } from "../core/tool-names.js";
+import { isRecord } from "../core/type-guards.js";
+import type { DelegationToolCallLogEntry } from "../domains/dispatch/types.js";
+import { evaluateAdmission } from "../domains/safety/admission.js";
+import type { SafetyContract, SafetyDecision } from "../domains/safety/contract.js";
+import type {
+	AcpPermissionOption,
+	AcpRequestPermissionParams,
+	AcpRequestPermissionResponse,
+	AcpToolCallLocation,
+	AcpToolCallUpdate,
+} from "./types.js";
+
+interface MediatorInput {
+	safety: SafetyContract;
+	cwd: string;
+	toolGovernance: DelegationToolGovernance;
+	readOnly?: boolean;
+	/** Canonical tools this delegation may use; absent leaves the peer's surface to the safety net. */
+	allowedTools?: ReadonlyArray<string>;
+	onPermissionResolved?(event: AcpMediatorPermissionResolvedEvent): void;
+}
+
+export interface AcpMediatorPermissionResolvedEvent {
+	requestId: string;
+	tool: string;
+	actionClass: string;
+	mode: "deny";
+	source: "policy";
+	reason: string;
+}
+
+interface MappedToolCall {
+	tool: string;
+	args: Record<string, unknown>;
+	evaluations: ReadonlyArray<{ tool: string; args: Record<string, unknown> }>;
+	known: boolean;
+	displayTool: string;
+	validationError?: string;
+}
+
+type MutationKind = "edit" | "delete" | "move";
+
+interface ExtractedPaths {
+	paths: string[];
+	provided: boolean;
+	errors: string[];
+}
+
+interface MutationTargets {
+	paths: string[];
+	error?: string;
+}
+
+const MUTATION_MARKERS = [
+	"content",
+	"new_string",
+	"old_string",
+	"new_str",
+	"edits",
+	"new_source",
+	"replace_all",
+	"patch",
+	"diff",
+] as const;
+
+const SINGLE_MUTATION_PATH_KEYS = [
+	"path",
+	"file",
+	"filename",
+	"fileName",
+	"file_name",
+	"filePath",
+	"file_path",
+	"notebook_path",
+	"target",
+	"targetPath",
+	"target_path",
+	"uri",
+] as const;
+
+/**
+ * A read or a search also names the directory it reaches under these keys,
+ * and that directory is judged like any other path target.
+ */
+const READ_PATH_KEYS = [
+	...SINGLE_MUTATION_PATH_KEYS,
+	"directory",
+	"dir",
+	"dirPath",
+	"dir_path",
+	"folder",
+	"root",
+] as const;
+const MULTI_MUTATION_PATH_KEYS = ["paths", "files", "filePaths", "file_paths", "targets", "targetPaths"] as const;
+const MOVE_SOURCE_PATH_KEYS = [
+	"source",
+	"sourcePath",
+	"source_path",
+	"src",
+	"from",
+	"fromPath",
+	"from_path",
+	"oldPath",
+	"old_path",
+	"path",
+	"file",
+	"filePath",
+	"file_path",
+] as const;
+const MOVE_MULTI_SOURCE_PATH_KEYS = ["sources"] as const;
+const MOVE_DESTINATION_PATH_KEYS = [
+	"destination",
+	"destinationPath",
+	"destination_path",
+	"dest",
+	"destPath",
+	"dest_path",
+	"to",
+	"toPath",
+	"to_path",
+	"newPath",
+	"new_path",
+	"target",
+] as const;
+
+function stringField(record: Record<string, unknown>, ...keys: string[]): string | undefined {
+	for (const key of keys) {
+		const value = record[key];
+		if (typeof value === "string" && value.trim().length > 0) return value.trim();
+	}
+	return undefined;
+}
+
+/**
+ * PanCode approves one call at a time, so only `allow_once` answers an approval.
+ * `allow_always` would turn that approval into a standing grant inside the
+ * peer that PanCode's policy never gave, and no allow kind is matched by prefix.
+ */
+function allowOnceOption(options: ReadonlyArray<AcpPermissionOption>): string | null {
+	return options.find((option) => option.kind === "allow_once")?.optionId ?? null;
+}
+
+/** A denial prefers `reject_once`; any reject kind is acceptable, since none grants anything. */
+function rejectOption(options: ReadonlyArray<AcpPermissionOption>): string | null {
+	return (
+		options.find((option) => option.kind === "reject_once")?.optionId ??
+		options.find((option) => option.kind === "reject_always")?.optionId ??
+		options.find((option) => typeof option.kind === "string" && option.kind.startsWith("reject"))?.optionId ??
+		null
+	);
+}
+
+function responseFor(decision: "approved" | "denied" | "cancelled", options: ReadonlyArray<AcpPermissionOption>) {
+	if (decision === "cancelled") return { outcome: { outcome: "cancelled" as const } };
+	const optionId = decision === "approved" ? allowOnceOption(options) : rejectOption(options);
+	if (!optionId) return { outcome: { outcome: "cancelled" as const } };
+	return { outcome: { outcome: "selected" as const, optionId } };
+}
+
+function commandArgs(rawInput: Record<string, unknown>, cwd: string): Record<string, unknown> {
+	const command = stringField(rawInput, "command", "cmd", "shell", "input", "description") ?? "";
+	return { command, cwd };
+}
+
+function hasOwn(record: Record<string, unknown>, key: string): boolean {
+	return Object.hasOwn(record, key);
+}
+
+function canonicalMutationPath(value: unknown, cwd: string): { path?: string; error?: string } {
+	if (typeof value !== "string") return { error: "path must be a string" };
+	const trimmed = value.trim();
+	if (trimmed.length === 0) return { error: "path must not be empty" };
+	if (trimmed.includes("\0")) return { error: "path must not contain NUL" };
+
+	let expanded = trimmed;
+	if (trimmed === "~") expanded = homedir();
+	else if (trimmed.startsWith("~/") || trimmed.startsWith("~\\")) expanded = path.join(homedir(), trimmed.slice(2));
+	else if (trimmed.startsWith("~")) return { error: "named home-directory paths are not supported" };
+
+	const windowsAbsolute = /^[A-Za-z]:[\\/]/.test(expanded) || expanded.startsWith("\\\\");
+	if (windowsAbsolute && path.sep !== "\\") {
+		return { error: "Windows paths cannot be evaluated on this host" };
+	}
+	if (!windowsAbsolute && /^[A-Za-z][A-Za-z\d+.-]*:/.test(expanded)) {
+		if (!expanded.toLowerCase().startsWith("file:")) return { error: "path must be a filesystem path" };
+		try {
+			expanded = fileURLToPath(expanded);
+		} catch {
+			return { error: "file URL is malformed" };
+		}
+	}
+	const absolute = path.isAbsolute(expanded) ? path.resolve(expanded) : path.resolve(cwd, expanded);
+	return { path: canonicalizeExistingPath(absolute) };
+}
+
+function appendUnique(target: string[], value: string): void {
+	if (!target.includes(value)) target.push(value);
+}
+
+function samePathSet(left: ReadonlyArray<string>, right: ReadonlyArray<string>): boolean {
+	return left.length === right.length && left.every((candidate) => right.includes(candidate));
+}
+
+function extractPathFields(
+	rawInput: Record<string, unknown>,
+	singleKeys: ReadonlyArray<string>,
+	multiKeys: ReadonlyArray<string>,
+	cwd: string,
+	label: string,
+): ExtractedPaths {
+	const fieldSets: string[][] = [];
+	const errors: string[] = [];
+	let provided = false;
+	for (const key of singleKeys) {
+		if (!hasOwn(rawInput, key)) continue;
+		provided = true;
+		const canonical = canonicalMutationPath(rawInput[key], cwd);
+		if (canonical.path !== undefined) fieldSets.push([canonical.path]);
+		else errors.push(`${label}.${key} ${canonical.error ?? "is malformed"}`);
+	}
+	for (const key of multiKeys) {
+		if (!hasOwn(rawInput, key)) continue;
+		provided = true;
+		const value = rawInput[key];
+		if (!Array.isArray(value) || value.length === 0) {
+			errors.push(`${label}.${key} must be a non-empty array of paths`);
+			continue;
+		}
+		const paths: string[] = [];
+		for (const candidate of value) {
+			const canonical = canonicalMutationPath(candidate, cwd);
+			if (canonical.path !== undefined) appendUnique(paths, canonical.path);
+			else errors.push(`${label}.${key} contains a path that ${canonical.error ?? "is malformed"}`);
+		}
+		if (paths.length > 0) fieldSets.push(paths);
+	}
+
+	const paths = fieldSets[0] ?? [];
+	if (fieldSets.some((fieldSet) => !samePathSet(paths, fieldSet))) {
+		errors.push(`${label} contains conflicting mutation targets`);
+		for (const fieldSet of fieldSets) {
+			for (const candidate of fieldSet) appendUnique(paths, candidate);
+		}
+	}
+	return { paths, provided, errors };
+}
+
+function extractRawMutationPaths(rawInput: Record<string, unknown>, kind: MutationKind, cwd: string): ExtractedPaths {
+	if (kind !== "move") {
+		return extractPathFields(rawInput, SINGLE_MUTATION_PATH_KEYS, MULTI_MUTATION_PATH_KEYS, cwd, "rawInput");
+	}
+
+	const sources = extractPathFields(
+		rawInput,
+		MOVE_SOURCE_PATH_KEYS,
+		MOVE_MULTI_SOURCE_PATH_KEYS,
+		cwd,
+		"rawInput source",
+	);
+	const destinations = extractPathFields(rawInput, MOVE_DESTINATION_PATH_KEYS, [], cwd, "rawInput destination");
+	const complete = extractPathFields(rawInput, [], MULTI_MUTATION_PATH_KEYS, cwd, "rawInput");
+	const rolePaths = [...sources.paths];
+	for (const candidate of destinations.paths) appendUnique(rolePaths, candidate);
+	const errors = [...sources.errors, ...destinations.errors, ...complete.errors];
+	if (complete.provided && rolePaths.length > 0 && !samePathSet(complete.paths, rolePaths)) {
+		errors.push("rawInput contains conflicting move targets");
+	}
+	const paths = complete.paths.length > 0 ? [...complete.paths] : rolePaths;
+	for (const candidate of rolePaths) appendUnique(paths, candidate);
+	return {
+		paths,
+		provided: sources.provided || destinations.provided || complete.provided,
+		errors,
+	};
+}
+
+function extractLocationPaths(locations: unknown, cwd: string): ExtractedPaths {
+	if (locations === undefined) return { paths: [], provided: false, errors: [] };
+	if (!Array.isArray(locations) || locations.length === 0) {
+		return { paths: [], provided: true, errors: ["locations must be a non-empty array"] };
+	}
+	const paths: string[] = [];
+	const errors: string[] = [];
+	for (const value of locations) {
+		if (!isRecord(value)) {
+			errors.push("locations contains a non-object entry");
+			continue;
+		}
+		const location = value as Partial<AcpToolCallLocation>;
+		if (
+			location.line !== undefined &&
+			location.line !== null &&
+			(!Number.isInteger(location.line) || location.line < 0)
+		) {
+			errors.push("locations contains an invalid line number");
+		}
+		const canonical = canonicalMutationPath(location.path, cwd);
+		if (canonical.path !== undefined) appendUnique(paths, canonical.path);
+		else errors.push(`locations contains a path that ${canonical.error ?? "is malformed"}`);
+	}
+	return { paths, provided: true, errors };
+}
+
+function mutationTargets(toolCall: AcpToolCallUpdate | undefined, kind: MutationKind, cwd: string): MutationTargets {
+	const rawInput = isRecord(toolCall?.rawInput) ? toolCall.rawInput : {};
+	const raw = extractRawMutationPaths(rawInput, kind, cwd);
+	const locations = extractLocationPaths(toolCall?.locations, cwd);
+	const errors = [...raw.errors, ...locations.errors];
+	if (toolCall?.rawInput !== undefined && !isRecord(toolCall.rawInput)) {
+		errors.push("rawInput must be an object");
+	}
+	if (raw.provided && locations.provided && !samePathSet(raw.paths, locations.paths)) {
+		errors.push("rawInput and locations contain conflicting mutation targets");
+	}
+
+	const paths = locations.paths.length > 0 ? [...locations.paths] : [...raw.paths];
+	for (const candidate of raw.paths) appendUnique(paths, candidate);
+	if (paths.length === 0) errors.push("mutation target is missing");
+	if (kind === "move" && paths.length < 2) errors.push("move requires at least two distinct mutation targets");
+	return {
+		paths,
+		...(errors.length > 0 ? { error: [...new Set(errors)].join("; ") } : {}),
+	};
+}
+
+function canonicalTargetArgs(paths: ReadonlyArray<string>): Record<string, unknown> {
+	if (paths.length === 1) return { path: paths[0] };
+	return { paths: [...paths] };
+}
+
+function mutationKind(kind: string, rawTool: string | undefined, mutationShape: boolean): MutationKind | null {
+	if (kind === "delete") return "delete";
+	if (kind === "move") return "move";
+	if (kind === "edit" || rawTool === ToolNames.Write || rawTool === ToolNames.Edit) return "edit";
+	// A declared benign kind/tool must never override a raw mutation shape.
+	// Map it as a mutation first; metadata conflict validation below then denies
+	// the contradictory request after evaluating its real canonical targets.
+	return mutationShape ? "edit" : null;
+}
+
+function mutationMetadataConflict(
+	kind: string,
+	rawTool: string | undefined,
+	mutation: MutationKind,
+	mutationShape: boolean,
+): string | undefined {
+	const kindIsMutation = kind === "edit" || kind === "delete" || kind === "move";
+	const toolIsMutation = rawTool === ToolNames.Write || rawTool === ToolNames.Edit;
+	const rawToolIsKnown =
+		rawTool !== undefined && Object.values(ToolNames).includes(rawTool as (typeof ToolNames)[keyof typeof ToolNames]);
+	if (kindIsMutation && rawToolIsKnown && !toolIsMutation) {
+		return `mutating ACP kind ${kind} conflicts with raw tool ${rawTool}`;
+	}
+	if (toolIsMutation && kind.length > 0 && !kindIsMutation) {
+		return `mutating raw tool ${rawTool} conflicts with ACP kind ${kind}`;
+	}
+	if (mutation !== "edit" && toolIsMutation) {
+		return `ACP ${mutation} kind conflicts with raw edit tool ${rawTool}`;
+	}
+	if (mutationShape && kind.length > 0 && !kindIsMutation) {
+		return `raw mutation shape conflicts with ACP kind ${kind}`;
+	}
+	if (mutationShape && rawToolIsKnown && !toolIsMutation) {
+		return `raw mutation shape conflicts with raw tool ${rawTool}`;
+	}
+	return undefined;
+}
+
+function hasRawMutationTarget(rawInput: Record<string, unknown>, hasLocations: boolean): boolean {
+	return (
+		hasLocations ||
+		SINGLE_MUTATION_PATH_KEYS.some((key) => hasOwn(rawInput, key)) ||
+		MULTI_MUTATION_PATH_KEYS.some((key) => hasOwn(rawInput, key)) ||
+		MOVE_SOURCE_PATH_KEYS.some((key) => hasOwn(rawInput, key)) ||
+		MOVE_DESTINATION_PATH_KEYS.some((key) => hasOwn(rawInput, key))
+	);
+}
+
+function commandMetadataConflict(kind: string, rawTool: string | undefined): string | undefined {
+	const rawToolIsKnown =
+		rawTool !== undefined && Object.values(ToolNames).includes(rawTool as (typeof ToolNames)[keyof typeof ToolNames]);
+	if (kind.length > 0 && kind !== "execute") return `raw command shape conflicts with ACP kind ${kind}`;
+	if (rawToolIsKnown && rawTool !== ToolNames.Bash) return `raw command shape conflicts with raw tool ${rawTool}`;
+	return undefined;
+}
+
+function mapMutationToolCall(
+	toolCall: AcpToolCallUpdate | undefined,
+	kind: MutationKind,
+	displayTool: string,
+	cwd: string,
+	metadataError: string | undefined,
+): MappedToolCall {
+	const targets = mutationTargets(toolCall, kind, cwd);
+	const args = canonicalTargetArgs(targets.paths);
+	return {
+		tool: ToolNames.Edit,
+		args,
+		evaluations: targets.paths.map((target) => ({ tool: ToolNames.Edit, args: { path: target } })),
+		known: true,
+		displayTool,
+		...(metadataError !== undefined || targets.error !== undefined
+			? {
+					validationError: [metadataError, targets.error].filter((value): value is string => value !== undefined).join("; "),
+				}
+			: {}),
+	};
+}
+
+function mapPathBearingToolCall(
+	toolCall: AcpToolCallUpdate | undefined,
+	tool: string,
+	displayTool: string,
+	cwd: string,
+	targetRequired: boolean,
+): MappedToolCall {
+	const rawInput = isRecord(toolCall?.rawInput) ? toolCall.rawInput : {};
+	const raw = extractPathFields(rawInput, READ_PATH_KEYS, MULTI_MUTATION_PATH_KEYS, cwd, "rawInput");
+	const locations = extractLocationPaths(toolCall?.locations, cwd);
+	const errors = [...raw.errors, ...locations.errors];
+	if (toolCall?.rawInput !== undefined && !isRecord(toolCall.rawInput)) errors.push("rawInput must be an object");
+	if (raw.provided && locations.provided && !samePathSet(raw.paths, locations.paths)) {
+		errors.push("rawInput and locations contain conflicting path targets");
+	}
+	const paths = locations.paths.length > 0 ? [...locations.paths] : [...raw.paths];
+	for (const candidate of raw.paths) appendUnique(paths, candidate);
+	if (targetRequired && paths.length === 0) errors.push("path target is missing");
+
+	const baseArgs = tool === ToolNames.Grep ? { ...rawInput } : {};
+	const args =
+		paths.length === 0
+			? baseArgs
+			: paths.length === 1
+				? { ...baseArgs, path: paths[0] }
+				: { ...baseArgs, paths: [...paths] };
+	const evaluations =
+		paths.length > 0
+			? paths.map((target) => ({ tool, args: { ...baseArgs, path: target } }))
+			: [{ tool, args: baseArgs }];
+	return {
+		tool,
+		args,
+		evaluations,
+		known: true,
+		displayTool,
+		...(errors.length > 0 ? { validationError: [...new Set(errors)].join("; ") } : {}),
+	};
+}
+
+/** The PanCode tool and normalized arguments an ACP tool call amounts to; `known` false names no PanCode tool. */
+export function mapAcpToolCall(toolCall: AcpToolCallUpdate | undefined, cwd: string): MappedToolCall {
+	const kind = typeof toolCall?.kind === "string" ? toolCall.kind.toLowerCase() : "";
+	const rawInput = isRecord(toolCall?.rawInput) ? toolCall.rawInput : {};
+	const rawTool = stringField(rawInput, "tool", "toolName", "tool_name", "name");
+	const title = typeof toolCall?.title === "string" ? toolCall.title : undefined;
+	const displayTool = rawTool ?? kind ?? title ?? "unknown";
+	const mutationShape =
+		MUTATION_MARKERS.some((key) => hasOwn(rawInput, key)) &&
+		hasRawMutationTarget(rawInput, toolCall?.locations !== undefined);
+	const commandShape = stringField(rawInput, "command", "cmd", "shell") !== undefined;
+	const mappedMutation = mutationKind(kind, rawTool, mutationShape);
+	if (mappedMutation !== null) {
+		return mapMutationToolCall(
+			toolCall,
+			mappedMutation,
+			displayTool,
+			cwd,
+			[
+				mutationMetadataConflict(kind, rawTool, mappedMutation, mutationShape),
+				commandShape ? "raw input contains both command and mutation shapes" : undefined,
+			]
+				.filter((value): value is string => value !== undefined)
+				.join("; ") || undefined,
+		);
+	}
+	if (rawTool === ToolNames.Bash || kind === "execute" || commandShape) {
+		const args = commandArgs(rawInput, cwd);
+		const validationError = commandShape ? commandMetadataConflict(kind, rawTool) : undefined;
+		return {
+			tool: ToolNames.Bash,
+			args,
+			evaluations: [{ tool: ToolNames.Bash, args }],
+			known: true,
+			displayTool,
+			...(validationError !== undefined ? { validationError } : {}),
+		};
+	}
+	if (kind === "fetch" && stringField(rawInput, "url") !== undefined && toolCall?.locations === undefined) {
+		const args = { url: stringField(rawInput, "url") };
+		return {
+			tool: ToolNames.WebFetch,
+			args,
+			evaluations: [{ tool: ToolNames.WebFetch, args }],
+			known: true,
+			displayTool,
+		};
+	}
+	if (rawTool === ToolNames.Read || kind === "read" || kind === "fetch") {
+		return mapPathBearingToolCall(toolCall, ToolNames.Read, displayTool, cwd, true);
+	}
+	if (rawTool === ToolNames.Grep || kind === "search") {
+		return mapPathBearingToolCall(toolCall, ToolNames.Grep, displayTool, cwd, false);
+	}
+	if (rawTool && Object.values(ToolNames).includes(rawTool as (typeof ToolNames)[keyof typeof ToolNames])) {
+		return { tool: rawTool, args: rawInput, evaluations: [{ tool: rawTool, args: rawInput }], known: true, displayTool };
+	}
+	// A search names where it looks as well as what it looks for, so the
+	// inferred grep keeps its path targets for the policy to judge.
+	if (stringField(rawInput, "pattern")) {
+		return mapPathBearingToolCall(toolCall, ToolNames.Grep, displayTool, cwd, false);
+	}
+	const inferredPath = stringField(rawInput, "file_path", "filePath", "path", "notebook_path");
+	if (inferredPath) {
+		const mutates =
+			"content" in rawInput ||
+			"new_string" in rawInput ||
+			"old_string" in rawInput ||
+			"new_str" in rawInput ||
+			"edits" in rawInput ||
+			"new_source" in rawInput ||
+			"replace_all" in rawInput;
+		if (mutates) {
+			return mapMutationToolCall(toolCall, "edit", displayTool, cwd, undefined);
+		}
+		const args = { path: inferredPath };
+		return { tool: ToolNames.Read, args, evaluations: [{ tool: ToolNames.Read, args }], known: true, displayTool };
+	}
+	const inferredUrl = stringField(rawInput, "url");
+	if (inferredUrl) {
+		const args = { url: inferredUrl };
+		return {
+			tool: ToolNames.WebFetch,
+			args,
+			evaluations: [{ tool: ToolNames.WebFetch, args }],
+			known: true,
+			displayTool,
+		};
+	}
+	return { tool: displayTool, args: rawInput, evaluations: [], known: false, displayTool };
+}
+
+function logSafety(decision: SafetyDecision | undefined): DelegationToolCallLogEntry["safetyDecision"] | undefined {
+	if (!decision) return undefined;
+	const out: NonNullable<DelegationToolCallLogEntry["safetyDecision"]> = {
+		kind: decision.kind,
+	};
+	const policy = decision.policy;
+	if (policy?.reasonCode !== undefined) out.reasonCode = policy.reasonCode;
+	if (policy?.policySource !== undefined) out.policySource = policy.policySource;
+	if (policy?.ruleId !== undefined) out.ruleId = policy.ruleId;
+	return out;
+}
+
+export class AcpToolMediator {
+	private requested = 0;
+	private approved = 0;
+	private denied = 0;
+	private readonly log: DelegationToolCallLogEntry[] = [];
+
+	constructor(private readonly input: MediatorInput) {}
+
+	async handle(params: unknown): Promise<AcpRequestPermissionResponse> {
+		const startedAt = performance.now();
+		this.requested += 1;
+		const parsed = isRecord(params) ? (params as AcpRequestPermissionParams) : {};
+		const options = Array.isArray(parsed.options) ? parsed.options : [];
+		const toolCall = isRecord(parsed.toolCall) ? (parsed.toolCall as AcpToolCallUpdate) : undefined;
+		const mapped = mapAcpToolCall(toolCall, this.input.cwd);
+		let decision: "approved" | "denied" | "cancelled" = "denied";
+		let reason: string | undefined;
+		let safetyDecision: SafetyDecision | undefined;
+		let governanceRuleId: string | undefined;
+
+		if (mapped.validationError !== undefined) {
+			governanceRuleId = "acp:invalid-mutation-targets";
+			if (this.input.toolGovernance === "pancode-policy") {
+				const invalidSafetyDecisions = mapped.evaluations.map((evaluation) =>
+					this.input.safety.evaluate({ tool: evaluation.tool, args: evaluation.args }),
+				);
+				safetyDecision =
+					invalidSafetyDecisions.find((candidate) => candidate.kind === "block") ??
+					invalidSafetyDecisions.find((candidate) => candidate.kind === "ask") ??
+					invalidSafetyDecisions[0];
+			}
+			decision = "denied";
+			reason = `invalid ACP mutation targets: ${mapped.validationError}`;
+		} else if (this.input.toolGovernance === "agent-managed") {
+			governanceRuleId = "acp:agent-managed";
+			decision = "approved";
+			reason = "agent-managed governance";
+		} else if (this.input.toolGovernance === "deny-all") {
+			governanceRuleId = "acp:deny-all";
+			decision = "denied";
+			reason = "deny-all governance";
+		} else if (!mapped.known) {
+			governanceRuleId = "acp:unknown-tool";
+			decision = "denied";
+			reason = `unknown ACP tool: ${mapped.displayTool}`;
+		} else {
+			// The shared evaluator decides, as it does for native and SDK workers
+			// (F4). Any ask resolves as a non-stall denial: a delegation has no
+			// operator to answer it.
+			const admission = evaluateAdmission({
+				principal: "worker",
+				effects: mapped.evaluations.map((evaluation) => ({ tool: evaluation.tool, args: evaluation.args })),
+				cwd: this.input.cwd,
+				safety: this.input.safety,
+				constraints: {
+					...(this.input.readOnly === true ? { readOnly: true } : {}),
+					...(this.input.allowedTools !== undefined ? { allowedTools: this.input.allowedTools } : {}),
+				},
+			});
+			decision = admission.kind === "allow" ? "approved" : "denied";
+			if (admission.kind === "deny") {
+				safetyDecision = admission.decision;
+				reason =
+					admission.code === "safety_net"
+						? (admission.decision.policy?.reasonCode ?? admission.decision.kind)
+						: admission.code === "no_effects"
+							? "ACP tool produced no policy-evaluable arguments"
+							: admission.code === "read_only"
+								? `${mapped.tool} denied: this run is read-only`
+								: admission.code === "tool_scope"
+									? `${mapped.tool} is outside this run's admitted tool scope`
+									: admission.reason;
+			} else if (admission.kind === "ask") {
+				safetyDecision = admission.netDecision;
+				if (admission.source === "autonomy") {
+					const asked = admission.readOutsideWorkspace
+						? "a path outside the workspace"
+						: admission.exposure === "outward"
+							? `outward ${admission.netDecision.classification.actionClass}`
+							: admission.netDecision.classification.actionClass;
+					reason = `permission_required: autonomy ${admission.level} requires approval for ${asked}; denied by non-stall policy (no interactive operator in delegation context)`;
+				} else {
+					reason = "permission_required: denied by non-stall policy (no interactive operator in delegation context)";
+				}
+			} else {
+				safetyDecision = admission.decision;
+				reason = admission.decision.policy?.reasonCode ?? "allowed";
+			}
+		}
+
+		let noAllowOnce = false;
+		if (decision === "approved" && allowOnceOption(options) === null) {
+			decision = "denied";
+			noAllowOnce = true;
+			reason = `approved by PanCode policy (${reason ?? "allowed"}), but the peer offered no allow_once option and PanCode never selects allow_always, so the call was rejected`;
+		}
+		if (decision === "approved") this.approved += 1;
+		else this.denied += 1;
+		const finalRuleId = noAllowOnce ? "acp:no-allow-once" : governanceRuleId;
+		const reasonCode = finalRuleId ?? (decision === "denied" ? "acp:non-stall-denial" : undefined);
+		// An unmapped tool's name is whatever the peer sent, possibly a path; the journal keeps a fixed id (#434).
+		const recordedTool = mapped.known ? mapped.tool : "unknown";
+		this.input.safety.decisions.recordToolCall?.({
+			tool: recordedTool,
+			classification:
+				safetyDecision?.classification ?? this.input.safety.classify({ tool: mapped.tool, args: mapped.args }),
+			decision: decision === "approved" ? "allowed" : "denied",
+			...(safetyDecision?.policy !== undefined ? { policy: safetyDecision.policy } : {}),
+			...(finalRuleId !== undefined ? { ruleId: finalRuleId } : {}),
+			...(reasonCode !== undefined ? { reasonCode } : {}),
+		});
+		const loggedSafety = logSafety(safetyDecision);
+		const callId = toolCall?.toolCallId ?? `permission-${this.requested}`;
+		this.log.push({
+			callId,
+			tool: mapped.tool,
+			arguments: { ...mapped.args },
+			decision,
+			...(reason !== undefined ? { reason } : {}),
+			...(loggedSafety !== undefined ? { safetyDecision: loggedSafety } : {}),
+			durationMs: Math.round(performance.now() - startedAt),
+			timestamp: new Date().toISOString(),
+		});
+		if (decision === "denied" && (noAllowOnce || reason?.startsWith("permission_required:"))) {
+			this.input.onPermissionResolved?.({
+				requestId: callId,
+				tool: recordedTool,
+				actionClass: safetyDecision?.classification.actionClass ?? "unknown",
+				mode: "deny",
+				source: "policy",
+				reason,
+			});
+		}
+		return responseFor(decision, options);
+	}
+
+	snapshot(): {
+		toolCallsRequested: number;
+		toolCallsApproved: number;
+		toolCallsDenied: number;
+		toolCallLog: DelegationToolCallLogEntry[];
+	} {
+		return {
+			toolCallsRequested: this.requested,
+			toolCallsApproved: this.approved,
+			toolCallsDenied: this.denied,
+			toolCallLog: [...this.log],
+		};
+	}
+}

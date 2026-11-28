@@ -373,7 +373,7 @@ function offlineTransport(io: Io, findGh: () => string | null): ReportPlanTransp
 
 async function loadFindGh(deps: ReportCliDeps): Promise<() => string | null> {
 	if (deps.findGh !== undefined) return deps.findGh;
-	const { resolveToolBinary } = await import("../domains/toolchain/index.js");
+	const { resolveToolBinary } = await import("../lib/programs/index.js");
 	return () => resolveToolBinary("gh").binaryPath;
 }
 

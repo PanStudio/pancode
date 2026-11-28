@@ -14,7 +14,7 @@ import {
 	buildWorkerExtensionHooks,
 	evaluateWorkerHookRequest,
 } from "../../src/entry/extension-runtime-hooks.js";
-import type { WorkerHookRequest, WorkerHookRun } from "../../src/worker/protocol.js";
+import type { WorkerHookRequest, WorkerHookRun } from "../../src/lib/worker-wire/protocol.js";
 import { isolatePancodeEnv } from "../harness/scratch-env.js";
 
 /** One installed extension with a before_tool gate on `read`, run through the given executor. */

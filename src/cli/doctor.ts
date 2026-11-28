@@ -26,7 +26,6 @@ import { unixSocketHostState } from "../core/sandbox/unix-sockets.js";
 import { physicalSandboxPath } from "../core/sandbox/worker-process.js";
 import { type LayeredSettings, readLayeredSettings, settingsSourceFor } from "../core/settings-layers.js";
 import { reportInvalidInstallRecordsAsRows } from "../domains/extensions/index.js";
-import { resolveOnPath } from "../domains/interop/detect.js";
 import {
 	type DoctorFinding,
 	formatDoctorReport,
@@ -38,8 +37,9 @@ import {
 	runDoctorModelChecks,
 	runDoctorRuntimeChecks,
 	withDoctorCommand,
-} from "../domains/lifecycle/doctor.js";
-import { describeMissing } from "../domains/lifecycle/setup-status.js";
+} from "../domains/install/doctor.js";
+import { describeMissing } from "../domains/install/setup-status.js";
+import { resolveOnPath } from "../domains/interop/detect.js";
 import type { ProvidersContract } from "../domains/providers/contract.js";
 import { copilotContextTierLabel } from "../domains/providers/types/target-descriptor.js";
 import { withFrontmatterCacheReadOnly } from "../domains/resources/skills/frontmatter-cache.js";

@@ -2,12 +2,12 @@
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import { deepStrictEqual, ok, strictEqual } from "node:assert/strict";
 import { test } from "node:test";
+import { effectiveToolCall } from "../../src/core/tool-surface.js";
 import { toolResultPayload } from "../../src/domains/context/working-set/payload.js";
 import { stripTerminalSequences } from "../../src/engine/tui.js";
 import { renderToolPreview } from "../../src/interactive/renderers/tool-execution.js";
 import { transcriptDetail } from "../../src/interactive/transcript-detail.js";
 import { displayToolCall } from "../../src/tools/gateway-display.js";
-import { effectiveToolCall } from "../../src/tools/surface.js";
 
 /**
  * A chain whose step loaded a skill stamps `capability: "context"` and the
