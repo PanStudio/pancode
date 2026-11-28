@@ -32,6 +32,11 @@ test("the live worker set names each run the engine still holds, with its agent,
 	assert.deepEqual(workers.summary().runs, [{ runId: "r1", agentId: "scout", state: "active", node: null }]);
 	workers.observe({ type: "fleet.completed", payload: { runId: "r1", agentId: "scout", outcome: "succeeded" } });
 	assert.deepEqual(workers.summary().runs, []);
+	// A straggling progress or start frame for the ended run does not list it as live again.
+	workers.observe({ type: "fleet.progress", payload: { runId: "r1", agentId: "scout", progressCount: 3 } });
+	workers.observe({ type: "fleet.started", payload: { runId: "r1", agentId: "scout" } });
+	assert.deepEqual(workers.summary().runs, []);
+	assert.equal(workers.hasWork, false);
 });
 
 test("an active run is listed before a queued one, and a run that never named its agent says so", () => {

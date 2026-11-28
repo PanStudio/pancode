@@ -2,16 +2,37 @@
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import { deepStrictEqual, ok, strictEqual, throws } from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { appendFileSync, existsSync, readFileSync, statSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import {
+	appendFileSync,
+	existsSync,
+	mkdirSync,
+	readdirSync,
+	readFileSync,
+	statSync,
+	symlinkSync,
+	unlinkSync,
+	writeFileSync,
+} from "node:fs";
+import { dirname, join } from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
 import { setTimeout as sleep } from "node:timers/promises";
 import { makeTelemetryRecord } from "../../src/core/telemetry/envelope.js";
+import { telemetryHub } from "../../src/core/telemetry/hub.js";
 import { newAttemptId, newCallId } from "../../src/core/telemetry/ids.js";
 import { pancodeStateDir } from "../../src/core/xdg.js";
-
+import {
+	deferAppend,
+	dropDeferredWrite,
+	flushDeferredWrite,
+	flushDeferredWrites,
+} from "../../src/domains/dispatch/deferred-writes.js";
 import { recoverAbandonedRuns } from "../../src/domains/dispatch/orphan-recovery.js";
-import { openRunTelemetry, settleOrphanedRunJournal } from "../../src/domains/dispatch/run-telemetry.js";
+import { appendRunFeed, flushRunFeed, readRunFeed, runFeedPath } from "../../src/domains/dispatch/run-feed.js";
+import {
+	openRunTelemetry,
+	sealTerminalRunJournal,
+	settleOrphanedRunJournal,
+} from "../../src/domains/dispatch/run-telemetry.js";
 import { openLedger } from "../../src/domains/dispatch/state.js";
 import {
 	appendTurn,
@@ -26,7 +47,11 @@ import {
 } from "../../src/domains/session/protected-artifact-journal.js";
 import { callSettlementFromMessage } from "../../src/domains/telemetry/call-facts.js";
 import { readCallJournal } from "../../src/domains/telemetry/call-journal.js";
-import { telemetryRunsDirectory } from "../../src/domains/telemetry/paths.js";
+import {
+	telemetryBundlePath,
+	telemetryJournalPath,
+	telemetryRunsDirectory,
+} from "../../src/domains/telemetry/paths.js";
 import { createSession, readSessionFileEntries, resumeSession, sessionPaths } from "../../src/engine/session.js";
 import { type IsolatedPancodeEnv, isolatePancodeEnv } from "../harness/scratch-env.js";
 
@@ -259,6 +284,52 @@ describe("session durability boundary", () => {
 		strictEqual((settled[0]?.record.data as { terminalReason?: string }).terminalReason, "stalled");
 	});
 
+	it("gives a terminal run whose run.settled never landed the correcting record its row states, heard once on disk", async () => {
+		const ledger = openLedger({ maxRuns: 10 });
+		const run = ledger.create({
+			agentId: "coder",
+			executionRole: "builder",
+			task: "finalization failed",
+			targetId: "local",
+			wireModelId: "model",
+			runtimeId: "openai",
+			runtimeKind: "http",
+			sessionId: null,
+			cwd: scratch.dir,
+		});
+		ledger.update(run.id, { status: "failed", outcome: "failed", endedAt: new Date().toISOString() });
+		await ledger.persist();
+		const directory = join(telemetryRunsDirectory(pancodeStateDir()), run.id);
+		const journal = await openRunTelemetry(
+			{ sessionId: null, runId: run.id, agent: { role: "worker", id: run.id } },
+			directory,
+		);
+		journal.feed({ kind: "open", runId: run.id, agentId: "coder" }, 1_000_000);
+		await journal.close();
+
+		const recovered = recoverAbandonedRuns(openLedger({ maxRuns: 10 }), { journalUnsealed: () => true });
+		const [unsealed] = recovered.unsealed;
+		strictEqual(unsealed?.runId, run.id);
+		ok(unsealed?.settlement);
+		const heard: Array<{ runId: unknown; outcome: unknown; onDisk: boolean }> = [];
+		const unsubscribe = telemetryHub().subscribe("run.settled", (data, ctx) => {
+			heard.push({
+				runId: ctx?.runId,
+				outcome: data.outcome,
+				onDisk: readFileSync(telemetryJournalPath(directory), "utf8").includes('"run.settled"'),
+			});
+		});
+		try {
+			await sealTerminalRunJournal(directory, unsealed.settlement);
+		} finally {
+			unsubscribe();
+		}
+		deepStrictEqual(heard, [{ runId: run.id, outcome: "failed", onDisk: true }]);
+		const settled = (await readCallJournal(directory)).records.filter(({ record }) => record.k === "run.settled");
+		strictEqual((settled[0]?.record.data as { outcome?: string }).outcome, "failed");
+		ok(existsSync(telemetryBundlePath(directory)), "the corrected journal is sealed");
+	});
+
 	it("closes an abandoned run at its journal's call fold, a call it never settled unknown (FL-24)", async () => {
 		const ledger = openLedger({ maxRuns: 10 });
 		const run = ledger.create({
@@ -335,5 +406,90 @@ describe("session durability boundary", () => {
 		await settleOrphanedRunJournal(directory, unsettled.settlement);
 		const journaled = (await readCallJournal(directory)).records.find(({ record }) => record.k === "run.settled");
 		deepStrictEqual((journaled?.record.data as { callIds?: unknown }).callIds, callIds);
+	});
+
+	it("bounds deferred append handles, finishes mid-flush appends, retires dropped handles, and rejects symlinked directories", async () => {
+		const fdCount = () => (existsSync("/proc/self/fd") ? readdirSync("/proc/self/fd").length : null);
+		await flushDeferredWrites();
+		const baseline = fdCount();
+
+		const burstDir = join(scratch.dir, "burst");
+		const paths = Array.from({ length: 100 }, (_, i) => join(burstDir, `f-${i}.jsonl`));
+		for (const [i, path] of paths.entries()) {
+			deferAppend(path, `row-${i}\n`, { mkdirMode: 0o700 });
+		}
+		// Wait for natural setImmediate draining without flushing handles closed yet.
+		const deadline = Date.now() + 5_000;
+		while (Date.now() < deadline && !paths.every((p) => existsSync(p) && readFileSync(p, "utf8").endsWith("\n"))) {
+			await sleep(10);
+		}
+		for (const [i, path] of paths.entries()) strictEqual(readFileSync(path, "utf8"), `row-${i}\n`);
+		const afterBurst = fdCount();
+		if (baseline !== null && afterBurst !== null) {
+			ok(afterBurst - baseline <= 68, `open FD delta ${afterBurst - baseline} exceeded 64-handle cap`);
+		}
+		await flushDeferredWrites();
+		const afterFlush = fdCount();
+		if (baseline !== null && afterFlush !== null) {
+			ok(afterFlush - baseline <= 4, `open FD delta ${afterFlush - baseline} leaked handles after flush`);
+		}
+
+		// flushDeferredWrite must land lines queued while an earlier batch for the same path is in flight.
+		const midFlush = join(scratch.dir, "mid-flush.jsonl");
+		deferAppend(midFlush, "first\n");
+		const flushing = flushDeferredWrite(midFlush);
+		deferAppend(midFlush, "second\n");
+		await flushing;
+		strictEqual(readFileSync(midFlush, "utf8"), "first\nsecond\n");
+
+		// dropDeferredWrite while a write is in flight must close the handle once the write completes so a recreated path is written.
+		const rotated = join(scratch.dir, "rotated.jsonl");
+		deferAppend(rotated, "v1\n");
+		const waitV1 = Date.now() + 2_000;
+		while (Date.now() < waitV1 && (!existsSync(rotated) || readFileSync(rotated, "utf8") !== "v1\n")) {
+			await sleep(5);
+		}
+		deferAppend(rotated, "v2\n");
+		const inFlightFlush = flushDeferredWrite(rotated);
+		dropDeferredWrite(rotated);
+		await inFlightFlush;
+		unlinkSync(rotated);
+		deferAppend(rotated, "v3\n");
+		await flushDeferredWrite(rotated);
+		strictEqual(readFileSync(rotated, "utf8"), "v3\n");
+
+		// A symlinked directory listed in plainDirectories must be rejected asynchronously without creating the target file.
+		const realDir = join(scratch.dir, "real-dir");
+		const linkDir = join(scratch.dir, "link-dir");
+		mkdirSync(realDir);
+		symlinkSync(realDir, linkDir);
+		let rejected: unknown = null;
+		const blocked = join(linkDir, "blocked.jsonl");
+		deferAppend(blocked, "secret\n", {
+			plainDirectories: [linkDir],
+			onError: (error) => {
+				rejected = error;
+			},
+		});
+		await flushDeferredWrite(blocked);
+		ok(rejected !== null);
+		strictEqual(existsSync(join(realDir, "blocked.jsonl")), false);
+	});
+
+	it("starts a resumed run feed append on a new line when the file ended mid-line", async () => {
+		const runId = "run-torn-tail";
+		const path = runFeedPath(runId);
+		mkdirSync(dirname(path), { recursive: true });
+		const openRow = JSON.stringify({ v: 1, seq: 1, at: "2026-06-11T00:00:00.000Z", kind: "open", runId, agentId: "a" });
+		writeFileSync(path, `${openRow}\n{"v":1,"seq":2,"kind":"eve`, "utf8");
+
+		appendRunFeed(runId, { kind: "event", type: "pancode_tool_start", tool: "read", callId: "c1" });
+		await flushRunFeed(runId);
+
+		const read = readRunFeed(runId);
+		strictEqual(read.lines.length, 2);
+		strictEqual(read.lines[0]?.kind, "open");
+		strictEqual(read.lines[1]?.kind, "event");
+		strictEqual(read.lines[1]?.seq, 2);
 	});
 });

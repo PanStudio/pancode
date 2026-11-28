@@ -26,6 +26,7 @@ import {
 import { cleanupFleetChangeReturn } from "./fleet-change-return.js";
 import type { RunVerdict } from "./grading.js";
 import { resolveRunTerminalReason, runStatusForOutcome } from "./outcome.js";
+import { flushRunFeed } from "./run-feed.js";
 import { verificationWithHostVerdict } from "./run-findings.js";
 import { emitTerminalDispatchEvent, sealTaskWorktreeReceipt } from "./run-finish.js";
 import { idleBuilderOutcome } from "./run-outcome-detail.js";
@@ -372,7 +373,7 @@ export async function sealAttemptReceipt(rt: DispatchRuntime, attempt: Finalizin
 		agentId: req.agentId,
 		exitCode: receipt.exitCode,
 	});
-	await closeRunJournal();
+	await Promise.all([closeRunJournal(), flushRunFeed(envelope.id)]);
 	attempt.terminalEventEmitted = true;
 	emitTerminalDispatchEvent({ context }, finalizing, receipt, settling.finalOutcome);
 	const continues = rt.retry.completeAssignmentAttempt(

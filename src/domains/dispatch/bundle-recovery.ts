@@ -15,7 +15,7 @@ import type { DispatchRuntime } from "./bundle-runtime.js";
 import { reportDispatchDiagnostic } from "./dispatch-diagnostic.js";
 import { recoverAbandonedRuns } from "./orphan-recovery.js";
 import { assignmentStatusForOutcome } from "./outcome.js";
-import { sealSettledRunJournal, settleOrphanedRunJournal } from "./run-telemetry.js";
+import { sealTerminalRunJournal, settleOrphanedRunJournal } from "./run-telemetry.js";
 import type { Ledger } from "./state.js";
 
 export function createStartupRecovery(rt: DispatchRuntime) {
@@ -59,10 +59,11 @@ export function createStartupRecovery(rt: DispatchRuntime) {
 						.catch((error) => reportDispatchDiagnostic(`settle the journal of run ${runId}`, error)),
 				),
 			);
-			// A terminal row persisted before its journal's seal landed gets that seal now (#434).
-			for (const runId of recovery.unsealed)
+			// A terminal row persisted before its journal's seal landed gets that seal now, and one whose run.settled never
+			// landed gets the correcting record the row states before it (#434).
+			for (const { runId, settlement } of recovery.unsealed)
 				void rt.runs
-					.trackDurableWrite(sealSettledRunJournal(telemetryRunDirectory(pancodeStateDir(), runId)))
+					.trackDurableWrite(sealTerminalRunJournal(telemetryRunDirectory(pancodeStateDir(), runId), settlement))
 					.catch((error) => reportDispatchDiagnostic(`seal the journal of run ${runId}`, error));
 			if (recovery.abandoned > 0 || recovery.sealed > 0) {
 				await runLedger.persist();

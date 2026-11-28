@@ -61,7 +61,7 @@ import {
 	executePlan,
 } from "./execution-scheduler.js";
 import { changedCheckFiles, deriveFleetCommitAttribution, isVacuousCheckArgv } from "./fleet-commit-attribution.js";
-import { createFleetEventJournal, fleetStepEntryDigest } from "./fleet-event-journal.js";
+import { createFleetEventJournal, type FleetEventJournal, fleetStepEntryDigest } from "./fleet-event-journal.js";
 import { gateBaselineFailure, gateFailureLines, loopGateNotice } from "./fleet-gate.js";
 import type {
 	ExecuteFleetRunInput,
@@ -206,6 +206,27 @@ async function executeFleetRunIn(input: ExecuteFleetRunInput, place: FleetRunPla
 	}
 }
 
+/**
+ * A fleet's own word on its ledger row. A settle that cannot be written leaves
+ * the row `running`, which startup reconciliation resolves to failed, so a lost
+ * write never becomes a false success. The event journal lands first, so a
+ * settled fleet's journal is on disk through its seal.
+ */
+async function settleFleetAssignment(
+	events: FleetEventJournal,
+	fleetRootId: string,
+	record: FleetRunRecord,
+	cleanRun: boolean,
+): Promise<unknown> {
+	await events.flush();
+	return settleStoredAssignment(
+		fleetRootId,
+		record.steps.at(-1)?.result.terminalRunId ?? fleetRootId,
+		cleanRun ? "succeeded" : "failed",
+		"fleet",
+	).catch(() => undefined);
+}
+
 async function runFleetHoldingWorkspace(
 	input: ExecuteFleetRunInput,
 	place: FleetRunPlace,
@@ -314,18 +335,6 @@ async function runFleetHoldingWorkspace(
 	/** File one step's terminal run id, whichever kind produced it. */
 	const fileStepAttempt = (terminalRunId: string): Promise<unknown> =>
 		recordAssignmentAttempt(fleetRootId, terminalRunId);
-	/**
-	 * The run's own word on its ledger row. A settle that cannot be written
-	 * leaves the row `running`, which startup reconciliation resolves to failed,
-	 * so a lost write never becomes a false success.
-	 */
-	const settleFleetAssignment = (cleanRun: boolean): Promise<unknown> =>
-		settleStoredAssignment(
-			fleetRootId,
-			fleetRunRecord.steps.at(-1)?.result.terminalRunId ?? fleetRootId,
-			cleanRun ? "succeeded" : "failed",
-			"fleet",
-		).catch(() => undefined);
 	const boundaryEnforcer = createWriteBoundaryEnforcer({
 		root: workspaceRoot,
 		rootId: fleetRootId,
@@ -1218,7 +1227,7 @@ async function runFleetHoldingWorkspace(
 		}
 		// A run the scheduler could not carry to the end never reached a verdict,
 		// and a fleet that threw is not a fleet that worked.
-		await settleFleetAssignment(false);
+		await settleFleetAssignment(events, fleetRootId, fleetRunRecord, false);
 		throw error;
 	}
 	// A loop is judged by whether it converged, not attempt by attempt: a red
@@ -1244,7 +1253,7 @@ async function runFleetHoldingWorkspace(
 		// could not be written skips the settle, and reconciliation fails the row.
 		sealEvents(cleanRun && recordWritten ? "succeeded" : input.signal?.aborted === true ? "aborted" : "failed");
 	}
-	await settleFleetAssignment(cleanRun);
+	await settleFleetAssignment(events, fleetRootId, fleetRunRecord, cleanRun);
 	return {
 		rootId: fleetRootId,
 		planHash: input.plan.hash,

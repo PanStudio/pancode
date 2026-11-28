@@ -131,8 +131,10 @@ import {
 	ACP_MAX_EVIDENCE_TAG_BYTES,
 	ACP_MAX_EVIDENCE_TAGS,
 	ACP_MAX_SCOPE_NOTICE_BYTES,
+	type DispatchRunTrack,
 	dispatchIdentity,
 	jobEventPayload,
+	lifecycleFrame,
 	readResult,
 	replayDispatchTerminals,
 	runResultMeta,
@@ -405,7 +407,7 @@ export async function servePancodeAcpAgent(options: PancodeAcpServerOptions): Pr
 	 * run rather than refusing the newest, so a leaked run cannot starve the
 	 * board of the run an operator is actually watching.
 	 */
-	const dispatchProgress = new Map<string, { count: number; capped: boolean }>();
+	const dispatchProgress = new Map<string, DispatchRunTrack>();
 	let activeSessionId: string | null = null;
 	/**
 	 * The one session this process hosts, from the moment it is bound until it is
@@ -677,8 +679,7 @@ export async function servePancodeAcpAgent(options: PancodeAcpServerOptions): Pr
 		unsubscribeEvents.push(
 			bus.subscribe("run.enqueued", (payload: DispatchEnqueuedPayload) => {
 				const identity = dispatchIdentity(payload);
-				if (identity === null) return;
-				trackDispatchRun(dispatchProgress, identity.runId);
+				if (identity === null || !trackDispatchRun(dispatchProgress, lifecycleFrame("enqueued", identity.runId))) return;
 				forwardEvent("run.enqueued", null, false, {
 					...identity,
 					origin: safeStoredIdentifier(payload.requestOrigin, 64),
@@ -689,8 +690,7 @@ export async function servePancodeAcpAgent(options: PancodeAcpServerOptions): Pr
 		unsubscribeEvents.push(
 			bus.subscribe("run.started", (payload: DispatchStartedPayload) => {
 				const identity = dispatchIdentity(payload);
-				if (identity === null) return;
-				trackDispatchRun(dispatchProgress, identity.runId);
+				if (identity === null || !trackDispatchRun(dispatchProgress, lifecycleFrame("started", identity.runId))) return;
 				// A run started by a tool call this turn already put on the wire is
 				// the one place the harness knows which agent produced a tool
 				// segment. Record it and re-announce the call so a client can label
@@ -707,8 +707,8 @@ export async function servePancodeAcpAgent(options: PancodeAcpServerOptions): Pr
 			bus.subscribe("run.progressed", (payload: DispatchProgressPayload) => {
 				const identity = dispatchIdentity(payload);
 				if (identity === null) return;
-				const state = trackDispatchRun(dispatchProgress, identity.runId);
-				if (state.capped) return;
+				const state = trackDispatchRun(dispatchProgress, lifecycleFrame("progressed", identity.runId));
+				if (state === null || state.capped) return;
 				state.count += 1;
 				const capped = state.count > ACP_MAX_DISPATCH_PROGRESS_EVENTS;
 				if (capped) state.capped = true;
@@ -727,7 +727,7 @@ export async function servePancodeAcpAgent(options: PancodeAcpServerOptions): Pr
 			bus.subscribe("run.completed", (payload: DispatchCompletedPayload) => {
 				const identity = dispatchIdentity(payload);
 				if (identity === null) return;
-				dispatchProgress.delete(identity.runId);
+				trackDispatchRun(dispatchProgress, lifecycleFrame("ended", identity.runId, payload.outcome));
 				forwardEvent(
 					"run.completed",
 					null,
@@ -749,7 +749,7 @@ export async function servePancodeAcpAgent(options: PancodeAcpServerOptions): Pr
 			bus.subscribe("run.failed", (payload: DispatchFailedPayload) => {
 				const identity = dispatchIdentity(payload);
 				if (identity === null) return;
-				dispatchProgress.delete(identity.runId);
+				trackDispatchRun(dispatchProgress, lifecycleFrame("ended", identity.runId, payload.outcome));
 				forwardEvent(
 					"run.failed",
 					null,

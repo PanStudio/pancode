@@ -8,6 +8,13 @@
 import type { JobRecord } from "../../core/job-types.js";
 import type { Fact } from "../../core/telemetry/fact.js";
 import { renderFact } from "../../core/telemetry/render.js";
+import {
+	type RunLifecycle,
+	type RunLifecycleEvent,
+	type RunLifecycleKind,
+	reduceRunLifecycle,
+	runLifecycleLive,
+} from "../../core/views/run-lifecycle.js";
 import type { RunResultFacts } from "../../domains/dispatch/index.js";
 import { readRunResultFacts, readRunResultFactsForReplay, runResultWireFacts } from "../../domains/dispatch/index.js";
 import { safeStoredIdentifier, safeStoredString } from "./server-bounds.js";
@@ -138,21 +145,48 @@ export const dispatchIdentity = (payload: {
 	};
 };
 
-/** Forgets a run's progress counter and keeps the live map inside its cap. */
+/** A run the wire has announced: its progress counter and its lifecycle. */
+export interface DispatchRunTrack {
+	count: number;
+	capped: boolean;
+	lifecycle: RunLifecycle;
+}
+
+/**
+ * Folds a run's lifecycle frame into the tracked runs, keeping the map inside its cap. Null for a start or progress
+ * frame of a run that already ended: the wire never revives a finished run. A terminal frame is always tracked, so a
+ * straggler after it is recognized.
+ */
 export const trackDispatchRun = (
-	dispatchProgress: Map<string, { count: number; capped: boolean }>,
-	runId: string,
-): { count: number; capped: boolean } => {
-	const existing = dispatchProgress.get(runId);
-	if (existing !== undefined) return existing;
+	dispatchProgress: Map<string, DispatchRunTrack>,
+	event: RunLifecycleEvent,
+): DispatchRunTrack | null => {
+	const existing = dispatchProgress.get(event.runId);
+	if (existing !== undefined) {
+		const terminal = event.kind === "ended" || event.kind === "settled";
+		if (!terminal && !runLifecycleLive(existing.lifecycle)) return null;
+		existing.lifecycle = reduceRunLifecycle(existing.lifecycle, event);
+		return existing;
+	}
 	if (dispatchProgress.size >= ACP_MAX_TRACKED_DISPATCH_RUNS) {
 		const oldest = dispatchProgress.keys().next();
 		if (!oldest.done) dispatchProgress.delete(oldest.value);
 	}
-	const created = { count: 0, capped: false };
-	dispatchProgress.set(runId, created);
+	const created = { count: 0, capped: false, lifecycle: reduceRunLifecycle(undefined, event) };
+	dispatchProgress.set(event.runId, created);
 	return created;
 };
+
+/** A lifecycle frame for a run the wire names by its bounded id. */
+export const lifecycleFrame = (
+	kind: RunLifecycleKind,
+	runId: string,
+	outcome: string | null = null,
+): RunLifecycleEvent => ({
+	kind,
+	runId,
+	outcome,
+});
 
 export const safeCount = (value: unknown): number | null =>
 	typeof value === "number" && Number.isSafeInteger(value) && value >= 0 ? value : null;

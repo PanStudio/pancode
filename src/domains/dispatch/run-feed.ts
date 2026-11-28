@@ -18,20 +18,13 @@
  * Bounding follows the telemetry journal: past {@link RUN_FEED_CAP_BYTES} display `event` rows are dropped behind one
  * `journal_truncated` row, while `open`, `result` and `terminal` always land. The `terminal` row closes the feed.
  * Nothing here throws into a dispatch.
+ *
+ * Rows are numbered, redacted and counted against the cap as they are appended, then land off the emitter in batches
+ * (deferred-writes.ts). A run's end awaits {@link flushRunFeed} before its terminal event, so every reader of an ended
+ * run reads its whole feed.
  */
 
-import {
-	closeSync,
-	constants,
-	lstatSync,
-	mkdirSync,
-	openSync,
-	readdirSync,
-	readSync,
-	rmSync,
-	statSync,
-	writeSync,
-} from "node:fs";
+import { closeSync, constants, openSync, readdirSync, readSync, rmSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { unlinkedStateDirectory } from "../../core/state-boundary.js";
 import { isRecord } from "../../core/type-guards.js";
@@ -53,6 +46,7 @@ import {
 	SCHEME_CHAR_RE,
 } from "../../lib/secrets/redaction.js";
 import type { ToolCallFacts } from "../../tools/agent-tools.js";
+import { deferAppend, deferredWritePending, dropDeferredWrite, flushDeferredWrite } from "./deferred-writes.js";
 import type { RunEventJournalBody } from "./run-event-journal.js";
 
 export const RUN_FEED_VERSION = 1;
@@ -123,6 +117,7 @@ export function removeRunFeeds(stateDir: string, runIds: Iterable<string>): void
 		if (!isSafeRunId(runId)) continue;
 		try {
 			const path = runFeedPath(runId, stateDir);
+			dropDeferredWrite(path);
 			if (unlinkedStateDirectory(stateDir, dirname(path))) rmSync(path, { force: true });
 		} catch {
 			// A feed we could not remove is retained display state, not an error.
@@ -150,6 +145,8 @@ interface WriterState {
 	carryGuardedThrough: number;
 	/** The seq of the truncation marker this writer wrote, so the run's journal can mirror it (C-29). */
 	truncatedSeq?: number;
+	/** The file ended mid-line before this writer resumed it; prepend a newline before the next row. */
+	needsLeadingNewline?: boolean;
 }
 
 /**
@@ -160,20 +157,8 @@ export type RunFeedPosition = { seq?: number; truncatedSeq?: number };
 
 const writers = new Map<string, WriterState>();
 
-/** A run's directory, refusing a symlink or a non-directory where the run state belongs. */
-function ensureRunDirectory(stateDir: string, runId: string): string {
-	const directory = runStateDirectory(stateDir, runId);
-	mkdirSync(directory, { recursive: true, mode: 0o700 });
-	for (const path of [join(stateDir, "runs"), directory]) {
-		const stat = lstatSync(path);
-		if (!stat.isDirectory() || stat.isSymbolicLink()) throw new Error("run state directory is not a regular directory");
-	}
-	return directory;
-}
-
-/** Resume a feed this process did not start, such as a recovered run, from its last lines. */
-function loadWriterState(path: string): WriterState {
-	const state: WriterState = {
+function emptyWriterState(): WriterState {
+	return {
 		seq: 0,
 		bytes: 0,
 		dropping: false,
@@ -184,9 +169,15 @@ function loadWriterState(path: string): WriterState {
 		boundSecretName: false,
 		carryGuardedThrough: 0,
 	};
+}
+
+/** Resume a feed this process did not start, such as a recovered run, from its last lines. */
+function loadWriterState(path: string): WriterState {
+	const state = emptyWriterState();
 	const tail = readTail(path, 64 * 1024);
 	if (tail === null) return state;
 	state.bytes = tail.size;
+	if (tail.size > 0 && !tail.text.endsWith("\n")) state.needsLeadingNewline = true;
 	for (const raw of tail.text.split("\n")) {
 		const line = readRunFeedLine(raw);
 		if (line === null) continue;
@@ -197,47 +188,60 @@ function loadWriterState(path: string): WriterState {
 	return state;
 }
 
-function writerFor(path: string): WriterState {
+function writerFor(path: string, fresh: boolean): WriterState {
 	let state = writers.get(path);
 	if (state !== undefined) return state;
-	state = loadWriterState(path);
+	state = fresh ? emptyWriterState() : loadWriterState(path);
 	writers.set(path, state);
 	for (const [key, held] of writers) {
 		if (writers.size <= WRITER_LIMIT) break;
 		// A later row reloads seq from the file, but held prose and a guard do not survive that, so a writer holding either
 		// stays past the limit until its run ends: writing it early would split it from the text still to come (#446).
-		if (key !== path && held.carry.length === 0 && held.headGuard === null) writers.delete(key);
+		// One with rows still to land would reload a seq the file does not have yet.
+		if (key !== path && held.carry.length === 0 && held.headGuard === null && !deferredWritePending(key))
+			writers.delete(key);
 	}
 	return state;
 }
 
-function writeRow(path: string, state: WriterState, body: RunEventJournalBody, at: string): void {
+function writeRow(
+	path: string,
+	state: WriterState,
+	body: RunEventJournalBody,
+	at: string,
+	plainDirectories: readonly string[],
+): void {
 	const row = redactSecretsDeep({ v: RUN_FEED_VERSION, seq: state.seq + 1, at, ...body }, createRedactionTally());
-	const line = `${JSON.stringify(row)}\n`;
-	const handle = openSync(
-		path,
-		constants.O_WRONLY | constants.O_APPEND | constants.O_CREAT | constants.O_NOFOLLOW,
-		0o600,
-	);
-	try {
-		writeSync(handle, line);
-	} finally {
-		closeSync(handle);
-	}
+	const prefix = state.needsLeadingNewline ? "\n" : "";
+	state.needsLeadingNewline = false;
+	const line = `${prefix}${JSON.stringify(row)}\n`;
+	deferAppend(path, line, { mkdirMode: 0o700, plainDirectories });
 	state.seq += 1;
 	state.bytes += Buffer.byteLength(line);
 }
 
-function writeBounded(path: string, state: WriterState, body: RunEventJournalBody, at: string): boolean {
+function writeBounded(
+	path: string,
+	state: WriterState,
+	body: RunEventJournalBody,
+	at: string,
+	plainDirectories: readonly string[],
+): boolean {
 	if (body.kind === "event" && (state.dropping || state.bytes >= RUN_FEED_CAP_BYTES)) {
 		if (!state.dropping) {
 			state.dropping = true;
-			writeRow(path, state, { kind: "journal_truncated", reason: "per-run size cap", droppedFromSeq: state.seq + 1 }, at);
+			writeRow(
+				path,
+				state,
+				{ kind: "journal_truncated", reason: "per-run size cap", droppedFromSeq: state.seq + 1 },
+				at,
+				plainDirectories,
+			);
 			state.truncatedSeq = state.seq;
 		}
 		return false;
 	}
-	writeRow(path, state, body, at);
+	writeRow(path, state, body, at, plainDirectories);
 	if (body.kind === "terminal") state.closed = true;
 	return true;
 }
@@ -344,7 +348,8 @@ export function appendRunFeed(
 	try {
 		const stateDir = pancodeStateDir();
 		const path = runFeedPath(runId, stateDir);
-		const state = writerFor(path);
+		const plainDirectories = [join(stateDir, "runs"), runStateDirectory(stateDir, runId)];
+		const state = writerFor(path, body.kind === "open");
 		if (state.closed) return undefined;
 		// A marker written by any row of this append, held prose included, is what the journal mirrors (C-29).
 		const wasDropping = state.dropping;
@@ -352,14 +357,13 @@ export function appendRunFeed(
 			!wasDropping && state.dropping && state.truncatedSeq !== undefined
 				? { truncatedSeq: state.truncatedSeq }
 				: undefined;
-		if (state.seq === 0 && state.bytes === 0) ensureRunDirectory(stateDir, runId);
 		if (body.kind === "event" && body.type === "text" && body.detail !== undefined) {
 			let detail = body.detail;
 			if (state.boundSecretName && detail.length > 0) {
 				state.boundSecretName = false;
 				if (/^\s/u.test(detail)) {
 					// A value set apart from its name can be too short for a row's own rule, and a bound already split this run.
-					writeBounded(path, state, { kind: "event", type: "text", detail: state.carry }, state.carryAt);
+					writeBounded(path, state, { kind: "event", type: "text", detail: state.carry }, state.carryAt, plainDirectories);
 					state.headGuard = headGuardAfter(state.carry);
 					state.carry = "";
 					state.carryGuardedThrough = 0;
@@ -371,7 +375,7 @@ export function appendRunFeed(
 			}
 			const { head, tail, guardedThrough } = holdBack(state.carry + detail, state.carryGuardedThrough);
 			if (state.carry.length === 0) state.carryAt = at;
-			if (head.length > 0) writeBounded(path, state, { ...body, detail: head }, state.carryAt);
+			if (head.length > 0) writeBounded(path, state, { ...body, detail: head }, state.carryAt, plainDirectories);
 			state.carry = tail;
 			state.carryGuardedThrough = guardedThrough;
 			state.carryAt = head.length > 0 ? at : state.carryAt;
@@ -382,7 +386,7 @@ export function appendRunFeed(
 				const shown = holdUnresolvedUserinfo(bounded);
 				const open = shown !== bounded || endsInOpenCredential(bounded);
 				if (open) state.headGuard = cutHeadGuard();
-				writeBounded(path, state, { kind: "event", type: "text", detail: shown }, state.carryAt);
+				writeBounded(path, state, { kind: "event", type: "text", detail: shown }, state.carryAt, plainDirectories);
 				state.carry = open ? "" : state.carry.slice(split);
 				state.carryGuardedThrough = 0;
 				state.carryAt = at;
@@ -393,14 +397,15 @@ export function appendRunFeed(
 		const carry = carryAfter(body);
 		if (carry !== "keep") {
 			const detail = carry === "hold" ? holdCutOffText(state.carry) : state.carry;
-			if (detail.length > 0) writeBounded(path, state, { kind: "event", type: "text", detail }, state.carryAt);
+			if (detail.length > 0)
+				writeBounded(path, state, { kind: "event", type: "text", detail }, state.carryAt, plainDirectories);
 			state.carry = "";
 			state.carryGuardedThrough = 0;
 			// The next text starts a new block, so nothing of it continues what the guard covers.
 			state.headGuard = null;
 			state.boundSecretName = false;
 		}
-		const wrote = writeBounded(path, state, body, at);
+		const wrote = writeBounded(path, state, body, at, plainDirectories);
 		const marker = truncation();
 		if (!wrote) return marker;
 		return { seq: state.seq, ...marker };
@@ -408,6 +413,11 @@ export function appendRunFeed(
 		// Display state is best-effort; the run's telemetry journal still holds its structural feed.
 		return undefined;
 	}
+}
+
+/** Land every row appended to a run's feed so far. */
+export function flushRunFeed(runId: string, stateDir: string = pancodeStateDir()): Promise<void> {
+	return isSafeRunId(runId) ? flushDeferredWrite(runFeedPath(runId, stateDir)) : Promise.resolve();
 }
 
 // ---------------------------------------------------------------------------

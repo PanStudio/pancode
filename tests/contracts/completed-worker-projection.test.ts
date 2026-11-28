@@ -12,6 +12,7 @@ import { unobservedRunUsageFacts } from "../../src/core/telemetry/pricing.js";
 import { pancodeStateDir } from "../../src/core/xdg.js";
 import { takeRunCancelRequest } from "../../src/domains/dispatch/cancel-requests.js";
 import { createCrossProcessFleet } from "../../src/domains/dispatch/cross-process-fleet.js";
+import { drainDeferredWritesSync } from "../../src/domains/dispatch/deferred-writes.js";
 import { writeRunOwnerRecord } from "../../src/domains/dispatch/run-directory-records.js";
 import { appendRunFeed } from "../../src/domains/dispatch/run-feed.js";
 import { finishRunResult } from "../../src/domains/dispatch/run-settlement.js";
@@ -26,7 +27,7 @@ import { fixtureEnvelope, fixtureReceiptDraft } from "../harness/receipt.js";
 import { isolatePancodeEnv } from "../harness/scratch-env.js";
 import { settledRunTrust } from "../harness/settled-run.js";
 
-test("only integrity-admitted receipt contract facts reach the board and lifecycle reset clears them", () => {
+test("only integrity-admitted receipt contract facts reach the board and a late start keeps them", () => {
 	const envelope = fixtureEnvelope("aa-run");
 	const receipt = finishRunResult(fixtureReceiptDraft(envelope), envelope, {
 		terminal: { terminalReason: "completed" },
@@ -71,10 +72,10 @@ test("only integrity-admitted receipt contract facts reach the board and lifecyc
 		store.reconcile();
 		assert.deepEqual(store.rows()[0]?.resultContract, { kind: "debugger-report", conformance: "pass" });
 		assert.deepEqual(store.rows()[0]?.commitPlacement, { branch: "pancode/task-aa" });
-		const prior = projection.snapshot();
+		// A late start frame for the ended run neither revives it nor clears what its end reported.
 		bus.emit("run.started", { ...event, pid: null, assignmentId: "aa-run", attempt: 1 });
-		assert.equal(projection.snapshot().runs[0]?.resultContract, undefined);
-		assert.deepEqual(prior.runs[0]?.resultContract, { kind: "debugger-report", conformance: "pass" });
+		assert.equal(projection.snapshot().runs[0]?.status, "completed");
+		assert.deepEqual(projection.snapshot().runs[0]?.resultContract, { kind: "debugger-report", conformance: "pass" });
 		facts = { text: "tampered answer", trust: rejected, contract: "pass", contractKind: "debugger-report" };
 		bus.emit("run.completed", event);
 		assert.equal(projection.snapshot().runs[0]?.resultContract, undefined);
@@ -148,6 +149,7 @@ test("a live run another PanCode process owns becomes a board row fed from its r
 			verb: "reading",
 			detail: "src/a.ts",
 		});
+		drainDeferredWritesSync();
 		viewer.poll();
 		store.reconcile();
 		const row = store.liveRows().find((candidate) => candidate.runId === "run-f");
@@ -164,6 +166,7 @@ test("a live run another PanCode process owns becomes a board row fed from its r
 		// A feed line over the fold bound is skipped, not waited on: the row after it still lands.
 		appendRunFeed("run-f", { kind: "event", type: "pancode_run_outcome", detail: "x".repeat(300 * 1024) });
 		appendRunFeed("run-f", { kind: "event", type: "pancode_tool_start", tool: "grep", callId: "c2" });
+		drainDeferredWritesSync();
 		viewer.poll();
 		viewer.poll();
 		assert.equal(projection.snapshot().runs[0]?.progress?.currentAction?.tool, "grep");
@@ -175,5 +178,91 @@ test("a live run another PanCode process owns becomes a board row fed from its r
 		store.unsubscribe();
 		projection.stop();
 		env.restore();
+	}
+});
+
+test("ended and settled runs ignore late progress and keep settled outcome detail on contradicting failure", () => {
+	const bus = createTelemetryHub();
+	const projection = createTelemetryProjection(bus, {});
+	const identity = {
+		runId: "settled-run",
+		agentId: "coder",
+		targetId: "t",
+		wireModelId: "m",
+		runtimeId: "r",
+		runtimeKind: "http" as const,
+		requestOrigin: "user" as const,
+		lineage: { rootRunId: "settled-run", parentRunId: null, attempt: 0, depth: 0 },
+	};
+	try {
+		bus.emit("run.started", { ...identity, pid: null, assignmentId: "settled-run", attempt: 0 });
+		bus.emit("run.progressed", {
+			...identity,
+			event: { type: "pancode_tool_start", payload: { tool: "read", toolCallId: "live-c1" } },
+		});
+		bus.emit(
+			"run.settled",
+			{
+				outcome: "succeeded",
+				terminalReason: "completed",
+				endedAt: "2026-06-11T00:00:01.000Z",
+				callIds: [],
+				facts: {
+					usage: unobservedRunUsageFacts().usage,
+					totalTokens: unobservedRunUsageFacts().totalTokens,
+					apiCalls: 0,
+					pricing: unobservedRunUsageFacts().pricing,
+					endedAt: "2026-06-11T00:00:01.000Z",
+					callIds: [],
+				},
+			} as never,
+			{ sessionId: null, runId: "settled-run", agent: { role: "worker", id: "settled-run" } },
+		);
+		// Late progress frames after settlement must not mutate progress fold or status.
+		bus.emit("run.progressed", {
+			...identity,
+			event: { type: "pancode_tool_start", payload: { tool: "bash", toolCallId: "late-c1" } },
+		});
+		bus.emit("run.progressed", {
+			...identity,
+			event: { type: "heartbeat_status", status: "stalled" },
+		});
+		// A contradicting live failure after run.settled must keep both the settled status and avoid stale outcomeDetail.
+		bus.emit("run.failed", {
+			...identity,
+			spend: unobservedRunUsageFacts(),
+			durationMs: 999,
+			exitCode: 1,
+			reason: "failed",
+			outcome: "failed",
+			outcomeCode: null,
+			outcomeDetail: "stale error detail",
+		});
+		const settled = projection.snapshot().runs.find((r) => r.runId === "settled-run");
+		assert.equal(settled?.status, "completed");
+		assert.equal(settled?.outcomeDetail ?? null, null);
+		assert.equal(settled?.progress?.currentAction?.tool, "read");
+
+		// A matching live completion after run.settled still fills in its outcomeDetail, while late progress after it is ignored.
+		bus.emit("run.completed", {
+			...identity,
+			spend: unobservedRunUsageFacts(),
+			durationMs: 120,
+			exitCode: 0,
+			toolActivity: null,
+			outcome: "succeeded",
+			outcomeCode: null,
+			outcomeDetail: "verified answer",
+		});
+		bus.emit("run.progressed", {
+			...identity,
+			event: { type: "pancode_tool_start", payload: { tool: "grep", toolCallId: "late-c2" } },
+		});
+		const matched = projection.snapshot().runs.find((r) => r.runId === "settled-run");
+		assert.equal(matched?.status, "completed");
+		assert.equal(matched?.outcomeDetail, "verified answer");
+		assert.equal(matched?.progress?.currentAction ?? null, null);
+	} finally {
+		projection.stop();
 	}
 });

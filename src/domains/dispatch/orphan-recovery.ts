@@ -13,12 +13,12 @@ import { spendSumsOf, unobservedRunUsageFacts } from "../../core/telemetry/prici
 import { pancodeStateDir } from "../../core/xdg.js";
 import type { SettledRunRecord } from "../telemetry/index.js";
 import { readRunJournalRecords, readSettledRun } from "../telemetry/index.js";
-import { runStatusForOutcome } from "./outcome.js";
+import { mainAgentTerminalReason, runStatusForOutcome } from "./outcome.js";
 import { runUsageFromJournal } from "./run-call-usage.js";
 import type { RunSettlement } from "./run-settlement.js";
 import { settleUnfinishedRun } from "./run-settlement.js";
 import type { Ledger } from "./state.js";
-import type { RunEnvelope } from "./types.js";
+import type { RunEnvelope, RunOutcome, RunStatus } from "./types.js";
 
 export interface RunRecoverySummary {
 	/** Non-terminal rows whose worker process no longer exists and whose run never settled, closed as stalled. */
@@ -29,9 +29,11 @@ export interface RunRecoverySummary {
 	unsettled: Array<{ runId: string; settlement: RunSettlement }>;
 	/**
 	 * Terminal rows of this host whose run journal is not sealed: the host persisted the terminal row and died before
-	 * the journal's seal landed. The caller seals the ones whose journal holds run.settled (#434).
+	 * the journal's seal landed, or its run.settled never landed at all. A journal that holds run.settled keeps it and
+	 * the row follows it; one that does not gets the correcting run.settled the row states. The caller journals and
+	 * seals them (#434).
 	 */
-	unsealed: string[];
+	unsealed: Array<{ runId: string; settlement: RunSettlement | null }>;
 }
 
 export interface RunRecoveryOptions {
@@ -185,17 +187,56 @@ export function recoverAbandonedRuns(ledger: Ledger, options: RunRecoveryOptions
 		});
 	}
 	const settling = new Set(unsettled.map(({ runId }) => runId));
-	const unsealed = options.journalUnsealed
-		? ledger
-				.list()
-				.filter(
-					(row) =>
-						!isOpenRunRow(row) &&
-						!settling.has(row.id) &&
-						(row.identity === undefined || row.identity.host === localHost) &&
-						options.journalUnsealed?.(row.id) === true,
-				)
-				.map((row) => row.id)
-		: [];
+	const unsealed: RunRecoverySummary["unsealed"] = [];
+	const journalUnsealed = options.journalUnsealed;
+	if (journalUnsealed === undefined) return { abandoned, sealed, unsettled, unsealed };
+	const terminalUnsealed = (row: RunEnvelope): boolean =>
+		!isOpenRunRow(row) &&
+		!settling.has(row.id) &&
+		(row.identity === undefined || row.identity.host === localHost) &&
+		journalUnsealed(row.id);
+	for (const row of ledger.list({ where: terminalUnsealed })) {
+		const run = readSettledRun(stateDir, row.id);
+		if (run !== null) {
+			// The landed record stands: a row a failed finalization patched on its own follows it.
+			if (row.outcome !== run.settled.outcome) {
+				ledger.update(row.id, settledRowPatch(run.settled));
+				sealed += 1;
+			}
+			unsealed.push({ runId: row.id, settlement: null });
+			continue;
+		}
+		unsealed.push({ runId: row.id, settlement: terminalRowSettlement(row, stateDir) });
+	}
 	return { abandoned, sealed, unsettled, unsealed };
+}
+
+const ROW_OUTCOMES: Partial<Record<RunStatus, RunOutcome>> = {
+	completed: "succeeded",
+	interrupted: "canceled",
+	dead: "stalled",
+};
+
+/**
+ * The run.settled a terminal row states for a run whose own record never landed, as when a finalization failure could
+ * not write its settlement: the late correcting record, so the journal ends the way the row and every live consumer
+ * said the run ended.
+ */
+function terminalRowSettlement(row: RunEnvelope, stateDir: string): RunSettlement {
+	let records: readonly TelemetryRecord[] = [];
+	try {
+		records = readRunJournalRecords(stateDir, row.id);
+	} catch {
+		// An unreadable journal leaves the settlement the row's own spend.
+	}
+	const usage = runUsageFromJournal(records);
+	const outcome = row.outcome ?? ROW_OUTCOMES[row.status] ?? "failed";
+	return settleUnfinishedRun(row, {
+		terminal: mainAgentTerminalReason(outcome),
+		outcome,
+		detail: row.outcomeDetail ?? "settled from the run's terminal row: its run.settled never landed",
+		endedAt: row.endedAt ?? row.heartbeatAt ?? row.startedAt,
+		processExitCode: row.exitCode ?? null,
+		...(usage !== undefined ? { usage } : {}),
+	});
 }
