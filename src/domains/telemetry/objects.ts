@@ -12,6 +12,7 @@ import { sha256Hex } from "../../core/hash.js";
 import { safeResourceWriteAsync } from "../../core/safe-resource-write.js";
 import { literalUnion } from "../../core/telemetry/enums.js";
 import { EvidenceFindingsObjectSchema } from "../../core/telemetry/evidence-schemas.js";
+import { telemetryObjectsDirectory } from "../../core/telemetry/paths.js";
 import { RunResultObjectSchema } from "../../core/telemetry/run-schemas.js";
 import type { ObjectRef } from "../../core/telemetry/schemas.js";
 import { ObjectRefSchema } from "../../core/telemetry/schemas.js";
@@ -21,7 +22,6 @@ import type { RedactionTally } from "../../lib/secrets/redact.js";
 import { createRedactionTally, secretRedactingReplacer } from "../../lib/secrets/redact.js";
 import { redactSecretString } from "../../lib/secrets/redaction.js";
 import type { SessionPromptCompileRecord } from "../session/prompt-manifest.js";
-import { telemetryObjectsDirectory } from "./paths.js";
 
 const maximumBytes = 16 * 1024 * 1024;
 type StoredSubject =

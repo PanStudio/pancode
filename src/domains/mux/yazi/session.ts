@@ -92,7 +92,6 @@ export interface YaziSessionOptions {
 	pollMs?: number;
 	resolveBinaries?: () => YaziResolvedBinaries;
 	ensureProfile?: typeof ensureYaziProfile;
-	runYa?: (file: string, args: ReadonlyArray<string>, env: Readonly<NodeJS.ProcessEnv>) => Promise<boolean>;
 }
 
 export function resolveYaziBinaries(): YaziResolvedBinaries {
@@ -359,7 +358,7 @@ export async function createYaziSession(options: YaziSessionOptions): Promise<Ya
 		}),
 		async pushCwd(cwd: string): Promise<boolean> {
 			if (!instanceId || !binaries.yaPath) return false;
-			const pushed = await (options.runYa ?? runYa)(binaries.yaPath, ["emit-to", instanceId, "cd", cwd], {
+			const pushed = await runYa(binaries.yaPath, ["emit-to", instanceId, "cd", cwd], {
 				...process.env,
 				...env,
 			});

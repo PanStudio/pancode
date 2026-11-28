@@ -8,7 +8,7 @@ import {
 	COMPACTION_TURN_PREFIX_PROMPT_TEMPLATE,
 	COMPACTION_USER_PROMPT_TEMPLATE,
 	compact,
-} from "../../src/domains/session/compaction/compact.js";
+} from "../../src/domains/memory/compaction/compact.js";
 import type { DecisionRecord, SessionEntry } from "../../src/domains/session/entries.js";
 import { toTaskLedgerEntryFields } from "../../src/domains/session/task-board.js";
 import { registerEngineFauxProvider } from "../../src/engine/api-registry.js";

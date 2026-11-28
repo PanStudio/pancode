@@ -10,6 +10,7 @@ import { fileURLToPath } from "node:url";
 import { DEFAULT_SETTINGS } from "../../src/core/defaults.js";
 import { readPancodeVersion } from "../../src/core/package-root.js";
 import { withTelemetryContext } from "../../src/core/telemetry/context.js";
+import { telemetryRunDirectory } from "../../src/core/telemetry/paths.js";
 import { capacityDrain, setCapacityDraining } from "../../src/domains/dispatch/capacity-lease.js";
 import { compileExecutionPlan, executionPlanIdentityHash } from "../../src/domains/dispatch/execution-plan.js";
 import type { ExecutionStepResult } from "../../src/domains/dispatch/execution-scheduler.js";
@@ -37,7 +38,6 @@ import type { FleetRunRecord } from "../../src/domains/dispatch/state.js";
 import { resolveSshTargetLifecycle, type WorkerTransport } from "../../src/domains/dispatch/transport.js";
 import { createFleetRegistry } from "../../src/domains/scheduling/cluster.js";
 import { openCallJournal, readCallJournal } from "../../src/domains/telemetry/call-journal.js";
-import { telemetryRunDirectory } from "../../src/domains/telemetry/paths.js";
 import { formatBudgetLine } from "../../src/interactive/overlays/fleet-run-approval.js";
 import {
 	claimCompeteGroup,

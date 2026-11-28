@@ -136,8 +136,6 @@ function isTransparentAssistantWrapper(event: ChatLoopEvent): boolean {
 export interface CreateCoalescingChatRendererDeps {
 	chatPanel: ChatPanel;
 	requestRender: () => void;
-	/** Coalesce window in ms. Defaults to 16 (one frame at 60fps). */
-	coalesceMs?: number;
 	/** Override for tests. Mirrors the setTimeout signature. */
 	setTimer?: (cb: () => void, ms: number) => unknown;
 	/** Override for tests. Mirrors the clearTimeout signature. */
@@ -180,7 +178,7 @@ export function createCoalescingChatRenderer(deps: CreateCoalescingChatRendererD
 		((id) => {
 			clearTimeout(id as ReturnType<typeof setTimeout>);
 		});
-	const coalesceMs = deps.coalesceMs ?? DEFAULT_COALESCE_MS;
+	const coalesceMs = DEFAULT_COALESCE_MS;
 
 	let pendingTimer: unknown = null;
 	let mutationDepth = 0;

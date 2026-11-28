@@ -11,6 +11,7 @@ import { mainAgent } from "../../core/telemetry/context.js";
 import type { SegmentHeader } from "../../core/telemetry/envelope.js";
 import type { EventPayload } from "../../core/telemetry/events.js";
 import { telemetryHub } from "../../core/telemetry/hub.js";
+import { TELEMETRY_JOURNAL_FILE, telemetrySessionDirectory } from "../../core/telemetry/paths.js";
 import type { PendingTelemetry } from "../../core/telemetry/producer.js";
 import {
 	enqueueHeldTelemetry,
@@ -22,7 +23,6 @@ import type { CallStarted, ObjectRef } from "../../core/telemetry/schemas.js";
 import type { CallJournal, JournalHealth } from "./call-journal.js";
 import { openCallJournal } from "./call-journal.js";
 import { type storeTelemetryObject, telemetryPromptStructure } from "./objects.js";
-import { TELEMETRY_JOURNAL_FILE, telemetrySessionDirectory } from "./paths.js";
 
 export interface TelemetrySessionOrigin {
 	id: string;

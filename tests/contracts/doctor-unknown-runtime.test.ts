@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { runPancodeRun } from "../../src/cli/run.js";
 import { readSettings } from "../../src/core/config.js";
+import { telemetrySessionDirectory } from "../../src/core/telemetry/paths.js";
 import { resolvePancodeDirs } from "../../src/core/xdg.js";
 import {
 	runDoctor,
@@ -13,7 +14,6 @@ import {
 	runDoctorModelChecks,
 	withDoctorCommand,
 } from "../../src/domains/install/doctor.js";
-import { telemetrySessionDirectory } from "../../src/domains/telemetry/paths.js";
 import { isolatePancodeEnv } from "../harness/scratch-env.js";
 
 test("doctor proposes the provider catalog model and changes it only after confirmation", async (t) => {

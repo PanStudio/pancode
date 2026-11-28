@@ -12,8 +12,8 @@
 import { createHostPolicyMessage } from "../core/host-policy-message.js";
 import { markHostAuthored } from "../core/message-accounting.js";
 import { compactionCut } from "../domains/context/working-set/visible.js";
+import { captureSkillContext } from "../domains/memory/compaction/compact.js";
 import { toContextOverflowError } from "../domains/providers/errors.js";
-import { captureSkillContext } from "../domains/session/compaction/compact.js";
 import { foldDecisionBoard } from "../domains/session/decision-board.js";
 import type {
 	BashExecutionEntry,
