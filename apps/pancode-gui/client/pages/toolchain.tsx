@@ -49,7 +49,7 @@ export function Toolchain({
 	const action = useMutation({
 		meta: { errorSurface: "inline" },
 		mutationFn: async ({ id, kind, key }: { id: string; kind: "install" | "remove"; key: string }) =>
-			client.call(routes[kind], { params: { toolId: id }, query: {}, body: {} }, key),
+			client.call(routes[kind], { params: { programId: id }, query: {}, body: {} }, key),
 		onSuccess: (result) => setOperationId(result.operationId),
 		onSettled: () => {
 			actionLock.current = false;
@@ -81,10 +81,10 @@ export function Toolchain({
 					<PanelHeading
 						panel={PANELS.toolchain}
 						level={1}
-						title="Toolchain"
+						title="Programs"
 						action={
 							<span className="count">
-								{tools.data?.length ?? "—"} pinned {tools.data?.length === 1 ? "tool" : "tools"}
+								{tools.data?.length ?? "—"} pinned {tools.data?.length === 1 ? "program" : "programs"}
 							</span>
 						}
 					/>
@@ -94,7 +94,7 @@ export function Toolchain({
 						installations intact.
 					</p>
 					<div className="section-rule">
-						<span>TOOL / PINNED VERSION</span>
+						<span>PROGRAM / PINNED VERSION</span>
 						<span>RESOLUTION & INSTALLATION</span>
 					</div>
 				</>
@@ -102,12 +102,12 @@ export function Toolchain({
 			{!compact && tools.data && (
 				<div className="toolchain-discovery">
 					<label className="settings-filter">
-						Find a tool
+						Find a program
 						<input
 							type="search"
 							value={search}
 							onChange={(event) => setSearch(event.target.value)}
-							placeholder="Search tools or capabilities"
+							placeholder="Search programs or capabilities"
 						/>
 					</label>
 					<fieldset className="toolchain-filters">
@@ -120,7 +120,7 @@ export function Toolchain({
 					</fieldset>
 					<div className="toolchain-results">
 						<span role="status">
-							{visibleTools?.length} of {tools.data.length} tools
+							{visibleTools?.length} of {tools.data.length} programs
 						</span>
 						{(search || availability !== "all") && (
 							<button
@@ -139,7 +139,7 @@ export function Toolchain({
 					</div>
 				</div>
 			)}
-			{tools.isPending && <p role="status">Resolving tools…</p>}
+			{tools.isPending && <p role="status">Resolving programs…</p>}
 			{tools.error && (
 				<>
 					<ProblemAlert error={tools.error} />
@@ -148,8 +148,8 @@ export function Toolchain({
 					</button>
 				</>
 			)}
-			{tools.data && !tools.data.length && <PanelEmpty>{emptyState.emptyStore("pinned tool")}</PanelEmpty>}
-			{!!tools.data?.length && !visibleTools?.length && <PanelEmpty>No pinned tools match this filter.</PanelEmpty>}
+			{tools.data && !tools.data.length && <PanelEmpty>{emptyState.emptyStore("pinned program")}</PanelEmpty>}
+			{!!tools.data?.length && !visibleTools?.length && <PanelEmpty>No pinned programs match this filter.</PanelEmpty>}
 			{action.isPending && (
 				<p role="status">
 					Sending {action.variables?.kind} request for {action.variables?.id}…
@@ -192,7 +192,7 @@ export function Toolchain({
 				<section className="operation" aria-label="Operation progress">
 					<div className="operation-heading">
 						<h2>
-							{operation.data.kind === "toolchain.install" ? "Installation" : "Removal"}
+							{operation.data.kind === "programs.install" ? "Installation" : "Removal"}
 							{action.variables && ` · ${action.variables.id}`}
 						</h2>
 						<span role="status">

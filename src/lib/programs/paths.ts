@@ -36,10 +36,10 @@ function vendoredBinaryPath(id: string, version: string, binary: string): string
  * tool is an installation artifact, not session data, so a run whose own data root starts empty resolves the
  * operator's vendored tools from here, read-only: nothing installs into it.
  */
-export const OPERATOR_TOOLS_ENV = "PANCODE_OPERATOR_TOOLS_DIR";
+export const OPERATOR_PROGRAMS_ENV = "PANCODE_PROGRAMS_DIR";
 
 function borrowedToolchainRoot(): string | null {
-	const dir = process.env[OPERATOR_TOOLS_ENV];
+	const dir = process.env[OPERATOR_PROGRAMS_ENV];
 	return dir && isAbsolute(dir) ? dir : null;
 }
 

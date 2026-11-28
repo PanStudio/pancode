@@ -13,7 +13,7 @@ export const PAGE_PATHS = [
 	"/workspaces/:workspaceId/sessions",
 	"/traces",
 	"/traces/:runId",
-	"/toolchain",
+	"/programs",
 	"/docs",
 	"/settings",
 	"/settings/general",

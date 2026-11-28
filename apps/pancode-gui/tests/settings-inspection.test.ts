@@ -143,7 +143,7 @@ test("config graph: actual 15-second deadline leaves HTTP responsive and later w
 			performance.now() - start >= 14_900,
 			`The graph owns a 15-second deadline; observed ${performance.now() - start} ms`,
 		);
-		assert.equal((await h.request("/api/toolchain/tools")).status, 200, "A late graph result must not wedge later reads");
+		assert.equal((await h.request("/api/programs")).status, 200, "A late graph result must not wedge later reads");
 	} finally {
 		await h.close();
 	}

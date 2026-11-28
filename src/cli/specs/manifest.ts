@@ -118,7 +118,7 @@ export const NESTED_LEAVES: ReadonlyArray<readonly [string, string, string]> = [
 	[
 		"fleet nodes",
 		"manage SSH worker nodes and project verification",
-		"fleet nodes setup|add|discover|install|tools|list|remove|test",
+		"fleet nodes setup|add|discover|install|programs|list|remove|test",
 	],
 	[
 		"fleet nodes add",
@@ -144,9 +144,9 @@ export const NESTED_LEAVES: ReadonlyArray<readonly [string, string, string]> = [
 		"fleet nodes test <id> [--record] [--json]",
 	],
 	[
-		"fleet nodes tools install",
+		"fleet nodes programs install",
 		"preview a user-level remote install of asciinema, copilot-sdk or claude-sdk pinned by the node's PanCode; --yes executes",
-		"fleet nodes tools install <id> <tool> [--yes]",
+		"fleet nodes programs install <id> <program> [--yes]",
 	],
 	[
 		"fleet run",

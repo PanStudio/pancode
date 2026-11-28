@@ -4,7 +4,7 @@
 export function restrictNetwork() {
 	const download = globalThis.fetch;
 	globalThis.fetch = async () => {
-		throw new Error("Web server network requests must use the pinned toolchain downloader.");
+		throw new Error("Web server network requests must use the pinned programs downloader.");
 	};
 	return download;
 }

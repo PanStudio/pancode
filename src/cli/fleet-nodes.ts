@@ -18,8 +18,8 @@ const HELP = `pancode fleet nodes <command>
                                         probes it after adding, --record also records the check
   discover [--json]                     list Tailscale peers and which ones are registered nodes
   install <id> [--yes]                  preview a user-level install of this exact client; --yes executes
-  tools install <id> <tool> [--yes]     preview a user-level remote install of asciinema, copilot-sdk or
-                                        claude-sdk pinned by the node's PanCode; --yes executes
+  programs install <id> <program> [--yes]  preview a user-level remote install of asciinema, copilot-sdk or
+                                           claude-sdk pinned by the node's PanCode; --yes executes
   list [--json]                         show recorded readiness for this project and check age
   remove <id>                           remove a node without deleting remote files
   test <id> [--record] [--json]         probe without remote writes; --record updates local eligibility
@@ -250,18 +250,18 @@ export async function runFleetNodes(args: ReadonlyArray<string>): Promise<number
 				plan.cleanup();
 			}
 		}
-		if (sub === "tools") {
+		if (sub === "programs") {
 			const { prepareFleetToolInstall, describeFleetToolInstall, executeFleetToolInstall, FLEET_TOOLS, isFleetTool } =
 				await import("../domains/dispatch/index.js");
-			const usage = `tools install requires <node-id> and one of ${FLEET_TOOLS.join(", ")}`;
+			const usage = `programs install requires <node-id> and one of ${FLEET_TOOLS.join(", ")}`;
 			if (args[1] !== "install") throw new Error(usage);
 			const parsed = parse(args.slice(2), ["--yes"], []);
-			const tool = parsed.positional[1];
-			if (parsed.positional.length !== 2 || tool === undefined || !isFleetTool(tool)) throw new Error(usage);
-			const plan = prepareFleetToolInstall(parsed.positional[0] as string, tool);
+			const program = parsed.positional[1];
+			if (parsed.positional.length !== 2 || program === undefined || !isFleetTool(program)) throw new Error(usage);
+			const plan = prepareFleetToolInstall(parsed.positional[0] as string, program);
 			process.stdout.write(`${describeFleetToolInstall(plan)}\n`);
 			if (!parsed.flags.has("--yes")) {
-				process.stdout.write(`Run 'pancode fleet nodes tools install ${plan.node.id} ${tool} --yes' to execute.\n`);
+				process.stdout.write(`Run 'pancode fleet nodes programs install ${plan.node.id} ${program} --yes' to execute.\n`);
 				return 0;
 			}
 			const output = await executeFleetToolInstall(plan);

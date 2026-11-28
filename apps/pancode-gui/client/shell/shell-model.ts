@@ -234,7 +234,7 @@ export const READY_LABEL = "Ready";
 const SETTINGS_SEGMENTS = new Set([
 	"settings",
 	"hub",
-	"toolchain",
+	"programs",
 	"usage",
 	"metrics",
 	"system",
@@ -348,12 +348,12 @@ export const SETTINGS_SECTIONS: readonly SettingsSection[] = [
 	},
 	{ id: "hub", label: "Hub", path: "/hub", icon: "skills", group: "capabilities", owns: ["/hub"] },
 	{
-		id: "toolchain",
-		label: "Toolchain",
-		path: "/toolchain",
+		id: "programs",
+		label: "Programs",
+		path: "/programs",
 		icon: "toolchain",
 		group: "capabilities",
-		owns: ["/toolchain"],
+		owns: ["/programs"],
 	},
 	{ id: "usage", label: "Usage", path: "/usage", icon: "usage", group: "activity", owns: ["/usage"] },
 	{

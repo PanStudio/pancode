@@ -14,7 +14,7 @@ test("ambient network is denied; injected registry downloads complete across the
 	t.after(() => {
 		globalThis.fetch = previous;
 	});
-	await assert.rejects(globalThis.fetch("https://fixture.invalid"), /pinned toolchain/);
+	await assert.rejects(globalThis.fetch("https://fixture.invalid"), /pinned programs/);
 	let calls = 0;
 	const fixture = fixtureOptions();
 	const fetcher = pinnedFetcher(fixture.pins, async () => {
@@ -32,6 +32,6 @@ test("ambient network is denied; injected registry downloads complete across the
 	assert.equal(calls, 1);
 	const h = await harness();
 	t.after(h.close);
-	const operation = await json(await h.post("/api/toolchain/tools/herdr/install"), Accepted);
+	const operation = await json(await h.post("/api/programs/herdr/install"), Accepted);
 	assert.equal((await terminal(h.operations, operation.operationId)).status, "succeeded");
 });

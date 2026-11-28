@@ -31,7 +31,7 @@ import type { PinnedProgram, PinnedProgramDownload, ProgramPlatform } from "./ty
  * by hand. Pruning runs on the already-installed path too, which is what
  * repairs a machine that bumped pins before this behavior existed.
  *
- * `PANCODE_TOOLCHAIN_MIRROR` points every download at a mirror instead of
+ * `PANCODE_PROGRAMS_MIRROR` points every download at a mirror instead of
  * upstream, for airgapped and proxied machines: a base URL or a local directory
  * that holds the upstream assets under `<tool id>/<version>/<upstream name>`
  * (the upstream name is the last path segment of each pinned URL, e.g.
@@ -56,7 +56,7 @@ export interface ProgramInstallOptions {
 	/**
 	 * Base URL or local directory serving the pinned assets under
 	 * `<id>/<version>/<upstream basename>`, or flat under the basename.
-	 * Defaults to `PANCODE_TOOLCHAIN_MIRROR`; null forces upstream.
+	 * Defaults to `PANCODE_PROGRAMS_MIRROR`; null forces upstream.
 	 */
 	mirror?: string | null;
 	/** Per-asset download timeout. Defaults to five minutes. */
@@ -321,7 +321,7 @@ function unpack(bytes: Buffer, download: PinnedProgramDownload): Map<string, Arc
 
 /** The configured mirror, or null for upstream. */
 function toolchainMirror(env: NodeJS.ProcessEnv = process.env): string | null {
-	const value = env.PANCODE_TOOLCHAIN_MIRROR?.trim();
+	const value = env.PANCODE_PROGRAMS_MIRROR?.trim();
 	return value ? value : null;
 }
 

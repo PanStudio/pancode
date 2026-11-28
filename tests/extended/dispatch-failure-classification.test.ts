@@ -321,7 +321,7 @@ describe("dispatch failure classification", () => {
 		strictEqual(affectsTargetBreaker(failureClass), false);
 		match(
 			nodeComponentRemedy(message, "loop"),
-			/^The copilot-sdk runtime needs \S+\. Install it on node 'loop' from this client: pancode fleet nodes tools install loop copilot-sdk --yes\. This installs a separate component at \/home\/u\/\S+ on that node;/,
+			/^The copilot-sdk runtime needs \S+\. Install it on node 'loop' from this client: pancode fleet nodes programs install loop copilot-sdk --yes\. This installs a separate component at \/home\/u\/\S+ on that node;/,
 		);
 	});
 

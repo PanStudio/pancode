@@ -49,7 +49,7 @@ export interface Destination {
  */
 export const DESTINATIONS: readonly Destination[] = [
 	{ label: "Traces", path: "/traces", keywords: ["runs", "forensics"] },
-	{ label: "Toolchain", path: "/toolchain", keywords: ["tools", "install"] },
+	{ label: "Programs", path: "/programs", keywords: ["programs", "tools", "install"] },
 	{ label: "Sessions", path: "/sessions", keywords: ["tasks", "conversations", "history", "resume"] },
 	{ label: "Machines", path: "/machines", keywords: ["hosts", "remote", "servers", "attach"] },
 	{ label: "Settings", path: "/settings", keywords: ["configuration", "preferences"] },

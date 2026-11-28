@@ -373,7 +373,7 @@ function Install-Pancode {
 		Ok "$reported"
 
 		# PanCode hosts its terminal panes in a private copy of herdr, pinned by sha256 and fetched from
-		# herdr's releases or PANCODE_TOOLCHAIN_MIRROR. It is part of the install, but never fails it:
+		# herdr's releases or PANCODE_PROGRAMS_MIRROR. It is part of the install, but never fails it:
 		# PanCode runs in the plain terminal, says so once, and never downloads on first launch.
 		$panes = $null
 		$savedPreference = $ErrorActionPreference

@@ -319,7 +319,7 @@ const router = createBrowserRouter([
 				},
 			},
 			{
-				path: "/toolchain",
+				path: "/programs",
 				lazy: async () => {
 					const { Toolchain } = await import("./pages/toolchain.js");
 					return { element: <Toolchain client={client} /> };

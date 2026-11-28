@@ -47,19 +47,19 @@ export class ToolchainService {
 	}
 	async mutate(action: "install" | "remove", id: string, body: { force?: boolean }, key: string) {
 		if (!(await this.list()).tools.some((tool) => tool.id === id))
-			throw new AppProblem("not_found", "Unknown pinned tool.");
+			throw new AppProblem("not_found", "Unknown pinned program.");
 		return this.operations.create({
-			kind: `toolchain.${action}`,
+			kind: `programs.${action}`,
 			scope: "installation",
 			key,
-			fingerprint: fingerprint({ path: `/api/toolchain/tools/${id}/${action}`, params: { toolId: id }, body }),
+			fingerprint: fingerprint({ path: `/api/programs/${id}/${action}`, params: { programId: id }, body }),
 			run: async (progress) => {
 				try {
 					return action === "install"
 						? await this.ops.call("tools.install", { id, force: body.force ?? false }, { progress })
 						: await this.ops.call("tools.remove", { id });
 				} finally {
-					this.hub.publish({ type: "toolchain.changed", payload: { id } });
+					this.hub.publish({ type: "programs.changed", payload: { id } });
 				}
 			},
 		});

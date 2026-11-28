@@ -156,10 +156,10 @@ export function createApp(options: {
 		return result.tools;
 	});
 	register(app, hub, routes.install, async ({ params, body }, context) => ({
-		operationId: await toolchain.mutate("install", params.toolId, body, idempotencyKey(context)),
+		operationId: await toolchain.mutate("install", params.programId, body, idempotencyKey(context)),
 	}));
 	register(app, hub, routes.remove, async ({ params }, context) => ({
-		operationId: await toolchain.mutate("remove", params.toolId, {}, idempotencyKey(context)),
+		operationId: await toolchain.mutate("remove", params.programId, {}, idempotencyKey(context)),
 	}));
 	register(app, hub, routes.operation, ({ params }, context) => {
 		const record = operations.get(params.id);

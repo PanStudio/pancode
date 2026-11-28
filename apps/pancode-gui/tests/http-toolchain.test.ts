@@ -17,7 +17,7 @@ import { scratchHome } from "./harness/scratch-home.js";
 test("real domain workers: inventory, fabricated install over SSE, idempotency, cancel, removal", async (t) => {
 	const h = await harness();
 	t.after(h.close);
-	const list = await h.request("/api/toolchain/tools");
+	const list = await h.request("/api/programs");
 	const tools = await list.json();
 	assert.ok(Value.Check(Tools, tools));
 	assert.deepEqual(
@@ -49,13 +49,13 @@ test("real domain workers: inventory, fabricated install over SSE, idempotency, 
 			}
 		}
 	})();
-	const first = await h.post("/api/toolchain/tools/herdr/install", { force: false }, "install-key");
+	const first = await h.post("/api/programs/herdr/install", { force: false }, "install-key");
 	assert.equal(first.status, 202);
 	const { operationId } = await json(first, Accepted);
-	assert.deepEqual(await (await h.post("/api/toolchain/tools/herdr/install", { force: false }, "install-key")).json(), {
+	assert.deepEqual(await (await h.post("/api/programs/herdr/install", { force: false }, "install-key")).json(), {
 		operationId,
 	});
-	assert.equal((await h.post("/api/toolchain/tools/herdr/install", { force: true }, "install-key")).status, 409);
+	assert.equal((await h.post("/api/programs/herdr/install", { force: true }, "install-key")).status, 409);
 	const cancel = await h.post(`/api/operations/${operationId}/cancel`);
 	assert.equal(cancel.status, 409);
 	assert.equal((await json(cancel, Problem)).code, "unsupported");
@@ -72,7 +72,7 @@ test("real domain workers: inventory, fabricated install over SSE, idempotency, 
 	const finished = events.find((event) => event.type === "operation.finished");
 	assert.ok(finished?.type === "operation.finished");
 	assert.deepEqual(finished.payload.operation, record);
-	const installed = (await json(await h.request("/api/toolchain/tools"), Tools)).find((row) => row.id === "herdr");
+	const installed = (await json(await h.request("/api/programs"), Tools)).find((row) => row.id === "herdr");
 	assert.equal(installed?.installed, true);
 	assert.equal(installed?.resolution.source, "vendored");
 	const file = join(
@@ -82,18 +82,18 @@ test("real domain workers: inventory, fabricated install over SSE, idempotency, 
 		"herdr",
 	);
 	assert.ok(existsSync(file));
-	const removal = await h.post("/api/toolchain/tools/herdr/remove");
+	const removal = await h.post("/api/programs/herdr/remove");
 	assert.equal(removal.status, 202);
 	assert.equal((await terminal(h.operations, (await json(removal, Accepted)).operationId)).status, "succeeded");
 	assert.equal(existsSync(file), false);
-	assert.equal((await h.post("/api/toolchain/tools/unknown/install")).status, 404);
-	assert.equal((await h.post("/api/toolchain/tools/bad!/install")).status, 422);
-	assert.equal((await h.post("/api/toolchain/tools/%2e%2e/install")).status, 404);
-	assert.equal((await h.post("/api/toolchain/tools/herdr/install", { force: "yes" })).status, 422);
-	assert.equal((await h.post("/api/toolchain/tools/herdr/install", { extra: true })).status, 422);
+	assert.equal((await h.post("/api/programs/unknown/install")).status, 404);
+	assert.equal((await h.post("/api/programs/bad!/install")).status, 422);
+	assert.equal((await h.post("/api/programs/%2e%2e/install")).status, 404);
+	assert.equal((await h.post("/api/programs/herdr/install", { force: "yes" })).status, 422);
+	assert.equal((await h.post("/api/programs/herdr/install", { extra: true })).status, 422);
 	assert.equal(
 		(
-			await h.request("/api/toolchain/tools/herdr/install", {
+			await h.request("/api/programs/herdr/install", {
 				method: "POST",
 				headers: { "Content-Type": "application/json" },
 				body: "{}",
@@ -106,7 +106,7 @@ test("real domain workers: inventory, fabricated install over SSE, idempotency, 
 test("domain installation failure is a redacted terminal problem", async (t) => {
 	const h = await harness({ failInstall: true });
 	t.after(h.close);
-	const { operationId } = await json(await h.post("/api/toolchain/tools/herdr/install"), Accepted);
+	const { operationId } = await json(await h.post("/api/programs/herdr/install"), Accepted);
 	const record = await terminal(h.operations, operationId);
 	assert.ok(record.status === "failed");
 	assert.equal(record.problem.code, "operation_failed");
@@ -116,7 +116,7 @@ test("domain installation failure is a redacted terminal problem", async (t) => 
 test("production programStatuses and removeProgram execute in separate workers without fixture substitution", async (t) => {
 	const h = await harness({ fixture: false });
 	t.after(h.close);
-	const response = await h.request("/api/toolchain/tools");
+	const response = await h.request("/api/programs");
 	const rows = await json(response, Tools);
 	assert.deepEqual(
 		rows.map((row) => row.id),
@@ -127,7 +127,7 @@ test("production programStatuses and removeProgram execute in separate workers w
 		PINNED_PROGRAMS.map((pin) => pin.summary),
 	);
 	assert.equal(Number(response.headers.get("X-Pancode-Worker-Thread")), h.reads.threadId);
-	const accepted = await json(await h.post("/api/toolchain/tools/herdr/remove"), Accepted);
+	const accepted = await json(await h.post("/api/programs/herdr/remove"), Accepted);
 	assert.equal((await terminal(h.operations, accepted.operationId)).status, "succeeded");
 	assert.ok((h.ops.threadId ?? 0) > 0);
 	assert.notEqual(h.ops.threadId, h.reads.threadId);
@@ -144,15 +144,15 @@ test("removing the vendored copy preserves the compatible executable on the oper
 	await chmod(executable, 0o755);
 	const h = await harness({}, { env: { PATH: directory } });
 	t.after(h.close);
-	const installed = await json(await h.post("/api/toolchain/tools/herdr/install"), Accepted);
+	const installed = await json(await h.post("/api/programs/herdr/install"), Accepted);
 	assert.equal((await terminal(h.operations, installed.operationId)).status, "succeeded");
-	const before = (await json(await h.request("/api/toolchain/tools"), Tools)).find((row) => row.id === "herdr");
+	const before = (await json(await h.request("/api/programs"), Tools)).find((row) => row.id === "herdr");
 	assert.equal(before?.installed, true);
 	assert.equal(before?.resolution.source, "path");
 	assert.equal(before?.resolution.binaryPath, executable);
-	const removed = await json(await h.post("/api/toolchain/tools/herdr/remove"), Accepted);
+	const removed = await json(await h.post("/api/programs/herdr/remove"), Accepted);
 	assert.equal((await terminal(h.operations, removed.operationId)).status, "succeeded");
-	const after = (await json(await h.request("/api/toolchain/tools"), Tools)).find((row) => row.id === "herdr");
+	const after = (await json(await h.request("/api/programs"), Tools)).find((row) => row.id === "herdr");
 	assert.equal(after?.installed, false);
 	assert.equal(after?.resolution.source, "path");
 	assert.equal(after?.resolution.binaryPath, executable);

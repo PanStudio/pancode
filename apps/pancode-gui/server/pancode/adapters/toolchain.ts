@@ -49,7 +49,7 @@ function containedTool(id: string) {
 	};
 	const difference = relative(canonical(root), canonical(resolve(root, id)));
 	if (difference === ".." || difference.startsWith(`..${sep}`) || difference.startsWith(sep))
-		throw new AppProblem("validation", "Tool directory escapes the toolchain root.");
+		throw new AppProblem("validation", "Program directory escapes the programs root.");
 }
 export function toolchainAdapter(options: { pins?: readonly PinnedProgram[]; fetcher?: ProgramFetcher } = {}) {
 	const pins = options.pins ?? PINNED_PROGRAMS;

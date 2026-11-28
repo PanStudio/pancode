@@ -37,7 +37,7 @@ const SHOTS = [
 	"fleet-history",
 	"evidence",
 	"hub",
-	"toolchain",
+	"programs",
 	"settings",
 	"system",
 	"approval",
@@ -200,7 +200,7 @@ if (values.serve) {
 				["fleet-history", "/fleet"],
 				["evidence", "/evidence"],
 				["hub", "/hub"],
-				["toolchain", "/toolchain"],
+				["programs", "/programs"],
 				["settings", "/settings"],
 				["system", "/system"],
 			] as const)

@@ -30,17 +30,17 @@ export function toolCandidateNote(tool: Pick<Tool, "resolution">): string | null
 /** Explain the effect beside the action rather than making an operator infer it from the resolution. */
 export function toolActionEffect(tool: Pick<Tool, "supported" | "installed" | "resolution">): string {
 	if (!tool.supported)
-		return "No pinned download is available for this platform. A compatible tool on PATH can still be inspected above.";
+		return "No pinned download is available for this platform. A compatible program on PATH can still be inspected above.";
 	if (tool.installed) return "Check confirms the pinned binaries are present. Remove deletes only the vendored copy.";
 	return tool.resolution.source === "path"
 		? "Install adds a pinned fallback. The compatible PATH copy may remain the executable PanCode uses."
-		: "Install downloads and verifies the pinned version into PanCode’s toolchain folder.";
+		: "Install downloads and verifies the pinned version into PanCode’s programs folder.";
 }
 
 export const TOOL_FILTERS = ["all", "available", "missing", "unsupported"] as const;
 export type ToolFilter = (typeof TOOL_FILTERS)[number];
 export const TOOL_FILTER_LABELS: Record<ToolFilter, string> = {
-	all: "All tools",
+	all: "All programs",
 	available: "Available",
 	missing: "Missing",
 	unsupported: "No platform download",
@@ -71,6 +71,6 @@ export function toolAvailability(tool: Pick<Tool, "supported" | "resolution">): 
 	if (tool.resolution.source === "path") return "A compatible executable on PATH is available to PanCode.";
 	if (tool.resolution.source === "vendored") return "PanCode resolves the installed pinned executable.";
 	return tool.supported
-		? "No usable executable was resolved. Install the pinned version to make this tool available."
+		? "No usable executable was resolved. Install the pinned version to make this program available."
 		: "No executable was resolved and no pinned download is available for this platform.";
 }

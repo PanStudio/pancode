@@ -83,7 +83,7 @@ export const Event = Type.Union([
 		type: Type.Literal("operation.finished"),
 		payload: Type.Object({ ...resource, kind: Type.String(), operation: Type.Optional(Operation) }),
 	}),
-	Type.Object({ ...base, type: Type.Literal("toolchain.changed"), payload: Type.Object({ id: Id }) }),
+	Type.Object({ ...base, type: Type.Literal("programs.changed"), payload: Type.Object({ id: Id }) }),
 	/**
 	 * The agent's coalesced telemetry_update for a session this host holds (at most 10 Hz, never per token): an
 	 * invalidation only, naming the topics whose reads moved; the client re-reads and folds nothing (#434).

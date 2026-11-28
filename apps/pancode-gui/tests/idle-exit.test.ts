@@ -80,7 +80,7 @@ test("an operation retains idle lifetime after its HTTP request, then releases i
 	);
 	t.after(() => idle.stop());
 	const release = idle.hold();
-	assert.equal((await h.post("/api/toolchain/tools/herdr/install")).status, 202);
+	assert.equal((await h.post("/api/programs/herdr/install")).status, 202);
 	release();
 	// The 200 ms window lapses well inside the 900 ms install; exit must still wait for the operation to settle.
 	await exited;

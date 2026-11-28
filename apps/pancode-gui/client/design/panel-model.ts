@@ -58,8 +58,8 @@ export const PANELS = {
 			"The trace database stays on this machine and this page only reads it. Event payloads and process command lines are shown from that local database; what the histograms cross with is how many of each kind there were.",
 	},
 	toolchain: {
-		eyebrow: eyebrow("Pinned tools", "this installation", "install and remove"),
-		title: "Toolchain",
+		eyebrow: eyebrow("Pinned programs", "this installation", "install and remove"),
+		title: "Programs",
 		boundary:
 			"Resolution is read from this machine: a compatible copy on PATH first, then the pinned copy PanCode vendored. Removing a vendored copy leaves your PATH installation in place.",
 	},

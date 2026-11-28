@@ -12,7 +12,7 @@ import { scratchHome } from "./harness/scratch-home.js";
 test("65 concurrent HTTP reads overflow the 64-call queue with a retryable problem", async (t) => {
 	const h = await harness({ readDelayMs: 20 });
 	t.after(h.close);
-	const replies = await Promise.all(Array.from({ length: 65 }, () => h.request("/api/toolchain/tools")));
+	const replies = await Promise.all(Array.from({ length: 65 }, () => h.request("/api/programs")));
 	const refused = replies.filter((response) => response.status === 503);
 	assert.ok(refused.length >= 1);
 	for (const response of refused) {
@@ -95,7 +95,7 @@ test("HTTP read deadline returns an unavailable problem while the adapter comple
 	// Warm-up only primes the worker; a cold start on a loaded 4-vCPU runner
 	// exceeded 2 s in ci (22). The 20 ms read deadline is what this test checks.
 	await h.reads.call("tools.list", {}, { deadlineMs: 10_000 });
-	const response = await h.request("/api/toolchain/tools");
+	const response = await h.request("/api/programs");
 	assert.equal(response.status, 503);
 	assert.equal((await json(response, Problem)).code, "unavailable");
 	assert.equal(h.reads.pendingCount, 1);

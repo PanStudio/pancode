@@ -150,7 +150,7 @@ export function nodeComponentRemedy(text: string, nodeId: string): string {
 	return text.replace(
 		COMPONENT_REMEDY,
 		(_match, tool: string, path: string) =>
-			`Install it on node '${nodeId}' from this client: pancode fleet nodes tools install ${nodeId} ${tool} --yes. This installs a separate component at ${path} on that node;`,
+			`Install it on node '${nodeId}' from this client: pancode fleet nodes programs install ${nodeId} ${tool} --yes. This installs a separate component at ${path} on that node;`,
 	);
 }
 

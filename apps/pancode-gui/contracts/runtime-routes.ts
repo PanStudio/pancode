@@ -216,9 +216,9 @@ export const routes = {
 	authRevoke: { name: "authRevoke", method: "POST", path: "/api/auth/revoke" },
 	eventTicket: { name: "eventTicket", method: "POST", path: "/api/events/ticket" },
 	events: { name: "events", method: "GET", path: "/api/events" },
-	tools: { name: "tools", method: "GET", path: "/api/toolchain/tools" },
-	install: { name: "install", method: "POST", path: "/api/toolchain/tools/:toolId/install" },
-	remove: { name: "remove", method: "POST", path: "/api/toolchain/tools/:toolId/remove" },
+	tools: { name: "tools", method: "GET", path: "/api/programs" },
+	install: { name: "install", method: "POST", path: "/api/programs/:programId/install" },
+	remove: { name: "remove", method: "POST", path: "/api/programs/:programId/remove" },
 	operation: { name: "operation", method: "GET", path: "/api/operations/:id" },
 	cancel: { name: "cancel", method: "POST", path: "/api/operations/:id/cancel" },
 	// x090 spec 14

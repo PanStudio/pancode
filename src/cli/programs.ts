@@ -45,22 +45,22 @@ PATH wins over PanCode's own as long as it clears the pinned minimum.
 
 Commands:
   pancode programs list [--json]           the pinned table, the components, and where each resolves
-  pancode programs status <id> [--json]    one tool or component in detail
-  pancode programs reset-profile <id> [--json]  regenerate a tool's PanCode profile on next
+  pancode programs status <id> [--json]    one program or component in detail
+  pancode programs reset-profile <id> [--json]  regenerate a program's PanCode profile on next
                                               open (yazi)
   pancode programs install claude-sdk      provision the separate Claude SDK component
   pancode programs install copilot-sdk     provision the separate GitHub Copilot SDK component
   pancode programs install browser         provision the browser tool's playwright-core and headless shell
-  pancode programs install <id> [--force] [--json]  download, verify, and vendor a tool
-  pancode programs remove <id>|--all [--json]  delete every vendored version of a tool
+  pancode programs install <id> [--force] [--json]  download, verify, and vendor a program
+  pancode programs remove <id>|--all [--json]  delete every vendored version of a program
 
 Downloads happen only here. Nothing on a startup path fetches anything.
 
-An install keeps one version directory per tool: once the pinned version is in
+An install keeps one version directory per program: once the pinned version is in
 place, versions it superseded are pruned, along with any staging directory left
 by an install that was killed. Removal touches nothing outside <data>/tools/<id>
 and needs no confirmation, since every byte under it is re-downloadable from the
-checksum-pinned registry. "remove --all" sweeps every tool in the table.
+checksum-pinned registry. "remove --all" sweeps every program in the table.
 `;
 
 /**

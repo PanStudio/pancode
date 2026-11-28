@@ -6,7 +6,7 @@ import { SETTINGS_SECTIONS } from "./shell-model.js";
 
 const GROUPS = [
 	{ label: "Workbench", detail: "Sessions and research machines", sections: ["sessions", "machines"] },
-	{ label: "Capabilities", detail: "What PanCode can use", sections: ["hub", "skills", "toolchain", "interop"] },
+	{ label: "Capabilities", detail: "What PanCode can use", sections: ["hub", "skills", "programs", "interop"] },
 	{
 		label: "Research activity",
 		detail: "Work, results and recorded evidence",
@@ -25,7 +25,7 @@ const EXTRA = [
 const KEYWORDS: Readonly<Record<string, string>> = {
 	machines: "ssh remote lab workstation server",
 	usage: "cost costs spending tokens calls models",
-	toolchain: "tools executables install setup",
+	programs: "programs tools executables install setup",
 	traces: "replay timeline execution events",
 	evidence: "reports records findings provenance checks",
 	research: "hill climb optimize metric benchmark campaign ratchet",

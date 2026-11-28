@@ -51,9 +51,9 @@ export const VIEW_GUIDE: Readonly<Record<NavPath, { title: string; meaning: stri
 		title: "Traces",
 		meaning: "The detailed conversation record, including individual events, their sources and token counts.",
 	},
-	"/toolchain": {
-		title: "Toolchain",
-		meaning: "Tools available on this machine, their versions and trust status.",
+	"/programs": {
+		title: "Programs",
+		meaning: "Pinned external programs available on this machine, their versions and trust status.",
 	},
 	"/settings": {
 		title: "Settings",
