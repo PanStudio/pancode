@@ -248,6 +248,44 @@ export interface OverlayLifecycleController {
 	dispose(): void;
 }
 
+function loadReportHost(
+	deps: OverlayLifecycleRuntimeDeps,
+	transitions: ReturnType<typeof createOverlayTransitions>,
+): Promise<import("./report-flow.js").ReportHost> {
+	return Promise.all([import("./report-flow.js"), import("../domains/telemetry/process-journal.js")]).then(
+		([{ createReportHost }, { telemetryProcessId }]) =>
+			createReportHost({
+				tui: deps.tui,
+				transitions,
+				stateDir: deps.app.stateDir,
+				notify: deps.notify,
+				terminal: deps.terminal,
+				suspendTerminal: deps.suspendTerminal,
+				session: () => {
+					const meta = deps.app.session?.current();
+					if (!meta) return null;
+					const settings = deps.app.getSettings?.();
+					const autonomy = settings?.safety.autonomy;
+					// Session meta names the target; the report's Runtime line wants that target's runtime.
+					const runtime = settings?.targets.find((target) => target.id === meta.target)?.runtime;
+					return {
+						id: meta.id,
+						cwd: meta.cwd,
+						facts: {
+							...(meta.model ? { model: meta.model } : {}),
+							...(runtime ? { runtime } : {}),
+							...(autonomy ? { autonomy } : {}),
+						},
+					};
+				},
+				identitySettings: () => ({ targets: deps.app.getSettings?.().targets ?? [] }),
+				flushTelemetry: () => deps.app.telemetry.flush(),
+				telemetryProcess: () => telemetryProcessId(),
+				...(deps.takeReportOffer ? { takeOffer: deps.takeReportOffer } : {}),
+			}),
+	);
+}
+
 export function createOverlayLifecycle(deps: OverlayLifecycleRuntimeDeps): OverlayLifecycleController {
 	const {
 		tui,
@@ -690,35 +728,7 @@ export function createOverlayLifecycle(deps: OverlayLifecycleRuntimeDeps): Overl
 	// The report host and the domain behind it load on the first /report, never at boot.
 	let reportHost: Promise<import("./report-flow.js").ReportHost> | null = null;
 	const withReportHost = (use: (host: import("./report-flow.js").ReportHost) => void): void => {
-		reportHost ??= import("./report-flow.js").then(({ createReportHost }) =>
-			createReportHost({
-				tui,
-				transitions: overlayTransitions,
-				stateDir: deps.app.stateDir,
-				notify,
-				terminal,
-				suspendTerminal: deps.suspendTerminal,
-				session: () => {
-					const meta = deps.app.session?.current();
-					if (!meta) return null;
-					const settings = deps.app.getSettings?.();
-					const autonomy = settings?.safety.autonomy;
-					// Session meta names the target; the report's Runtime line wants that target's runtime.
-					const runtime = settings?.targets.find((target) => target.id === meta.target)?.runtime;
-					return {
-						id: meta.id,
-						cwd: meta.cwd,
-						facts: {
-							...(meta.model ? { model: meta.model } : {}),
-							...(runtime ? { runtime } : {}),
-							...(autonomy ? { autonomy } : {}),
-						},
-					};
-				},
-				identitySettings: () => ({ targets: deps.app.getSettings?.().targets ?? [] }),
-				...(deps.takeReportOffer ? { takeOffer: deps.takeReportOffer } : {}),
-			}),
-		);
+		reportHost ??= loadReportHost(deps, overlayTransitions);
 		const report = (error: unknown, what: string): void =>
 			notify("error", `/report ${what}: ${error instanceof Error ? error.message : String(error)}`);
 		reportHost.then(

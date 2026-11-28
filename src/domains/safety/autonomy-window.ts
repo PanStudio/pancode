@@ -23,14 +23,14 @@ import type { ClassifierCall } from "./action-classifier.js";
 import type { SafetyDecision } from "./contract.js";
 
 /** The `outcomeDetail` and abort reason prefix of a cap halt. */
-export const AUTONOMOUS_CAP_REASON = "autonomous-cap";
+const AUTONOMOUS_CAP_REASON = "autonomous-cap";
 /** The `outcomeDetail` and abort reason prefix of a judge-streak halt. */
-export const JUDGE_STREAK_REASON = "judge-streak";
+const JUDGE_STREAK_REASON = "judge-streak";
 /**
  * The `outcomeDetail`, abort reason prefix and run cause of a decision-gate halt (exploration design X7): an
  * unattended streak of read-only calls that kept reading after every note and two refused rounds.
  */
-export const EXPLORATION_STALLED_REASON = "exploration_stalled";
+const EXPLORATION_STALLED_REASON = "exploration_stalled";
 /** A headless run a cap paused exits as a spend ceiling does. */
 export const AUTONOMOUS_CAP_EXIT_CODE = 4;
 /** A headless run the judge's block streak ended exits as a permission refusal does. */

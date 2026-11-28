@@ -4,7 +4,6 @@
 
 import { sha256Hex } from "../../core/hash.js";
 import type { RecordOnlyWorkerPermit, WorkerPermit } from "../safety/worker-permit.js";
-import type { WorkerEnvelope } from "./envelope.js";
 import type { GrantRecord } from "./grant-broker.js";
 import type { RunResultDraft } from "./types.js";
 import type { WorkerMcpNetworkWithheld } from "./worker-mcp.js";
@@ -53,9 +52,7 @@ export function receiptPermitSummary(
 	};
 }
 
-export function receiptEnvelopeSummary(
-	envelope: WorkerEnvelope,
-): NonNullable<NonNullable<RunResultDraft["safety"]>["envelope"]> {
+export function receiptEnvelopeSummary(envelope: NonNullable<NonNullable<RunResultDraft["safety"]>["envelope"]>) {
 	return {
 		version: envelope.version,
 		digest: envelope.digest,

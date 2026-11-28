@@ -148,8 +148,6 @@ export interface InteractivePresentationDeps {
 	adoptLiveWorker?: (runId: string) => import("../session-control/worker-stream.js").WorkerEntryState | undefined;
 	/** The last slash command the operator ran, so a demo tip can name its key. */
 	getLastCommand?: () => string | null;
-	/** How many of the main turn's own calls are parked on the operator. */
-	getParkedCallCount?: () => number;
 	/** The header's reminder about project configuration that is not applied; cached by its owner. */
 	getProjectConfigReminder?: () => string | null;
 	getConnections?: () => { mcp: string[]; plugins: string[] };

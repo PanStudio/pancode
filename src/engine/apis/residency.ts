@@ -55,7 +55,6 @@ import { withResidencyLock } from "./residency-lock.js";
 import { type ResidentModelInfo, residentMatchesKeep } from "./resident-models.js";
 
 export type ResidencyNotice = RuntimeNoticePayload;
-export type { RuntimeNoticeKind };
 
 // --- notice sink -----------------------------------------------------------
 
