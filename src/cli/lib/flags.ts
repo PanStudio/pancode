@@ -10,7 +10,7 @@
  * - `--` ends the flags; `-` alone is a positional (stdin by convention).
  *
  * Errors come back as values; the caller prints them with `writeCliFailure`.
- * Leaf of the CLI kit: imports only other kit modules.
+ * Leaf of the CLI lib: imports only other CLI lib modules.
  */
 import { didYouMean } from "./did-you-mean.js";
 import { type DurationUnit, parseDuration } from "./duration.js";

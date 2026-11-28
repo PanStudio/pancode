@@ -13,7 +13,7 @@ import {
 	writeShareArchive,
 } from "../domains/share/index.js";
 import { printError, printOk } from "./argv.js";
-import { writeCliFailure } from "./kit/json-out.js";
+import { writeCliFailure } from "./lib/json-out.js";
 
 const HELP = `pancode share <command>
 

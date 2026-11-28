@@ -19,7 +19,7 @@ import {
 	type PlaybookListing,
 	type PlaybookStep,
 } from "../domains/agents/index.js";
-import { jsonDocument, writeCliFailure } from "./kit/json-out.js";
+import { jsonDocument, writeCliFailure } from "./lib/json-out.js";
 
 const HELP = `pancode playbook <subcommand>
 

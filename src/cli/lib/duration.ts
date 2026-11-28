@@ -5,7 +5,7 @@
  * number keeps the unit that flag used before the convention, which each
  * caller states, so no existing script changes meaning in 0.8.x.
  *
- * Leaf of the CLI kit: imports nothing.
+ * Leaf of the CLI lib: imports nothing.
  */
 export type DurationUnit = "ms" | "s" | "m" | "h";
 

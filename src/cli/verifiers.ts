@@ -18,8 +18,8 @@ import { normalizeNumericTolerance } from "../tools/verify/numeric.js";
 import { type DeclaredReproduce, normalizeReproduce } from "../tools/verify/reproduce.js";
 import { discoverDeclaredChecksAtRoot, recordPerfBaseline } from "../tools/verify/scripts.js";
 import { printError, printOk } from "./argv.js";
-import { jsonDocument, writeCliFailure } from "./kit/json-out.js";
-import type { ErrorSlug } from "./kit/slugs.js";
+import { jsonDocument, writeCliFailure } from "./lib/json-out.js";
+import type { ErrorSlug } from "./lib/slugs.js";
 import {
 	createVerifierDraft,
 	discoverVerifierAuthoring,

@@ -40,7 +40,7 @@ import { readStateInfo } from "../domains/install/state.js";
 import { updateFingerprint } from "../domains/install/update-check.js";
 import { getVersionInfo } from "../domains/install/version.js";
 import { printError } from "./argv.js";
-import { writeCliFailure } from "./kit/json-out.js";
+import { writeCliFailure } from "./lib/json-out.js";
 import type { LifecyclePresenter } from "./lifecycle-presenter.js";
 import { createLifecyclePresenter, formatBytes, measurePath, shortenPath } from "./lifecycle-presenter.js";
 

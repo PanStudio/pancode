@@ -35,7 +35,7 @@ import { pancodeCachePath } from "../core/xdg.js";
 import { openStoreBackend, type StoreBackend } from "../domains/store/index.js";
 import { buildPutRecord, putHashObservation } from "../domains/store/provenance.js";
 import { printError, printOk } from "./argv.js";
-import { confirmAction } from "./kit/confirm.js";
+import { confirmAction } from "./lib/confirm.js";
 
 export type VerifyResult = StoreVerifyResult;
 

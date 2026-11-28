@@ -4,7 +4,7 @@
  * The near-miss suggestion an unknown subcommand or flag ends with: the one
  * known name at edit distance 2 or less, appended as `; did you mean 'run'?`.
  *
- * Leaf of the CLI kit: imports nothing.
+ * Leaf of the CLI lib: imports nothing.
  */
 
 const MAX_DISTANCE = 2;

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
-import { defineCommandSpec, type LeafFlagsSpec } from "../kit/help.js";
+import { defineCommandSpec, type LeafFlagsSpec } from "../lib/help.js";
 
 export const spec = defineCommandSpec({
 	path: ["auth"],

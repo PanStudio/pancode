@@ -19,7 +19,7 @@ import {
 	type SurfaceLedgerRow,
 } from "../domains/telemetry/read-model-side-surfaces.js";
 import { formatColumns } from "./argv.js";
-import { writeCliFailure } from "./kit/json-out.js";
+import { writeCliFailure } from "./lib/json-out.js";
 import { resolveSessionSelector } from "./telemetry-target.js";
 
 export const SURFACES_HELP = `pancode telemetry surfaces [--session <id>] [--json]

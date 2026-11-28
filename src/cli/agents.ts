@@ -8,7 +8,7 @@ import { ExtensionsDomainModule } from "../domains/extensions/module.js";
 import { ensurePancodeState } from "../domains/install/index.js";
 import { PluginsDomainModule } from "../domains/plugins/module.js";
 import { SafetyDomainModule } from "../domains/safety/module.js";
-import { writeCliFailure } from "./kit/json-out.js";
+import { writeCliFailure } from "./lib/json-out.js";
 
 const HELP = `pancode agents [list] [--json] [--all]
 pancode agents validate [--json]

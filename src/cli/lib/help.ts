@@ -5,7 +5,7 @@
  * convention C1). A spec under `src/cli/specs/` holds what root help and
  * `help --json` need without importing the command's implementation.
  *
- * Leaf of the CLI kit: imports nothing.
+ * Leaf of the CLI lib: imports nothing.
  */
 export interface CommandSpec {
 	/** The command path after `pancode`, such as `["fleet"]` or `["session", "history"]`. */

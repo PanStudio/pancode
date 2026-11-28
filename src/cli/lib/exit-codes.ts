@@ -5,7 +5,7 @@
  * contract table 6.5). `fleet events` keeps its own documented codes and is the
  * one named exception.
  *
- * Leaf of the CLI kit: imports nothing.
+ * Leaf of the CLI lib: imports nothing.
  */
 export const EXIT_CODES = {
 	/** The operation completed; a verdict command puts its verdict in the document (C19). */

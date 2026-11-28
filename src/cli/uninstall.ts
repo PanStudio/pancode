@@ -52,8 +52,8 @@ import {
 	launchReceipts,
 } from "../domains/install/install-plan.js";
 import { GUI_UNINSTALL_ADVICE, prepareGuiUninstall } from "./gui.js";
-import { writeCliFailure } from "./kit/json-out.js";
-import { CliUsageError } from "./kit/usage-error.js";
+import { writeCliFailure } from "./lib/json-out.js";
+import { CliUsageError } from "./lib/usage-error.js";
 import type { LifecycleItem, LifecyclePresenter } from "./lifecycle-presenter.js";
 import { createLifecyclePresenter, measurePath, shortenPath } from "./lifecycle-presenter.js";
 import type { RemovalFailure } from "./removal.js";

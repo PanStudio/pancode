@@ -2,9 +2,9 @@
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import { readBuildProvenance, readPancodeVersionLabel, runningBuildId } from "../core/build-info.js";
 import { readPancodeVersion } from "../core/package-root.js";
-import { parseCommandFlags } from "./kit/flags.js";
-import { helpRequested } from "./kit/help.js";
-import { jsonDocument, writeCliFailure, writeJson } from "./kit/json-out.js";
+import { parseCommandFlags } from "./lib/flags.js";
+import { helpRequested } from "./lib/help.js";
+import { jsonDocument, writeCliFailure, writeJson } from "./lib/json-out.js";
 
 const HELP = `pancode version [--worker-specs | --build | --sandbox | --json]
 

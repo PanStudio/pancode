@@ -6,7 +6,7 @@ import {
 	executionPlanIsolationText,
 	executionPlanStepScope,
 } from "../domains/dispatch/execution-plan.js";
-import { writeCliFailure } from "./kit/json-out.js";
+import { writeCliFailure } from "./lib/json-out.js";
 import { inspectPlaybook } from "./playbook-preflight.js";
 import { parsePlaybookVars, playbookVarsOrUndefined } from "./playbook-vars.js";
 

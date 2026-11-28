@@ -56,8 +56,8 @@ import {
 	sweepReportBundles,
 	updateOutbox,
 } from "../domains/report/index.js";
-import { parseCommandFlags } from "./kit/flags.js";
-import { jsonDocument, writeCliFailure } from "./kit/json-out.js";
+import { parseCommandFlags } from "./lib/flags.js";
+import { jsonDocument, writeCliFailure } from "./lib/json-out.js";
 import { canSelect, promptSelect } from "./select.js";
 
 const REPORT_HELP = `pancode report [bug|feature|question] [--title <t>] [--body-file <f> | -] [--session <id> | --last]

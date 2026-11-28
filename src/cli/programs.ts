@@ -33,8 +33,8 @@ import {
 	toolStatuses,
 } from "../lib/programs/index.js";
 import { formatColumns, printError, printOk } from "./argv.js";
-import { writeCliFailure } from "./kit/json-out.js";
-import type { ErrorSlug } from "./kit/slugs.js";
+import { writeCliFailure } from "./lib/json-out.js";
+import type { ErrorSlug } from "./lib/slugs.js";
 
 const HELP = `pancode programs <command>
 

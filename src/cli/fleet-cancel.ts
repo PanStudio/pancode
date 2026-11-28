@@ -43,9 +43,9 @@ import { runStatusForOutcome } from "../domains/dispatch/outcome.js";
 import { type Ledger, openLedger } from "../domains/dispatch/state.js";
 import type { RunEnvelope } from "../domains/dispatch/types.js";
 import { ensurePancodeState } from "../domains/install/index.js";
-import { EXIT_CODES } from "./kit/exit-codes.js";
-import { jsonDocument, writeCliFailure, writeJson } from "./kit/json-out.js";
-import type { ErrorSlug } from "./kit/slugs.js";
+import { EXIT_CODES } from "./lib/exit-codes.js";
+import { jsonDocument, writeCliFailure, writeJson } from "./lib/json-out.js";
+import type { ErrorSlug } from "./lib/slugs.js";
 
 const USAGE = "usage: pancode fleet cancel <runId|fleetRootId> [--json] [--reason <text>]";
 const CANCEL_PATH = ["fleet", "cancel"] as const;

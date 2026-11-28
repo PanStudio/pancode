@@ -31,10 +31,10 @@ import { StateFileLockTimeoutError, withStateFileLockSync } from "../core/state-
 import { captureProjectSurface, recordProjectSurfaceTrust } from "../core/workspace-trust.js";
 import { renderYamlPreservingLayout } from "../core/yaml-preserve.js";
 import { settingsRuntimeFacts } from "../domains/providers/settings-facts.js";
-import { EXIT_CODES } from "./kit/exit-codes.js";
-import { parseCommandFlags } from "./kit/flags.js";
-import { jsonDocument, writeCliFailure, writeJson } from "./kit/json-out.js";
-import type { ErrorSlug } from "./kit/slugs.js";
+import { EXIT_CODES } from "./lib/exit-codes.js";
+import { parseCommandFlags } from "./lib/flags.js";
+import { jsonDocument, writeCliFailure, writeJson } from "./lib/json-out.js";
+import type { ErrorSlug } from "./lib/slugs.js";
 
 type Verb = "get" | "set" | "unset";
 type Source = "default" | "user" | "project" | "project.local" | "cli";

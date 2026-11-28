@@ -5,7 +5,7 @@
  * `pancode <path>: <message>` on stderr, plus `see: pancode <path> --help`
  * for a usage error, and never the full help.
  *
- * Leaf of the CLI kit: imports types only.
+ * Leaf of the CLI lib: imports types only.
  */
 import type { ErrorSlug } from "./slugs.js";
 

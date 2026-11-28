@@ -80,7 +80,7 @@ import { storeFindings } from "./doctor-store.js";
 import { taskWorktreeFindings } from "./doctor-task-worktrees.js";
 import { pdfAttachmentFinding, toolchainFindings } from "./doctor-toolchain.js";
 import { validationContractFinding } from "./doctor-validation-contract.js";
-import { writeCliFailure } from "./kit/json-out.js";
+import { writeCliFailure } from "./lib/json-out.js";
 import { createLifecyclePresenter } from "./lifecycle-presenter.js";
 
 const HELP = `pancode doctor [--fix [--yes]] [--json] [--verbose] [--deep [--tools-timeout <seconds>]]

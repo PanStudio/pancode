@@ -3,8 +3,8 @@
 import { acceptanceFromTaskFlags } from "../domains/dispatch/task-acceptance.js";
 import { formatUserTaskHandoff } from "../domains/user-tasks/handoff.js";
 import { createUserTasksStore, type UserTask } from "../domains/user-tasks/store.js";
-import { jsonDocument, writeCliFailure } from "./kit/json-out.js";
-import type { ErrorSlug } from "./kit/slugs.js";
+import { jsonDocument, writeCliFailure } from "./lib/json-out.js";
+import type { ErrorSlug } from "./lib/slugs.js";
 
 const USAGE = `Usage:
   pancode tasks [list] [--json]

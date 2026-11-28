@@ -11,10 +11,10 @@
  * from its verb. Such an entry says `"source": "usage"`; a curated entry says `"source": "spec"`.
  */
 import { spawnSync } from "node:child_process";
-import { EXIT_CODES } from "./kit/exit-codes.js";
-import { type FlagSpec, helpRequested, type LeafFlagsSpec } from "./kit/help.js";
-import { jsonDocument, writeCliFailure, writeJson } from "./kit/json-out.js";
-import { ERROR_SLUGS } from "./kit/slugs.js";
+import { EXIT_CODES } from "./lib/exit-codes.js";
+import { type FlagSpec, helpRequested, type LeafFlagsSpec } from "./lib/help.js";
+import { jsonDocument, writeCliFailure, writeJson } from "./lib/json-out.js";
+import { ERROR_SLUGS } from "./lib/slugs.js";
 import { type ManifestFlag, type ManifestValue, NESTED_LEAVES, RUN_FLAGS, TOP_LEVEL_USAGE } from "./specs/manifest.js";
 import { SCHEMA_NAMES } from "./specs/schema.js";
 import { COMMAND_SPECS } from "./specs/table.js";

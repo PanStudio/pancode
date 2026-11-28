@@ -12,8 +12,8 @@ import {
 	resolvePancodeDirs,
 } from "../core/xdg.js";
 import { GUI_UNINSTALL_ADVICE, prepareGuiUninstall } from "./gui.js";
-import { writeCliFailure } from "./kit/json-out.js";
-import { CliUsageError } from "./kit/usage-error.js";
+import { writeCliFailure } from "./lib/json-out.js";
+import { CliUsageError } from "./lib/usage-error.js";
 import { createLifecyclePresenter, type LifecycleItem, measurePath } from "./lifecycle-presenter.js";
 import { type RemovalFailure, refuseForOpenSessions, removePath, reportRemovalFailures } from "./removal.js";
 

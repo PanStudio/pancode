@@ -7,7 +7,7 @@
  * with the C3 diagnostic on stderr. NDJSON streams (`run`, `fleet run`,
  * `fleet events`) follow the headless contract instead.
  *
- * Leaf of the CLI kit: imports only other kit modules.
+ * Leaf of the CLI lib: imports only other CLI lib modules.
  */
 import type { ErrorSlug } from "./slugs.js";
 import { formatDiagnostic, formatUsageError, USAGE_SLUGS } from "./usage-error.js";

@@ -11,7 +11,7 @@
  * generated from the 0.8.5 root help, the `dev` listing and the handler
  * comments, so `hidden` marks exactly what the default root help leaves out.
  */
-import type { CommandSpec } from "../kit/help.js";
+import type { CommandSpec } from "../lib/help.js";
 
 interface CommandSpecModule {
 	readonly spec: CommandSpec;

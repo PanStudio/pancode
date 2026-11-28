@@ -6,9 +6,9 @@ import { parseToolLimitList, toolLimitConflict, toolLimitConstraints } from "../
 import type { TurnConstraints } from "../core/turn-constraints.js";
 import { type AutonomyLevel, autonomyFromUserInput } from "../lib/autonomy/autonomy.js";
 import { globalFlagPositionHint, parseMaxContextTokens } from "./argv.js";
-import { didYouMean } from "./kit/did-you-mean.js";
-import { parseDuration } from "./kit/duration.js";
-import type { ErrorSlug } from "./kit/slugs.js";
+import { didYouMean } from "./lib/did-you-mean.js";
+import { parseDuration } from "./lib/duration.js";
+import type { ErrorSlug } from "./lib/slugs.js";
 import type { RunLimitsV2 } from "./modes/run-json-schema-v2.js";
 import { RUN_FLAGS } from "./specs/manifest.js";
 

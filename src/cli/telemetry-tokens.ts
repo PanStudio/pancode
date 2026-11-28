@@ -10,7 +10,7 @@ import type {
 } from "../domains/session/token-sources.js";
 import { loadTokenSourcesReport } from "../domains/session/token-sources.js";
 import { formatColumns } from "./argv.js";
-import { writeCliFailure } from "./kit/json-out.js";
+import { writeCliFailure } from "./lib/json-out.js";
 import { resolveSessionSelector } from "./telemetry-target.js";
 
 export const TOKENS_HELP = `pancode telemetry tokens --session <id> [--by-source] [--json]

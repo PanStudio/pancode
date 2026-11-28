@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import type { buildCustomizationGraph, CustomizationEntry } from "./config-inspect.js";
-import { parseCommandFlags } from "./kit/flags.js";
-import { helpRequested } from "./kit/help.js";
-import { writeCliFailure } from "./kit/json-out.js";
+import { parseCommandFlags } from "./lib/flags.js";
+import { helpRequested } from "./lib/help.js";
+import { writeCliFailure } from "./lib/json-out.js";
 
 type CustomizationGraph = ReturnType<typeof buildCustomizationGraph>;
 

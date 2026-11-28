@@ -39,7 +39,7 @@ import {
 } from "../../session-control/chat-loop-messages.js";
 import { sealCompletion } from "../../tools/finish.js";
 import { openSteerChannel } from "../headless-steer.js";
-import { EXPLORATION_STALLED_EXIT_CODE } from "../kit/exit-codes.js";
+import { EXPLORATION_STALLED_EXIT_CODE } from "../lib/exit-codes.js";
 import { flushRawStdout, writeRawStdout } from "../output-guard.js";
 import { UNSCRIPTED_EXIT_CODE, unscriptedRunMessage } from "../run-answers.js";
 import {

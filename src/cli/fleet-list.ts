@@ -17,9 +17,9 @@ import { type FleetRootSeal, inspectFleetRootSeal } from "../domains/dispatch/fl
 import { type FleetRunRecord, listFleetRuns, openLedger } from "../domains/dispatch/state.js";
 import { formatColumns } from "./argv.js";
 import { fleetInspectionScope } from "./fleet-project-scope.js";
-import { EXIT_CODES } from "./kit/exit-codes.js";
-import { parseCommandFlags } from "./kit/flags.js";
-import { jsonDocument, writeCliFailure, writeJson } from "./kit/json-out.js";
+import { EXIT_CODES } from "./lib/exit-codes.js";
+import { parseCommandFlags } from "./lib/flags.js";
+import { jsonDocument, writeCliFailure, writeJson } from "./lib/json-out.js";
 
 const LIST_PATH = ["fleet", "list"] as const;
 const DEFAULT_LIMIT = 20;

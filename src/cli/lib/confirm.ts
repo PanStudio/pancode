@@ -8,7 +8,7 @@
  * is never a confirmation flag.
  *
  * The question is asked on stderr so stdout stays the command's document.
- * Leaf of the CLI kit: imports only node builtins and other kit modules.
+ * Leaf of the CLI lib: imports only node builtins and other CLI lib modules.
  */
 import { createInterface } from "node:readline/promises";
 import { EXIT_CODES } from "./exit-codes.js";

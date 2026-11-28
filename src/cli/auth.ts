@@ -21,7 +21,7 @@ import { formatColumns, printError, printOk } from "./argv.js";
 import { askYesNo } from "./ask.js";
 import { railPrefix } from "./configure-target.js";
 import { offerCopilotSignIn } from "./copilot-sign-in.js";
-import { jsonDocument, writeCliFailure, writeJson } from "./kit/json-out.js";
+import { jsonDocument, writeCliFailure, writeJson } from "./lib/json-out.js";
 import { createLifecyclePresenter } from "./lifecycle-presenter.js";
 import { createDelayedManualCodeInput } from "./oauth-manual-input.js";
 import {

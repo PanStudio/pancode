@@ -47,11 +47,11 @@ import { forkSessionAtRest } from "../domains/session/tree/fork.js";
 import { readTreeBundle } from "../domains/session/tree/manager.js";
 import type { PancodeSessionOwner } from "../engine/session.js";
 import { formatColumns } from "./argv.js";
-import { confirmAction } from "./kit/confirm.js";
-import { EXIT_CODES } from "./kit/exit-codes.js";
-import { type FlagDeclarations, parseCommandFlags } from "./kit/flags.js";
-import { jsonDocument, writeCliFailure, writeJson } from "./kit/json-out.js";
-import type { ErrorSlug } from "./kit/slugs.js";
+import { confirmAction } from "./lib/confirm.js";
+import { EXIT_CODES } from "./lib/exit-codes.js";
+import { type FlagDeclarations, parseCommandFlags } from "./lib/flags.js";
+import { jsonDocument, writeCliFailure, writeJson } from "./lib/json-out.js";
+import type { ErrorSlug } from "./lib/slugs.js";
 import { terminalColumns, truncate } from "./text-layout.js";
 
 export type SessionHistoryVerb = "history" | "show" | "export" | "artifacts" | "rename" | "fork" | "rm" | "compact";

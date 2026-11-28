@@ -47,8 +47,8 @@ import {
 } from "../domains/session/heartbeat.js";
 import { endAbandonedSession } from "../domains/session/history.js";
 import { cwdHash, type PancodeSessionMeta } from "../engine/session.js";
-import { jsonFailure, writeJson } from "./kit/json-out.js";
-import type { ErrorSlug } from "./kit/slugs.js";
+import { jsonFailure, writeJson } from "./lib/json-out.js";
+import type { ErrorSlug } from "./lib/slugs.js";
 import type { SessionHistoryVerb } from "./session-history.js";
 
 const USAGE = `usage: pancode session list [--json] [--stale]

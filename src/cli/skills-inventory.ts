@@ -39,8 +39,8 @@ import {
 	type SkillCatalogInvalidReason,
 	skillCatalogValidity,
 } from "../domains/resources/index.js";
-import { helpRequested } from "./kit/help.js";
-import { writeCliFailure } from "./kit/json-out.js";
+import { helpRequested } from "./lib/help.js";
+import { writeCliFailure } from "./lib/json-out.js";
 
 /** Wire bound on the emitted skill list. */
 const MAX_SKILLS_INVENTORY_SKILLS = 64;

@@ -79,9 +79,9 @@ import { bareSkillRemedy, isBareSkillDirectory, packageBareSkill } from "../doma
 import { knownSkillNames } from "../domains/resources/skills/marketplace.js";
 import { createProcessJournal } from "../domains/telemetry/process-journal.js";
 import { formatColumns, printError, printOk } from "./argv.js";
-import { didYouMean } from "./kit/did-you-mean.js";
-import { helpRequested } from "./kit/help.js";
-import { jsonDocument, writeCliFailure } from "./kit/json-out.js";
+import { didYouMean } from "./lib/did-you-mean.js";
+import { helpRequested } from "./lib/help.js";
+import { jsonDocument, writeCliFailure } from "./lib/json-out.js";
 import { leaves as hubLeaves } from "./specs/hub.js";
 import { terminalColumns, truncate, wrapPlain } from "./text-layout.js";
 

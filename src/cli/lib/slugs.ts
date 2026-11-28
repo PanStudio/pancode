@@ -5,7 +5,7 @@
  * document carries one in `error.code`, and `schema help` publishes the list,
  * so a new slug is a contract change, not a local choice.
  *
- * Leaf of the CLI kit: imports nothing.
+ * Leaf of the CLI lib: imports nothing.
  */
 export const ERROR_SLUGS = [
 	"usage",

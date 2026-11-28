@@ -67,7 +67,7 @@ import { traceBoot } from "../core/boot-trace.js";
 import { incompleteInstallationAdvice } from "../core/incomplete-installation.js";
 import { installProxyFromEnv } from "../core/proxy-env.js";
 import { extractGlobalFlags, parseFlags, printError } from "./argv.js";
-import { didYouMean } from "./kit/did-you-mean.js";
+import { didYouMean } from "./lib/did-you-mean.js";
 
 const HELP = `PanCode command line
 
