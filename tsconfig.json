@@ -13,20 +13,16 @@
 		"resolveJsonModule": true,
 		"esModuleInterop": true,
 		"skipLibCheck": true,
-		"declaration": false,
 		"sourceMap": true,
 		"outDir": "./dist",
 		"rootDir": "./src",
-		"forceConsistentCasingInFileNames": true,
 		"isolatedModules": true,
-		"allowImportingTsExtensions": false,
 		"types": ["node"],
 		// Workspace packages resolve to their source, so the checkout's own
 		// templates type-check against the SDK without a build. Authors import
 		// the SDK as `pancode/sdk/<subpath>`, the root package's exports.
 		"paths": {
 			"pancode/sdk/*": ["./packages/sdk/src/*/index.ts"],
-			"@pancode/sdk": ["./packages/sdk/src/index.ts"],
 			"@pancode/sdk/*": ["./packages/sdk/src/*/index.ts"],
 			"@pancode/store": ["./packages/store/src/index.ts"],
 			"@pancode/store/*": ["./packages/store/src/*/index.ts"],
@@ -34,6 +30,5 @@
 			"@pancode/scidata/*": ["./packages/scidata/src/*/index.ts"]
 		}
 	},
-	"include": ["src/**/*"],
-	"exclude": ["node_modules", "dist", "scripts"]
+	"include": ["src/**/*"]
 }

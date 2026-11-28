@@ -40,23 +40,12 @@
 	"files": {
 		"includes": [
 			"**",
-			"!**/.antigravitycli",
 			"!apps/pancode-gui",
-			"!.claude",
-			"!.pancode",
-			"!**/dist",
-			"!**/node_modules",
-			"!**/*.log",
-			"!.superpowers",
-			"!.mine",
-			"!benchmarks",
-			"!social-campaigns",
 			"!**/*.html",
 			"!tests/fixtures/telemetry/golden",
 			"!tests/fixtures/typecheck-corpus",
 			"!assets/media-manifest.json",
-			"!hub/packs/plugins/*/server.mjs",
-			"!tmp"
+			"!hub/packs/plugins/*/server.mjs"
 		]
 	},
 	"overrides": [

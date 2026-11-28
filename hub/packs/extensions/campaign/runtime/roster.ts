@@ -1,11 +1,7 @@
-// SPDX-License-Identifier: LicenseRef-PanCode-1.0
-// SPDX-FileCopyrightText: 2026 Anthony Kougkas
-import { readFileSync } from "node:fs";
-import { parse as parseYaml } from "yaml";
-import { THINKING_LEVELS } from "../providers/types/capability-flags.js";
+import type { RosterEntry } from "./types.ts";
 
 /**
- * A campaign roster: the models one fixture is run across (WTF-P 0.8.3 C4). The file is
+ * A campaign roster: the models one fixture is run across. The file is
  *
  *   roster:
  *     - target: openai-codex
@@ -15,17 +11,16 @@ import { THINKING_LEVELS } from "../providers/types/capability-flags.js";
  *
  * Labels name each entry's rows and directory, so they must be unique.
  */
-export interface RosterEntry {
-	target: string;
-	model: string;
-	thinking: string | null;
-	label: string;
-}
 
+/** The thinking levels `pancode run --thinking` takes. */
+export const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
+
+/** The host parses YAML text up to this size. */
+const ROSTER_MAX_BYTES = 64 * 1024;
 const ENTRY_KEYS = new Set(["target", "model", "thinking", "label"]);
 const LABEL_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._@/:+-]{0,79}$/u;
 
-class RosterError extends Error {}
+export class RosterError extends Error {}
 
 function fail(where: string, reason: string): never {
 	throw new RosterError(`${where}: ${reason}`);
@@ -59,14 +54,8 @@ function parseEntry(raw: unknown, index: number): RosterEntry {
 	return { target, model, thinking, label };
 }
 
-/** Parse roster YAML; a bad file throws naming the offending entry. */
-export function parseRoster(source: string): RosterEntry[] {
-	let document: unknown;
-	try {
-		document = parseYaml(source);
-	} catch (error) {
-		fail("roster", `not valid YAML: ${error instanceof Error ? error.message : String(error)}`);
-	}
+/** Check a parsed roster document; a bad one throws a RosterError naming the offending entry. */
+export function parseRoster(document: unknown): RosterEntry[] {
 	if (document === null || typeof document !== "object" || Array.isArray(document))
 		fail("roster", "expected a mapping with one key, roster");
 	for (const key of Object.keys(document)) if (key !== "roster") fail(key, "unknown key; the file takes roster");
@@ -82,18 +71,14 @@ export function parseRoster(source: string): RosterEntry[] {
 	return entries;
 }
 
-/** Read and parse a roster file: the entries, or one error line naming the file and the offending entry. */
-export function loadRoster(file: string): { entries: RosterEntry[] } | { error: string } {
-	let source: string;
+/** Parse roster YAML through `yaml` (the host's parser); a bad file throws a RosterError. */
+export async function readRoster(source: string, yaml: (text: string) => Promise<unknown>): Promise<RosterEntry[]> {
+	if (Buffer.byteLength(source) > ROSTER_MAX_BYTES) fail("roster", "the file is larger than 64 KiB");
+	let document: unknown;
 	try {
-		source = readFileSync(file, "utf8");
+		document = await yaml(source);
 	} catch (error) {
-		return { error: `--roster ${file}: cannot read the file: ${error instanceof Error ? error.message : String(error)}` };
+		fail("roster", `not valid YAML: ${error instanceof Error ? error.message : String(error)}`);
 	}
-	try {
-		return { entries: parseRoster(source) };
-	} catch (error) {
-		if (error instanceof RosterError) return { error: `--roster ${file}: ${error.message}` };
-		throw error;
-	}
+	return parseRoster(document);
 }

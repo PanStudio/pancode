@@ -4,7 +4,7 @@
 
 The certificate is signed by the PanHub root key. The root private key is held offline by the maintainer; its public half is compiled into PanCode (`src/domains/resources/hub-keys.ts`). The maintainer issues certificates with `node scripts/hub-root.mjs certify`.
 
-CI signs each index change with a certified key and publishes `index.yaml`, `index.envelope.json` and this certificate as assets of the `hub-index` release.
+When the repository variable `HUB_SIGNING` is `on`, CI (`.github/workflows/hub-index.yml`) signs each index change with a certified key and publishes `index.yaml`, `index.envelope.json` and this certificate as assets of the `hub-index` release.
 
 To verify a certificate: `node scripts/hub-root.mjs verify --certificate hub/keys/signing.json`.
 
