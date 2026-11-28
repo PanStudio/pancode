@@ -10,7 +10,7 @@ import { Problem } from "../contracts/common.js";
 import type { Event } from "../contracts/events.js";
 import { Accepted, Operation } from "../contracts/operations.js";
 import { Tools } from "../contracts/toolchain.js";
-import { PINNED_TOOLS } from "./fixtures/toolchain.js";
+import { PINNED_PROGRAMS } from "./fixtures/toolchain.js";
 import { harness, json, terminal } from "./harness/app.js";
 import { scratchHome } from "./harness/scratch-home.js";
 
@@ -22,7 +22,7 @@ test("real domain workers: inventory, fabricated install over SSE, idempotency, 
 	assert.ok(Value.Check(Tools, tools));
 	assert.deepEqual(
 		tools.map((row) => row.id),
-		PINNED_TOOLS.map((row) => row.id),
+		PINNED_PROGRAMS.map((row) => row.id),
 	);
 	assert.ok(Number(list.headers.get("X-Pancode-Worker-Thread")) > 0);
 	assert.equal(Number(list.headers.get("X-Pancode-Worker-Thread")), h.reads.threadId);
@@ -78,7 +78,7 @@ test("real domain workers: inventory, fabricated install over SSE, idempotency, 
 	const file = join(
 		h.home.path,
 		"data/tools/herdr",
-		PINNED_TOOLS.find((row) => row.id === "herdr")?.version ?? "",
+		PINNED_PROGRAMS.find((row) => row.id === "herdr")?.version ?? "",
 		"herdr",
 	);
 	assert.ok(existsSync(file));
@@ -113,18 +113,18 @@ test("domain installation failure is a redacted terminal problem", async (t) => 
 	assert.doesNotMatch(JSON.stringify(record), /private-stderr-sentinel|\n\s+at /);
 });
 
-test("production toolStatuses and removeTool execute in separate workers without fixture substitution", async (t) => {
+test("production programStatuses and removeProgram execute in separate workers without fixture substitution", async (t) => {
 	const h = await harness({ fixture: false });
 	t.after(h.close);
 	const response = await h.request("/api/toolchain/tools");
 	const rows = await json(response, Tools);
 	assert.deepEqual(
 		rows.map((row) => row.id),
-		PINNED_TOOLS.map((pin) => pin.id),
+		PINNED_PROGRAMS.map((pin) => pin.id),
 	);
 	assert.deepEqual(
 		rows.map((row) => row.summary),
-		PINNED_TOOLS.map((pin) => pin.summary),
+		PINNED_PROGRAMS.map((pin) => pin.summary),
 	);
 	assert.equal(Number(response.headers.get("X-Pancode-Worker-Thread")), h.reads.threadId);
 	const accepted = await json(await h.post("/api/toolchain/tools/herdr/remove"), Accepted);
@@ -139,7 +139,7 @@ test("removing the vendored copy preserves the compatible executable on the oper
 	const directory = join(pathHome.path, "path");
 	await mkdir(directory);
 	const executable = join(directory, "herdr");
-	const source = `#!/bin/sh\nprintf 'herdr ${PINNED_TOOLS.find((row) => row.id === "herdr")?.version}\\n'\n`;
+	const source = `#!/bin/sh\nprintf 'herdr ${PINNED_PROGRAMS.find((row) => row.id === "herdr")?.version}\\n'\n`;
 	await writeFile(executable, source);
 	await chmod(executable, 0o755);
 	const h = await harness({}, { env: { PATH: directory } });

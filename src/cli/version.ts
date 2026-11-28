@@ -87,8 +87,8 @@ export async function runVersionCommand(args: ReadonlyArray<string> = []): Promi
 		process.stdout.write(`${WORKER_SPEC_VERSIONS.join(" ")}\n`);
 		return 0;
 	}
-	const { findPinnedTool } = await import("../lib/programs/registry.js");
-	const herdr = findPinnedTool("herdr");
+	const { findPinnedProgram } = await import("../lib/programs/registry.js");
+	const herdr = findPinnedProgram("herdr");
 	if (flags.json) {
 		const { WORKER_SPEC_VERSIONS } = await import("../lib/worker-wire/spec-contract.js");
 		const build = readBuildProvenance();

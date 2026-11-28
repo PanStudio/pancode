@@ -12,8 +12,8 @@ import {
 	executeFleetToolInstall,
 	prepareFleetToolInstall,
 } from "../../src/domains/dispatch/fleet-tool-install.js";
-import { installPinnedTool } from "../../src/lib/programs/install.js";
-import { findPinnedTool } from "../../src/lib/programs/registry.js";
+import { installPinnedProgram } from "../../src/lib/programs/install.js";
+import { findPinnedProgram } from "../../src/lib/programs/registry.js";
 import { isolatePancodeEnv } from "../harness/scratch-env.js";
 
 let env: Awaited<ReturnType<typeof isolatePancodeEnv>>;
@@ -23,14 +23,18 @@ beforeEach(async () => {
 afterEach(() => env.restore());
 
 it("pins asciinema, GPL notice and corresponding upstream release source", async () => {
-	const entry = findPinnedTool("asciinema");
+	const entry = findPinnedProgram("asciinema");
 	ok(entry);
 	equal(entry.version, "3.2.1");
 	equal(entry.license, "GPL-3.0-or-later");
 	ok(entry.documents.some((doc) => doc.name.endsWith("source.tar.gz")));
 	match(entry.notice ?? "", /separate program/);
 	const root = join(env.dir, "tools");
-	const bad = await installPinnedTool(entry, { root, platform: "linux-x64", fetch: async () => Buffer.from("corrupt") });
+	const bad = await installPinnedProgram(entry, {
+		root,
+		platform: "linux-x64",
+		fetch: async () => Buffer.from("corrupt"),
+	});
 	equal(bad.ok, false);
 	match(bad.message, /checksum mismatch/);
 	equal(existsSync(join(root, entry.id, entry.version)), false);
@@ -39,9 +43,9 @@ it("pins asciinema, GPL notice and corresponding upstream release source", async
 it("writes the separate-program notice during an atomic checksum-verified installation", async () => {
 	const bytes = Buffer.from("fixture program");
 	const digest = createHash("sha256").update(bytes).digest("hex");
-	const entry = findPinnedTool("asciinema");
+	const entry = findPinnedProgram("asciinema");
 	ok(entry);
-	const result = await installPinnedTool(
+	const result = await installPinnedProgram(
 		{
 			...entry,
 			documents: [],
@@ -70,9 +74,9 @@ it("installs a runtime member under a directory whose name starts with ..", asyn
 	const archive = join(env.dir, "asset.tar.gz");
 	execFileSync("tar", ["-czf", archive, "-C", tree, "tool", "..data/lib.so"]);
 	const bytes = readFileSync(archive);
-	const entry = findPinnedTool("asciinema");
+	const entry = findPinnedProgram("asciinema");
 	ok(entry);
-	const result = await installPinnedTool(
+	const result = await installPinnedProgram(
 		{
 			...entry,
 			documents: [],

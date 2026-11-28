@@ -5,21 +5,21 @@ import { dirname, relative, resolve, sep } from "node:path";
 import { threadId } from "node:worker_threads";
 import {
 	describeResolution,
-	findPinnedTool,
-	installPinnedTool,
-	installTool,
-	PINNED_TOOLS,
-	type PinnedTool,
-	removeTool,
-	type ToolFetcher,
-	toolchainRoot,
-	toolStatus,
-	toolStatuses,
+	findPinnedProgram,
+	installPinnedProgram,
+	installProgram,
+	PINNED_PROGRAMS,
+	type PinnedProgram,
+	type ProgramFetcher,
+	programStatus,
+	programStatuses,
+	programsRoot,
+	removeProgram,
 } from "../../../../../src/lib/programs/index.js";
 import { AppProblem } from "../../services/problem.js";
 
 /** Check the requested URL before invoking the fetcher (including injected fetchers). */
-export function pinnedFetcher(pins: readonly PinnedTool[], fetcher: ToolFetcher): ToolFetcher {
+export function pinnedFetcher(pins: readonly PinnedProgram[], fetcher: ProgramFetcher): ProgramFetcher {
 	const allowed = new Set(
 		pins.flatMap((pin) => [
 			...Object.values(pin.downloads).map((download) => download.url),
@@ -31,17 +31,17 @@ export function pinnedFetcher(pins: readonly PinnedTool[], fetcher: ToolFetcher)
 		return fetcher(url);
 	};
 }
-export function toolDownloader(network: typeof fetch): ToolFetcher {
+export function toolDownloader(network: typeof fetch): ProgramFetcher {
 	return async (url: string): Promise<Buffer> => {
 		// GitHub's pinned release URLs redirect to signed asset URLs. Hash verification
-		// remains owned by installTool; arbitrary entry URLs never reach this function.
+		// remains owned by installProgram; arbitrary entry URLs never reach this function.
 		const response = await network(url, { redirect: "follow", signal: AbortSignal.timeout(300_000) });
 		if (!response.ok) throw new Error(`Pinned download returned HTTP ${response.status}.`);
 		return Buffer.from(await response.arrayBuffer());
 	};
 }
 function containedTool(id: string) {
-	const root = resolve(toolchainRoot());
+	const root = resolve(programsRoot());
 	const canonical = (path: string): string => {
 		let parent = path;
 		while (!existsSync(parent)) parent = dirname(parent);
@@ -51,19 +51,19 @@ function containedTool(id: string) {
 	if (difference === ".." || difference.startsWith(`..${sep}`) || difference.startsWith(sep))
 		throw new AppProblem("validation", "Tool directory escapes the toolchain root.");
 }
-export function toolchainAdapter(options: { pins?: readonly PinnedTool[]; fetcher?: ToolFetcher } = {}) {
-	const pins = options.pins ?? PINNED_TOOLS;
+export function toolchainAdapter(options: { pins?: readonly PinnedProgram[]; fetcher?: ProgramFetcher } = {}) {
+	const pins = options.pins ?? PINNED_PROGRAMS;
 	const fetcher = pinnedFetcher(pins, options.fetcher ?? toolDownloader(globalThis.fetch));
 	const known = (id: string) => {
 		const entry = pins.find((pin) => pin.id === id);
-		if (!entry || !findPinnedTool(id)) throw new AppProblem("not_found", "Unknown pinned tool.");
+		if (!entry || !findPinnedProgram(id)) throw new AppProblem("not_found", "Unknown pinned tool.");
 		containedTool(id);
 		containedTool(`${id}/${entry.version}`);
 		return entry;
 	};
 	return {
 		list() {
-			const statuses = options.pins ? pins.map(toolStatus) : toolStatuses();
+			const statuses = options.pins ? pins.map(programStatus) : programStatuses();
 			return {
 				threadId,
 				rows: statuses.map((status) => ({
@@ -89,7 +89,7 @@ export function toolchainAdapter(options: { pins?: readonly PinnedTool[]; fetche
 		async install(id: string, force: boolean, onProgress: (message: string) => void) {
 			const entry = known(id);
 			const settings = { force, onProgress, fetch: fetcher };
-			const result = options.pins ? await installPinnedTool(entry, settings) : await installTool(id, settings);
+			const result = options.pins ? await installPinnedProgram(entry, settings) : await installProgram(id, settings);
 			if (!result.ok) {
 				const problem = new AppProblem(
 					"operation_failed",
@@ -102,7 +102,7 @@ export function toolchainAdapter(options: { pins?: readonly PinnedTool[]; fetche
 		},
 		remove(id: string) {
 			known(id);
-			const result = removeTool(id);
+			const result = removeProgram(id);
 			if (!result.ok) throw new AppProblem("operation_failed", "Vendored tool removal failed.");
 			return { id: result.id, message: result.message };
 		},

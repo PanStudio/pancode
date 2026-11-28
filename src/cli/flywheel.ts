@@ -217,8 +217,8 @@ export async function runFlywheelCommand(argv: ReadonlyArray<string>, deps: Flyw
 	let gh: string | null;
 	if (deps.findGh !== undefined) gh = deps.findGh();
 	else {
-		const { resolveToolBinary } = await import("../lib/programs/index.js");
-		gh = resolveToolBinary("gh").binaryPath;
+		const { resolveProgramBinary } = await import("../lib/programs/index.js");
+		gh = resolveProgramBinary("gh").binaryPath;
 	}
 	if (gh === null) {
 		fail("dev flywheel reads GitHub through gh, which is not on PATH");

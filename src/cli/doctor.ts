@@ -70,6 +70,7 @@ import { hpcToolchainFindings } from "./doctor-hpc.js";
 import { installRecordFindings } from "./doctor-install-records.js";
 import { installationFindings } from "./doctor-installation.js";
 import { panesFindings } from "./doctor-panes.js";
+import { pdfAttachmentFinding, programFindings } from "./doctor-programs.js";
 import {
 	homeStorageFinding,
 	installRootFinding,
@@ -78,7 +79,6 @@ import {
 } from "./doctor-state-size.js";
 import { storeFindings } from "./doctor-store.js";
 import { taskWorktreeFindings } from "./doctor-task-worktrees.js";
-import { pdfAttachmentFinding, toolchainFindings } from "./doctor-toolchain.js";
 import { validationContractFinding } from "./doctor-validation-contract.js";
 import { writeCliFailure } from "./lib/json-out.js";
 import { createLifecyclePresenter } from "./lifecycle-presenter.js";
@@ -637,7 +637,7 @@ async function collectFindings(options: DoctorCollectOptions): Promise<DoctorFin
 	// untouched home there is no vendor root to look at and the answer would be
 	// "none" for every row regardless, so the sweep stays with the others.
 	// The PDF row reads PATH only, so it runs on an untouched home too.
-	const toolChecks = [...(untouched ? [] : toolchainFindings({ filesEnabled, fix })), await pdfAttachmentFinding()];
+	const toolChecks = [...(untouched ? [] : programFindings({ filesEnabled, fix })), await pdfAttachmentFinding()];
 	// Compilers, MPI, build systems, and the scheduler. Each probe resolves PATH
 	// and runs a bounded `--version` in a scratch directory, so it creates
 	// nothing and runs on an untouched home too.

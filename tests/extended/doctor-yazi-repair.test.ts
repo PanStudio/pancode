@@ -4,7 +4,7 @@ import { match, strictEqual } from "node:assert/strict";
 import { chmodSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { it } from "node:test";
-import { toolchainFindings } from "../../src/cli/doctor-toolchain.js";
+import { programFindings } from "../../src/cli/doctor-programs.js";
 import { yaziProfileDir } from "../../src/domains/mux/index.js";
 import { ensureYaziProfile, inspectYaziProfile } from "../../src/domains/mux/yazi/profile.js";
 import { isolatePancodeEnv } from "../harness/scratch-env.js";
@@ -20,7 +20,7 @@ it("doctor treats an unused Yazi profile as information and repairs missing and 
 			});
 		process.env.PATH = bin;
 		const profileRow = (fix = false) =>
-			toolchainFindings({ filesEnabled: true, fix }).find((row) => row.name === "files pane profile");
+			programFindings({ filesEnabled: true, fix }).find((row) => row.name === "files pane profile");
 		strictEqual(profileRow()?.level, "info");
 		strictEqual(profileRow(true)?.level, "ok");
 		writeFileSync(join(yaziProfileDir(), "stamp.json"), "{}");
@@ -43,7 +43,7 @@ it("doctor retains a generation failure until a profile successfully regenerates
 		});
 		process.env.PATH = bin;
 		const row = (fix = false) =>
-			toolchainFindings({ filesEnabled: true, fix }).find((finding) => finding.name === "files pane profile");
+			programFindings({ filesEnabled: true, fix }).find((finding) => finding.name === "files pane profile");
 		strictEqual(row(true)?.level, "warn");
 		strictEqual(row()?.level, "warn");
 		match(row()?.detail ?? "", /generation failed/);

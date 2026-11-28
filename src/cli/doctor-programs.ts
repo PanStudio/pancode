@@ -13,14 +13,14 @@ import {
 } from "../domains/mux/index.js";
 import {
 	describeResolution,
-	resolveToolBinary,
+	type ProgramStatus,
+	programStatuses,
+	resolveProgramBinary,
 	resolveVendoredBinary,
-	type ToolStatus,
-	toolStatuses,
 } from "../lib/programs/index.js";
 import { popplerInstallHint } from "../tools/read-documents/pdf.js";
 
-export interface ToolchainFindingOptions {
+export interface ProgramFindingOptions {
 	filesEnabled?: boolean;
 	fix?: boolean;
 }
@@ -36,8 +36,8 @@ function yaziProfileFinding(enabled: boolean, fix: boolean): DoctorFinding {
 	try {
 		let profile = inspectCurrentYaziProfile();
 		if (fix && profile.state !== "current") {
-			const yazi = resolveToolBinary("yazi").binaryPath;
-			const ya = resolveToolBinary("ya").binaryPath;
+			const yazi = resolveProgramBinary("yazi").binaryPath;
+			const ya = resolveProgramBinary("ya").binaryPath;
 			if (yazi && ya) {
 				if (!ensureYaziProfile({ yaziPath: yazi, yaPath: ya })) {
 					return {
@@ -86,9 +86,9 @@ function yaziProfileFinding(enabled: boolean, fix: boolean): DoctorFinding {
  * being used, and a row that only said "not found" would send them looking for
  * a binary that is right there on their PATH.
  */
-export function toolchainFindings(options: ToolchainFindingOptions = {}): DoctorFinding[] {
+export function programFindings(options: ProgramFindingOptions = {}): DoctorFinding[] {
 	const filesEnabled = options.filesEnabled ?? true;
-	const tools = toolStatuses().map((status) =>
+	const tools = programStatuses().map((status) =>
 		status.id === "herdr"
 			? paneHostFinding(status)
 			: {
@@ -118,7 +118,7 @@ export function toolchainFindings(options: ToolchainFindingOptions = {}): Doctor
  * never a herdr on PATH. Shared by the toolchain row and doctor's
  * `panes binary` row, so the two cannot disagree about which binary hosts the panes.
  */
-export function paneHostFinding(status: ToolStatus, name = "external tool herdr"): DoctorFinding {
+export function paneHostFinding(status: ProgramStatus, name = "external tool herdr"): DoctorFinding {
 	const vendored = resolveVendoredBinary("herdr");
 	if (vendored !== null) {
 		return {

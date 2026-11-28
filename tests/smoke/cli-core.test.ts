@@ -11,7 +11,7 @@ import { after, before, describe, it } from "node:test";
 import { parse as parseYaml } from "yaml";
 import { readVerifiedRun, telemetryRunsDirectory } from "../../src/domains/telemetry/index.js";
 import { formatUserTaskHandoff } from "../../src/domains/user-tasks/handoff.js";
-import { findPinnedTool } from "../../src/lib/programs/registry.js";
+import { findPinnedProgram } from "../../src/lib/programs/registry.js";
 import { initializeScratchHome } from "../harness/headless-run.js";
 
 const ROOT = new URL("../..", import.meta.url).pathname;
@@ -363,7 +363,7 @@ describe("smoke/built CLI core", { concurrency: false }, () => {
 			if (/-dev(?:[.+]|$)/.test(VERSION))
 				match(versionLine ?? "", new RegExp(`^PanCode ${VERSION.replaceAll(".", "\\.")} \\(unreleased · [^)]+\\)$`));
 			else strictEqual(versionLine, `PanCode ${VERSION}`);
-			const herdr = findPinnedTool("herdr");
+			const herdr = findPinnedProgram("herdr");
 			const credit = herdr === null ? [] : [`Panes powered by herdr ${herdr.version} (${herdr.license})`];
 			deepStrictEqual(rest, [...credit, ""]);
 			strictEqual(version.stderr, "");

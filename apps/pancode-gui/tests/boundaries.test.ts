@@ -310,7 +310,7 @@ test("source import targets, shim exports, worker ownership, and process chokepo
 
 test("boundary checker rejects representative bypasses", () => {
 	for (const source of [
-		'import { toolStatuses } from "../../../../src/lib/programs/index.js";',
+		'import { programStatuses } from "../../../../src/lib/programs/index.js";',
 		'import { Worker as Thread } from "node:worker_threads";',
 		'export * from "../pancode/adapters/toolchain.js";',
 		"const module = await import(path);",

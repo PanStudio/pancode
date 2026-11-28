@@ -17,18 +17,18 @@ import { pancodeDataDir, resolvePancodeDirs } from "../../core/xdg.js";
  */
 
 /** `<data>/tools`, without creating it. */
-export function toolchainRoot(): string {
+export function programsRoot(): string {
 	return join(resolvePancodeDirs().data, "tools");
 }
 
 /** `<data>/tools/<id>/<version>`, without creating it. */
-export function toolVersionDir(id: string, version: string): string {
-	return join(toolchainRoot(), id, version);
+export function programVersionDir(id: string, version: string): string {
+	return join(programsRoot(), id, version);
 }
 
 /** `<data>/tools/<id>/<version>/<binary>`, without creating it. */
 function vendoredBinaryPath(id: string, version: string, binary: string): string {
-	return join(toolVersionDir(id, version), process.platform === "win32" ? `${binary}.exe` : binary);
+	return join(programVersionDir(id, version), process.platform === "win32" ? `${binary}.exe` : binary);
 }
 
 /**
@@ -44,8 +44,8 @@ function borrowedToolchainRoot(): string | null {
 }
 
 /** The toolchain root the operator's `pancode programs install` fills. */
-export function operatorToolchainRoot(): string {
-	return borrowedToolchainRoot() ?? toolchainRoot();
+export function operatorProgramsRoot(): string {
+	return borrowedToolchainRoot() ?? programsRoot();
 }
 
 /** Every place a vendored binary at this pin may already be: this process's own `<data>/tools`, then the operator's. */
@@ -58,7 +58,7 @@ export function vendoredBinaryCandidates(id: string, version: string, binary: st
 }
 
 /** `<data>/tools`, creating the data root the way every other writer does. */
-export function ensureToolchainRoot(): string {
+export function ensureProgramsRoot(): string {
 	return join(pancodeDataDir(), "tools");
 }
 

@@ -581,7 +581,7 @@ async function runHeadlessCommand(
 export async function runHomes(): Promise<NonNullable<ExtensionWorkOptions["homes"]>> {
 	const [
 		{ OPERATOR_COMPONENTS_ENV, operatorComponentsDir },
-		{ OPERATOR_TOOLS_ENV, operatorToolchainRoot },
+		{ OPERATOR_TOOLS_ENV, operatorProgramsRoot },
 		{ loadRunDigest },
 	] = await Promise.all([
 		import("../domains/install/components.js"),
@@ -595,7 +595,7 @@ export async function runHomes(): Promise<NonNullable<ExtensionWorkOptions["home
 			PANCODE_STATE_DIR: join(home, "state"),
 			PANCODE_CACHE_DIR: join(home, "cache"),
 			[OPERATOR_COMPONENTS_ENV]: operatorComponentsDir(),
-			[OPERATOR_TOOLS_ENV]: operatorToolchainRoot(),
+			[OPERATOR_TOOLS_ENV]: operatorProgramsRoot(),
 		}),
 		digest: loadRunDigest,
 	};

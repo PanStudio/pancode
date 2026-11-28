@@ -2,8 +2,8 @@
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import { readdirSync, rmdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
-import { statOrNull, toolchainRoot } from "./paths.js";
-import { findPinnedTool } from "./registry.js";
+import { programsRoot, statOrNull } from "./paths.js";
+import { findPinnedProgram } from "./registry.js";
 
 /**
  * Deleting vendored installs, and pruning the versions a pin bump superseded.
@@ -25,7 +25,7 @@ import { findPinnedTool } from "./registry.js";
  * only by an operator who went reading under the data root.
  */
 
-export interface ToolRemoveOptions {
+export interface ProgramRemoveOptions {
 	/** Vendor root override. Defaults to the data root's `tools` directory. */
 	root?: string;
 	/**
@@ -38,7 +38,7 @@ export interface ToolRemoveOptions {
 /**
  * How long a staging directory may sit before a sweep treats it as dead.
  *
- * The window is far shorter than it looks. `installPinnedTool` downloads every
+ * The window is far shorter than it looks. `installPinnedProgram` downloads every
  * asset and verifies every checksum *before* it creates the staging directory,
  * so that directory's whole life is a handful of local file writes and two
  * renames: sub-second normally, seconds on a struggling disk. An hour is twelve
@@ -54,7 +54,7 @@ export interface ToolRemoveOptions {
 const STALE_STAGING_MS = 3_600_000;
 
 /** What one sweep of a tool's directory deleted, and what it could not. */
-export interface ToolRemoveResult {
+export interface ProgramRemoveResult {
 	ok: boolean;
 	id: string;
 	/** `<root>/<id>`, whether or not it exists. */
@@ -69,8 +69,8 @@ export interface ToolRemoveResult {
 }
 
 /** Version directories currently installed for a tool, sorted. */
-export function installedToolVersions(id: string, options: ToolRemoveOptions = {}): string[] {
-	const dir = join(options.root ?? toolchainRoot(), id);
+export function installedProgramVersions(id: string, options: ProgramRemoveOptions = {}): string[] {
+	const dir = join(options.root ?? programsRoot(), id);
 	let names: string[];
 	try {
 		names = readdirSync(dir);
@@ -91,9 +91,9 @@ export function installedToolVersions(id: string, options: ToolRemoveOptions = {
  * asked for a state ("this tool is not vendored") that already holds, and
  * failing them for it would make the verb unusable in a script.
  */
-export function removeTool(id: string, options: ToolRemoveOptions = {}): ToolRemoveResult {
-	if (findPinnedTool(id) === null) {
-		const dir = join(options.root ?? toolchainRoot(), id);
+export function removeProgram(id: string, options: ProgramRemoveOptions = {}): ProgramRemoveResult {
+	if (findPinnedProgram(id) === null) {
+		const dir = join(options.root ?? programsRoot(), id);
 		return { ok: false, id, dir, removed: [], failed: [], staleStaging: [], message: `unknown tool: ${id}` };
 	}
 	return removeVersions(id, null, options);
@@ -107,10 +107,10 @@ export function removeTool(id: string, options: ToolRemoveOptions = {}): ToolRem
  * The kept version is not required to exist: pruning to a version that is not
  * installed empties the tool, which is what `--force` recovery wants.
  */
-export function removeVersions(id: string, keep: string | null, options: ToolRemoveOptions): ToolRemoveResult {
-	const root = options.root ?? toolchainRoot();
+export function removeVersions(id: string, keep: string | null, options: ProgramRemoveOptions): ProgramRemoveResult {
+	const root = options.root ?? programsRoot();
 	const dir = join(root, id);
-	const versions = installedToolVersions(id, { root }).filter((version) => version !== keep);
+	const versions = installedProgramVersions(id, { root }).filter((version) => version !== keep);
 	const removed: string[] = [];
 	const failed: { version: string; error: string }[] = [];
 	for (const version of versions) {

@@ -7,10 +7,10 @@ import { sha256Hex } from "../../core/hash.js";
 import { relativePathEscapes } from "../../core/path-containment.js";
 import { safeResourceWrite } from "../../core/safe-resource-write.js";
 import { type ArchiveEntry, readTarGzEntries, readZipEntries } from "./archive.js";
-import { ensureToolchainRoot } from "./paths.js";
-import { currentToolPlatform, findPinnedTool } from "./registry.js";
+import { ensureProgramsRoot } from "./paths.js";
+import { currentProgramPlatform, findPinnedProgram } from "./registry.js";
 import { removeVersions } from "./remove.js";
-import type { PinnedTool, PinnedToolDownload, ToolPlatform } from "./types.js";
+import type { PinnedProgram, PinnedProgramDownload, ProgramPlatform } from "./types.js";
 
 /**
  * Install a pinned tool into the vendor root.
@@ -43,16 +43,16 @@ import type { PinnedTool, PinnedToolDownload, ToolPlatform } from "./types.js";
  */
 
 /** How a URL becomes bytes. Injectable so the contract tests never touch the network. */
-export type ToolFetcher = (url: string) => Promise<Buffer>;
+export type ProgramFetcher = (url: string) => Promise<Buffer>;
 
-export interface ToolInstallOptions {
+export interface ProgramInstallOptions {
 	/** Re-download and replace an already-installed version. */
 	force?: boolean;
 	/** Install the asset for a platform other than the running one. */
-	platform?: ToolPlatform;
+	platform?: ProgramPlatform;
 	/** Vendor root override. Defaults to the data root's `tools` directory. */
 	root?: string;
-	fetch?: ToolFetcher;
+	fetch?: ProgramFetcher;
 	/**
 	 * Base URL or local directory serving the pinned assets under
 	 * `<id>/<version>/<upstream basename>`, or flat under the basename.
@@ -64,7 +64,7 @@ export interface ToolInstallOptions {
 	onProgress?: (message: string) => void;
 }
 
-export interface ToolInstallResult {
+export interface ProgramInstallResult {
 	ok: boolean;
 	id: string;
 	version: string;
@@ -85,22 +85,22 @@ export interface ToolInstallResult {
 const DOWNLOAD_TIMEOUT_MS = 300_000;
 
 /** Install by registry id. */
-export async function installTool(id: string, options: ToolInstallOptions = {}): Promise<ToolInstallResult> {
-	const entry = findPinnedTool(id);
+export async function installProgram(id: string, options: ProgramInstallOptions = {}): Promise<ProgramInstallResult> {
+	const entry = findPinnedProgram(id);
 	if (entry === null) {
 		return failure(id, "unknown", "", `unknown tool: ${id}`);
 	}
-	return installPinnedTool(entry, options);
+	return installPinnedProgram(entry, options);
 }
 
 /** Install a registry row. Exported so tests can drive a fabricated entry. */
-export async function installPinnedTool(
-	entry: PinnedTool,
-	options: ToolInstallOptions = {},
-): Promise<ToolInstallResult> {
-	const root = options.root ?? ensureToolchainRoot();
+export async function installPinnedProgram(
+	entry: PinnedProgram,
+	options: ProgramInstallOptions = {},
+): Promise<ProgramInstallResult> {
+	const root = options.root ?? ensureProgramsRoot();
 	const dir = join(root, entry.id, entry.version);
-	const platform = options.platform ?? currentToolPlatform();
+	const platform = options.platform ?? currentProgramPlatform();
 	const progress = options.onProgress ?? (() => undefined);
 
 	if (platform === null) {
@@ -295,7 +295,7 @@ export async function installPinnedTool(
  * `rm` is a disk problem to report, not a reason to claim the install did not
  * happen. It is named in the message so the operator can go look.
  */
-function prune(root: string, entry: PinnedTool): { pruned: string[]; note: string } {
+function prune(root: string, entry: PinnedProgram): { pruned: string[]; note: string } {
 	const outcome = removeVersions(entry.id, entry.version, { root });
 	const parts: string[] = [];
 	if (outcome.removed.length > 0) parts.push(`pruned ${outcome.removed.join(", ")}`);
@@ -309,7 +309,7 @@ function prune(root: string, entry: PinnedTool): { pruned: string[]; note: strin
 	return { pruned: outcome.removed, note: parts.length === 0 ? "" : `; ${parts.join("; ")}` };
 }
 
-function unpack(bytes: Buffer, download: PinnedToolDownload): Map<string, ArchiveEntry> {
+function unpack(bytes: Buffer, download: PinnedProgramDownload): Map<string, ArchiveEntry> {
 	if (download.archive === "raw") {
 		// The asset is the binary. The registry names it with an empty member
 		// path, so the synthetic map key matches what the caller looks up.
@@ -352,7 +352,7 @@ type VerifiedFetch = { ok: true; bytes: Buffer } | { ok: false; mismatch: boolea
 async function fetchVerified(
 	candidates: string[],
 	expected: string,
-	fetcher: ToolFetcher,
+	fetcher: ProgramFetcher,
 	progress: (message: string) => void,
 ): Promise<VerifiedFetch> {
 	const mismatches: string[] = [];
@@ -392,11 +392,11 @@ async function fetchAsset(url: string, timeoutMs: number): Promise<Buffer> {
  * writing `herdr` there would produce a directory Windows could never run and
  * that the resolution ladder on Windows would report as not installed.
  */
-function executableName(name: string, platform: ToolPlatform): string {
+function executableName(name: string, platform: ProgramPlatform): string {
 	return platform.startsWith("win32") ? `${name}.exe` : name;
 }
 
-function failure(id: string, version: string, dir: string, message: string): ToolInstallResult {
+function failure(id: string, version: string, dir: string, message: string): ProgramInstallResult {
 	return { ok: false, id, version, dir, binaries: [], documents: [], skipped: false, pruned: [], message };
 }
 

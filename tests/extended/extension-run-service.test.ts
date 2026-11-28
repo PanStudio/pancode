@@ -67,7 +67,7 @@ import {
 } from "../../src/domains/install/copilot-sdk-install.js";
 import type { SessionEntry } from "../../src/domains/session/entries.js";
 import { foldRunDigest } from "../../src/domains/session/run-digest.js";
-import { findPinnedTool, resolveVendoredBinary } from "../../src/lib/programs/index.js";
+import { findPinnedProgram, resolveVendoredBinary } from "../../src/lib/programs/index.js";
 import { runParkedInterview } from "../../src/tools/extension-interview.js";
 import { isolatePancodeEnv } from "../harness/scratch-env.js";
 
@@ -1306,7 +1306,7 @@ describe("a run home's digest", () => {
 		);
 		writeFileSync(join(sdk, "sdk.mjs"), "export class CopilotClient {}\n");
 		const operatorTools = join(env.dir, "operator-data", "tools");
-		const herdr = findPinnedTool("herdr");
+		const herdr = findPinnedProgram("herdr");
 		assert.ok(herdr !== null);
 		const herdrBinary = join(operatorTools, herdr.id, herdr.version, herdr.primaryBinary);
 		mkdirSync(join(herdrBinary, ".."), { recursive: true });

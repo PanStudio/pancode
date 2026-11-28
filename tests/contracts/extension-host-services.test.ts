@@ -82,7 +82,7 @@ import { startExtensionHost } from "../../src/entry/extension-host.js";
 import { createKeybindingManagerForTesting } from "../../src/interactive/keybinding-manager.js";
 import { settleExtensionKeys } from "../../src/interactive/surfaces/extension-pane-keys.js";
 import { createDockKeyGate } from "../../src/lib/panes/dock-keys.js";
-import { currentToolPlatform } from "../../src/lib/programs/index.js";
+import { currentProgramPlatform } from "../../src/lib/programs/index.js";
 import { resolveExtensionLine } from "../../src/session-control/extension-line.js";
 import { isolatePancodeEnv } from "../harness/scratch-env.js";
 
@@ -904,7 +904,7 @@ describe("extension binaries service", () => {
 	});
 
 	function binary(sha256: string): ExtensionBinaryDeclaration {
-		const platform = currentToolPlatform();
+		const platform = currentProgramPlatform();
 		return {
 			...paneBinary(),
 			name: NAME,
@@ -1025,7 +1025,7 @@ describe("extension binaries service", () => {
 	});
 
 	it("follows the installed copies: an install downloads the pin and removing the last copy deletes it", async (t) => {
-		const platform = currentToolPlatform();
+		const platform = currentProgramPlatform();
 		if (!platform) return t.skip("no pinned platform here");
 		const env = await isolatePancodeEnv("pancode-ext-binaries-");
 		t.after(() => env.restore());

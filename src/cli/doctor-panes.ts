@@ -7,8 +7,8 @@ import type { DoctorFinding } from "../domains/install/doctor.js";
 import { detectMux, MUX_METHOD_MIN_PROTOCOL, resolveSocketCandidates } from "../domains/mux/index.js";
 import { isPancodeHostSocket } from "../domains/mux/workspace/platform.js";
 import { telemetryRunsDirectory } from "../domains/telemetry/index.js";
-import { findPinnedTool, toolStatus } from "../lib/programs/index.js";
-import { paneHostFinding } from "./doctor-toolchain.js";
+import { findPinnedProgram, programStatus } from "../lib/programs/index.js";
+import { paneHostFinding } from "./doctor-programs.js";
 import { workspaceEligibility } from "./workspace-launch.js";
 
 /**
@@ -160,7 +160,7 @@ export async function panesFindings(env: NodeJS.ProcessEnv = process.env): Promi
 				: `server ${server.version}, protocol ${server.protocol}; PanCode's optional methods need ${REQUIRED_PROTOCOL} (${server.protocol >= REQUIRED_PROTOCOL ? "satisfied" : "toasts and agent focus fall back"})`,
 	});
 
-	const entry = findPinnedTool(PANE_HOST_TOOL_ID);
+	const entry = findPinnedProgram(PANE_HOST_TOOL_ID);
 	findings.push(
 		entry === null
 			? {
@@ -169,7 +169,7 @@ export async function panesFindings(env: NodeJS.ProcessEnv = process.env): Promi
 					name: "panes binary",
 					detail: `${PANE_HOST_TOOL_ID} is not in the pinned tool registry`,
 				}
-			: samePaneHostRow(paneHostFinding(toolStatus(entry), "panes binary")),
+			: samePaneHostRow(paneHostFinding(programStatus(entry), "panes binary")),
 	);
 
 	findings.push(layoutRow);

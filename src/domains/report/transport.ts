@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import { canOpenBrowser, openBrowser } from "../../core/open-browser.js";
-import { resolveToolBinary } from "../../lib/programs/index.js";
+import { resolveProgramBinary } from "../../lib/programs/index.js";
 import type { RenderedReport } from "./body.js";
 import { issueCanaryFinding, issueCanaryGate } from "./canary.js";
 import { type ReportCommandRunner, runReportCommand } from "./command.js";
@@ -68,7 +68,7 @@ export async function detectTransport(
 	deps: TransportDetectDeps = {},
 ): Promise<ReportTransport> {
 	const run = deps.run ?? runReportCommand;
-	const gh = (deps.findGh ?? (() => resolveToolBinary("gh").binaryPath))();
+	const gh = (deps.findGh ?? (() => resolveProgramBinary("gh").binaryPath))();
 	if (gh !== null) {
 		const options = { timeoutMs: REPORT_DETECT_TIMEOUT_MS, env: ghEnvironment(env) };
 		try {

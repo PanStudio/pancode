@@ -53,8 +53,8 @@ export function reportHostProbes(deps: ReportHostProbeDeps, env: NodeJS.ProcessE
 		});
 	const findGh = async (): Promise<string | null> => {
 		if (deps.findGh) return deps.findGh();
-		const { resolveToolBinary } = await import("../../lib/programs/index.js");
-		return resolveToolBinary("gh").binaryPath;
+		const { resolveProgramBinary } = await import("../../lib/programs/index.js");
+		return resolveProgramBinary("gh").binaryPath;
 	};
 	// The preview names the transport from what is on this machine; it never asks GitHub who is signed in.
 	const offline = async (): Promise<ReportPlanTransport> => {

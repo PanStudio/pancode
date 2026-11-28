@@ -12,7 +12,7 @@ import {
 } from "../domains/mux/operations.js";
 import { isPancodeHostSocket } from "../domains/mux/workspace/platform.js";
 import type { ExtensionReloadOutcome } from "../entry/extension-reload.js";
-import { pinnedToolMissing } from "../lib/programs/index.js";
+import { pinnedProgramMissing } from "../lib/programs/index.js";
 import type { NoticeLevel } from "./notice-source.js";
 import type {
 	BuiltinSlashCommand,
@@ -478,7 +478,7 @@ const CANONICAL_SLASH_COMMANDS: ReadonlyArray<BuiltinSlashCommand> = [
  * does not say it on every start (bt-11 #4); otherwise the ways to start a session with panes.
  */
 export function panesInactiveWords(lead: string): string {
-	if (pinnedToolMissing("herdr")) {
+	if (pinnedProgramMissing("herdr")) {
 		return `${lead}: terminal panes are not installed. Run \`pancode panes install\`, then restart \`pancode\``;
 	}
 	return `${lead}: this session started without panes. Restart \`pancode\` in a plain terminal to open its own pane host, or run \`pancode --with-panes\` inside herdr`;

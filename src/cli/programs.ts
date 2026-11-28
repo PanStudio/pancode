@@ -22,15 +22,15 @@ import { describeYaziProfile, inspectCurrentYaziProfile, resetYaziProfile } from
 import {
 	describeFloorRejection,
 	describeResolution,
-	findPinnedTool,
-	installedToolVersions,
+	findPinnedProgram,
+	installedProgramVersions,
+	installProgram,
 	installRemedy,
-	installTool,
-	PINNED_TOOLS,
-	removeTool,
-	type ToolStatus,
-	toolStatus,
-	toolStatuses,
+	PINNED_PROGRAMS,
+	type ProgramStatus,
+	programStatus,
+	programStatuses,
+	removeProgram,
 } from "../lib/programs/index.js";
 import { formatColumns, printError, printOk } from "./argv.js";
 import { writeCliFailure } from "./lib/json-out.js";
@@ -225,11 +225,11 @@ function resetProfile(positional: ReadonlyArray<string>, json: boolean): number 
 	const [id, extra] = positional;
 	if (id === undefined) return usageFailure("reset-profile", "usage", "name a tool: programs reset-profile <id>", json);
 	if (extra !== undefined) return usageFailure("reset-profile", "usage", `unexpected argument: ${extra}`, json);
-	if (findPinnedTool(id) === null) {
+	if (findPinnedProgram(id) === null) {
 		writeCliFailure({
 			path: ["programs", "reset-profile"],
 			slug: "not_found",
-			message: `unknown tool: ${id} (known: ${PINNED_TOOLS.map((row) => row.id).join(", ")})`,
+			message: `unknown tool: ${id} (known: ${PINNED_PROGRAMS.map((row) => row.id).join(", ")})`,
 			json,
 		});
 		return 1;
@@ -277,7 +277,7 @@ function parse(argv: ReadonlyArray<string>): Parsed {
 }
 
 function listTools(json: boolean): number {
-	const statuses = toolStatuses();
+	const statuses = programStatuses();
 	const components = COMPONENTS.map(componentStatus);
 	if (json) {
 		process.stdout.write(`${JSON.stringify([...statuses.map(jsonShape), ...components], null, 2)}\n`);
@@ -311,7 +311,7 @@ function listTools(json: boolean): number {
  */
 function unknownTool(command: string, id: string, json: boolean): number {
 	// Only the verbs that take a component name it among the ids that exist.
-	const known = [...PINNED_TOOLS, ...(command === "remove" ? [] : COMPONENTS)].map((row) => row.id);
+	const known = [...PINNED_PROGRAMS, ...(command === "remove" ? [] : COMPONENTS)].map((row) => row.id);
 	writeCliFailure({
 		path: ["programs", command],
 		slug: "not_found",
@@ -323,7 +323,7 @@ function unknownTool(command: string, id: string, json: boolean): number {
 
 function statusTool(id: string | undefined, json: boolean): number {
 	if (id === undefined) return usageFailure("status", "usage", "name a tool: programs status <id>", json);
-	const entry = findPinnedTool(id);
+	const entry = findPinnedProgram(id);
 	if (entry === null) {
 		const component = COMPONENTS.find((row) => row.id === id);
 		if (component === undefined) return unknownTool("status", id, json);
@@ -335,14 +335,14 @@ function statusTool(id: string | undefined, json: boolean): number {
 			);
 		return 0;
 	}
-	const status = toolStatus(entry);
+	const status = programStatus(entry);
 	const profile = id === "yazi" ? inspectCurrentYaziProfile() : null;
 	if (json) {
 		process.stdout.write(`${JSON.stringify({ ...jsonShape(status), ...(profile ? { profile } : {}) }, null, 2)}\n`);
 		return 0;
 	}
 	const rejection = describeFloorRejection(status);
-	const installedVersions = installedToolVersions(entry.id);
+	const installedVersions = installedProgramVersions(entry.id);
 	const lines = [
 		`${entry.id} ${entry.version} (${entry.license})`,
 		`  ${entry.summary}`,
@@ -370,10 +370,10 @@ function statusTool(id: string | undefined, json: boolean): number {
 
 async function installOne(id: string | undefined, force: boolean, json: boolean): Promise<number> {
 	if (id === undefined) return usageFailure("install", "usage", "name a tool: programs install <id>", json);
-	if (findPinnedTool(id) === null) {
+	if (findPinnedProgram(id) === null) {
 		return unknownTool("install", id, json);
 	}
-	const result = await installTool(id, {
+	const result = await installProgram(id, {
 		force,
 		...(json ? {} : { onProgress: (message: string) => process.stderr.write(`  ${message}\n`) }),
 	});
@@ -407,8 +407,8 @@ function removeOne(id: string | undefined, json: boolean): number {
 			`${id} is a component under <data>/components; programs remove deletes vendored programs only`,
 			json,
 		);
-	if (findPinnedTool(id) === null) return unknownTool("remove", id, json);
-	const result = removeTool(id);
+	if (findPinnedProgram(id) === null) return unknownTool("remove", id, json);
+	const result = removeProgram(id);
 	if (json) {
 		process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
 		return result.ok ? 0 : 1;
@@ -442,7 +442,7 @@ function removeAll(id: string | undefined, json: boolean): number {
 			json,
 		);
 	}
-	const results = PINNED_TOOLS.map((entry) => removeTool(entry.id));
+	const results = PINNED_PROGRAMS.map((entry) => removeProgram(entry.id));
 	if (json) {
 		process.stdout.write(`${JSON.stringify(results, null, 2)}\n`);
 		return results.every((result) => result.ok) ? 0 : 1;
@@ -463,7 +463,7 @@ function removeAll(id: string | undefined, json: boolean): number {
 }
 
 /** The JSON surface, flattened so a script does not have to walk the resolution. */
-function jsonShape(status: ToolStatus): Record<string, unknown> {
+function jsonShape(status: ProgramStatus): Record<string, unknown> {
 	return {
 		id: status.id,
 		kind: "program",
@@ -484,7 +484,7 @@ function jsonShape(status: ToolStatus): Record<string, unknown> {
 		// change nothing: already vendored, or no asset for this platform.
 		floorRejection: describeFloorRejection(status),
 		remedy: status.resolution.source === "none" && status.supported ? installRemedy(status.id) : null,
-		installedVersions: installedToolVersions(status.id),
+		installedVersions: installedProgramVersions(status.id),
 		detail: describeResolution(status),
 	};
 }
