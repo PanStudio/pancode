@@ -273,7 +273,7 @@ function mediaType(path: string): string {
 		: "application/octet-stream";
 }
 
-export async function extractPdfPages(
+async function extractPdfPages(
 	path: string,
 	options: { maxPages: number; maxBytes: number; signal?: AbortSignal },
 ): Promise<{ page: number; text: string }[]> {

@@ -6,7 +6,7 @@ export type { DispatchContract, DispatchRequest } from "./contract.js";
 export { councilTopologies } from "./council-topology.js";
 export { agentRoleFactsResolver } from "./execution-role.js";
 export { describeFleetResumeDiff, planFleetResume } from "./fleet-resume.js";
-export { type FleetRootSeal, fleetRootStepRunIds, inspectFleetRootSeal } from "./fleet-root-seal.js";
+export { type FleetRootSeal, inspectFleetRootSeal } from "./fleet-root-seal.js";
 export { executeFleetRun } from "./fleet-run.js";
 export type {
 	FleetRunPreview,

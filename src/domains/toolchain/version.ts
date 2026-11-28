@@ -30,7 +30,7 @@ export function parseVersion(output: string): string | null {
  * Unparseable input sorts oldest, so an unreadable version never satisfies a
  * minimum.
  */
-export function compareVersions(a: string, b: string): number {
+function compareVersions(a: string, b: string): number {
 	const left = numericParts(a);
 	const right = numericParts(b);
 	for (let i = 0; i < 3; i += 1) {

@@ -27,7 +27,7 @@ export function toolVersionDir(id: string, version: string): string {
 }
 
 /** `<data>/tools/<id>/<version>/<binary>`, without creating it. */
-export function vendoredBinaryPath(id: string, version: string, binary: string): string {
+function vendoredBinaryPath(id: string, version: string, binary: string): string {
 	return join(toolVersionDir(id, version), process.platform === "win32" ? `${binary}.exe` : binary);
 }
 

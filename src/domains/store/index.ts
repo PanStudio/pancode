@@ -5,14 +5,10 @@ import { storeBackendKind } from "../../core/store-paths.js";
 
 export type {
 	StoreBackend,
-	StoreBackendFacts,
-	StoreBackendKind,
-	StoreBlobPut,
 	StoreBlobStat,
-	StoreRefusalReason,
 	StoreTagClass,
 } from "@pancode/store/backend";
-export { compileBlobPattern, StoreRefusal } from "@pancode/store/backend";
+export { StoreRefusal } from "@pancode/store/backend";
 
 /**
  * The store backend for this project, of the kind `store.backend` selects: local, plain files under the
