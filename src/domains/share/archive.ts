@@ -1002,7 +1002,7 @@ export function importShareArchive(filePath: string, options: ShareImportOptions
 					...prepared.diagnostics,
 					{
 						type: "error",
-						message: `share import failed${failed ? ` while importing ${failed}` : ""}: ${reason}`,
+						message: `archive import failed${failed ? ` while importing ${failed}` : ""}: ${reason}`,
 						...(failed ? { path: failed } : {}),
 					},
 				],

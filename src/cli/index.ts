@@ -101,7 +101,7 @@ Setup:
 Project and hub:
   pancode context <verb>       PANCODE.md, codemap, wiki and working set for this project
   pancode agents|tasks|verifiers|memory|claims|store  recipes, tasks, checks, memory, claims, store
-  pancode hub|extensions|mcp|share  packs, extension authoring, MCP servers, archives
+  pancode hub|extensions|mcp|archive  packs, extension authoring, MCP servers, archives
   pancode programs|interop|panes  pinned programs, external coding agents, the pane host
   pancode semantic             search
   pancode report|usage         reports to the maintainers, cross-session usage facts
@@ -499,7 +499,7 @@ const COMMAND_HANDLERS = new Map<string, CommandHandler>([
 	["store", async (subArgs) => (await import("./store.js")).runStoreCommand(subArgs)],
 	["verifiers", async (subArgs) => (await import("./verifiers.js")).runVerifiersCommand(subArgs)],
 	["gui", async (subArgs) => (await import("./gui.js")).runGuiCommand(subArgs)],
-	["share", async (subArgs) => (await import("./share.js")).runShareCommand(subArgs)],
+	["archive", async (subArgs) => (await import("./archive.js")).runArchiveCommand(subArgs)],
 	["context", async (subArgs) => (await import("./context.js")).runContextCommand(subArgs)],
 	[
 		"run",

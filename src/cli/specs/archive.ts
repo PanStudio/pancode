@@ -3,7 +3,7 @@
 import { defineCommandSpec } from "../lib/help.js";
 
 export const spec = defineCommandSpec({
-	path: ["share"],
+	path: ["archive"],
 	summary: "export or import PanCode project/resource archives",
 	hidden: false,
 });

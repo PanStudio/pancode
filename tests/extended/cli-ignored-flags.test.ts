@@ -50,7 +50,7 @@ describe("global startup flags before a subcommand", () => {
 		[["--no-skills", "paths"], "--no-skills", "paths"],
 		[["--api-key", "k-123", "doctor"], "--api-key", "doctor"],
 		[["-nc", "fleet", "status"], "-nc", "fleet"],
-		[["--skill", "skill-dir", "share", "inspect", "x.json"], "--skill", "share"],
+		[["--skill", "skill-dir", "archive", "inspect", "x.json"], "--skill", "archive"],
 		[["--with-panes", "run", "hello"], "--with-panes", "run"],
 		[["--with-panes", "acp"], "--with-panes", "acp"],
 	] as const) {
@@ -142,14 +142,14 @@ describe("global startup flags before a subcommand", () => {
 	});
 });
 
-describe("share", () => {
+describe("archive", () => {
 	it("export --dry-run reports the archive and writes nothing", () => {
 		const out = join(home.dir, "dry.pancode-share.json");
-		const result = cli(["share", "export", "--out", out, "--dry-run"]);
+		const result = cli(["archive", "export", "--out", out, "--dry-run"]);
 		equal(result.status, 0, result.stderr);
 		equal(existsSync(out), false, "a dry run must never write the archive");
 		match(result.stdout, /would write \d+ item\(s\) to /u);
-		const json = cli(["share", "export", "--out", out, "--dry-run", "--json"]);
+		const json = cli(["archive", "export", "--out", out, "--dry-run", "--json"]);
 		equal(json.status, 0, json.stderr);
 		equal(existsSync(out), false);
 		const parsed = JSON.parse(json.stdout) as { dryRun?: unknown; out?: unknown; manifest?: { files?: unknown } };
@@ -159,11 +159,11 @@ describe("share", () => {
 	});
 
 	for (const [args, flag] of [
-		[["share", "export", "--out", "x.json", "--force"], "--force"],
-		[["share", "import", "x.json", "--both"], "--both"],
-		[["share", "import", "x.json", "--prompts"], "--prompts"],
-		[["share", "inspect", "x.json", "--force"], "--force"],
-		[["share", "inspect", "x.json", "--dry-run"], "--dry-run"],
+		[["archive", "export", "--out", "x.json", "--force"], "--force"],
+		[["archive", "import", "x.json", "--both"], "--both"],
+		[["archive", "import", "x.json", "--prompts"], "--prompts"],
+		[["archive", "inspect", "x.json", "--force"], "--force"],
+		[["archive", "inspect", "x.json", "--dry-run"], "--dry-run"],
 	] as const) {
 		it(`refuses ${args.join(" ")} instead of ignoring ${flag}`, () => {
 			const result = cli(args);

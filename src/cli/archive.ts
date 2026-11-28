@@ -15,14 +15,14 @@ import {
 import { printError, printOk } from "./argv.js";
 import { writeCliFailure } from "./lib/json-out.js";
 
-const HELP = `pancode share <command>
+const HELP = `pancode archive <command>
 
 Export and import portable PanCode project/resource archives.
 
 Commands:
-  pancode share export --out <path> [--project|--user|--both] [--context] [--prompts] [--skills] [--agents] [--playbooks] [--settings] [--extensions] [--all] [--dry-run] [--json]
-  pancode share import <path> [--dry-run] [--force] [--project|--user] [--json]
-  pancode share inspect <path> [--json]
+  pancode archive export --out <path> [--project|--user|--both] [--context] [--prompts] [--skills] [--agents] [--playbooks] [--settings] [--extensions] [--all] [--dry-run] [--json]
+  pancode archive import <path> [--dry-run] [--force] [--project|--user] [--json]
+  pancode archive inspect <path> [--json]
 
 A flag the chosen command does not use is refused rather than ignored.
 `;
@@ -229,13 +229,13 @@ function printExportPlan(files: ReadonlyArray<ShareArchiveManifestFile>, outPath
 	if (files.length > 12) process.stdout.write(`  ... ${files.length - 12} more item(s)\n`);
 }
 
-export function runShareCommand(argv: ReadonlyArray<string>): number {
+export function runArchiveCommand(argv: ReadonlyArray<string>): number {
 	const parsed = parse(argv);
 	if (!parsed) {
 		// A usage error is one diagnostic and a pointer to help, never the full help on stdout (C3).
 		const command = argv.find((arg) => !arg.startsWith("-"));
 		writeCliFailure({
-			path: ["share", ...(command !== undefined ? [command] : [])],
+			path: ["archive", ...(command !== undefined ? [command] : [])],
 			slug: "usage",
 			message: "unknown flag, or a flag without its value",
 			json: argv.includes("--json"),
@@ -248,13 +248,13 @@ export function runShareCommand(argv: ReadonlyArray<string>): number {
 	}
 	const ignored = ignoredFlag(parsed);
 	if (ignored !== null) {
-		printError(`${ignored} does not apply to pancode share ${parsed.command}`);
+		printError(`${ignored} does not apply to pancode archive ${parsed.command}`);
 		return 2;
 	}
 	switch (parsed.command) {
 		case "export": {
 			if (!parsed.out) {
-				process.stderr.write("usage: pancode share export --out <path> [options]\n");
+				process.stderr.write("usage: pancode archive export --out <path> [options]\n");
 				return 2;
 			}
 			const outPath = resolve(parsed.out);
@@ -273,7 +273,7 @@ export function runShareCommand(argv: ReadonlyArray<string>): number {
 		case "import": {
 			const archivePath = parsed.positional[0];
 			if (!archivePath || parsed.positional.length !== 1) {
-				process.stderr.write("usage: pancode share import <path> [--dry-run] [--force] [--project|--user] [--json]\n");
+				process.stderr.write("usage: pancode archive import <path> [--dry-run] [--force] [--project|--user] [--json]\n");
 				return 2;
 			}
 			const options = {
@@ -291,7 +291,7 @@ export function runShareCommand(argv: ReadonlyArray<string>): number {
 		case "inspect": {
 			const archivePath = parsed.positional[0];
 			if (!archivePath || parsed.positional.length !== 1) {
-				process.stderr.write("usage: pancode share inspect <path> [--json]\n");
+				process.stderr.write("usage: pancode archive inspect <path> [--json]\n");
 				return 2;
 			}
 			const plan = planShareImport(resolve(archivePath), { dryRun: true, force: true });
@@ -310,7 +310,7 @@ export function runShareCommand(argv: ReadonlyArray<string>): number {
 		}
 		default:
 			writeCliFailure({
-				path: ["share"],
+				path: ["archive"],
 				slug: "unknown_command",
 				message: `unknown share command: ${parsed.command}`,
 				json: parsed.json,

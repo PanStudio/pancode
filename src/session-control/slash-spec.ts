@@ -55,7 +55,7 @@ export type CompletionSlotName = (typeof COMPLETION_SLOT_NAMES)[number];
 export interface CommandArgsSpec {
 	flags?: ReadonlyArray<CommandFlagSpec>;
 	positionals?: ReadonlyArray<CommandPositionalSpec>;
-	/** Subcommands with their own args, e.g. share export/import. */
+	/** Subcommands with their own args, e.g. archive export/import. */
 	subcommands?: Record<string, CommandArgsSpec>;
 	/**
 	 * For commands shaped like `<name> <rest...>`, continue recognizing

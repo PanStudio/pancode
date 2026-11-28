@@ -1138,8 +1138,8 @@ describe("safety gate boundary", () => {
 	it("asks before a share import or package code runs, and keeps an extension install blocked", () => {
 		const policy = engine();
 		for (const command of [
-			"pancode share import ./archive.json",
-			"pancode dev share import ./archive.json",
+			"pancode archive import ./archive.json",
+			"pancode dev archive import ./archive.json",
 			"pancode extensions test ./draft-extension",
 			"pancode extensions validate ./draft-extension",
 		]) {
@@ -1150,7 +1150,7 @@ describe("safety gate boundary", () => {
 			strictEqual(policy.evaluate(call, "confirmed").kind, "allow", command);
 		}
 		strictEqual(
-			policy.evaluate({ tool: ToolNames.Bash, args: { command: "pancode share import ./archive.json --dry-run" } }).kind,
+			policy.evaluate({ tool: ToolNames.Bash, args: { command: "pancode archive import ./archive.json --dry-run" } }).kind,
 			"allow",
 		);
 		strictEqual(

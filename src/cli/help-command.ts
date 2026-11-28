@@ -167,7 +167,7 @@ const NETWORK_VERBS = new Set([
 	"sync",
 	"push",
 	"upgrade",
-	"share",
+	"archive",
 	"test",
 ]);
 
