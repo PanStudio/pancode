@@ -104,7 +104,7 @@ function mcpSkillCatalogPath(identity: McpCatalogIdentity, cacheDir?: string): s
 	return path.join(cacheDir ?? pancodeCacheDir(), CACHE_SUBDIRECTORY, `${catalogKey(identity)}.json`);
 }
 
-export function mcpRecordedSkill(entry: McpSkillEntry): McpRecordedSkill {
+function mcpRecordedSkill(entry: McpSkillEntry): McpRecordedSkill {
 	return {
 		uri: entry.uri,
 		name: entry.name,
