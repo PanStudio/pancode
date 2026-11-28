@@ -1443,14 +1443,10 @@ function isAllowedWorkerProviderValueImport(resolved: string, providersDomainRoo
 }
 
 /**
- * The workspace packages each package under packages/ may import by name (rule21). The SDK is the base;
- * the store and the scientific data library build on it. A package not listed here imports none.
+ * The workspace packages each package under packages/ may import by name (rule21). No package imports
+ * another today; a package not listed here imports none.
  */
-const PACKAGE_IMPORTS: ReadonlyMap<string, ReadonlySet<string>> = new Map([
-	["sdk", new Set<string>()],
-	["store", new Set(["sdk"])],
-	["scidata", new Set(["sdk"])],
-]);
+const PACKAGE_IMPORTS: ReadonlyMap<string, ReadonlySet<string>> = new Map();
 const WORKSPACE_PACKAGE = /^@pancode\/([^/]+)(?:\/|$)/;
 
 /** Source files under `dir`, without installed dependencies or build output. */
