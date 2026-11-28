@@ -18,6 +18,34 @@ export function transcriptStart(turns: readonly ChatTurn[], startTurnId: string 
 	return held < 0 ? Math.max(0, turns.length - TRANSCRIPT_PAGE_SIZE) : held;
 }
 
+/** The first turn of the newest page, where a view with no saved place begins. */
+export function newestPageTurn(turns: readonly ChatTurn[]): string | null {
+	return turns[transcriptStart(turns, null)]?.turnId ?? null;
+}
+
+/** The first turn of the slice that ends before `end`, never earlier than `floor`. */
+export function sliceStartTurn(turns: readonly ChatTurn[], floor: number, end: number): string | null {
+	return turns[Math.max(floor, end - TRANSCRIPT_SLICE_SIZE)]?.turnId ?? null;
+}
+
+/**
+ * The index of the first mounted turn. A view opening at the live edge mounts its newest slice; otherwise the turns
+ * from the one a reveal has reached, or from `start` once no reveal is under way (`shownIndex` -1).
+ */
+export function mountedFrom(turns: readonly ChatTurn[], start: number, shownIndex: number, opening: boolean): number {
+	return Math.max(start, opening ? turns.length - TRANSCRIPT_SLICE_SIZE : shownIndex);
+}
+
+/** Paging back: the earlier page's first turn becomes the anchor, and its reveal starts a slice above `mounted`. */
+export function earlierPage(
+	turns: readonly ChatTurn[],
+	start: number,
+	mounted: number,
+): { readonly anchor: string | null; readonly shown: string | null } {
+	const target = Math.max(0, start - TRANSCRIPT_PAGE_SIZE);
+	return { anchor: turns[target]?.turnId ?? null, shown: sliceStartTurn(turns, target, mounted) };
+}
+
 /** Reading position is local to this window and cannot carry across a runtime or branch replacement. */
 export function createTranscriptViewStore() {
 	const views = new Map<string, { scope: number; view: TranscriptView }>();

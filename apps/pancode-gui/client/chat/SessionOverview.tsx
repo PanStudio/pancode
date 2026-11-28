@@ -40,15 +40,8 @@ import type { PaneSession, PaneView } from "./pane-model.js";
 import { RunRecordLine } from "./RunRecordLine.js";
 import type { RouteFacts } from "./route.js";
 import { modelSessionFacts, sessionFacts } from "./session-facts-model.js";
-import {
-	settledTurns,
-	spendLine,
-	useContextLedger,
-	useSessionCapabilities,
-	useSessionUsage,
-	useTelemetrySession,
-} from "./session-telemetry.js";
-import { sessionSpend } from "./session-usage-model.js";
+import { useContextLedger, useSessionCapabilities, useSessionUsage, useTelemetrySession } from "./session-telemetry.js";
+import { sessionSpend, settledTurns, spendLine } from "./session-usage-model.js";
 import { livePlanView, planCancellation } from "./telemetry-model.js";
 
 function PlanGlyph({ tone }: { tone: PlanRow["tone"] }) {

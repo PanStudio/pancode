@@ -31,7 +31,7 @@ import { openRoutePicker } from "./RoutePicker.js";
 import type { RouteFacts } from "./route.js";
 import { needsTrustReview } from "./session-facts-model.js";
 import { selectSessionPanel } from "./session-panel-model.js";
-import { settledTurns } from "./session-telemetry.js";
+import { settledTurns } from "./session-usage-model.js";
 import "./pane.css";
 import "./pane-inspection.css";
 import { sessionCapabilitiesQuery } from "../api/queries.js";
