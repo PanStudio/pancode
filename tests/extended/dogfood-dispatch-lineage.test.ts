@@ -13,6 +13,7 @@ import { telemetryRunDirectory } from "../../src/core/telemetry/paths.js";
 import { pancodeStateDir } from "../../src/core/xdg.js";
 import type { DispatchPreparationOptions, DispatchRequest } from "../../src/domains/dispatch/contract.js";
 import { readGateDecisionArtifacts } from "../../src/domains/dispatch/gate-decisions.js";
+import { REVIEWER_GATE_PROMPT } from "../../src/domains/dispatch/gate-role-prompts.js";
 import { readRunResultFacts } from "../../src/domains/dispatch/run-result-facts.js";
 import type { RunLineage } from "../../src/domains/dispatch/types.js";
 import type { SpawnedWorker, SpawnedWorkerResult, WorkerSpec } from "../../src/domains/dispatch/worker-spawn.js";
@@ -389,6 +390,8 @@ for (const cites of [true, false]) {
 			);
 			const reviewer = f.captured.find((request) => request.gate?.role === "reviewer");
 			deepStrictEqual(reviewer?.gate?.packet?.ids, ["s1.handback", "s1.diff"]);
+			// A builtin reviewer runs under the pinned gate prompt byte for byte.
+			strictEqual(reviewer?.systemPrompt, REVIEWER_GATE_PROMPT);
 			match(reviewer?.task ?? "", /Packet ids: s1\.handback, s1\.diff/u);
 			const subject = JSON.parse(
 				(reviewer?.task ?? "").split("\n\n").find((block) => block.startsWith('{"ordinal":')) ?? "{}",
