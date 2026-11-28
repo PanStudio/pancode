@@ -18,6 +18,7 @@ import type {
 import type { createShellEgress, OperatorAskQueue } from "../registry-operator-asks.js";
 import type { ToolSpec } from "../tool-spec.js";
 import type { createRegistryAdmission } from "./admission.js";
+import type { createRegistryAsk } from "./ask.js";
 import type { createRegistryAttempts } from "./attempts.js";
 import type { createRegistryDenials } from "./denials.js";
 import type { createFlowGates } from "./flow.js";
@@ -134,4 +135,11 @@ export interface RegistryScope {
 	readonly refreshHooksAfterGitControlWrite: ReturnType<typeof createRegistryPark>["refreshHooksAfterGitControlWrite"];
 	readonly judgeParkedCall: ReturnType<typeof createRegistryPark>["judgeParkedCall"];
 	readonly requestReadRootApproval: ReturnType<typeof createRegistryPark>["requestReadRootApproval"];
+	readonly routeAsk: ReturnType<typeof createRegistryAsk>["routeAsk"];
+	readonly runSpec: (
+		spec: ToolSpec,
+		call: ClassifierCall,
+		decision: SafetyDecision,
+		options?: ToolInvokeOptions,
+	) => Promise<RegistryVerdict>;
 }

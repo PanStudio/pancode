@@ -10,12 +10,10 @@ import { SESSION_CODE_CONSENT_RULE_ID } from "../core/views/approval-words.js";
 import type { MiddlewareEffect, MiddlewareHookInput, ToolCallLanding } from "../domains/middleware/types.js";
 import type { ClassifierCall } from "../domains/safety/action-classifier.js";
 import { evaluateAdmission } from "../domains/safety/admission.js";
-import { mainCallExposure } from "../domains/safety/call-consequence.js";
 import type { SafetyDecision } from "../domains/safety/contract.js";
 import { escapeScopeOptionConsequence, escapeScopeOptionLabel } from "../domains/safety/escape-scope.js";
 import type { FlowRestrictionSet } from "../domains/safety/information-flow.js";
 import { isFlowRestrictionSet, mergeFlowRestrictions } from "../domains/safety/information-flow.js";
-import { OPERATOR_NAMED_RULE, SAFETY_JUDGE_ALLOW_REASON_CODE } from "../domains/safety/safety-judge.js";
 import { DEFAULT_AUTONOMY_LEVEL } from "../lib/autonomy/autonomy.js";
 import { approvalGiver, withApprovalNote } from "./approval-note.js";
 import { settleObservationCharge } from "./observation.js";
@@ -30,16 +28,16 @@ import {
 	readFanOutText,
 } from "./read-fan-out.js";
 import { createRegistryAdmission } from "./registry/admission.js";
+import { createRegistryAsk } from "./registry/ask.js";
 import { createRegistryAttempts } from "./registry/attempts.js";
 import { createRegistryDenials } from "./registry/denials.js";
 import { createFlowGates } from "./registry/flow.js";
 import { createRegistryHooks } from "./registry/hooks.js";
 import { createOperatorScopes } from "./registry/operator-scope.js";
 import { createRegistryPark } from "./registry/park.js";
-import type { AdmitOutcome, ParkedCall, RegistryScope } from "./registry/scope.js";
+import type { ParkedCall, RegistryScope } from "./registry/scope.js";
 import { createSnapshotGate } from "./registry/snapshot.js";
 import {
-	approvalConsequencesOf,
 	disposeAdmissionArgs,
 	hookLanding,
 	prepareAdmissionCall,
@@ -67,26 +65,11 @@ import {
 } from "./registry-nested-calls.js";
 import { createShellEgress, type OperatorAskQueue } from "./registry-operator-asks.js";
 import {
-	blockDecision,
 	blockedVerdict,
-	CONTAINED_YOLO_ESCAPE_REASON,
-	CONTAINED_YOLO_REASON,
-	CONTAINED_YOLO_REASON_CODE,
-	containedOutwardReason,
-	ESCAPE_SCOPE_ALLOW_REASON_CODE,
-	escapeNoScopeLine,
-	escapeScopeAllowedDecision,
-	escapeScopeAskHint,
 	FLOW_BLOCK_REASON_CODE,
 	FLOW_RESTRICTIONS_DETAIL,
 	flowBlockedVerdict,
-	NO_PARK_LISTENER_REASON,
-	NO_PARK_LISTENER_REASON_CODE,
-	PARK_ABORT_REASON,
-	parkAnsweredBlockedVerdict,
-	SAFETY_JUDGE_REASON_PREFIX,
 	SNAPSHOT_REQUIRED_REASON_CODE,
-	safetyJudgeAllowedDecision,
 	withFlowRestrictions,
 } from "./registry-verdicts.js";
 import type { ToolResultDigest } from "./result-disposition.js";
@@ -340,6 +323,13 @@ export function createRegistry(deps: RegistryDeps): ToolRegistry {
 		},
 		get requestReadRootApproval() {
 			return requestReadRootApproval;
+		},
+
+		get routeAsk() {
+			return routeAsk;
+		},
+		get runSpec() {
+			return runSpec;
 		},
 	};
 	const {
@@ -720,210 +710,7 @@ export function createRegistry(deps: RegistryDeps): ToolRegistry {
 		return routeAsk(admissionCall, factCall, outcome, options);
 	};
 
-	/**
-	 * Route one ask: the safety judge, the contained-yolo and no-listener
-	 * refusals, then a park on the operator card. Admission asks and a before_tool
-	 * hook's `request_approval` take the same route; `hookEffects` is that hook
-	 * stage's result, which already observed the attempt and which the call
-	 * reuses when it runs.
-	 */
-	const routeAsk = async (
-		admissionCall: ClassifierCall,
-		factCall: ClassifierCall,
-		outcome: Extract<AdmitOutcome, { kind: "park" }>,
-		options: ToolInvokeOptions | undefined,
-		hookEffects?: ReadonlyArray<MiddlewareEffect>,
-	): Promise<RegistryVerdict> => {
-		// The hook stage already showed the loop guard this attempt; running it again would count it twice.
-		const rejected = (): string | null =>
-			hookEffects !== undefined ? null : observeRejectedAttempt(admissionCall, outcome.decision, options);
-		// A sandbox escape inside a scope the operator approved for this session (M-7) runs as an approved card does.
-		const mainAsk = deps.principal !== "worker";
-		const scopeGrant = mainAsk ? (deps.escapeScopes?.covering(admissionCall, outcome.decision) ?? null) : null;
-		const scopedSpec = scopeGrant === null ? undefined : tools.get(admissionCall.tool as ToolName);
-		if (scopedSpec !== undefined) {
-			const allowed = escapeScopeAllowedDecision(outcome.decision);
-			recordRegistryDisposition(admissionCall, allowed, "allowed", { reasonCode: ESCAPE_SCOPE_ALLOW_REASON_CODE });
-			return runSpec(scopedSpec, admissionCall, allowed, options);
-		}
-		// The scope a session option would offer for this escape: on the card, or to contained yolo's next ask_user.
-		const offeredScope = mainAsk ? (deps.escapeScopes?.scopeFor(admissionCall, outcome.decision) ?? null) : null;
-		// The safety judge reviews the ask before anyone is asked. An allow runs
-		// the call, a block refuses it back to the model, and anything else parks
-		// exactly as before, with the judge's reason on the card when it had one.
-		// The judge reads the admission facts, so a store put's replace marker is admission's, never the model's.
-		const pendingJudgement = judgeParkedCall(factCall, outcome, options);
-		const judged = pendingJudgement instanceof Promise ? await pendingJudgement : pendingJudgement;
-		const judgedSpec = tools.get(admissionCall.tool as ToolName);
-		const unattended = deps.principal !== "worker" && deps.unattendedAsks?.() === true;
-		// Contained yolo cannot raise the card, so the scope goes to the next ask_user question about the escape.
-		if (unattended && offeredScope !== null) deps.escapeScopes?.offer(offeredScope);
-		const scopeHint = unattended && offeredScope !== null ? escapeScopeAskHint(offeredScope) : null;
-		// An escape with no session option says why none exists, so the agent does not look for one (row 328).
-		const noScope =
-			unattended && offeredScope === null
-				? (deps.escapeScopes?.noScopeReason(admissionCall, outcome.decision) ?? null)
-				: null;
-		const noScopeLine = noScope === null ? null : escapeNoScopeLine(noScope);
-		// Contained yolo publishes only what the operator's own words name: an
-		// outward call the judge allowed under any other rule is refused.
-		const outwardUnnamed =
-			unattended &&
-			judged.kind === "allow" &&
-			judged.rule !== OPERATOR_NAMED_RULE &&
-			mainCallExposure(admissionCall, outcome.decision) === "outward";
-		if (judged.kind === "allow" && judgedSpec !== undefined && !outwardUnnamed) {
-			// The code names the judge's rule, so a run's record says why an ask ran without anyone answering it.
-			const reasonCode = `${SAFETY_JUDGE_ALLOW_REASON_CODE}:${judged.rule}`;
-			const allowed = safetyJudgeAllowedDecision(outcome.decision, reasonCode);
-			recordRegistryDisposition(admissionCall, allowed, "allowed", { reasonCode });
-			notifyAdmissionReview(options, "admitted");
-			const verdict = await runSpec(judgedSpec, admissionCall, allowed, options);
-			refreshHooksAfterGitControlWrite(admissionCall, outcome.decision, verdict);
-			return verdict;
-		}
-		if (judged.kind === "block") {
-			disposeAdmissionArgs(judgedSpec, admissionCall.args ?? {});
-			const reasonCode = `${SAFETY_JUDGE_REASON_PREFIX}${judged.rule}`;
-			const judgeReason = judged.refusal;
-			const blocked = blockDecision(
-				outcome.decision,
-				{
-					short: `${admissionCall.tool} blocked by the safety judge (rule ${judged.rule})`,
-					detail: judgeReason,
-					hints: [],
-				},
-				{ kind: "block", reasonCode },
-			);
-			recordRegistryDisposition(admissionCall, blocked, "blocked", { reasonCode });
-			if (unattended) observeUnattendedRefusal(admissionCall, outcome.decision, "judge-block", judged.rule);
-			const verdict = withDenial(
-				{
-					kind: "blocked",
-					reason: judgeReason,
-					decision: blocked,
-				},
-				"pancode_policy",
-				judged.allowedBy,
-				reasonCode,
-			);
-			return (hookEffects !== undefined ? null : observeBlockedAttempt(admissionCall, verdict, options)) ?? verdict;
-		}
-		const judgeGate = judged.kind === "park" ? { gateReason: judged.gateReason, gateBuild: judged.build } : {};
-		if (unattended) {
-			disposeAdmissionArgs(judgedSpec, admissionCall.args ?? {});
-			recordRegistryDisposition(admissionCall, outcome.decision, "denied", {
-				reasonCode: CONTAINED_YOLO_REASON_CODE,
-			});
-			if (outwardUnnamed) observeUnattendedRefusal(admissionCall, outcome.decision, "outward-unnamed", judged.rule);
-			else if (judged.kind === "park")
-				observeUnattendedRefusal(admissionCall, outcome.decision, "no-verdict", judged.cause);
-			else observeUnattendedRefusal(admissionCall, outcome.decision, "operator-only");
-			const loopReason = scopeHint !== null && firstEscapeRefusal(admissionCall, options) ? null : rejected();
-			const refused =
-				guardOverrideForRejectedAttempt(admissionCall, outcome.decision, loopReason) ??
-				parkDenial(
-					parkAnsweredBlockedVerdict(
-						outcome.decision,
-						admissionCall.tool,
-						loopReason ??
-							(scopeHint !== null
-								? `${CONTAINED_YOLO_ESCAPE_REASON}\n${scopeHint}`
-								: noScopeLine !== null
-									? `${CONTAINED_YOLO_REASON}\n${noScopeLine}`
-									: CONTAINED_YOLO_REASON),
-						judged.kind === "park" ? judged.gateReason : outwardUnnamed ? containedOutwardReason(judged.rule) : undefined,
-					),
-					CONTAINED_YOLO_REASON,
-				);
-			return scopeHint === null || loopReason !== null ? refused : escapeAnswerable(refused);
-		}
-		// A park settles only through a listener's answer, so with no listener
-		// the promise would never resolve. Refuse the call instead, fail closed.
-		if (permissionListeners.size === 0) {
-			disposeAdmissionArgs(tools.get(admissionCall.tool as ToolName), admissionCall.args ?? {});
-			recordRegistryDisposition(admissionCall, outcome.decision, "denied", {
-				reasonCode: NO_PARK_LISTENER_REASON_CODE,
-			});
-			const loopReason = rejected();
-			return (
-				guardOverrideForRejectedAttempt(admissionCall, outcome.decision, loopReason) ??
-				parkDenial(
-					parkAnsweredBlockedVerdict(outcome.decision, admissionCall.tool, loopReason ?? NO_PARK_LISTENER_REASON),
-					NO_PARK_LISTENER_REASON,
-				)
-			);
-		}
-		const abortReason = PARK_ABORT_REASON;
-		if (options?.signal?.aborted) {
-			disposeAdmissionArgs(tools.get(admissionCall.tool as ToolName), admissionCall.args ?? {});
-			const loopReason = rejected();
-			return { kind: "blocked", reason: loopReason ?? abortReason, decision: outcome.decision };
-		}
-		const consequence = approvalConsequencesOf(tools.get(admissionCall.tool as ToolName), admissionCall.args);
-		return new Promise<RegistryVerdict>((resolve) => {
-			const meta: PermissionRequiredMeta = {
-				requestId: nextApprovalRequestId(),
-				axis: outcome.axis,
-				approvalAuthority: outcome.approvalAuthority,
-				...(consequence.length > 0 ? { consequence } : {}),
-				...(options?.sessionId !== undefined ? { sessionId: options.sessionId } : {}),
-				...(options?.turnId !== undefined ? { turnId: options.turnId } : {}),
-				...(options?.toolCallId !== undefined && options.toolCallId.length > 0 ? { toolCallId: options.toolCallId } : {}),
-				...(outcome.dispatchPlan !== undefined ? { dispatchPlan: outcome.dispatchPlan } : {}),
-				...(offeredScope !== null ? { escapeScope: offeredScope } : {}),
-				...judgeGate,
-			};
-			// A worker's host handoff decides whether an ask is delivered or refused locally (#434).
-			if (deps.principal !== "worker")
-				recordRegistryDisposition(admissionCall, outcome.decision, "permission_requested", {
-					requestId: meta.requestId,
-					...(outcome.decision.kind === "ask" && outcome.decision.confirmationRuleId !== undefined
-						? { reasonCode: `confirmation:${outcome.decision.confirmationRuleId}` }
-						: {}),
-				});
-			// The park ends when the operator decides, not when the verdict
-			// resolves: an approved call runs its body inside the resume pass,
-			// so measuring to the resolve would fold the tool's own execution
-			// into the park and the caller would subtract it. A dispatch that
-			// fanned out for 224.8s settled as a 15ms line that way (issue #82).
-			// closePark seals it at the decision; settle covers every path that
-			// ends a park without reaching a body, including one added later,
-			// because they all resolve the entry through this function.
-			const parkedAtClock = performance.now();
-			let parkReported = false;
-			const closePark = (): void => {
-				if (parkReported) return;
-				parkReported = true;
-				options?.onParked?.(Math.round(performance.now() - parkedAtClock));
-			};
-			const settle = (verdict: RegistryVerdict): void => {
-				closePark();
-				resolve(verdict);
-			};
-			const parkedCall: ParkedCall = {
-				call: admissionCall,
-				decision: outcome.decision,
-				meta,
-				resolve: settle,
-				closePark,
-				...(outcome.hookDrift !== undefined ? { hookDrift: outcome.hookDrift } : {}),
-				...(hookEffects !== undefined ? { settledHookEffects: hookEffects } : {}),
-			};
-			if (options !== undefined) parkedCall.options = options;
-			if (options?.signal) {
-				const onAbort = (): void => {
-					cancelParkedCallById(meta.requestId, abortReason);
-				};
-				options.signal.addEventListener("abort", onAbort, { once: true });
-				parkedCall.abortCleanup = () => {
-					options.signal?.removeEventListener("abort", onAbort);
-				};
-			}
-			parked.push(parkedCall);
-			notifyPermissionRequired(admissionCall, outcome.decision, meta);
-		});
-	};
+	const { routeAsk } = createRegistryAsk(reg);
 
 	return {
 		register(spec) {
