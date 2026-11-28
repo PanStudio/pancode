@@ -31,6 +31,7 @@ import type { ResultContract } from "../domains/agents/result-contract-types.js"
 import { AGENT_AUTOMATION_AUTHORITIES, type AgentAutomationAuthority } from "../domains/agents/spec.js";
 import type { DispatchRequest } from "../domains/dispatch/contract.js";
 import { type ExecutionRole, isExecutionRole } from "../domains/dispatch/execution-role.js";
+import type { FleetRunCard } from "../domains/dispatch/fleet-run-card.js";
 import { type DispatchIntent, isDispatchIntent } from "../domains/dispatch/intent.js";
 import { DispatchPathScopeInferenceError, resolveDispatchPathScope } from "../domains/dispatch/path-scope.js";
 import {
@@ -148,6 +149,8 @@ export interface DispatchPlanView {
 	deadlineMs?: number;
 	/** Supervised compete-winner confirmation, when this is an apply action. */
 	confirmation?: { branch: string; group: string; index: number; cwd?: string };
+	/** The playbook's approval card when this call starts a playbook run; `text` is then the card's text. */
+	fleetRun?: FleetRunCard;
 }
 
 export const RESOLVED_DISPATCH_PLAN_ARGUMENT = "__pancode_resolved_dispatch_plan";

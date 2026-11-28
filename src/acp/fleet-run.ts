@@ -1,6 +1,5 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
-import { renderUsdLimit, renderUsdSpend } from "../core/telemetry/render.js";
 import type { AcpFleetPreview, AcpFleetStep } from "./types-fleet.js";
 
 export { ACP_FLEET_META_KEY, ACP_FLEET_PREVIEW_METHOD, ACP_FLEET_RUN_METHOD } from "./types.js";
@@ -22,7 +21,7 @@ export type { AcpFleetPreview } from "./types-fleet.js";
  */
 
 import type { TurnConstraints } from "../core/turn-constraints.js";
-import { executionPlanStepScope } from "../domains/dispatch/execution-plan.js";
+import { type FleetRunCard, fleetRunCard } from "../domains/dispatch/fleet-run-card.js";
 import type { FleetRunPreview, FleetRunPreviewResult } from "../domains/dispatch/index.js";
 import { boundedText } from "./server-bounds.js";
 
@@ -65,7 +64,14 @@ export function projectFleetPreview(result: FleetRunPreviewResult): AcpFleetPrev
 			diagnostics: result.diagnostics.slice(0, MAX_DIAGNOSTICS).map((line) => boundedText(line, MAX_DIAGNOSTIC_BYTES)),
 		};
 	}
-	const { preview } = result;
+	return projectFleetCard(fleetRunCard(result.preview));
+}
+
+/**
+ * The approval card on the wire, bounded: `_pancode/fleet/preview` answers with it and a permission ask for a
+ * model-started playbook carries it under `pancode/fleet`, so a client approves the card the terminal shows.
+ */
+export function projectFleetCard(card: FleetRunCard): Extract<AcpFleetPreview, { status: "ready" }> {
 	let budget = ACP_FLEET_MAX_STEPS;
 	let truncated = false;
 	const previewText = (text: string) => {
@@ -76,7 +82,7 @@ export function projectFleetPreview(result: FleetRunPreviewResult): AcpFleetPrev
 		if (values.length > MAX_LIST) truncated = true;
 		return values.slice(0, MAX_LIST).map((value) => previewText(value));
 	};
-	const waves = preview.waves.map((wave) => {
+	const waves = card.waves.map((wave) => {
 		const kept = wave.steps.slice(0, Math.max(0, budget));
 		if (kept.length < wave.steps.length) truncated = true;
 		budget -= kept.length;
@@ -85,18 +91,18 @@ export function projectFleetPreview(result: FleetRunPreviewResult): AcpFleetPrev
 			steps: kept.map(
 				(step): AcpFleetStep => ({
 					stepId: previewText(step.stepId),
-					kind: step.kind === "code" ? "code" : "agent",
+					kind: step.kind,
 					// A worktree-isolated run's writing step writes the task worktree, as the approval card and `playbook graph` say.
-					scope: executionPlanStepScope(preview.plan, step.scope),
+					scope: step.scopeText,
 					...(step.agentId !== undefined ? { agentId: previewText(step.agentId) } : {}),
 					...(step.commandId !== undefined ? { commandId: previewText(step.commandId) } : {}),
 					...(step.argv !== undefined ? { argv: boundedList(step.argv) } : {}),
-					writes: step.writes === undefined ? null : boundedList(step.writes),
+					writes: step.writes === null ? null : boundedList(step.writes),
 					...(step.route !== undefined
 						? {
 								route: {
 									targetId: previewText(step.route.targetId),
-									model: previewText(step.route.wireModelId),
+									model: previewText(step.route.model),
 									nodeId: previewText(step.route.nodeId),
 									...(step.route.endpoint !== undefined
 										? { endpoint: { label: previewText(step.route.endpoint.label), limit: step.route.endpoint.limit } }
@@ -115,26 +121,26 @@ export function projectFleetPreview(result: FleetRunPreviewResult): AcpFleetPrev
 	});
 	return {
 		status: "ready",
-		name: previewText(preview.name),
-		planHash: preview.planHash,
-		stepCount: preview.plan.steps.length,
-		isolation: preview.plan.isolation === "worktree" ? "worktree" : "workspace",
+		name: previewText(card.name),
+		planHash: card.planHash,
+		stepCount: card.stepCount,
+		isolation: card.isolation,
 		waves: waves.filter((wave) => wave.steps.length > 0),
 		budget: {
 			// The wire budget is closed; how the spend was priced reaches it only through currentDisplay.
-			ceilingUsd: preview.budget.ceilingUsd,
-			currentUsd: preview.budget.currentUsd,
-			playbookUsd: preview.budget.playbookUsd,
-			ceilingDisplay: renderUsdLimit(preview.budget.ceilingUsd),
-			currentDisplay: renderUsdSpend(preview.budget.currentUsd, preview.budget.pricing),
-			...(preview.budget.playbookUsd !== null ? { playbookDisplay: renderUsdLimit(preview.budget.playbookUsd) } : {}),
+			ceilingUsd: card.budget.ceilingUsd,
+			currentUsd: card.budget.currentUsd,
+			playbookUsd: card.budget.playbookUsd,
+			ceilingDisplay: card.budget.ceilingDisplay,
+			currentDisplay: card.budget.currentDisplay,
+			...(card.budget.playbookDisplay !== null ? { playbookDisplay: card.budget.playbookDisplay } : {}),
 		},
 		truncated,
-		...(preview.resume !== undefined
+		...(card.resume !== undefined
 			? {
 					resume: {
-						fromRunId: previewText(preview.resume.fromRunId),
-						replayed: [...preview.resume.replayed.keys()].slice(0, ACP_FLEET_MAX_STEPS).map((id) => previewText(id)),
+						fromRunId: previewText(card.resume.fromRunId),
+						replayed: card.resume.replayed.slice(0, ACP_FLEET_MAX_STEPS).map((id) => previewText(id)),
 					},
 				}
 			: {}),
