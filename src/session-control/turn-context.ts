@@ -56,7 +56,6 @@ import {
 } from "../domains/context/budget/live-view.js";
 import { requestFits } from "../domains/context/budget/request-fit.js";
 import { supersededStageApplies } from "../domains/context/fold/contract.js";
-import { foldTriggerReserve } from "../domains/context/fold/pressure.js";
 import type { planEviction } from "../domains/context/working-set/engine.js";
 import type { ClassifyCall } from "../domains/context/working-set/superseded.js";
 import { type PinnedContextBlock, pinnedContextDelta } from "../domains/extensions/pinned-context.js";
@@ -64,24 +63,13 @@ import type { MemoryPromptRequest } from "../domains/memory/prompt-cache.js";
 import type { MemoryRecordStanding } from "../domains/memory/prompt-section.js";
 import type { CompiledSessionPrompt } from "../domains/prompts/compiler.js";
 import type { PromptsContract } from "../domains/prompts/contract.js";
-import {
-	type ContextWindowDetails,
-	type ContextWindowSource,
-	isOrchestratorEligibleRuntime,
-	type ProvidersContract,
-	type ResolvedRuntimeTarget,
-	resolveModelReference,
-	resolveRuntimeTarget,
-	synthesizeTargetModel,
-} from "../domains/providers/index.js";
+import { isOrchestratorEligibleRuntime, type ProvidersContract } from "../domains/providers/index.js";
 import {
 	AutoCompactionTrigger,
 	DEFAULT_COMPACTION_THRESHOLD,
 	effectiveCompactionThreshold,
-	shouldCompact,
 } from "../domains/session/compaction/auto.js";
 import type { CompactInput, CompactResult } from "../domains/session/compaction/compact.js";
-import { summaryOutputReserve } from "../domains/session/compaction/summary-output.js";
 import {
 	type CaptureContextSnapshotInput,
 	type ContextSnapshot,
@@ -125,13 +113,7 @@ import { extractUserText, toolSignatureFromState } from "./chat-loop-messages.js
 import { codexEffortGeneration, codexEffortUpdates } from "./codex-effort.js";
 import type { HostInserts } from "./host-inserts.js";
 import { continuityContextFromSession, renderModelReplay } from "./model-session-replay.js";
-import {
-	contextFloorRefusal,
-	resolveFitOutputReserve,
-	resolveSummaryOutputCap,
-	resolveTurnOutputReserve,
-	turnAdmissionRemedy,
-} from "./output-reserve.js";
+import { contextFloorRefusal, resolveFitOutputReserve, turnAdmissionRemedy } from "./output-reserve.js";
 import { extractTurnText } from "./session-replay-messages.js";
 import { createTurnContextCache } from "./turn-context/cache.js";
 import {
@@ -145,6 +127,7 @@ import {
 	snapshotWindowSource,
 	toolResultTail,
 } from "./turn-context/helpers.js";
+import { createTurnContextRoute } from "./turn-context/route.js";
 import { createTurnContextCompaction } from "./turn-context-compaction.js";
 import { createTurnContextMemory } from "./turn-context-memory.js";
 import { createTurnContextPrompt } from "./turn-context-prompt.js";
@@ -720,10 +703,10 @@ export function createTurnContext(deps: TurnContextDeps): TurnContext {
 			return reconciledHistoryTokens;
 		},
 		get summaryOnChatRoute() {
-			return summaryOnChatRoute;
+			return routing.summaryOnChatRoute;
 		},
 		get routeCompaction() {
-			return routeCompaction;
+			return routing.routeCompaction;
 		},
 		get liveContextEstimate() {
 			return liveContextEstimate;
@@ -954,55 +937,7 @@ export function createTurnContext(deps: TurnContextDeps): TurnContext {
 		return shared.resumedPromptHash;
 	};
 
-	const resolveTargetWithoutRuntime = (): ResolvedRuntimeTarget | null => {
-		const settings = deps.getSettings();
-		const targetId = settings.chat?.target?.trim();
-		const wireModelId = settings.chat?.model?.trim();
-		if (!targetId || !wireModelId) return null;
-		const resolved = resolveRuntimeTarget(deps.providers, {
-			targetId,
-			wireModelId,
-			requestedThinkingLevel: settings.chat?.thinkingLevel ?? "off",
-			use: "orchestrator",
-			requireTools: false,
-			requireOutputBudget: true,
-		});
-		return resolved.ok ? resolved.target : null;
-	};
-
-	/**
-	 * Window facts while no runtime exists come only from the current route's
-	 * provider status. A resumed snapshot retains historical accounting, but
-	 * cannot claim its old loaded window is still serving.
-	 */
-	const windowWithoutRuntime = (): {
-		contextWindow: number;
-		contextWindowSource: ContextWindowSource | null;
-		contextWindowSlots: ContextWindowDetails["contextWindowSlots"];
-	} => {
-		const details = resolveTargetWithoutRuntime()?.contextWindowDetails;
-		if (details) {
-			return {
-				contextWindow: details.effectiveContextWindow,
-				contextWindowSource: details.contextWindowSource,
-				contextWindowSlots: details.contextWindowSlots,
-			};
-		}
-		return { contextWindow: 0, contextWindowSource: null, contextWindowSlots: null };
-	};
-
-	/**
-	 * Between turns the next request goes out on the route in settings, and the runtime or publication on hand may
-	 * still describe the last one until a rebuild lands. A read then states the picked route's window from the frame
-	 * the route changed. A turn in flight stays on the route it started with.
-	 */
-	const routeSuperseded = (targetId: string | null | undefined, modelId: string | null | undefined): boolean => {
-		const route = deps.getSettings().chat;
-		const target = route?.target?.trim();
-		const model = route?.model?.trim();
-		if (!target || !model || state.streaming || deps.isTurnActive?.() === true) return false;
-		return targetId !== target || modelId !== model;
-	};
+	const routing = createTurnContextRoute(shared);
 
 	/**
 	 * Seed the live anchor from the eviction record step 1 selects (ContextFold §4 step 3). The record's figure covers
@@ -1134,109 +1069,6 @@ export function createTurnContext(deps: TurnContextDeps): TurnContext {
 		let tail = 0;
 		for (let i = anchor.anchoredMessages.length; i < messages.length; i += 1) tail += observed.messageTokens[i] ?? 0;
 		return anchor.tokens + tail;
-	};
-
-	/**
-	 * Whether the compaction summary is written on the chat route, as it is unless `context.compaction.model` names
-	 * another one. A reference that resolves to nothing reads as the chat route, the larger reserve.
-	 */
-	const summaryOnChatRoute = (
-		agentRuntime: CompactionRouteView,
-		compactionModel: string | null | undefined,
-	): boolean => {
-		if (!compactionModel) return true;
-		const key = JSON.stringify([compactionModel, agentRuntime.targetId, agentRuntime.wireModelId]);
-		if (shared.summaryRouteMemo?.key === key) return shared.summaryRouteMemo.onChatRoute;
-		let onChatRoute = true;
-		try {
-			const { ref } = resolveModelReference(compactionModel, deps.providers, { use: "chat" });
-			if (ref) onChatRoute = ref.target === agentRuntime.targetId && ref.model === agentRuntime.wireModelId;
-		} catch {
-			// An invalid reference fails the summary itself; the trigger keeps the chat route's reserve.
-		}
-		shared.summaryRouteMemo = { key, onChatRoute };
-		return onChatRoute;
-	};
-
-	/**
-	 * The route's compaction budget and trigger. The summary's output shares the window with the context it reads,
-	 * so every trigger check counts its reserve; the reserve is resolved on first use and then held. On a known
-	 * window the trigger also counts the turn's own output reserve, the one admission checks, so it fires before
-	 * the next request would be refused (bt-13).
-	 */
-	const routeCompaction = (agentRuntime: CompactionRouteView, settings: Readonly<PancodeSettings>) => {
-		const cfg = settings.context.compaction;
-		const model = agentRuntime.agent.state.model;
-		const economic = compactionBudget(
-			agentRuntime.runtimeResolution.contextWindowDetails.effectiveContextWindow,
-			cfg?.threshold ?? DEFAULT_COMPACTION_THRESHOLD,
-			cfg?.maxTokens,
-			model,
-		);
-		let reserve: number | undefined;
-		// A chat-route summary under its A5 cap reserves reasoning room only when it thinks (CTX-3). It may ride the live
-		// prefix at the turn's thinking or go portable with thinking off, which resolves no higher, so the turn's level
-		// holds the larger. Every other reserve keys on the model, as ContextFold pins.
-		const summaryReserve = (): number => {
-			if (reserve !== undefined) return reserve;
-			const onChatRoute = summaryOnChatRoute(agentRuntime, cfg?.model);
-			const capped = onChatRoute && resolveSummaryOutputCap(agentRuntime) !== undefined;
-			reserve = summaryOutputReserve(model, {
-				summaryOnChatRoute: onChatRoute,
-				...(capped ? { capped: { thinking: agentRuntime.runtimeResolution.effectiveThinkingLevel } } : {}),
-			});
-			return reserve;
-		};
-		const triggerReserve = (tokens: number): number =>
-			foldTriggerReserve({
-				window: agentRuntime.runtimeResolution.contextWindowDetails.effectiveContextWindow,
-				summaryReserve,
-				turnReserve: () => resolveTurnOutputReserve(agentRuntime, tokens),
-			});
-		/** The fraction of the trigger window at which the automatic trigger fires, counting the reserve for `tokens`. */
-		const triggerFraction = (tokens: number): number =>
-			effectiveCompactionThreshold(economic.threshold, economic.triggerWindow, triggerReserve(tokens));
-		return {
-			economic,
-			triggerReserve,
-			triggerFraction,
-			shouldCompact: (tokens: number) =>
-				shouldCompact(tokens, economic.threshold, economic.triggerWindow, triggerReserve(tokens)),
-			/** The context size at which the automatic trigger fires, counting the reserve for `tokens`. */
-			triggerTokens: (tokens: number) => Math.floor(triggerFraction(tokens) * economic.triggerWindow),
-		};
-	};
-
-	/**
-	 * The compaction trigger of the route in settings before a runtime is built on it, from the model the runtime will
-	 * synthesize, so the threshold named before the first turn is the one that turn fires at.
-	 */
-	const previewCompactionRoute = (
-		window: number,
-		settings: Readonly<PancodeSettings>,
-	): ReturnType<typeof routeCompaction> | null => {
-		const resolved = resolveTargetWithoutRuntime();
-		if (!resolved) return null;
-		let synthesized: ReturnType<typeof synthesizeTargetModel>;
-		try {
-			synthesized = synthesizeTargetModel(resolved, deps.providers.knowledgeBase);
-		} catch {
-			// A read never fails on a preview; the ledger then names the configured threshold.
-			return null;
-		}
-		const { model, runtimeResolution } = synthesized;
-		return routeCompaction(
-			{
-				targetId: resolved.target.id,
-				wireModelId: resolved.wireModelId,
-				runtimeResolution: {
-					...runtimeResolution,
-					contextWindowDetails: { ...runtimeResolution.contextWindowDetails, effectiveContextWindow: window },
-				},
-				agent: { state: { model } },
-			},
-			settings,
-		);
 	};
 
 	const liveContextEstimate = (
@@ -1653,7 +1485,7 @@ export function createTurnContext(deps: TurnContextDeps): TurnContext {
 				snapshot?.snapshotId ?? null,
 				snapshot ? snapshotInputTokens(snapshot) : null,
 				snapshot?.sources.total ?? null,
-				windowWithoutRuntime().contextWindow,
+				routing.windowWithoutRuntime().contextWindow,
 				promptFingerprint,
 				toolSignature,
 				eligibility,
@@ -1734,7 +1566,7 @@ export function createTurnContext(deps: TurnContextDeps): TurnContext {
 						contextWindow: snapshot.effectiveContextWindow,
 						contextWindowSource: snapshotWindowSource(snapshot),
 					}
-				: windowWithoutRuntime();
+				: routing.windowWithoutRuntime();
 		const pendingTokens = pendingUserInputTokens();
 		return {
 			targetId: snapshot?.providerId ?? settings.chat?.target ?? null,
@@ -2150,7 +1982,7 @@ export function createTurnContext(deps: TurnContextDeps): TurnContext {
 							},
 							// The checks the fold's `livePrefix` port runs before rebuilding the transcript (MD9).
 							livePrefixSummary: () =>
-								summaryOnChatRoute(live, deps.getSettings().context.compaction?.model) &&
+								routing.summaryOnChatRoute(live, deps.getSettings().context.compaction?.model) &&
 								inPrefixRequestRefusal(
 									live.agent.state.model,
 									state.lastMainRequest?.runtime === live ? state.lastMainRequest.record : undefined,
@@ -2402,7 +2234,7 @@ export function createTurnContext(deps: TurnContextDeps): TurnContext {
 				const beforeView =
 					agentRuntime === state.runtime ? refreshLiveBudget(undefined, history, before) : refreshLiveBudget();
 				knownWindow = before.contextWindow > 0;
-				const verdict = routeCompaction(agentRuntime, deps.getSettings()).shouldCompact(before.tokens);
+				const verdict = routing.routeCompaction(agentRuntime, deps.getSettings()).shouldCompact(before.tokens);
 				// An automatic pass the trigger asks for runs first (A5); the A4 count then decides the overflow pass.
 				mustFit = knownWindow && (!viewFits(beforeView) || (!verdict.shouldCompact && !a4Fits(beforeView)));
 				// S0 commits under the trigger on an uncached route, so the guard asks there too (SPEC §3.4).
@@ -2427,8 +2259,8 @@ export function createTurnContext(deps: TurnContextDeps): TurnContext {
 			// second time when it becomes settled history.
 			const tokens =
 				view.inputTokens === null ? null : view.inputTokens + (state.streaming ? liveStreamingOutputTokens() : 0);
-			const window = routeSuperseded(view.targetId, view.modelId)
-				? windowWithoutRuntime().contextWindow
+			const window = routing.routeSuperseded(view.targetId, view.modelId)
+				? routing.windowWithoutRuntime().contextWindow
 				: view.effectiveWindow;
 			return {
 				...contextUsageSnapshot(tokens, window, view.breakdown ?? undefined),
@@ -2446,20 +2278,20 @@ export function createTurnContext(deps: TurnContextDeps): TurnContext {
 			// snapshot, and the token facts from the snapshot: the resumed
 			// messages are the ones it measured.
 			const routed =
-				state.runtime && !routeSuperseded(state.runtime.targetId, state.runtime.wireModelId) ? state.runtime : null;
+				state.runtime && !routing.routeSuperseded(state.runtime.targetId, state.runtime.wireModelId) ? state.runtime : null;
 			const window = routed
 				? {
 						contextWindow: routed.runtimeResolution.contextWindowDetails.effectiveContextWindow,
 						contextWindowSource: routed.runtimeResolution.contextWindowDetails.contextWindowSource,
 						contextWindowSlots: routed.runtimeResolution.contextWindowDetails.contextWindowSlots,
 					}
-				: windowWithoutRuntime();
+				: routing.windowWithoutRuntime();
 			const compactionThreshold = window.contextWindow > 0 ? (settings.context.compaction?.threshold ?? null) : null;
 			const compactionAuto = settings.context.compaction?.auto !== false;
 			const route = routed
-				? routeCompaction(routed, settings)
+				? routing.routeCompaction(routed, settings)
 				: window.contextWindow > 0
-					? previewCompactionRoute(window.contextWindow, settings)
+					? routing.previewCompactionRoute(window.contextWindow, settings)
 					: null;
 			const economic =
 				route?.economic ??
