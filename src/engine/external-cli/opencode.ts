@@ -11,7 +11,7 @@ import { zeroUsage } from "../types.js";
 import type { WorkerRunInput } from "../worker-run-types.js";
 import { cliWorkOrderPrompt, finiteUsage, type JsonlCliConnector } from "./jsonl-runner.js";
 
-export const OPENCODE_CLI_DEFAULT_MODEL = "opencode-cli-default";
+const OPENCODE_CLI_DEFAULT_MODEL = "opencode-cli-default";
 
 export function buildOpenCodeCliArgs(input: WorkerRunInput): string[] {
 	assertToolProfileEnforceable(input.toolProfile, "opencode-cli");

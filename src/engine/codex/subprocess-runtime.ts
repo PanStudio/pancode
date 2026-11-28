@@ -20,14 +20,14 @@ import type { AgentEvent, AgentMessage, Usage } from "../types.js";
 import type { WorkerEventEmit, WorkerRunHandle, WorkerRunInput, WorkerRunResult } from "../worker-run-types.js";
 
 const CODEX_BINARY = "codex";
-export const CODEX_CLI_DEFAULT_MODEL = "codex-cli-default";
-export const CODEX_MAX_STREAM_LINE_BYTES = 1024 * 1024;
-export const CODEX_MAX_STREAM_BYTES = 8 * 1024 * 1024;
-export const CODEX_MAX_RESPONSE_BYTES = 4 * 1024 * 1024;
+const CODEX_CLI_DEFAULT_MODEL = "codex-cli-default";
+const CODEX_MAX_STREAM_LINE_BYTES = 1024 * 1024;
+const CODEX_MAX_STREAM_BYTES = 8 * 1024 * 1024;
+const CODEX_MAX_RESPONSE_BYTES = 4 * 1024 * 1024;
 
 type CodexChildProcess = ChildProcessByStdio<Writable, Readable, Readable>;
 
-export interface CodexRuntimeDependencies {
+interface CodexRuntimeDependencies {
 	binary?: string;
 	workspaceRoot?: string;
 	environment?: NodeJS.ProcessEnv;

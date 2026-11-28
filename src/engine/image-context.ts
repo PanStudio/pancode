@@ -3,7 +3,7 @@
 import type { Message } from "@earendil-works/pi-ai";
 import type { AgentMessage } from "./types.js";
 
-export const IMAGE_OMITTED_NOTE = "[Image omitted from this request: the current model does not accept image input.]";
+const IMAGE_OMITTED_NOTE = "[Image omitted from this request: the current model does not accept image input.]";
 
 /** Count image blocks in the live transcript without changing durable session data. */
 export function countImageBlocks(messages: ReadonlyArray<AgentMessage>): number {

@@ -64,7 +64,7 @@ const HOST_RUNTIME_ENV_VARS = [
 const PROTOCOL_MISMATCH = /SDK protocol version mismatch/;
 
 /** The runtime PanCode started speaks a protocol the pinned SDK does not; updating the SDK is not the operator's fix. */
-export class CopilotRuntimeMismatchError extends Error {
+class CopilotRuntimeMismatchError extends Error {
 	readonly code = "COPILOT_RUNTIME_MISMATCH";
 	constructor(detail: string) {
 		super(
@@ -327,7 +327,7 @@ export function copilotAccount(): Promise<CopilotAccount> {
 	});
 }
 
-export interface CopilotSignInStatus {
+interface CopilotSignInStatus {
 	signedIn: boolean;
 	login?: string;
 	/** GitHub host of the login, `https://github.com` unless it is on GHE. */
@@ -360,7 +360,7 @@ export async function probeCopilotSignIn(keychain: boolean): Promise<CopilotSign
 export type CopilotContextTier = "default" | "long_context";
 
 /** A model's token prices on one tier, in the runtime's own unit (AI credits per `batchSize` tokens). */
-export interface CopilotModelPrices {
+interface CopilotModelPrices {
 	input: number | undefined;
 	output: number | undefined;
 	cacheRead: number | undefined;

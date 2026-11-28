@@ -34,7 +34,7 @@ interface OwnerMarker {
 	childPid?: number;
 }
 
-export interface AntigravityLaunch {
+interface AntigravityLaunch {
 	args: string[];
 	env: Record<string, string>;
 	/** agy's profile, `<gemini-dir>/<app-data-dir>` from the resolved args, which holds its `conversations/` store. */

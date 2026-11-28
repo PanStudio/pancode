@@ -271,7 +271,7 @@ function buildRequest(
 	return req;
 }
 
-export interface EvictResidentEntry {
+interface EvictResidentEntry {
 	readonly model: string;
 	readonly name: string;
 	/** GPU-resident bytes, when Ollama reports it on `/api/ps`. */
@@ -280,7 +280,7 @@ export interface EvictResidentEntry {
 	readonly size?: number;
 }
 
-export interface EvictResidentResponse {
+interface EvictResidentResponse {
 	readonly models: ReadonlyArray<EvictResidentEntry>;
 }
 

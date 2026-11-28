@@ -27,19 +27,19 @@ import { declareRuntimeNoticeProducer } from "./residency.js";
 import type { ResidentModelInfo } from "./resident-models.js";
 
 /** Time a prediction gets before its rate is judged. */
-export const DEGRADED_GRACE_MS = 30_000;
+const DEGRADED_GRACE_MS = 30_000;
 /** Sustained output tokens per second below which inference is reported as degraded. */
-export const DEGRADED_FLOOR_TOKENS_PER_SECOND = 2;
+const DEGRADED_FLOOR_TOKENS_PER_SECOND = 2;
 
 const emitDegradedNotice = declareRuntimeNoticeProducer("degraded-inference", ["degraded"]);
 
-export interface DegradedInferenceReport {
+interface DegradedInferenceReport {
 	elapsedMs: number;
 	tokens: number;
 	tokensPerSecond: number;
 }
 
-export interface DegradedInferenceTiming {
+interface DegradedInferenceTiming {
 	graceMs?: number;
 	floorTokensPerSecond?: number;
 	/** Sampling interval; the watchdog checks the rate this often. */
@@ -53,12 +53,12 @@ export interface DegradedInferenceTiming {
 	setTimer?: (fn: () => void, ms: number) => { cancel: () => void };
 }
 
-export interface DegradedInferenceOptions extends DegradedInferenceTiming {
+interface DegradedInferenceOptions extends DegradedInferenceTiming {
 	/** Called at most once, when the observed rate stays under the floor past the grace period. */
 	onDegraded: (report: DegradedInferenceReport) => void;
 }
 
-export interface DegradedInferenceWatchdog {
+interface DegradedInferenceWatchdog {
 	/** Record generated tokens (output plus reasoning; both are work the server did). */
 	addTokens: (count: number) => void;
 	stop: () => void;

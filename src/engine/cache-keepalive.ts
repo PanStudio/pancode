@@ -21,7 +21,7 @@ export interface CacheKeepaliveRequest {
 
 export type CacheKeepaliveRefusal = "retention-none" | "lifetime-unknown" | "output-uncapped" | "budget-thinking";
 
-export type CacheKeepaliveRoute =
+type CacheKeepaliveRoute =
 	| { ok: true; ttlMs: number; delayMs: number; outputTokens: number }
 	| { ok: false; reason: CacheKeepaliveRefusal };
 

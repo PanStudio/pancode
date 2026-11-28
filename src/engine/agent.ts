@@ -54,7 +54,7 @@ export type EngineStreamFn = (...args: Parameters<typeof engineStreamSimple>) =>
 export type EnginePrepareNextTurnContext = Parameters<NonNullable<AgentOptions["prepareNextTurnWithContext"]>>[0];
 export type EnginePrepareNextTurnUpdate = Awaited<ReturnType<NonNullable<AgentOptions["prepareNextTurnWithContext"]>>>;
 export type EngineToolBatchContext = Pick<BeforeToolCallContext, "assistantMessage" | "context">;
-export interface EngineToolBatchRejection {
+interface EngineToolBatchRejection {
 	reason: string;
 }
 export interface EngineStreamRequest {
@@ -63,7 +63,7 @@ export interface EngineStreamRequest {
 	context: Parameters<StreamFn>[1];
 	options: Parameters<StreamFn>[2];
 }
-export type EngineStreamAdmission =
+type EngineStreamAdmission =
 	| { block: true; reason: string; modelRouteRefusal?: ModelRouteRefusal }
 	| { block: false; correlationId?: string };
 

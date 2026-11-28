@@ -11,7 +11,7 @@ import type { WorkerEventEmit, WorkerRunHandle, WorkerRunInput, WorkerRunResult 
 import type { JsonlCliConnector, JsonlCliDependencies, JsonlCliState } from "./jsonl-runner.js";
 import { cliWorkOrderPrompt, finiteUsage, startJsonlCliRun } from "./jsonl-runner.js";
 
-export const PI_CLI_DEFAULT_MODEL = "pi-cli-default";
+const PI_CLI_DEFAULT_MODEL = "pi-cli-default";
 
 /** `noContextFiles` is false only for a Pi known to predate `--no-context-files` (0.67.4), which rejects it. */
 export function buildPiCliArgs(input: WorkerRunInput, builtinLlamaCpp = false, noContextFiles = true): string[] {

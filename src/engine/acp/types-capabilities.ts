@@ -244,7 +244,7 @@ export const AcpWorkerPermissionsCapability = Type.Object(
 	},
 	closed,
 );
-export type AcpWorkerPermissionsCapability = Static<typeof AcpWorkerPermissionsCapability>;
+type AcpWorkerPermissionsCapability = Static<typeof AcpWorkerPermissionsCapability>;
 
 /** `_meta["pancode/budget"]` beside `_meta["pancode/notice"]` on the chunk that reports a ceiling stop. */
 export interface AcpBudgetBlock {
@@ -274,7 +274,7 @@ export interface AcpBudgetCapability {
 }
 
 /** The trust report's capability entry. `surfaces` are `ProjectTrustSurface` names. */
-export interface AcpTrustCapability {
+interface AcpTrustCapability {
 	version: 1;
 	meta: typeof ACP_TRUST_META_KEY;
 	surfaces: ReadonlyArray<string>;
@@ -300,7 +300,7 @@ export interface AcpCeiling {
  * one with `ceiling_unsupported`. Enforcement covers tool calls, the dispatches
  * they start, and slash commands, which run only as reads or bounded turns.
  */
-export interface AcpCeilingCapability {
+interface AcpCeilingCapability {
 	version: 1;
 	meta: typeof ACP_CEILING_META_KEY;
 	fields: ReadonlyArray<(typeof ACP_CEILING_FIELDS)[number]>;
@@ -311,7 +311,7 @@ export interface AcpCeilingCapability {
  * `satisfies` this, so an extension it announces under a key or in a shape this
  * interface does not name fails the build instead of reaching a client.
  */
-export interface AcpAgentCapabilitiesMeta {
+interface AcpAgentCapabilitiesMeta {
 	[ACP_SESSION_META_KEY]: { close: boolean; label: boolean };
 	[ACP_SETTINGS_META_KEY]: AcpSettingsCapability;
 	[ACP_TARGETS_META_KEY]: AcpTargetsCapability;

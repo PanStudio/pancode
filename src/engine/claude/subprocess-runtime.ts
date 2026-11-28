@@ -29,14 +29,14 @@ export const CLAUDE_MAX_STREAM_BYTES = 8 * 1024 * 1024;
 
 type ClaudeChildProcess = ChildProcessByStdio<Writable, Readable, Readable>;
 
-export interface ClaudeRuntimeDependencies {
+interface ClaudeRuntimeDependencies {
 	binary?: string;
 	workspaceRoot?: string;
 	environment?: NodeJS.ProcessEnv;
 	killGraceMs?: number;
 }
 
-export interface ClaudeSubprocessPermissionConfig {
+interface ClaudeSubprocessPermissionConfig {
 	permissionMode: "plan" | "acceptEdits";
 	extraArgs: string[];
 }

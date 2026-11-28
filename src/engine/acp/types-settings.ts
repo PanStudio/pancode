@@ -28,7 +28,7 @@ const settingModel = Type.Union([
 	Type.String({ minLength: 1, maxLength: ACP_MAX_MODEL_ID_BYTES, pattern: noControls }),
 	Type.Null(),
 ]);
-export const AcpThinkingLevelSchema = literalUnion(THINKING_LEVELS);
+const AcpThinkingLevelSchema = literalUnion(THINKING_LEVELS);
 export const AcpAutonomyLevelSchema = Type.Union([Type.Literal("default"), Type.Literal("yolo")]);
 export const ACP_SAFE_SETTINGS_KEYS = ["chat.target", "chat.model", "chat.thinkingLevel", "safety.autonomy"] as const;
 /** `params.patch` of `_pancode/settings/patch_safe`. */

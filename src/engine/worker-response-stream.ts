@@ -15,7 +15,7 @@ import { type PinnedInputTokens, remainingContextMaxTokens } from "./apis/output
 import { RESPONSE_DEADLINE } from "./response-deadline.js";
 import { zeroUsage } from "./types.js";
 
-export type WorkerResponseLimitCode = "worker_turn_timeout" | "worker_output_cap_exhausted";
+type WorkerResponseLimitCode = "worker_turn_timeout" | "worker_output_cap_exhausted";
 
 /** A native worker must settle locally even when its provider ignores cancellation. */
 export function boundWorkerResponse<T extends StreamOptions>(

@@ -36,7 +36,6 @@ export const AcpSessionListMeta = Type.Object(
 	},
 	closed,
 );
-export type AcpSessionListMeta = Static<typeof AcpSessionListMeta>;
 /** One `session/list` row as a client reads it. */
 export const AcpSessionListRow = Type.Object(
 	{
@@ -67,7 +66,6 @@ export const AcpSteerParams = Type.Object(
 	},
 	closed,
 );
-export type AcpSteerParams = Static<typeof AcpSteerParams>;
 export const AcpSteerResult = Type.Object(
 	{ accepted: Type.Boolean(), queue: queuedKind, refusal: Type.Optional(Type.String()) },
 	closed,
@@ -109,7 +107,6 @@ export const AcpQueueEditParams = Type.Union([
 	),
 	Type.Object({ ...sessionParams, id: Type.String(), op: Type.Literal("set_kind"), kind: queuedKind }, closed),
 ]);
-export type AcpQueueEditParams = Static<typeof AcpQueueEditParams>;
 export const AcpQueueEditResult = Type.Object(
 	{
 		applied: Type.Boolean(),
@@ -123,12 +120,10 @@ export const AcpQueueEditResult = Type.Object(
 );
 export type AcpQueueEditResult = Static<typeof AcpQueueEditResult>;
 export const AcpQueueChangedParams = Type.Object({ ...sessionParams, entries: Type.Array(AcpQueueEntry) }, closed);
-export type AcpQueueChangedParams = Static<typeof AcpQueueChangedParams>;
 export const AcpShellParams = Type.Object(
 	{ ...sessionParams, command: Type.String(), excludeFromContext: Type.Optional(Type.Boolean()) },
 	closed,
 );
-export type AcpShellParams = Static<typeof AcpShellParams>;
 export const AcpShellResult = Type.Object(
 	{
 		turnId: Type.String(),
@@ -145,31 +140,26 @@ export const AcpShellResult = Type.Object(
 );
 export type AcpShellResult = Static<typeof AcpShellResult>;
 export const AcpInterruptParams = Type.Object({ ...sessionParams, reason: Type.Optional(Type.String()) }, closed);
-export type AcpInterruptParams = Static<typeof AcpInterruptParams>;
 export const AcpInterruptResult = Type.Object(
 	{ cancelled: Type.Boolean(), refusal: Type.Optional(Type.String()) },
 	closed,
 );
 export type AcpInterruptResult = Static<typeof AcpInterruptResult>;
 export const AcpLabelParams = Type.Object({ ...sessionParams, label: Type.String() }, closed);
-export type AcpLabelParams = Static<typeof AcpLabelParams>;
 
 export const AcpHandoffPrepareParams = Type.Object({ ...sessionParams, goal: Type.String() }, closed);
-export type AcpHandoffPrepareParams = Static<typeof AcpHandoffPrepareParams>;
 export const AcpHandoffCommitParams = Type.Object(
 	{ ...sessionParams, handoffId: Type.String(), document: Type.String() },
 	closed,
 );
-export type AcpHandoffCommitParams = Static<typeof AcpHandoffCommitParams>;
 export const AcpHandoffCancelParams = Type.Object({ ...sessionParams, handoffId: Type.String() }, closed);
-export type AcpHandoffCancelParams = Static<typeof AcpHandoffCancelParams>;
-export interface AcpHandoffRefusal {
+interface AcpHandoffRefusal {
 	status: "refused";
 	level: "warn" | "error";
 	code: string;
 	reason: string;
 }
-export interface AcpHandoffPrepared {
+interface AcpHandoffPrepared {
 	status: "ready";
 	handoffId: string;
 	goal: string;
@@ -184,7 +174,6 @@ export const AcpDecisionSupersedeParams = Type.Object(
 	{ ...sessionParams, interviewId: Type.String(), key: Type.String(), correction: Type.Optional(Type.String()) },
 	closed,
 );
-export type AcpDecisionSupersedeParams = Static<typeof AcpDecisionSupersedeParams>;
 export interface AcpDecisionSupersedeResult {
 	status: string;
 	correctionTurn?: string;
@@ -199,7 +188,6 @@ export const AcpMemoryProposeParams = Type.Object(
 	},
 	closed,
 );
-export type AcpMemoryProposeParams = Static<typeof AcpMemoryProposeParams>;
 export interface AcpMemoryProposeResult {
 	status: "needs_acknowledgement" | "proposed" | "existing" | "refused";
 	reason?: string;
@@ -568,11 +556,11 @@ export const AcpDispatchSteerResultSchema = Type.Object(
 	closed,
 );
 
-export interface AcpSessionModes {
+interface AcpSessionModes {
 	currentModeId: string;
 	availableModes: Array<{ id: string; name: string; description?: string }>;
 }
-export interface AcpHandoffCommitted {
+interface AcpHandoffCommitted {
 	status: "committed";
 	sessionId: string;
 	fromSessionId: string;

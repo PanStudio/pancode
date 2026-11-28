@@ -46,7 +46,7 @@ declare module "@earendil-works/pi-ai" {
 	}
 }
 
-export interface HarmonyStreamOptions {
+interface HarmonyStreamOptions {
 	/**
 	 * Replay field for thinking recovered from raw markers, from the resolved
 	 * runtime capability (`response.recoveredReasoningField`). It applies only
@@ -404,7 +404,7 @@ function isHarmonyIncompleteStop(message: AssistantMessage): boolean {
 	);
 }
 
-export interface HarmonyRetryOptions {
+interface HarmonyRetryOptions {
 	modelId: string;
 	/** Wire reasoning effort of the request, so the terminal message can name the low-effort defect. */
 	effort?: string;

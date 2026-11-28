@@ -141,7 +141,7 @@ export const streamSimple = engineStreamSimple;
 /** The session's own turn path, whose cache retention and system split a round reading the turn's prefix must match. */
 export const mainStreamSimple = engineMainStreamSimple;
 
-export interface EngineTextCompletionInput extends SideCallAuth {
+interface EngineTextCompletionInput extends SideCallAuth {
 	callTelemetry?: CallMessageObserver;
 	model: EngineModel;
 	systemPrompt: string;
@@ -324,7 +324,7 @@ async function completeEngineTextAttempt(input: EngineTextCompletionInput): Prom
 	};
 }
 
-export interface EngineAi {
+interface EngineAi {
 	listModels<TProvider extends KnownProvider>(provider: TProvider): EngineModel[];
 	getModel<TProvider extends KnownProvider>(provider: TProvider, modelId: string): EngineModel | undefined;
 }

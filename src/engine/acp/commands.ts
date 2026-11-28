@@ -80,7 +80,7 @@ const ACP_MAX_COMMAND_RESULT_LINES = 200;
  * will not see here", and a client that does not know that renders a button
  * that looks broken.
  */
-export interface AcpCommandRule {
+interface AcpCommandRule {
 	name: string;
 	/**
 	 * Only these subcommands are admitted. Present for the three commands whose
@@ -413,7 +413,7 @@ export type AcpCommandHost = Pick<SlashCommandContext, "dispatch" | "bus" | "pro
 	};
 
 /** The fields of `PromptTemplateExpansion` the prompt screen reads. */
-export interface AcpPromptTemplateVerdict {
+interface AcpPromptTemplateVerdict {
 	expanded: boolean;
 	refusal?: { message: string };
 	display?: { template: { name: string }; text: string };
@@ -425,7 +425,7 @@ export interface AcpPromptTemplateVerdict {
  * model never sees, or a refusal. An admitted command never reaches this; the
  * server invokes it first.
  */
-export type AcpPromptLineVerdict =
+type AcpPromptLineVerdict =
 	| { kind: "send"; text: string }
 	| { kind: "reference"; lines: string[] }
 	/** An extension command or takeover, answered by its runtime with no model turn (WTF-P F04). */

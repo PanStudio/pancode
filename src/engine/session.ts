@@ -105,7 +105,7 @@ function currentOwner(): PancodeSessionOwner {
  */
 export const CURRENT_SESSION_FORMAT_VERSION = 7;
 
-export interface PancodeSessionJsonlHeader {
+interface PancodeSessionJsonlHeader {
 	type: "session";
 	version: number;
 	id: string;
@@ -130,7 +130,7 @@ export interface SessionTreeNode {
 	kind: PancodeTurnRecord["kind"];
 }
 
-export interface PancodeSessionFile {
+interface PancodeSessionFile {
 	current: string;
 	tree: string;
 	meta: string;
@@ -174,7 +174,7 @@ export interface PancodeSessionWriter {
 	fenceWhen(probe: () => boolean): void;
 }
 
-export interface PancodeSessionReader {
+interface PancodeSessionReader {
 	meta(): PancodeSessionMeta;
 	turns(): ReadonlyArray<unknown>;
 	fileEntries(): ReadonlyArray<unknown>;
@@ -227,13 +227,13 @@ export interface SessionJsonlWarning {
 	message: string;
 }
 
-export type SessionJsonlWarningSink = (warning: SessionJsonlWarning) => void;
+type SessionJsonlWarningSink = (warning: SessionJsonlWarning) => void;
 
-export interface SessionJsonlReadOptions {
+interface SessionJsonlReadOptions {
 	onWarning?: SessionJsonlWarningSink;
 }
 
-export interface SessionJsonlWriteOptions {
+interface SessionJsonlWriteOptions {
 	beforeRename?: (tmpPath: string, targetPath: string) => void;
 }
 
@@ -362,7 +362,7 @@ function parseSessionJsonlLine(
 	}
 }
 
-export interface SessionJsonlRange {
+interface SessionJsonlRange {
 	entries: unknown[];
 	completeEntries: number;
 	nextOffset: number;
@@ -423,7 +423,7 @@ export function readSessionFileEntries(path: string, options: SessionJsonlReadOp
 	return readSessionFileEntriesRange(path, 0, 0, { ...options, retainBytes: false }).entries;
 }
 
-export interface SessionTailReadResult {
+interface SessionTailReadResult {
 	/** Parsed tail entries in file order (header included only if BOF was reached). */
 	entries: unknown[];
 	/** Non-empty JSONL lines parsed — the bounded-work signal (≈ maxEntries, not file size). */

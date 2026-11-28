@@ -21,8 +21,8 @@ import type { WorkerEventEmit, WorkerRunHandle, WorkerRunInput, WorkerRunResult 
 const ANTIGRAVITY_BINARY = "agy";
 export const ANTIGRAVITY_MAX_STREAM_LINE_BYTES = 1024 * 1024;
 export const ANTIGRAVITY_MAX_STREAM_BYTES = 8 * 1024 * 1024;
-export const ANTIGRAVITY_MAX_RESPONSE_BYTES = 4 * 1024 * 1024;
-export const ANTIGRAVITY_MAX_PROMPT_BYTES = 4 * 1024 * 1024;
+const ANTIGRAVITY_MAX_RESPONSE_BYTES = 4 * 1024 * 1024;
+const ANTIGRAVITY_MAX_PROMPT_BYTES = 4 * 1024 * 1024;
 const MAX_PROTOCOL_DIAGNOSTICS = 32;
 const MAX_CONVERSATION_ID_BYTES = 4096;
 
@@ -44,18 +44,18 @@ type AntigravityResult = {
 	usage?: unknown;
 };
 
-export type AntigravityStreamEvent =
+type AntigravityStreamEvent =
 	| { event: "init"; conversationId: string | null; model: string | null }
 	| { event: "text"; conversationId: string | null; delta: string }
 	| { event: "result"; result: AntigravityResult }
 	| { event: "other" };
 
-export interface AntigravitySubprocessConfig {
+interface AntigravitySubprocessConfig {
 	extraArgs: string[];
 	externalMode: "plan+sandbox" | "accept-edits";
 }
 
-export interface AntigravityRuntimeDependencies {
+interface AntigravityRuntimeDependencies {
 	binary?: string;
 	workspaceRoot?: string;
 	environment?: NodeJS.ProcessEnv;

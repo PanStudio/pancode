@@ -20,7 +20,7 @@ const IGNORED_AFTER_READS = 10;
  * read-class calls with no such change settle it `ignored`. A run that ends any other way after the note leaves it `moot`, and one that ends
  * before any request carried it leaves it `suppressed`.
  */
-export interface ThrashOutcome {
+interface ThrashOutcome {
 	/** The firing id the thrash note's `middleware.fired` row carries; one per run. */
 	fire(): string;
 	/** Follow the run's events: the request that carried the note, then the read-class calls after it. */

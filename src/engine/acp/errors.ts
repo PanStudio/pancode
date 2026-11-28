@@ -53,7 +53,7 @@ export class AcpAuthRequiredError extends AcpError {
  * message is operator-facing prose, not a payload: an unbounded one lets a
  * provider response, a file body, or a stack walk cross the protocol boundary.
  */
-export const ACP_MAX_ERROR_MESSAGE_CHARS = 256;
+const ACP_MAX_ERROR_MESSAGE_CHARS = 256;
 
 /**
  * The `error.message` a failed prompt turn always carries. A provider or engine
@@ -90,7 +90,7 @@ export const ACP_SESSION_LIMIT_CODE = -32010;
 /** `_meta` key carrying PanCode's machine-readable error detail (CONTRACT C001 §0). */
 
 /** Version of the `pancode/error` payload shape. */
-export const ACP_ERROR_META_VERSION = 1;
+const ACP_ERROR_META_VERSION = 1;
 
 /**
  * Machine-readable failure detail. `code` is a closed-set string the client

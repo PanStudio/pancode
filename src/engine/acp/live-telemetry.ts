@@ -233,7 +233,7 @@ function plainCost(view: TelemetryView | null): { amount: number; currency: stri
 }
 const CURRENCY_CODE = /^[A-Z]{3}$/;
 
-export interface AcpLiveTelemetryDeps {
+interface AcpLiveTelemetryDeps {
 	subscribeUsage?: (listener: () => void) => () => void;
 	notify(sessionId: string, update: Record<string, unknown>): void;
 	/** The one session this process hosts, or null between sessions. */

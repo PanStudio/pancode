@@ -321,14 +321,14 @@ export type AcpToolKind =
  */
 export type AcpToolCallStatus = (typeof ACP_V1_TOOL_CALL_STATUSES)[number];
 
-export interface AcpJsonRpcRequest {
+interface AcpJsonRpcRequest {
 	jsonrpc: "2.0";
 	id: string | number;
 	method: string;
 	params?: unknown;
 }
 
-export interface AcpJsonRpcNotification {
+interface AcpJsonRpcNotification {
 	jsonrpc: "2.0";
 	method: string;
 	params?: unknown;
@@ -352,13 +352,13 @@ export interface AcpJsonRpcFailure {
 
 export type AcpJsonRpcMessage = AcpJsonRpcRequest | AcpJsonRpcNotification | AcpJsonRpcSuccess | AcpJsonRpcFailure;
 
-export interface AcpImplementationInfo {
+interface AcpImplementationInfo {
 	name?: string;
 	title?: string;
 	version?: string;
 }
 
-export interface AcpAuthMethod {
+interface AcpAuthMethod {
 	id: string;
 	name: string;
 	description?: string;
@@ -403,7 +403,7 @@ export interface AcpSessionUpdateParams {
 	_meta?: Record<string, unknown>;
 }
 
-export type AcpPermissionOptionKind = "allow_once" | "allow_always" | "reject_once" | "reject_always" | string;
+type AcpPermissionOptionKind = "allow_once" | "allow_always" | "reject_once" | "reject_always" | string;
 
 export interface AcpPermissionOption {
 	optionId: string;
@@ -417,7 +417,7 @@ export interface AcpRequestPermissionParams {
 	options?: AcpPermissionOption[];
 }
 
-export type AcpPermissionOutcome = { outcome: "selected"; optionId: string } | { outcome: "cancelled" };
+type AcpPermissionOutcome = { outcome: "selected"; optionId: string } | { outcome: "cancelled" };
 
 export interface AcpRequestPermissionResponse {
 	outcome: AcpPermissionOutcome;
@@ -472,7 +472,6 @@ export const sessionId = Type.String({ minLength: 1, maxLength: 128 });
 export const sessionParams = { sessionId };
 export const queuedKind = Type.Union([Type.Literal("steer"), Type.Literal("follow-up")]);
 export const AcpSessionParams = Type.Object(sessionParams, closed);
-export type AcpSessionParams = Static<typeof AcpSessionParams>;
 
 export const AcpEmptyResult = Type.Object({}, closed);
 export type AcpEmptyResult = Static<typeof AcpEmptyResult>;
@@ -524,8 +523,8 @@ export type AcpUsageMeta = Static<typeof AcpUsageMetaSchema>;
 function displaysOf(schema: { properties: Record<string, unknown> }) {
 	return Type.Object(Object.fromEntries(Object.keys(schema.properties).map((key) => [key, Type.String()])), closed);
 }
-export const TurnUsageDisplaysSchema = displaysOf(TurnQuantitiesSchema);
-export const SessionUsageDisplaysSchema = displaysOf(SessionUsageQuantitiesSchema);
+const TurnUsageDisplaysSchema = displaysOf(TurnQuantitiesSchema);
+const SessionUsageDisplaysSchema = displaysOf(SessionUsageQuantitiesSchema);
 /**
  * `_meta["pancode/usage"]` unless the client asked for the full form: each quantity as the read model's display of
  * it, which words an unknown or partial count, so it still never reads as zero. A client that sends

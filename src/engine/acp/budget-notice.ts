@@ -28,7 +28,7 @@ export const ACP_BUDGET_CAPABILITY: AcpBudgetCapability = {
 	replay: true,
 };
 
-export interface AcpBudgetFrame {
+interface AcpBudgetFrame {
 	update: { sessionUpdate: "agent_message_chunk"; content: { type: "text"; text: string } };
 	meta: { [ACP_NOTICE_META_KEY]: { level: "warning" | "error" }; [ACP_BUDGET_META_KEY]: AcpBudgetBlock };
 }
