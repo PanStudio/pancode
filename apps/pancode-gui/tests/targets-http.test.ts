@@ -30,9 +30,9 @@ test("targets HTTP: real CLI use/remove, typed follow-up reads, redaction and of
 		await seedSettings(h.home.path, h.home.env);
 		const configFile = join(h.home.path, "config/settings.yaml");
 		const config = JSON.parse(await readFile(configFile, "utf8"));
-		config.chat = { target: null, model: null };
+		config.chat = { connection: null, model: null };
 		config.fleet = {
-			profiles: { local: { target: "fixture-target", model: null, thinkingLevel: "high" } },
+			profiles: { local: { connection: "fixture-target", model: null, thinkingLevel: "high" } },
 			agentProfiles: { coder: "local" },
 		};
 		await writeFile(configFile, JSON.stringify(config));

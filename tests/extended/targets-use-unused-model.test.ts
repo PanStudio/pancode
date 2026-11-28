@@ -138,12 +138,12 @@ it("shows the fleet default that targets use --fleet-model sets, with no profile
 	match(text.output, /^fleet default: connection blade \(litellm\), model dynamo\/fast, thinking off, from user$/mu);
 	match(text.output, /no fleet profiles configured/u);
 	const json = JSON.parse((await stdoutOf(["profile", "list", "--json"])).output) as {
-		default: { connection: string; model: string | null; source: string } | null;
+		default: { target: string; model: string | null; source: string } | null;
 		profiles: unknown[];
 	};
 	deepStrictEqual(
-		{ connection: json.default?.connection, model: json.default?.model, source: json.default?.source },
-		{ connection: "blade", model: "dynamo/fast", source: "user" },
+		{ target: json.default?.target, model: json.default?.model, source: json.default?.source },
+		{ target: "blade", model: "dynamo/fast", source: "user" },
 	);
 	deepStrictEqual(json.profiles, []);
 });

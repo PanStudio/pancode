@@ -608,7 +608,7 @@ describe("headless no-op contract through the built binary", () => {
 				{
 					id: "call-dispatch",
 					name: "dispatch",
-					arguments: { agent: "coder", task: "Apply the change.", target: "unpriced", model: "mock-model" },
+					arguments: { agent: "coder", task: "Apply the change.", connection: "unpriced", model: "mock-model" },
 				},
 			],
 			failOnNoop: false,

@@ -19,7 +19,7 @@ import { credentialFileProtection } from "../../src/cli/shared.js";
 
 const LOGOUT_SETTINGS = [
 	"version: 2",
-	"targets:",
+	"connections:",
 	"  - id: work-openai",
 	"    runtime: openai",
 	"    defaultModel: gpt-5",
@@ -184,7 +184,7 @@ describe("contracts/auth logout <runtime> with only a target key stored", () => 
 			const { code, stderr } = await captureAuth(["logout", RUNTIME]);
 			strictEqual(code, 1);
 			ok(stderr.includes("work-openai"), stderr);
-			ok(stderr.includes("auth logout <target-id>"), stderr);
+			ok(stderr.includes("auth logout <connection-id>"), stderr);
 		} finally {
 			scratch.restore();
 		}
@@ -237,7 +237,7 @@ describe("contracts/auth logout when a target is named after its runtime", () =>
 				join(configDir, "settings.yaml"),
 				[
 					"version: 2",
-					"targets:",
+					"connections:",
 					"  - id: openai",
 					"    runtime: openai",
 					"    defaultModel: gpt-5",
@@ -304,7 +304,7 @@ describe("contracts/auth logout of a key stored for the desktop app", () => {
 				join(configDir, "settings.yaml"),
 				[
 					"version: 2",
-					"targets:",
+					"connections:",
 					"  - id: lab",
 					"    runtime: openai",
 					"    defaultModel: gpt-5",
@@ -376,7 +376,7 @@ describe("contracts/targets remove and the removed target's stored key", () => {
 				join(configDir, "settings.yaml"),
 				[
 					"version: 2",
-					"targets:",
+					"connections:",
 					"  - id: openai",
 					"    runtime: openai",
 					"    defaultModel: gpt-5",
@@ -432,7 +432,7 @@ describe("contracts/targets remove and the removed target's stored key", () => {
 				join(configDir, "settings.yaml"),
 				[
 					"version: 2",
-					"targets:",
+					"connections:",
 					"  - id: work-a",
 					"    runtime: openai",
 					"    defaultModel: gpt-5",
@@ -470,7 +470,7 @@ describe("contracts/targets remove and the removed target's stored key", () => {
 				join(configDir, "settings.yaml"),
 				[
 					"version: 2",
-					"targets:",
+					"connections:",
 					"  - id: desk-a",
 					"    runtime: openai",
 					"    defaultModel: gpt-5",

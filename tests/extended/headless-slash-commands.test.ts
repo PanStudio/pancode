@@ -71,7 +71,7 @@ it("headless commands refuse interactive actions before boot while preserving sk
 		]) {
 			const result = run(task);
 			strictEqual(result.status, 2, `${task}: ${result.stderr}`);
-			match(result.stderr, /target 'headless-slash-missing-target' not found/, task);
+			match(result.stderr, /connection 'headless-slash-missing-target' not found/, task);
 			doesNotMatch(result.stderr, /interactive commands are not supported|is not a command/, task);
 		}
 		match(run("/not-a-real-command").stderr, /is not a command/);

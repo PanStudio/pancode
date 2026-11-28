@@ -717,7 +717,7 @@ function runProfileBindings(args: ReadonlyArray<string>): number {
 			return {
 				agentId,
 				profile: profileName,
-				connection: profile?.connection ?? null,
+				target: profile?.connection ?? null,
 				model: profile?.model ?? null,
 				source: settingsSourceFor(sources, `fleet.agentProfiles.${agentId}`),
 				warning: profile ? null : "missing profile",
@@ -738,7 +738,7 @@ function runProfileBindings(args: ReadonlyArray<string>): number {
 	);
 	for (const row of rows) {
 		process.stdout.write(
-			`${column(row.agentId, 18)}${column(row.profile, 20)}${column(row.connection ?? "-", 16)}${column(row.model ?? "-", 30)}${column(row.source, 15)}${row.warning ?? "-"}\n`,
+			`${column(row.agentId, 18)}${column(row.profile, 20)}${column(row.target ?? "-", 16)}${column(row.model ?? "-", 30)}${column(row.source, 15)}${row.warning ?? "-"}\n`,
 		);
 	}
 	return 0;
@@ -794,7 +794,7 @@ function runFleet(args: ReadonlyArray<string>, usage = "pancode connections flee
 	const defaultTarget = fleetDefault.connection ? byId.get(fleetDefault.connection) : undefined;
 	const defaultRow = fleetDefault.connection
 		? {
-				connection: fleetDefault.connection,
+				target: fleetDefault.connection,
 				runtime: defaultTarget?.runtime ?? null,
 				model: fleetDefault.model,
 				thinkingLevel: fleetDefault.thinkingLevel,
@@ -805,7 +805,7 @@ function runFleet(args: ReadonlyArray<string>, usage = "pancode connections flee
 		const target = profile.connection ? byId.get(profile.connection) : undefined;
 		return {
 			name,
-			connection: profile.connection,
+			target: profile.connection,
 			runtime: target?.runtime ?? null,
 			model: profile.model,
 			thinkingLevel: profile.thinkingLevel,
@@ -819,7 +819,7 @@ function runFleet(args: ReadonlyArray<string>, usage = "pancode connections flee
 	if (defaultRow) {
 		const model = defaultRow.model ?? "the connection's default";
 		process.stdout.write(
-			`fleet default: connection ${defaultRow.connection} (${defaultRow.runtime ?? "unknown runtime"}), model ${model}, thinking ${defaultRow.thinkingLevel}, from ${defaultRow.source}\n`,
+			`fleet default: connection ${defaultRow.target} (${defaultRow.runtime ?? "unknown runtime"}), model ${model}, thinking ${defaultRow.thinkingLevel}, from ${defaultRow.source}\n`,
 		);
 	} else {
 		process.stdout.write("fleet default: not set. run `pancode connections use <id> --fleet-model <model>` to set it.\n");
@@ -833,7 +833,7 @@ function runFleet(args: ReadonlyArray<string>, usage = "pancode connections flee
 	);
 	for (const row of rows) {
 		process.stdout.write(
-			`${column(row.name, 18)}${column(row.connection ?? "-", 16)}${column(row.runtime ?? "-", 20)}${column(row.model ?? "-", 30)}${column(row.thinkingLevel, 10)}${row.source}\n`,
+			`${column(row.name, 18)}${column(row.target ?? "-", 16)}${column(row.runtime ?? "-", 20)}${column(row.model ?? "-", 30)}${column(row.thinkingLevel, 10)}${row.source}\n`,
 		);
 	}
 	return 0;

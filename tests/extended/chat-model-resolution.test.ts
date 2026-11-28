@@ -54,7 +54,7 @@ test("chat model resolution excludes worker runtimes and prefers the active elig
 	targets.splice(2);
 	const exactWorker = resolveModelReference(model, providers, { use: "chat" });
 	strictEqual(exactWorker.ref, null);
-	match(exactWorker.error ?? "", /target claude-sdk-worker.*chat needs a loaded HTTP runtime/u);
+	match(exactWorker.error ?? "", /connection claude-sdk-worker.*chat needs a loaded HTTP runtime/u);
 	deepStrictEqual(resolveModelReference(`${model}*`, providers, { use: "chat" }).ref, {
 		target: subscription.target.id,
 		model: `${model}-extended`,
@@ -74,10 +74,10 @@ test("chat model resolution excludes worker runtimes and prefers the active elig
 	targets.splice(1, targets.length - 1, missing);
 	const refused = resolveModelReference(model, providers, { use: "chat" });
 	strictEqual(refused.ref, null);
-	match(refused.error ?? "", /targets claude-sdk-worker, missing-runtime.*chat needs a loaded HTTP runtime/u);
+	match(refused.error ?? "", /connections claude-sdk-worker, missing-runtime.*chat needs a loaded HTTP runtime/u);
 	const explicitWorker = resolveModelReference(`claude-sdk-worker/${model}`, providers, { use: "chat" });
 	strictEqual(explicitWorker.ref, null);
-	match(explicitWorker.error ?? "", /target claude-sdk-worker.*chat needs a loaded HTTP runtime/u);
+	match(explicitWorker.error ?? "", /connection claude-sdk-worker.*chat needs a loaded HTTP runtime/u);
 });
 
 test("an id a Copilot target does not list resolves only when named on that target", () => {
@@ -120,7 +120,10 @@ test("an id a Copilot target does not list resolves only when named on that targ
 
 	const unscoped = resolveModelReference("gemini-3.8-flash", both, { use: "chat" });
 	strictEqual(unscoped.ref, null);
-	match(unscoped.error ?? "", /cp serves models it does not list, so name it on a target, as cp\/gemini-3\.8-flash/u);
+	match(
+		unscoped.error ?? "",
+		/cp serves models it does not list, so name it on a connection, as cp\/gemini-3\.8-flash/u,
+	);
 	for (const providers of [onlyLocal, both]) {
 		const refused = resolveModelReference("local/gemini-3.8-flash", providers, { use: "chat" });
 		strictEqual(refused.ref, null);
