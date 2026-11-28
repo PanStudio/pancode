@@ -154,7 +154,7 @@ function modeFacts(
 	return displaySafe(
 		peerModeCapabilities(kind, record, {
 			configuredAcp: configuredIds.has(id),
-			configuredTargets: readSettings().targets,
+			configuredTargets: readSettings().connections,
 			paneAvailable,
 		}),
 	).map((mode) => ({

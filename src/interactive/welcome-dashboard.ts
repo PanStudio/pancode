@@ -205,7 +205,7 @@ function findCurrentStatus(
 	statuses: ReadonlyArray<TargetStatus>,
 	settings: Readonly<PancodeSettings> | undefined,
 ): TargetStatus | null {
-	const targetId = settings?.chat?.target ?? null;
+	const targetId = settings?.chat?.connection ?? null;
 	if (!targetId) return null;
 	return statuses.find((status) => status.target.id === targetId) ?? null;
 }
@@ -235,7 +235,7 @@ function deriveRoute(
 	if (targetLabel === null || modelLabel === null) return { route: "unset", routeReason: null };
 	// A target id that matches no listed target is a real misconfiguration, not an
 	// unprobed one.
-	if (current === null) return { route: "unavailable", routeReason: "no such target in settings" };
+	if (current === null) return { route: "unavailable", routeReason: "no such connection in settings" };
 	// `available: false` is decided from configuration and auth without probing.
 	if (!current.available || current.health.status === "down")
 		return { route: "unavailable", routeReason: shortRouteReason(current) };
@@ -412,7 +412,7 @@ function healthValue(theme: PancodeTheme, stats: WelcomeDashboardStats, room: nu
 			theme,
 			[
 				{ text: theme.fg("success", `${GLYPH.ok} ready`), rank: 0 },
-				...(target ? [{ text: theme.fg("body", `${target} target healthy`), rank: 1 }] : []),
+				...(target ? [{ text: theme.fg("body", `${target} connection healthy`), rank: 1 }] : []),
 			],
 			room,
 		);
@@ -422,7 +422,7 @@ function healthValue(theme: PancodeTheme, stats: WelcomeDashboardStats, room: nu
 			theme,
 			[
 				{ text: theme.fg("annotation", "checking"), rank: 0 },
-				...(target ? [{ text: theme.fg("annotation", `${target} target`), rank: 1 }] : []),
+				...(target ? [{ text: theme.fg("annotation", `${target} connection`), rank: 1 }] : []),
 			],
 			room,
 		);
@@ -927,7 +927,7 @@ class WelcomeDashboard implements WelcomeDashboardComponent {
 		const settings = this.deps.getSettings?.();
 		const statuses = this.deps.providers.list();
 		const current = findCurrentStatus(statuses, settings);
-		const targetLabel = current?.target.id ?? settings?.chat?.target ?? null;
+		const targetLabel = current?.target.id ?? settings?.chat?.connection ?? null;
 		const modelLabel = settings?.chat?.model ?? current?.target.defaultModel ?? null;
 		const workspace = this.deps.getWorkspaceSnapshot?.() ?? null;
 		const cwd = workspace?.cwd ?? process.cwd();
@@ -1076,7 +1076,7 @@ export function createBootWelcome(
 	submitKeyLabel: string | null,
 	getKeyLabel?: WelcomeDashboardDeps["getKeyLabel"],
 ): Component {
-	const target = settings.targets.find((entry) => entry.id === settings.chat.target);
+	const target = settings.connections.find((entry) => entry.id === settings.chat.connection);
 	const model = settings.chat.model ?? target?.defaultModel ?? null;
 	const version = readPancodeVersionLabel();
 	const mode = richWelcomeEnabled(settings.interface.demo) ? "launchpad" : "session";
@@ -1086,7 +1086,7 @@ export function createBootWelcome(
 		lastSession: "checking",
 		cwd: process.cwd(),
 		workspace: null,
-		targetLabel: settings.chat.target ?? null,
+		targetLabel: settings.chat.connection ?? null,
 		modelLabel: model,
 		route: target && model ? "checking" : "unset",
 		routeReason: null,

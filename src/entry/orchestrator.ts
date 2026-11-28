@@ -158,12 +158,12 @@ function bannerConfigurationLine(): string {
 	}
 	// A dangling chat target normalizes to null in the schema, so a deleted
 	// target arrives here as no target at all rather than as a name to report.
-	const targetId = settings.chat?.target;
+	const targetId = settings.chat?.connection;
 	if (!targetId) {
-		return chalk.yellow("no model target configured. Run `pancode configure` to add one.");
+		return chalk.yellow("no model connection configured. Run `pancode configure` to add one.");
 	}
 	const model = settings.chat?.model;
-	return chalk.dim(`target ${targetId}${model ? ` · model ${model}` : " · no default model"}`);
+	return chalk.dim(`connection ${targetId}${model ? ` · model ${model}` : " · no default model"}`);
 }
 
 function buildBanner(): string {
@@ -175,7 +175,7 @@ function buildBanner(): string {
 `;
 }
 
-/** The session frame names the route the run is on, which a resume's --target or --model may have moved (B-52). */
+/** The session frame names the route the run is on, which a resume's --connection or --model may have moved (B-52). */
 function printJsonSessionHeader(
 	meta: SessionMeta | null,
 	active: PancodeSettings["chat"],
@@ -189,7 +189,7 @@ function printJsonSessionHeader(
 		id: meta.id,
 		timestamp: meta.createdAt,
 		cwd: meta.cwd,
-		target: active.target ?? meta.target,
+		target: active.connection ?? meta.target,
 		model: active.model ?? meta.model,
 		pancodeVersion: meta.pancodeVersion,
 	};
@@ -208,7 +208,7 @@ function createSystemOneOneShot(providers: ProvidersContract, admitRequest: LlmR
 		const target = providers.getTarget(request.targetId);
 		const wireModelId = request.model ?? target?.defaultModel ?? null;
 		if (target === null || wireModelId === null) {
-			throw new Error(`target '${request.targetId}' names no model to ask`);
+			throw new Error(`connection '${request.targetId}' names no model to ask`);
 		}
 		const { model, refined } = prepareBackgroundMemoryModel(providers, request.targetId, wireModelId);
 		const sideAuth = await resolveSideCallAuth(
@@ -811,7 +811,7 @@ export async function bootOrchestrator(options: BootOptions = {}): Promise<BootR
 	// reads the effective view — shared snapshot + session routing overlay — so
 	// another process writing settings.yaml can update defaults and the
 	// target catalog but never redirect this session's routing.
-	// `run --target/--model` and the interactive `pancode --target/--model` seed the session route the same way.
+	// `run --connection/--model` and the interactive `pancode --connection/--model` seed the session route the same way.
 	const routeRequest = options.headless ?? options.route;
 	const initialRoutingSettings = applyRouteOverlay(config?.get() ?? readSettings(), routeRequest);
 	if (routeRequest?.model !== undefined && providers) {
@@ -830,11 +830,11 @@ export async function bootOrchestrator(options: BootOptions = {}): Promise<BootR
 				: { ...providers, list: () => providers.list().filter((status) => status.target.id === routeRequest.target) },
 			{
 				use: "chat",
-				...(initialRoutingSettings.chat.target ? { preferTarget: initialRoutingSettings.chat.target } : {}),
+				...(initialRoutingSettings.chat.connection ? { preferTarget: initialRoutingSettings.chat.connection } : {}),
 			},
 		);
 		if (selected.ref) {
-			initialRoutingSettings.chat.target = selected.ref.target;
+			initialRoutingSettings.chat.connection = selected.ref.target;
 			initialRoutingSettings.chat.model = selected.ref.model;
 			if (options.headless?.thinking === undefined && selected.ref.thinkingLevel) {
 				initialRoutingSettings.chat.thinkingLevel = selected.ref.thinkingLevel;
@@ -842,7 +842,7 @@ export async function bootOrchestrator(options: BootOptions = {}): Promise<BootR
 			if (selected.warning) bootStderr(`PanCode: ${selected.warning}\n`);
 		} else if (selected.error || options.apiKey) {
 			const exitCode = options.apiKey || /^no models match|not chat-eligible/u.test(selected.error ?? "") ? 2 : 1;
-			const reason = selected.error ?? "--api-key supplied but the model target could not be resolved";
+			const reason = selected.error ?? "--api-key supplied but the model connection could not be resolved";
 			if (options.headless) writeRunDiagnostic(`pancode run: ${reason}\n`);
 			else bootStderr(`pancode: ${reason}\n`);
 			await termination.shutdown(exitCode);
@@ -973,10 +973,10 @@ export async function bootOrchestrator(options: BootOptions = {}): Promise<BootR
 		},
 	});
 	if (options.apiKey) {
-		const target = resolveTarget(providers, getCurrentSettings().chat.target);
+		const target = resolveTarget(providers, getCurrentSettings().chat.connection);
 		const runtime = target ? providers.getRuntime(target.runtime) : null;
 		if (!target || !runtime) {
-			bootStderr("PanCode: --api-key supplied but no active orchestrator target could be resolved; refusing.\n");
+			bootStderr("PanCode: --api-key supplied but no active orchestrator connection could be resolved; refusing.\n");
 			await termination.shutdown(2);
 			return { exitCode: 2, bootTimeMs: timer.snapshot().totalMs };
 		}

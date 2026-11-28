@@ -145,7 +145,7 @@ function buildLesson(evidence: RunEvidence, context: EvidenceRunContext, primary
 		return `Evidence ${evidence.runId} shows runtime mismatch around "${task}". Confirm the configured runtime and model before dispatch.${findingText}`;
 	}
 	if (primaryTag === "auth-failure") {
-		return `Evidence ${evidence.runId} shows auth failure around "${task}". Check target credentials before repeating the workflow.${findingText}`;
+		return `Evidence ${evidence.runId} shows auth failure around "${task}". Check connection credentials before repeating the workflow.${findingText}`;
 	}
 	if (primaryTag === "destructive-cleanup") {
 		return `Evidence ${evidence.runId} shows destructive cleanup risk around "${task}". Keep validated artifacts protected until replacement validation exists.${findingText}`;

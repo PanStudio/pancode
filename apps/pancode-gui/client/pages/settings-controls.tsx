@@ -544,8 +544,8 @@ export function SettingsControlsView({
 	const startCheck = useMutation({
 		mutationFn: (targetId: string) =>
 			workspaceId === null
-				? client.call(routes.userTargetsProbe, { ...emptyInput, params: { targetId } })
-				: client.call(routes.targetsProbe, { ...emptyInput, params: { id: workspaceId, targetId } }),
+				? client.call(routes.userTargetsProbe, { ...emptyInput, params: { connectionId: targetId } })
+				: client.call(routes.targetsProbe, { ...emptyInput, params: { id: workspaceId, connectionId: targetId } }),
 		onSuccess: (value, targetId) => setCheck({ operationId: value.operationId, targetId }),
 	});
 	useEffect(() => {
@@ -741,7 +741,7 @@ export function SettingsControlsView({
 			{active === "targets" && (
 				<>
 					<ConnectionSetup />
-					{workspaceId && <Link to={`/settings/targets?workspace=${workspaceId}`}>Manage connections</Link>}
+					{workspaceId && <Link to={`/settings/connections?workspace=${workspaceId}`}>Manage connections</Link>}
 				</>
 			)}
 			{active === "advanced" && (

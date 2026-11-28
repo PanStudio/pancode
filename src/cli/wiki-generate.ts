@@ -1132,7 +1132,8 @@ export async function resolveDocumenterModelId(route: WikiModelRoute = {}): Prom
 		const bindingProfileName = workers?.agentProfiles?.[WIKI_AGENT_ID];
 		const profileName = route.workerProfile ?? bindingProfileName;
 		const profile = profileName ? workers?.profiles?.[profileName] : undefined;
-		const targetId = route.target ?? profile?.target ?? workers?.default?.target ?? settings.targets?.[0]?.id ?? null;
+		const targetId =
+			route.target ?? profile?.connection ?? workers?.default?.connection ?? settings.connections?.[0]?.id ?? null;
 		if (!targetId) return UNRESOLVED_DOCUMENTER_MODEL;
 		const target = providers.getTarget(targetId);
 		const requestedModel = route.model ?? profile?.model ?? workers?.default?.model ?? target?.defaultModel ?? null;

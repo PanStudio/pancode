@@ -43,7 +43,7 @@ export function createRouteControl(rt: TurnRuntimeScope) {
 
 	const readTarget = (route?: { target: string; model: string }): ChatLoopTarget | null => {
 		const settings = deps.getSettings();
-		const targetId = (route?.target ?? settings.chat.target)?.trim();
+		const targetId = (route?.target ?? settings.chat.connection)?.trim();
 		const wireModelId = (route?.model ?? settings.chat.model)?.trim();
 		if (!targetId || !wireModelId) return null;
 		const resolved = resolveRuntimeTarget(deps.providers, {
@@ -57,7 +57,7 @@ export function createRouteControl(rt: TurnRuntimeScope) {
 		if (!resolved.ok) {
 			const failure = resolved.diagnostics.find((entry) => entry.severity === "error") ?? resolved.diagnostics[0];
 			throw new TurnAdmissionError(
-				`[PanCode] ${failure?.message ?? "orchestrator target resolution failed"}`,
+				`[PanCode] ${failure?.message ?? "orchestrator connection resolution failed"}`,
 				failure?.code ?? "admission-failed",
 			);
 		}
@@ -116,7 +116,7 @@ export function createRouteControl(rt: TurnRuntimeScope) {
 	const ensureLiveCapabilitiesForSelectedModel = async (options?: { silent?: boolean }): Promise<void> => {
 		if (rt.disposed) return;
 		const settings = deps.getSettings();
-		const targetId = settings.chat.target?.trim();
+		const targetId = settings.chat.connection?.trim();
 		const wireModelId = settings.chat.model?.trim();
 		if (!targetId || !wireModelId) return;
 		const target = deps.providers.getTarget(targetId);
@@ -150,7 +150,7 @@ export function createRouteControl(rt: TurnRuntimeScope) {
 			if (
 				state.runtime &&
 				!state.streaming &&
-				deps.getSettings().chat.target === targetId &&
+				deps.getSettings().chat.connection === targetId &&
 				deps.getSettings().chat.model === wireModelId
 			) {
 				rt.ensureRuntime({ silent: true });

@@ -27,7 +27,7 @@ import {
 } from "../harness/openai-compat-fixture.js";
 
 function mockChat(settings: SettingsDocument): Section {
-	const target = (settings.targets as Section[]).find((entry) => entry.id === "mock-chat");
+	const target = (settings.connections as Section[]).find((entry) => entry.id === "mock-chat");
 	if (!target) throw new Error("no mock-chat target seeded");
 	return target;
 }

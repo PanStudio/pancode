@@ -206,7 +206,7 @@ function readRawLayer(
 /**
  * Remove credential-bearing keys from a project layer, recording where each was
  * dropped. Recurses through nested objects and arrays so a credential nested
- * under `targets[].auth` is caught too.
+ * under `connections[].auth` is caught too.
  */
 function stripCredentials(value: unknown, origin: SettingsOrigin, path: string, issues: SettingsLayerIssue[]): unknown {
 	if (Array.isArray(value)) {
@@ -215,7 +215,7 @@ function stripCredentials(value: unknown, origin: SettingsOrigin, path: string, 
 	if (!isRecord(value)) return value;
 	const out: Record<string, unknown> = {};
 	for (const [key, child] of Object.entries(value)) {
-		if (key === "auth" && /^targets\[\d+\]$/u.test(path) && isRecord(child)) {
+		if (key === "auth" && /^connections\[\d+\]$/u.test(path) && isRecord(child)) {
 			const kept = projectTargetKeyName(child, origin, `${path}.auth`, issues);
 			if (kept !== undefined) out[key] = kept;
 			continue;
@@ -255,7 +255,7 @@ function projectTargetKeyName(
 			path: `${path}.${key}`,
 			message:
 				key === "apiKeyEnvVar"
-					? "a project target's auth.apiKeyEnvVar must be an environment variable name; key ignored"
+					? "a project connection's auth.apiKeyEnvVar must be an environment variable name; key ignored"
 					: "credentials are not allowed in project settings; key ignored",
 		});
 	}
@@ -563,8 +563,8 @@ const OPERATOR_ONLY_SAFETY_KEYS: ReadonlyArray<{ key: string; message: string }>
 	},
 	// A repository could otherwise hand its own commands the operator's Copilot login.
 	{
-		key: "liveCheckTargets",
-		message: "live-check login targets are set only in user settings; project value ignored",
+		key: "liveCheckConnections",
+		message: "live-check login connections are set only in user settings; project value ignored",
 	},
 	// A repository could otherwise reopen the sockets that run code outside the sandbox.
 	{
@@ -601,7 +601,7 @@ const OPERATOR_ONLY_SAFETY_KEYS: ReadonlyArray<{ key: string; message: string }>
 ];
 
 /** The judge fields a trusted project may set: its route, never its rules or whether it runs. */
-const PROJECT_JUDGE_ROUTE_KEYS = new Set(["target", "model"]);
+const PROJECT_JUDGE_ROUTE_KEYS = new Set(["connection", "model"]);
 
 /**
  * A trusted project's `safety.judge`, cut to its route. A project kept fully on
@@ -631,20 +631,20 @@ function projectJudgeRoute(
 			issues.push({
 				origin,
 				path: `safety.judge.${key}`,
-				message: "a project sets only the safety judge's target and model; project value ignored",
+				message: "a project sets only the safety judge's connection and model; project value ignored",
 			});
 			continue;
 		}
-		if (key === "target" && typeof value === "string") {
-			const declared = Array.isArray(userBlob?.targets)
-				? userBlob.targets.some((entry) => isRecord(entry) && entry.id === value)
+		if (key === "connection" && typeof value === "string") {
+			const declared = Array.isArray(userBlob?.connections)
+				? userBlob.connections.some((entry) => isRecord(entry) && entry.id === value)
 				: false;
 			if (!declared) {
 				// The model was chosen for that target, so neither half of the route stays.
 				issues.push({
 					origin,
-					path: "safety.judge.target",
-					message: `a project may point the safety judge only at a target your user settings declare, and '${value}' is not one; project target and model ignored`,
+					path: "safety.judge.connection",
+					message: `a project may point the safety judge only at a connection your user settings declare, and '${value}' is not one; project connection and model ignored`,
 				});
 				return undefined;
 			}
@@ -925,7 +925,7 @@ function stripProjectRuntimeTrust(
 		});
 	};
 	let cleaned = blob;
-	if (Array.isArray(blob.targets)) cleaned = { ...cleaned, targets: strip(blob.targets, "targets") };
+	if (Array.isArray(blob.connections)) cleaned = { ...cleaned, connections: strip(blob.connections, "connections") };
 	const integrations = blob.integrations;
 	if (
 		isRecord(integrations) &&
@@ -1006,10 +1006,10 @@ function stripProjectFunding(
 		reject("funding");
 		delete cleaned.funding;
 	}
-	if (Array.isArray(blob.targets)) {
-		cleaned.targets = blob.targets.map((entry, index) => {
+	if (Array.isArray(blob.connections)) {
+		cleaned.connections = blob.connections.map((entry, index) => {
 			if (!isRecord(entry) || !Object.hasOwn(entry, "funding")) return entry;
-			reject(`targets[${index}].funding`);
+			reject(`connections[${index}].funding`);
 			const { funding: _ignored, ...target } = entry;
 			return target;
 		});
@@ -1168,17 +1168,17 @@ function prepareProjectLayers(
 }
 
 /**
- * The notice a project layer's `targets` list earns when the user layer has one too: arrays replace on merge, so the
+ * The notice a project layer's `connections` list earns when the user layer has one too: arrays replace on merge, so the
  * operator's own targets, and the stored credentials their entries name, are gone in this checkout.
  */
 export const PROJECT_TARGETS_REPLACE_USER_TARGETS =
-	"replaces the targets list in your user settings; this checkout uses only the targets this file declares, and no stored credential attaches to them";
+	"replaces the connections list in your user settings; this checkout uses only the connections this file declares, and no stored credential attaches to them";
 
 /** What each of the user's own targets names for its credential, by validated id. */
 function userTargetCredentials(userBlob: Record<string, unknown> | undefined): Map<string, "stored" | "key-variable"> {
 	const credentials = new Map<string, "stored" | "key-variable">();
-	if (!Array.isArray(userBlob?.targets)) return credentials;
-	for (const target of validateSettings({ targets: userBlob.targets }).settings.targets) {
+	if (!Array.isArray(userBlob?.connections)) return credentials;
+	for (const target of validateSettings({ connections: userBlob.connections }).settings.connections) {
 		if (target.auth?.apiKeyRef?.trim() || target.auth?.oauthProfile?.trim()) credentials.set(target.id, "stored");
 		else if (target.auth?.apiKeyEnvVar?.trim()) credentials.set(target.id, "key-variable");
 	}
@@ -1186,11 +1186,11 @@ function userTargetCredentials(userBlob: Record<string, unknown> | undefined): M
 }
 
 /**
- * Arrays replace wholesale, so a project `targets:` list can leave a route the
+ * Arrays replace wholesale, so a project `connections:` list can leave a route the
  * user layer set (the judge, the reviewer, a roster member) naming a target
  * this checkout no longer has (CLI-P32). The user file is valid on its own, so
  * the dangling reference is reported against the project layer that set
- * `targets`, the route falls back to its default here, and the session boots.
+ * `connections`, the route falls back to its default here, and the session boots.
  * The user's targets are not merged back in: a trusted project gains no
  * credential route it did not declare. A reference to a target the user layer
  * never declared stays the user's own validation error.
@@ -1204,11 +1204,11 @@ function downgradeProjectRemovedTargets(
 	const paths = new Set<string>();
 	const issues: SettingsLayerIssue[] = [];
 	const userIds = new Set(
-		(Array.isArray(userBlob?.targets) ? userBlob.targets : []).flatMap((entry) =>
+		(Array.isArray(userBlob?.connections) ? userBlob.connections : []).flatMap((entry) =>
 			isRecord(entry) && typeof entry.id === "string" ? [entry.id] : [],
 		),
 	);
-	const effectiveIds = new Set(validation.settings.targets.map((target) => target.id));
+	const effectiveIds = new Set(validation.settings.connections.map((target) => target.id));
 	const removed = (path: string, value: unknown): value is string =>
 		typeof value === "string" &&
 		userIds.has(value) &&
@@ -1219,13 +1219,13 @@ function downgradeProjectRemovedTargets(
 		issues.push({
 			origin: targetsOrigin,
 			path,
-			message: `target '${value}' from user settings is not in this file's targets list; ${effect}`,
+			message: `connection '${value}' from user settings is not in this file's connections list; ${effect}`,
 		});
 	};
 	const safety = isRecord(merged.safety) ? merged.safety : {};
 	const judge = isRecord(safety.judge) ? safety.judge : {};
-	if (removed("safety.judge.target", judge.target)) {
-		note("safety.judge.target", judge.target, "the safety judge uses its default route in this checkout");
+	if (removed("safety.judge.connection", judge.connection)) {
+		note("safety.judge.connection", judge.connection, "the safety judge uses its default route in this checkout");
 		// The model was chosen for that target, so neither half of the route stays.
 		if (judge.model !== undefined && judge.model !== null) {
 			paths.add("safety.judge.model");
@@ -1233,17 +1233,17 @@ function downgradeProjectRemovedTargets(
 		}
 	}
 	const review = isRecord(safety.review) ? safety.review : {};
-	if (removed("safety.review.target", review.target)) {
-		note("safety.review.target", review.target, "the reviewer uses its default route in this checkout");
+	if (removed("safety.review.connection", review.connection)) {
+		note("safety.review.connection", review.connection, "the reviewer uses its default route in this checkout");
 	}
 	const fleet = isRecord(merged.fleet) ? merged.fleet : {};
 	for (const [rawName, roster] of Object.entries(isRecord(fleet.rosters) ? fleet.rosters : {})) {
 		if (!isRecord(roster) || !Array.isArray(roster.members)) continue;
 		const name = rawName.trim();
 		for (const [index, member] of roster.members.entries()) {
-			const path = `fleet.rosters.${name}.members[${index}].target`;
-			if (!isRecord(member) || !removed(path, member.target)) continue;
-			note(path, member.target, `roster '${name}' is unavailable in this checkout`);
+			const path = `fleet.rosters.${name}.members[${index}].connection`;
+			if (!isRecord(member) || !removed(path, member.connection)) continue;
+			note(path, member.connection, `roster '${name}' is unavailable in this checkout`);
 			delete validation.settings.fleet.rosters[name];
 		}
 	}
@@ -1258,21 +1258,21 @@ function validateLayerStack(
 	const { merged, sources } = mergeLayersWithSources([user, prepared.project, prepared.local]);
 	const validation = validateSettings(merged);
 	let downgraded: Set<string> = new Set();
-	// Arrays replace wholesale, so a project layer that sets `targets` supplied every entry.
-	if (sources.targets === "project" || sources.targets === "project.local") {
-		const file = sources.targets === "project" ? prepared.projectFile : prepared.localFile;
+	// Arrays replace wholesale, so a project layer that sets `connections` supplied every entry.
+	if (sources.connections === "project" || sources.connections === "project.local") {
+		const file = sources.connections === "project" ? prepared.projectFile : prepared.localFile;
 		const userCredentials = userTargetCredentials(user.blob);
-		noteProjectTargets(validation.settings.targets);
-		for (const target of validation.settings.targets) {
+		noteProjectTargets(validation.settings.connections);
+		for (const target of validation.settings.connections) {
 			const userCredential = userCredentials.get(target.id);
 			markProjectTarget(target, { file, ...(userCredential !== undefined ? { userCredential } : {}) });
 		}
-		if (Array.isArray(user.blob?.targets) && user.blob.targets.length > 0)
-			issues.push({ origin: sources.targets, path: "targets", message: PROJECT_TARGETS_REPLACE_USER_TARGETS });
-		const removed = downgradeProjectRemovedTargets(merged, user.blob, validation, sources.targets);
+		if (Array.isArray(user.blob?.connections) && user.blob.connections.length > 0)
+			issues.push({ origin: sources.connections, path: "connections", message: PROJECT_TARGETS_REPLACE_USER_TARGETS });
+		const removed = downgradeProjectRemovedTargets(merged, user.blob, validation, sources.connections);
 		downgraded = removed.paths;
 		issues.push(...removed.issues);
-	} else markUserTargets(validation.settings.targets);
+	} else markUserTargets(validation.settings.connections);
 	for (const issue of validation.issues) {
 		if (downgraded.has(issue.path)) continue;
 		issues.push({ origin: settingsSourceFor(sources, issue.path), path: issue.path, message: issue.message });

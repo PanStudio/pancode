@@ -185,6 +185,6 @@ export function routeRefusalWords(targetId: string, error: unknown): string {
 	const reason = message
 		.replace(/^dispatch: /u, "")
 		.replace(/^admission denied: /u, "")
-		.replace(/^target '[^']*' unavailable: /u, "");
+		.replace(/^connection '[^']*' unavailable: /u, "");
 	return /^health down\b/u.test(reason) ? `${targetId} is down` : `${targetId} could not take it (${reason})`;
 }

@@ -944,7 +944,7 @@ export function createChatLoop(deps: CreateChatLoopDeps): ChatLoop {
 			const settings = deps.getSettings();
 			deps.session.create({
 				cwd: process.cwd(),
-				...(settings.chat.target ? { target: settings.chat.target } : {}),
+				...(settings.chat.connection ? { target: settings.chat.connection } : {}),
 				...(settings.chat.model ? { model: settings.chat.model } : {}),
 			});
 		},

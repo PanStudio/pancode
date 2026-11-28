@@ -28,8 +28,8 @@ import { dispatchStubContext } from "../harness/dispatch-stub-context.js";
  */
 function claudeSdkSettings() {
 	const settings = structuredClone(DEFAULT_SETTINGS);
-	settings.targets = [{ id: "sdk-worker", runtime: "claude-sdk", defaultModel: "claude-sonnet-4-6" }];
-	settings.fleet.default.target = "sdk-worker";
+	settings.connections = [{ id: "sdk-worker", runtime: "claude-sdk", defaultModel: "claude-sonnet-4-6" }];
+	settings.fleet.default.connection = "sdk-worker";
 	settings.fleet.default.model = "claude-sonnet-4-6";
 	return settings;
 }
@@ -112,8 +112,8 @@ describe("claude-sdk: PanCode context, artifact and verify tools", () => {
 	// M7 acceptance: on both runtimes the worker attests, and its prompt's tool contract names, exactly the envelope.
 	const nativeSettings = () => {
 		const settings = structuredClone(DEFAULT_SETTINGS);
-		settings.targets = [{ id: "native-worker", runtime: "openai", defaultModel: "gpt-4o" }];
-		settings.fleet.default = { ...settings.fleet.default, target: "native-worker", model: "gpt-4o" };
+		settings.connections = [{ id: "native-worker", runtime: "openai", defaultModel: "gpt-4o" }];
+		settings.fleet.default = { ...settings.fleet.default, connection: "native-worker", model: "gpt-4o" };
 		return settings;
 	};
 	const runtimes = [

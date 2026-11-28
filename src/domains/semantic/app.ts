@@ -53,7 +53,8 @@ function configured(
 ): PancodeSettings["context"]["semantic"] & { target: string; model: string; assetIdentity: string } {
 	const config = settings.context.semantic;
 	if (!config.enabled) throw new Error("Semantic indexing is disabled. Configure it explicitly first.");
-	if (!semanticUsable(config)) throw new Error("Semantic indexing requires a pinned target, model and asset identity.");
+	if (!semanticUsable(config))
+		throw new Error("Semantic indexing requires a pinned connection, model and asset identity.");
 	return config;
 }
 
@@ -91,10 +92,10 @@ async function openSemanticRoute(options: SemanticAppOptions) {
 	const settings = options.settings ?? readSettings();
 	const config = configured(settings);
 	const projectId = realpathSync(options.projectRoot);
-	const target = settings.targets.find((entry) => entry.id === config.target);
-	if (!target) throw new Error(`Semantic target ${config.target} is not configured`);
+	const target = settings.connections.find((entry) => entry.id === config.connection);
+	if (!target) throw new Error(`Semantic connection ${config.connection} is not configured`);
 	if (target.runtime !== "llamacpp-embed" && target.runtime !== "litellm")
-		throw new Error("Semantic target must use a qualified llama.cpp embedding or LiteLLM runtime");
+		throw new Error("Semantic connection must use a qualified llama.cpp embedding or LiteLLM runtime");
 	const runtime = findBuiltinRuntimeBootMetadata(target.runtime);
 	if (!runtime) throw new Error(`Semantic runtime ${target.runtime} is unavailable`);
 	const profile = embeddingGemma2Q8Profile({
@@ -107,7 +108,7 @@ async function openSemanticRoute(options: SemanticAppOptions) {
 	if (!options.offline && (target.auth?.apiKeyRef || target.auth?.apiKeyEnvVar || target.auth?.oauthProfile)) {
 		const auth = await openAuthStorage().resolveForTarget(resolveAuthTarget(target, runtime));
 		if (!auth.available || !auth.apiKey)
-			throw new Error(`Semantic target authentication unavailable: ${auth.detail ?? target.id}`);
+			throw new Error(`Semantic connection authentication unavailable: ${auth.detail ?? target.id}`);
 		authToken = auth.apiKey;
 	}
 	const service = createEmbeddingService({
@@ -356,7 +357,8 @@ export async function searchSemantic(
 	try {
 		app = await openSemanticApp(options);
 	} catch (error) {
-		if (!(error instanceof Error) || !error.message.startsWith("Semantic target authentication unavailable")) throw error;
+		if (!(error instanceof Error) || !error.message.startsWith("Semantic connection authentication unavailable"))
+			throw error;
 		app = await openSemanticApp({ ...options, offline: true });
 	}
 	const policy = createSafetyPolicyEngine({ cwd: app.projectId });

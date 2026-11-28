@@ -48,7 +48,7 @@ export const WORK_SLASH_COMMANDS: ReadonlyArray<BuiltinSlashCommand> = [
 			flags: [
 				{ name: "--agent-profile", takesValue: true, valueName: "profile" },
 				{ name: "--runtime", takesValue: true, valueName: "runtimeId" },
-				{ name: "--target", takesValue: true, valueName: "id" },
+				{ name: "--connection", takesValue: true, valueName: "id" },
 				{ name: "--worktree" },
 				{ name: "--read-only" },
 				{ name: "--model", takesValue: true, valueName: "id" },
@@ -72,7 +72,7 @@ export const WORK_SLASH_COMMANDS: ReadonlyArray<BuiltinSlashCommand> = [
 			const workerRuntime = parsed.flags.get("--runtime");
 			if (typeof workerRuntime === "string") options.workerRuntime = workerRuntime;
 
-			const target = parsed.flags.get("--target");
+			const target = parsed.flags.get("--connection");
 			if (typeof target === "string") options.target = target;
 			if (parsed.flags.has("--worktree")) options.worktree = true;
 			if (parsed.flags.has("--read-only")) options.readOnly = true;
@@ -309,7 +309,7 @@ export const WORK_SLASH_COMMANDS: ReadonlyArray<BuiltinSlashCommand> = [
 			parseFlagsBeforeRest: true,
 			flags: [
 				{ name: "--options", takesValue: true, valueName: "a|b|c" },
-				{ name: "--models", takesValue: true, valueName: "target[/model],..." },
+				{ name: "--models", takesValue: true, valueName: "connection[/model],..." },
 				{ name: "--rationale", takesValue: false },
 				{ name: "--deadline", takesValue: true, valueName: "duration" },
 			],

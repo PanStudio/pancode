@@ -327,7 +327,7 @@ function unservedDefaultModelReason(
 	// LM Studio lists a loaded model under its instance id and keeps the model
 	// key in the state map; the request path resolves either.
 	if (merge.discoveredModelStates && model in merge.discoveredModelStates) return null;
-	return `default model '${model}' is not advertised by the target`;
+	return `default model '${model}' is not advertised by the connection`;
 }
 
 export interface ProvidersBundleOptions {
@@ -369,7 +369,7 @@ export function createProvidersBundle(
 
 	function currentProbeTarget(probed: TargetDescriptor): TargetDescriptor | undefined {
 		if (stopped) return undefined;
-		return readConfig().targets.find((target) => sameProbeIdentity(probed, target));
+		return readConfig().connections.find((target) => sameProbeIdentity(probed, target));
 	}
 
 	async function buildProbeContextForTarget(
@@ -690,7 +690,7 @@ export function createProvidersBundle(
 	/** The only models an inference probe may touch: the chat model on this target, else its default. */
 	function probeCandidateModelId(target: TargetDescriptor): string | null {
 		const settings = options.getSettings?.() ?? readConfig();
-		const orchestratorModel = settings.chat.target === target.id ? settings.chat.model : null;
+		const orchestratorModel = settings.chat.connection === target.id ? settings.chat.model : null;
 		return orchestratorModel ?? target.defaultModel ?? null;
 	}
 
@@ -713,9 +713,9 @@ export function createProvidersBundle(
 			error,
 		});
 		if (desc.defaultCapabilities.decisions && !desc.defaultCapabilities.chat) {
-			return skipped("not applicable: decision-engine targets do not call tools");
+			return skipped("not applicable: decision-engine connections do not call tools");
 		}
-		if (!modelId) return skipped("no chat or default model is set for this target");
+		if (!modelId) return skipped("no chat or default model is set for this connection");
 		// SDK and subprocess runtimes stream through their own worker runners,
 		// not the engine request path this probe exercises.
 		if (desc.kind !== "http") return skipped(`runtime kind '${desc.kind}' does not stream through the engine`);
@@ -726,7 +726,7 @@ export function createProvidersBundle(
 			return skipped(`model synthesis failed: ${err instanceof Error ? err.message : String(err)}`);
 		}
 		const apiKey = targetRequiresAuth(target, desc) ? probeCtx.authToken : LOCAL_API_KEY_FALLBACK;
-		// The probe can load and pin a cold model, and `targets` never runs the
+		// The probe can load and pin a cold model, and `connections` never runs the
 		// orchestrator's release on exit, so the release happens here for every
 		// caller, on success, failure, and abort. It is scoped to this server and
 		// this model: in-session `/doctor deep` shares the process with chat turns,
@@ -763,7 +763,7 @@ export function createProvidersBundle(
 	): Promise<boolean | null> {
 		if (stopped) return null;
 		const settings = readConfig();
-		const configuredTarget = settings.targets.find((ep) => ep.id === targetId);
+		const configuredTarget = settings.connections.find((ep) => ep.id === targetId);
 		if (!configuredTarget) return null;
 		const target = structuredClone(configuredTarget);
 		keepTargetOrigins([configuredTarget], [target]);
@@ -802,11 +802,11 @@ export function createProvidersBundle(
 					for (const row of comparison) {
 						if (!row.profileId) {
 							writeDiagnostic(
-								`[providers:profiles:compare] unmatched target=${row.targetId} runtime=${row.runtimeId} model=${row.modelId ?? "(unset)"} fallback=${row.fallbackFamily ?? "none"}`,
+								`[providers:profiles:compare] unmatched connection=${row.targetId} runtime=${row.runtimeId} model=${row.modelId ?? "(unset)"} fallback=${row.fallbackFamily ?? "none"}`,
 							);
 						} else if (row.differentFields.length > 0) {
 							writeDiagnostic(
-								`[providers:profiles:compare] differs target=${row.targetId} model=${row.modelId} profile=${row.profileId} fields=${row.differentFields.join(",")}`,
+								`[providers:profiles:compare] differs connection=${row.targetId} model=${row.modelId} profile=${row.profileId} fields=${row.differentFields.join(",")}`,
 							);
 						}
 					}
@@ -817,14 +817,14 @@ export function createProvidersBundle(
 		}
 		const next = new Map<string, TargetStatus>();
 		for (const previous of statuses.values()) {
-			const current = settings.targets.find((target) => target.id === previous.target.id);
+			const current = settings.connections.find((target) => target.id === previous.target.id);
 			if (!current || !sameProbeIdentity(previous.target, current)) {
 				for (const key of reasoningCache.keys()) {
 					if (key.startsWith(`${previous.target.id}:`)) reasoningCache.delete(key);
 				}
 			}
 		}
-		for (const target of settings.targets) {
+		for (const target of settings.connections) {
 			const desc = registry.get(target.runtime);
 			const status = buildStatus(target, desc, null, statuses.get(target.id));
 			next.set(target.id, status);
@@ -837,11 +837,11 @@ export function createProvidersBundle(
 
 	async function probeAllLive(options?: LiveProbeOptions): Promise<void> {
 		const settings = readConfig();
-		const activeIds = new Set(settings.targets.map((ep) => ep.id));
+		const activeIds = new Set(settings.connections.map((ep) => ep.id));
 		for (const id of Array.from(statuses.keys())) {
 			if (!activeIds.has(id)) statuses.delete(id);
 		}
-		await Promise.all(settings.targets.map((ep) => probeTargetInternal(ep, true, options)));
+		await Promise.all(settings.connections.map((ep) => probeTargetInternal(ep, true, options)));
 	}
 
 	const extension: DomainExtension = {
@@ -878,7 +878,7 @@ export function createProvidersBundle(
 		},
 		getTarget(id) {
 			const settings = readConfig();
-			return settings.targets.find((ep) => ep.id === id) ?? null;
+			return settings.connections.find((ep) => ep.id === id) ?? null;
 		},
 		getRuntime(id) {
 			return registry.get(id);
@@ -886,7 +886,7 @@ export function createProvidersBundle(
 		probeAllLive,
 		async probeTarget(id, options) {
 			const settings = readConfig();
-			const target = settings.targets.find((ep) => ep.id === id);
+			const target = settings.connections.find((ep) => ep.id === id);
 			if (!target) return null;
 			return probeTargetInternal(target, true, options);
 		},
@@ -952,9 +952,9 @@ export function createProvidersBundle(
 		chatModel() {
 			// The session's own route, the one its chat loop resolves, not the one settings.yaml saved.
 			const chat = (options.getSettings?.() ?? readConfig()).chat;
-			if (!chat.target) return null;
+			if (!chat.connection) return null;
 			const resolved = resolveRuntimeTarget(contract, {
-				targetId: chat.target,
+				targetId: chat.connection,
 				...(chat.model ? { wireModelId: chat.model } : {}),
 				requestedThinkingLevel: chat.thinkingLevel,
 				use: "orchestrator",

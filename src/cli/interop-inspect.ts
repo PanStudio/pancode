@@ -109,7 +109,7 @@ async function interopInspectSnapshot(now: () => number = Date.now): Promise<Int
 	const report = await detectInteropAgents({ cwd: process.cwd(), probeVersion: true, inventory: true });
 	const settings = readSettings();
 	const configured = new Set(settings.integrations.externalAgents.entries.map((agent) => agent.id));
-	const configuredRuntimes = new Set(settings.targets.map((target) => target.runtime));
+	const configuredRuntimes = new Set(settings.connections.map((target) => target.runtime));
 	const agents: InteropInspectAgent[] = [];
 	for (const record of report.agents) {
 		const kind = interopAgentKind(record.kind);
@@ -120,7 +120,7 @@ async function interopInspectSnapshot(now: () => number = Date.now): Promise<Int
 		const decisionStale = decision !== null && record.decidedFingerprint !== record.fingerprint;
 		const modes = peerModeCapabilities(kind, record, {
 			configuredAcp: isConfigured,
-			configuredTargets: settings.targets,
+			configuredTargets: settings.connections,
 			paneAvailable: null,
 		});
 		const adoption = adoptionStates(kind.id, record.inventory);
@@ -195,7 +195,7 @@ export async function runInteropInspect(args: ReadonlyArray<string>): Promise<nu
 	else
 		for (const agent of snapshot.agents) {
 			process.stdout.write(
-				`${agent.label}: ${agent.presence}; version ${agent.version ?? "unknown"}; ACP ${agent.acp ? (agent.configured ? "configured" : "not configured") : "unsupported"}; adapter ${agent.adapter ?? "unsupported"}; headless ${agent.headless ? `${agent.headless.runtimeId} (${agent.headless.binaryPresent ? "binary installed" : "install CLI"}, ${agent.headless.configured ? "target configured" : "target needed"})` : "unsupported"}; pane ${agent.paneEligible ? "CLI installed" : agent.modes.some((mode) => mode.mode === "pane") ? "unavailable" : "unsupported"}\n`,
+				`${agent.label}: ${agent.presence}; version ${agent.version ?? "unknown"}; ACP ${agent.acp ? (agent.configured ? "configured" : "not configured") : "unsupported"}; adapter ${agent.adapter ?? "unsupported"}; headless ${agent.headless ? `${agent.headless.runtimeId} (${agent.headless.binaryPresent ? "binary installed" : "install CLI"}, ${agent.headless.configured ? "connection configured" : "connection needed"})` : "unsupported"}; pane ${agent.paneEligible ? "CLI installed" : agent.modes.some((mode) => mode.mode === "pane") ? "unavailable" : "unsupported"}\n`,
 			);
 			for (const mode of agent.modes) {
 				process.stdout.write(`  ${mode.mode}: ${mode.status}; ${mode.reason}. Next: ${mode.setupAction}\n`);

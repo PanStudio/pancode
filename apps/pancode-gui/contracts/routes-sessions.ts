@@ -417,15 +417,15 @@ export const sessionWorkRoutes = {
 		...get,
 		params: operationParams,
 		response: SessionTargets,
-		summary: "Targets available to this ACP session",
+		summary: "Connections available to this ACP session",
 		...runtimeRoutes.sessionTargets,
 	}),
 	probeSessionTarget: defineRoute({
 		...post,
 		status: 200,
-		params: Type.Object({ id: Id, targetId: Id }, { additionalProperties: false }),
+		params: Type.Object({ id: Id, connectionId: Id }, { additionalProperties: false }),
 		response: TargetProbe,
-		summary: "Probe a configured target through ACP",
+		summary: "Probe a configured connection through ACP",
 		...runtimeRoutes.probeSessionTarget,
 	}),
 	labelSession: defineRoute({

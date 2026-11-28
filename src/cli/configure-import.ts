@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 /**
  * `configure --import`: a site or lab publishes one setup file and a user is connected with one command. The file
- * names targets in the settings schema, restricted to where prompts go and which model answers; anything that could
+ * names connections in the settings schema, restricted to where prompts go and which model answers; anything that could
  * carry a secret, widen trust or run code is refused by name, so importing a file is reading a list of addresses.
  */
 import { readFileSync } from "node:fs";
@@ -22,10 +22,10 @@ import { firstMissing } from "./default-target.js";
 const MAX_BYTES = 64 * 1024;
 const FETCH_TIMEOUT_MS = 10_000;
 
-const TOP_KEYS = ["targets", "chat", "fleet", "notes"];
+const TOP_KEYS = ["connections", "chat", "fleet", "notes"];
 const TARGET_KEYS = ["id", "runtime", "url", "defaultModel", "wireModels", "capabilities", "pricing", "auth"];
 const AUTH_KEYS = ["apiKeyEnvVar", "oauthProfile"];
-const DEFAULT_KEYS = ["target", "model"];
+const DEFAULT_KEYS = ["connection", "model"];
 
 interface RoleDefault {
 	target: string;
@@ -49,14 +49,15 @@ function refuseUnknown(errors: string[], path: string, value: Record<string, unk
 
 function roleDefault(errors: string[], name: "chat" | "fleet", value: unknown, ids: string[]): RoleDefault | undefined {
 	if (value === undefined) return undefined;
-	if (!isRecord(value) || typeof value.target !== "string") {
-		errors.push(`${name} must name a target: ${name}: { target: <id>, model: <id> }`);
+	if (!isRecord(value) || typeof value.connection !== "string") {
+		errors.push(`${name} must name a connection: ${name}: { connection: <id>, model: <id> }`);
 		return undefined;
 	}
 	refuseUnknown(errors, `${name}.`, value, DEFAULT_KEYS);
-	if (!ids.includes(value.target)) errors.push(`${name}.target '${value.target}' is not a target in this file`);
+	if (!ids.includes(value.connection))
+		errors.push(`${name}.connection '${value.connection}' is not a connection in this file`);
 	if (value.model !== undefined && typeof value.model !== "string") errors.push(`${name}.model must be a string`);
-	return { target: value.target, ...(typeof value.model === "string" ? { model: value.model } : {}) };
+	return { target: value.connection, ...(typeof value.model === "string" ? { model: value.model } : {}) };
 }
 
 /** Read a setup file's text into targets and role defaults, or every reason it is refused. */
@@ -67,33 +68,33 @@ export function parseSetupFile(text: string): SetupFileParse {
 	} catch (err) {
 		return { ok: false, errors: [`not valid YAML: ${err instanceof Error ? err.message : String(err)}`] };
 	}
-	if (!isRecord(raw)) return { ok: false, errors: ["expected a map with a targets list"] };
+	if (!isRecord(raw)) return { ok: false, errors: ["expected a map with a connections list"] };
 	const errors: string[] = [];
 	refuseUnknown(errors, "", raw, TOP_KEYS);
-	if (!Array.isArray(raw.targets) || raw.targets.length === 0)
-		return { ok: false, errors: [...errors, "targets must be a non-empty list"] };
-	for (const [index, target] of raw.targets.entries()) {
+	if (!Array.isArray(raw.connections) || raw.connections.length === 0)
+		return { ok: false, errors: [...errors, "connections must be a non-empty list"] };
+	for (const [index, target] of raw.connections.entries()) {
 		if (!isRecord(target)) {
-			errors.push(`targets[${index}] must be a map`);
+			errors.push(`connections[${index}] must be a map`);
 			continue;
 		}
-		refuseUnknown(errors, `targets[${index}].`, target, TARGET_KEYS);
+		refuseUnknown(errors, `connections[${index}].`, target, TARGET_KEYS);
 		if (target.auth !== undefined) {
-			if (isRecord(target.auth)) refuseUnknown(errors, `targets[${index}].auth.`, target.auth, AUTH_KEYS);
-			else errors.push(`targets[${index}].auth must be a map`);
+			if (isRecord(target.auth)) refuseUnknown(errors, `connections[${index}].auth.`, target.auth, AUTH_KEYS);
+			else errors.push(`connections[${index}].auth must be a map`);
 		}
 	}
 	if (raw.notes !== undefined && typeof raw.notes !== "string") errors.push("notes must be a string");
 	if (errors.length > 0) return { ok: false, errors };
 
-	const validated = validateSettings({ version: 2, targets: raw.targets });
+	const validated = validateSettings({ version: 2, connections: raw.connections });
 	for (const issue of validated.issues) errors.push(`${issue.path}: ${issue.message}`);
-	const targets = validated.settings.targets;
+	const targets = validated.settings.connections;
 	const ids = targets.map((target) => target.id);
 	for (const [index, target] of targets.entries()) {
 		if (!getRuntimeRegistry().get(target.runtime))
-			errors.push(`targets[${index}].runtime: '${target.runtime}' is not a runtime this PanCode build knows`);
-		if (ids.indexOf(target.id) !== index) errors.push(`targets[${index}].id: '${target.id}' appears twice`);
+			errors.push(`connections[${index}].runtime: '${target.runtime}' is not a runtime this PanCode build knows`);
+		if (ids.indexOf(target.id) !== index) errors.push(`connections[${index}].id: '${target.id}' appears twice`);
 	}
 	const chat = roleDefault(errors, "chat", raw.chat, ids);
 	const fleet = roleDefault(errors, "fleet", raw.fleet, ids);
@@ -152,7 +153,7 @@ export function planImport(settings: Readonly<PancodeSettings>, file: SetupFile,
 		setsFleet: false,
 	};
 	for (const target of file.targets) {
-		const saved = settings.targets.find((entry) => entry.id === target.id);
+		const saved = settings.connections.find((entry) => entry.id === target.id);
 		if (saved === undefined) plan.added.push(target);
 		else if (isDeepStrictEqual(saved, target)) plan.unchanged.push(target);
 		else if (replace) plan.replaced.push(target);
@@ -160,10 +161,10 @@ export function planImport(settings: Readonly<PancodeSettings>, file: SetupFile,
 	}
 	if (file.chat)
 		plan.setsChat =
-			settings.chat.target !== file.chat.target || (settings.chat.model ?? null) !== roleModel(file, file.chat);
+			settings.chat.connection !== file.chat.target || (settings.chat.model ?? null) !== roleModel(file, file.chat);
 	if (file.fleet)
 		plan.setsFleet =
-			settings.fleet.default.target !== file.fleet.target ||
+			settings.fleet.default.connection !== file.fleet.target ||
 			(settings.fleet.default.model ?? null) !== roleModel(file, file.fleet);
 	return plan;
 }
@@ -220,13 +221,13 @@ function describePlan(file: SetupFile, plan: ImportPlan): string[] {
 	if (file.notes) lines.push(file.notes, "");
 	const verb = (target: TargetDescriptor) => (plan.replaced.includes(target) ? "replace" : "add");
 	for (const target of [...plan.added, ...plan.replaced]) {
-		lines.push(`  ${verb(target)} target ${target.id} (${target.runtime})`);
+		lines.push(`  ${verb(target)} connection ${target.id} (${target.runtime})`);
 		lines.push(`    prompts go to ${target.url ?? "the provider's default address"}`);
 		lines.push(`    model ${target.defaultModel ?? "not set"}; ${keySource(target)}`);
 		const warning = plainHttpWarning(target);
 		if (warning) lines.push(`    ${warning}`);
 	}
-	for (const target of plan.unchanged) lines.push(`  keep target ${target.id} (already saved, unchanged)`);
+	for (const target of plan.unchanged) lines.push(`  keep connection ${target.id} (already saved, unchanged)`);
 	if (plan.setsChat && file.chat)
 		lines.push(`  chat uses ${file.chat.target} / ${roleModel(file, file.chat) ?? "its default model"}`);
 	if (plan.setsFleet && file.fleet)
@@ -237,7 +238,7 @@ function describePlan(file: SetupFile, plan: ImportPlan): string[] {
 /** One line per imported target: ready, or what it still needs, in the setup-status words. */
 function statusLines(settings: Readonly<PancodeSettings>, file: SetupFile): string[] {
 	return file.targets.map((target) => {
-		const missing = firstMissing({ ...settings, chat: { ...settings.chat, target: target.id } });
+		const missing = firstMissing({ ...settings, chat: { ...settings.chat, connection: target.id } });
 		if (missing === null) return `  ${target.id}: ready`;
 		const described = describeMissing(missing);
 		return `  ${described.sentence}${described.command ? ` Run: ${described.command}` : ""}`;
@@ -323,7 +324,7 @@ export async function runConfigureImport(source: string, options: ImportOptions)
 		process.stderr.write(`error: ${err instanceof Error ? err.message : String(err)}; nothing changed\n`);
 		return 1;
 	}
-	out.write(`Imported ${file.targets.length === 1 ? "1 target" : `${file.targets.length} targets`}.\n`);
+	out.write(`Imported ${file.targets.length === 1 ? "1 connection" : `${file.targets.length} connections`}.\n`);
 	out.write(`${status.join("\n")}\n`);
 	return 0;
 }

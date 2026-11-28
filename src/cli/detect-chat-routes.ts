@@ -144,7 +144,7 @@ export async function detectChatRoutes(
 		const support = buildProviderSupportEntry(runtime);
 		return preferredModelFor({ models: support.modelHints, source: "catalog" }, support);
 	};
-	for (const target of settings.targets) {
+	for (const target of settings.connections) {
 		const runtime = runtimes.find((entry) => entry.id === target.runtime);
 		if (!runtime) continue;
 		// A copilot-sdk target holds no key of its own: it rides the Copilot sign-in, which headless keeps closed.
@@ -161,7 +161,7 @@ export async function detectChatRoutes(
 		const env = runtime.credentialsEnvVar;
 		const model = curatedModel(runtime);
 		if (runtime.auth !== "api-key" || !env || !process.env[env]?.trim() || runtime.gatewayUrl) continue;
-		const target = buildDescriptor(runtime, deriveTargetId(runtime.id, settings.targets), {
+		const target = buildDescriptor(runtime, deriveTargetId(runtime.id, settings.connections), {
 			...(model ? { model } : {}),
 			apiKeyEnv: env,
 		});
@@ -173,7 +173,7 @@ export async function detectChatRoutes(
 		const model = curatedModel(runtime);
 		if (!credential || runtime.gatewayUrl || (runtime.auth !== "api-key" && runtime.auth !== "oauth")) continue;
 		if ((credential.type === "oauth") !== (runtime.auth === "oauth")) continue;
-		const target = buildDescriptor(runtime, deriveTargetId(runtime.id, settings.targets), {
+		const target = buildDescriptor(runtime, deriveTargetId(runtime.id, settings.connections), {
 			...(model ? { model } : {}),
 			...(credential.type === "oauth" ? { oauthProfile: provider } : { apiKeyRef: provider }),
 		});
@@ -187,10 +187,10 @@ export async function detectChatRoutes(
 	// Headless keeps the Copilot keychain closed and must not send prompts to whoever owns a loopback port.
 	if (headless) return routes;
 	const copilot = runtimes.find((entry) => entry.id === "copilot-sdk");
-	if (copilot && !settings.targets.some((target) => target.runtime === copilot.id)) {
+	if (copilot && !settings.connections.some((target) => target.runtime === copilot.id)) {
 		const login = await detectCopilotLogin(3_000);
 		if (login) {
-			const target = buildDescriptor(copilot, deriveTargetId(copilot.id, settings.targets), { model: login.model });
+			const target = buildDescriptor(copilot, deriveTargetId(copilot.id, settings.connections), { model: login.model });
 			routes.push({
 				source: `copilot login (${login.account.login})`,
 				runtime: copilot,
@@ -213,7 +213,7 @@ export async function detectChatRoutes(
 		const runtime =
 			sharing.length > 1 ? (sharing.find((entry) => entry.id === "openai-compat") ?? sharing[0]) : sharing[0];
 		if (!runtime || !model) continue;
-		const target = buildDescriptor(runtime, deriveTargetId(runtime.id, settings.targets), { url, model });
+		const target = buildDescriptor(runtime, deriveTargetId(runtime.id, settings.connections), { url, model });
 		routes.push({ source: url, runtime, target, model });
 	}
 	return routes;
@@ -276,13 +276,13 @@ export function useDetectedChatRoute(
 		setOrchestratorPointer(draft, route.target, route.model);
 	};
 	let persisted = false;
-	if (!settings.chat.target) {
+	if (!settings.chat.connection) {
 		const keepSavedRoute = Symbol("keep saved route");
 		try {
 			updateSettings((draft) => {
-				// Normalization clears dangling target ids; the raw choice still belongs to the user.
-				const saved = parseYaml(readFileSync(settingsPath(), "utf8")) as { chat?: { target?: unknown } } | null;
-				if (draft.chat.target || saved?.chat?.target) throw keepSavedRoute;
+				// Normalization clears dangling connection ids; the raw choice still belongs to the user.
+				const saved = parseYaml(readFileSync(settingsPath(), "utf8")) as { chat?: { connection?: unknown } } | null;
+				if (draft.chat.connection || saved?.chat?.connection) throw keepSavedRoute;
 				apply(draft);
 			});
 			persisted = true;
@@ -374,7 +374,7 @@ export async function adoptDetectedChatRoute(
 ): Promise<AdoptedChatRoute | null> {
 	// The target dedicated to background memory is not a chat choice anyone made;
 	// taking it without asking would put the visible turn on the memory endpoint.
-	const memoryTarget = settings.targets.find((entry) => entry.id === settings.context.memory.target);
+	const memoryTarget = settings.connections.find((entry) => entry.id === settings.context.memory.connection);
 	const candidates = (await detectChatRoutes(settings)).filter(
 		(candidate) =>
 			candidate.model &&
@@ -425,7 +425,7 @@ export async function headlessChatRoute(
 	targetId?: string,
 	{ model, projectTargets = false }: { model?: string; projectTargets?: boolean } = {},
 ): Promise<HeadlessChatRoute> {
-	const memoryTarget = settings.context.memory.target;
+	const memoryTarget = settings.context.memory.connection;
 	const routes: DetectedChatRoute[] = [];
 	let reservedForMemory: string | undefined;
 	for (const candidate of await detectChatRoutes(settings, readLoopbackJson, { headless: true })) {

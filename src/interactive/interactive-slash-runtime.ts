@@ -308,7 +308,7 @@ export function resolveThinkingCapability(
 ): ResolvedThinkingCapability | null {
 	const resolved = resolveModelRuntimeCapabilitiesForProviders(
 		providers,
-		settings.chat.target,
+		settings.chat.connection,
 		settings.chat.model,
 		settings.chat.thinkingLevel ?? "off",
 	);
@@ -756,7 +756,7 @@ export function createInteractiveSlashRuntime(deps: InteractiveSlashRuntimeDeps)
 			deps.refreshFooter();
 			const resolved = resolveModelRuntimeCapabilitiesForProviders(
 				deps.providers,
-				settings.chat.target,
+				settings.chat.connection,
 				settings.chat.model,
 				match,
 			);
@@ -813,7 +813,7 @@ export function createInteractiveSlashRuntime(deps: InteractiveSlashRuntimeDeps)
 		},
 		openModel: deps.openModel,
 		providers: deps.providers,
-		getChatTarget: () => deps.getSettings?.().chat.target,
+		getChatTarget: () => deps.getSettings?.().chat.connection,
 		getChatModel: () => deps.getSettings?.().chat.model,
 		getFleetAgentProfiles: () => deps.getSettings?.().fleet.agentProfiles ?? {},
 		getAutonomy: () => deps.getSettings?.().safety.autonomy ?? "default",

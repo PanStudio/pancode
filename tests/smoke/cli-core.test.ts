@@ -121,10 +121,10 @@ describe("CLI targets use role selection", { concurrency: false }, () => {
 		const path = join(scratch.root, "config", "settings.yaml");
 		const initial = {
 			version: 2,
-			targets: [{ id: "blade-gateway", runtime: "litellm", url: endpoint, defaultModel }],
-			chat: { target: "blade-gateway", model: defaultModel, thinkingLevel: "medium" },
-			fleet: { default: { target: "blade-gateway", model: "mini/ornith1.5-35b-moe-q4km", thinkingLevel: "low" } },
-			context: { memory: { target: "blade-gateway", model: "zbook/ornith-1.5-35b-a3b" } },
+			connections: [{ id: "blade-gateway", runtime: "litellm", url: endpoint, defaultModel }],
+			chat: { connection: "blade-gateway", model: defaultModel, thinkingLevel: "medium" },
+			fleet: { default: { connection: "blade-gateway", model: "mini/ornith1.5-35b-moe-q4km", thinkingLevel: "low" } },
+			context: { memory: { connection: "blade-gateway", model: "zbook/ornith-1.5-35b-a3b" } },
 		};
 		writeFileSync(path, JSON.stringify(initial));
 		return { scratch, path, initial, options: { env: scratch.env, cwd: scratch.root } };
@@ -137,14 +137,14 @@ describe("CLI targets use role selection", { concurrency: false }, () => {
 		it(`${flag} updates only its role and names only that role`, async () => {
 			const { scratch, path, initial, options } = fixture();
 			try {
-				const result = await runCli(["targets", "use", "blade-gateway", flag, backgroundModel], options);
+				const result = await runCli(["connections", "use", "blade-gateway", flag, backgroundModel], options);
 				strictEqual(result.code, 0, result.stderr);
 				const expected = structuredClone(initial);
 				const route = role === "chat" ? expected.chat : role === "fleet" ? expected.fleet.default : expected.context.memory;
 				route.model = backgroundModel;
 				deepStrictEqual(parseYaml(readFileSync(path, "utf8")), expected);
-				strictEqual(result.stdout.trim(), `ok: using target blade-gateway for ${label}`);
-				const repeated = await runCli(["targets", "use", "blade-gateway", flag, backgroundModel], options);
+				strictEqual(result.stdout.trim(), `ok: using connection blade-gateway for ${label}`);
+				const repeated = await runCli(["connections", "use", "blade-gateway", flag, backgroundModel], options);
 				strictEqual(repeated.code, 0, repeated.stderr);
 				strictEqual(repeated.stdout.trim(), "ok: no role settings changed");
 			} finally {
@@ -157,18 +157,18 @@ describe("CLI targets use role selection", { concurrency: false }, () => {
 		try {
 			initial.chat.model = "previous/main";
 			writeFileSync(path, JSON.stringify(initial));
-			const result = await runCli(["targets", "use", "blade-gateway"], options);
+			const result = await runCli(["connections", "use", "blade-gateway"], options);
 			strictEqual(result.code, 0, result.stderr);
 			const expected = structuredClone(initial);
 			expected.chat.model = defaultModel;
 			expected.fleet.default.model = defaultModel;
 			deepStrictEqual(parseYaml(readFileSync(path, "utf8")), expected);
-			strictEqual(result.stdout.trim(), "ok: using target blade-gateway for chat and fleet dispatch");
+			strictEqual(result.stdout.trim(), "ok: using connection blade-gateway for chat and fleet dispatch");
 			initial.chat.model = defaultModel;
 			writeFileSync(path, JSON.stringify(initial));
-			const fleetOnlyChanged = await runCli(["targets", "use", "blade-gateway"], options);
+			const fleetOnlyChanged = await runCli(["connections", "use", "blade-gateway"], options);
 			strictEqual(fleetOnlyChanged.code, 0, fleetOnlyChanged.stderr);
-			strictEqual(fleetOnlyChanged.stdout.trim(), "ok: using target blade-gateway for fleet dispatch");
+			strictEqual(fleetOnlyChanged.stdout.trim(), "ok: using connection blade-gateway for fleet dispatch");
 		} finally {
 			scratch.cleanup();
 		}
@@ -179,7 +179,7 @@ describe("CLI targets use role selection", { concurrency: false }, () => {
 			const before = readFileSync(path, "utf8");
 			const rejected = await runCli(
 				[
-					"targets",
+					"connections",
 					"use",
 					"blade-gateway",
 					"--orchestrator-model",
@@ -194,12 +194,12 @@ describe("CLI targets use role selection", { concurrency: false }, () => {
 			ok(rejected.stderr.includes(prefixedModel));
 			strictEqual(rejected.stdout.includes("ok:"), false);
 			strictEqual(readFileSync(path, "utf8"), before, "rejection cannot partially update another selected role");
-			const accepted = await runCli(["targets", "use", "blade-gateway", "--background-model", prefixedModel], options);
+			const accepted = await runCli(["connections", "use", "blade-gateway", "--background-model", prefixedModel], options);
 			strictEqual(accepted.code, 0, accepted.stderr);
 			const expected = structuredClone(initial);
 			expected.context.memory.model = prefixedModel;
 			deepStrictEqual(parseYaml(readFileSync(path, "utf8")), expected);
-			strictEqual(accepted.stdout.trim(), "ok: using target blade-gateway for background memory");
+			strictEqual(accepted.stdout.trim(), "ok: using connection blade-gateway for background memory");
 		} finally {
 			scratch.cleanup();
 		}

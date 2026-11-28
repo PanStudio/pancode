@@ -2139,10 +2139,10 @@ describe("dispatch under process isolation", () => {
 		tweak(settings);
 		settings.fleet.retry.maxRetries = 0;
 		settings.safety.workerIsolation = "process";
-		settings.targets = [
+		settings.connections = [
 			{ id: "cloud", runtime: runtime.id, defaultModel: "m", auth: { headers: { "X-Secret-Org": "org-secret" } } },
 		];
-		settings.fleet.default.target = "cloud";
+		settings.fleet.default.connection = "cloud";
 		settings.fleet.default.model = "m";
 		const base = dispatchStubContext({ settings, runtime });
 		const baseProviders = base.getContract("providers") as ProvidersContract;

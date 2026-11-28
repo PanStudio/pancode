@@ -283,7 +283,7 @@ export function resolveWorkerEnvelope(input: EnvelopeInput): WorkerEnvelope {
 		const harness = isHarnessExtensionToolName(tool);
 		if (isMcpToolName(tool) || harness ? !input.runtime.ownLoop : !input.runtime.offers(tool)) {
 			if (unasked(tool)) continue;
-			take(tool, "runtime", "the selected runtime runs its own tools; choose a native target");
+			take(tool, "runtime", "the selected runtime runs its own tools; choose a native connection");
 			continue;
 		}
 		// An extension tool this host has not enabled, or a name no build knows, is nothing to offer.

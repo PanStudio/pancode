@@ -25,7 +25,7 @@ import type { TurnContextScope } from "./scope.js";
 export function createTurnContextRoute(shared: TurnContextScope) {
 	const resolveTargetWithoutRuntime = (): ResolvedRuntimeTarget | null => {
 		const settings = shared.deps.getSettings();
-		const targetId = settings.chat?.target?.trim();
+		const targetId = settings.chat?.connection?.trim();
 		const wireModelId = settings.chat?.model?.trim();
 		if (!targetId || !wireModelId) return null;
 		const resolved = resolveRuntimeTarget(shared.deps.providers, {
@@ -67,7 +67,7 @@ export function createTurnContextRoute(shared: TurnContextScope) {
 	 */
 	const routeSuperseded = (targetId: string | null | undefined, modelId: string | null | undefined): boolean => {
 		const route = shared.deps.getSettings().chat;
-		const target = route?.target?.trim();
+		const target = route?.connection?.trim();
 		const model = route?.model?.trim();
 		if (!target || !model || shared.state.streaming || shared.deps.isTurnActive?.() === true) return false;
 		return targetId !== target || modelId !== model;

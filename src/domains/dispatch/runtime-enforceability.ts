@@ -134,7 +134,7 @@ export function assertDenyToolsEnforceable(
 	denyTools: ReadonlyArray<string> | undefined,
 ): void {
 	if (runtime.kind === "subprocess" && denyTools !== undefined && denyTools.length > 0) {
-		throw new Error("dispatch: denyTools cannot be enforced on an external CLI target; use a native worker");
+		throw new Error("dispatch: denyTools cannot be enforced on an external CLI connection; use a native worker");
 	}
 }
 
@@ -214,7 +214,7 @@ export function assertResponseSchemaEnforceable(
 		}
 		if (capabilities?.structuredOutputs === "json-schema") return;
 		throw new UnsupportedResponseSchemaError(
-			"dispatch: responseSchema requires resolved structuredOutputs='json-schema'; the selected llama.cpp target/model reports no enforceable schema support",
+			"dispatch: responseSchema requires resolved structuredOutputs='json-schema'; the selected llama.cpp connection/model reports no enforceable schema support",
 		);
 	}
 	throw new UnsupportedResponseSchemaError(

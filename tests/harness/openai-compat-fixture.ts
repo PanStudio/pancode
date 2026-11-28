@@ -309,8 +309,8 @@ const TOOL_CAPABILITIES: Section = {
 
 export function seedOpenAICompatOrchestrator(configDir: string, url: string): void {
 	editSettings(configDir, (settings) => {
-		settings.targets = [mockChatTarget(url, { vision: true })];
-		Object.assign(section(settings, "chat"), { target: "mock-chat", model: "mock-model" });
+		settings.connections = [mockChatTarget(url, { vision: true })];
+		Object.assign(section(settings, "chat"), { connection: "mock-chat", model: "mock-model" });
 	});
 }
 
@@ -321,8 +321,8 @@ export function seedOpenAICompatOrchestrator(configDir: string, url: string): vo
  */
 export function seedOpenAICompatToolOrchestrator(configDir: string, url: string, autonomy?: string): void {
 	editSettings(configDir, (settings) => {
-		settings.targets = [mockChatTarget(url, { ...TOOL_CAPABILITIES })];
-		Object.assign(section(settings, "chat"), { target: "mock-chat", model: "mock-model" });
+		settings.connections = [mockChatTarget(url, { ...TOOL_CAPABILITIES })];
+		Object.assign(section(settings, "chat"), { connection: "mock-chat", model: "mock-model" });
 		if (autonomy !== undefined) section(settings, "safety").autonomy = autonomy;
 	});
 }
@@ -330,8 +330,8 @@ export function seedOpenAICompatToolOrchestrator(configDir: string, url: string,
 export function seedOpenAICompatFleetDefault(configDir: string): void {
 	editSettings(configDir, (settings) => {
 		const fleet = section(settings, "fleet");
-		Object.assign(section(fleet, "default"), { target: "mock-chat", model: "mock-model" });
-		const targets = Array.isArray(settings.targets) ? (settings.targets as Section[]) : [];
+		Object.assign(section(fleet, "default"), { connection: "mock-chat", model: "mock-model" });
+		const targets = Array.isArray(settings.connections) ? (settings.connections as Section[]) : [];
 		const chat = targets.find((target) => target.id === "mock-chat");
 		if (chat)
 			chat.capabilities = { chat: true, tools: true, toolCallFormat: "openai", ...(chat.capabilities as Section) };

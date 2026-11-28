@@ -351,7 +351,7 @@ export async function workspaceSteps(run: SmokeRun) {
 		);
 		await check("usage-explain");
 		await page.keyboard.press("Escape");
-		// Each recorded route has a dense row whose figures explain themselves; the grouping switches to targets.
+		// Each recorded route has a dense row whose figures explain themselves; the grouping switches to connections.
 		const usageModelRow = page
 			.getByRole("region", { name: "Recorded usage by model", exact: true })
 			.locator("tbody tr", { has: page.locator("th", { hasText: /fixture-model$/ }) });
@@ -360,9 +360,9 @@ export async function workspaceSteps(run: SmokeRun) {
 		await modelTokens.locator(".explain__panel dt", { hasText: /^Coverage$/ }).waitFor();
 		await check("usage-model-row");
 		await modelTokens.locator("summary").click();
-		await page.locator("main").getByRole("button", { name: "Per target", exact: true }).click();
+		await page.locator("main").getByRole("button", { name: "Per connection", exact: true }).click();
 		await page
-			.getByRole("region", { name: "Recorded usage by target", exact: true })
+			.getByRole("region", { name: "Recorded usage by connection", exact: true })
 			.locator("tbody tr", { has: page.locator("th", { hasText: /fixture/ }) })
 			.first()
 			.waitFor();

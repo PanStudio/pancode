@@ -258,7 +258,7 @@ describe("P1: a text-only route with a historical image; a locked round then an 
 			strictEqual(server.requests.length, 1);
 			ok(JSON.stringify(server.requests[0]?.body).includes(IMAGE), "the vision route received the image");
 
-			harness.settings.chat.target = CAPTURE_TARGET_B;
+			harness.settings.chat.connection = CAPTURE_TARGET_B;
 			await harness.submit("lock this round");
 			await harness.submit("and continue");
 			const textOnly = server.requests.slice(1);

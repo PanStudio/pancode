@@ -92,7 +92,7 @@ function summaryLine(
 			paint: muted,
 			shorter: [{ text: `${matches} of ${summary.totalModels}`, rank: 4.5 }],
 		},
-		{ text: plural(summary.targets, "target", "targets"), drop: 2, paint: muted },
+		{ text: plural(summary.targets, "connection", "connections"), drop: 2, paint: muted },
 		...(split
 			? [
 					{ text: `${summary.localModels} local`, drop: 1, paint: muted },
@@ -110,8 +110,8 @@ function refreshStatusLine(
 ): string | null {
 	if (refreshing)
 		return refreshing === "all"
-			? `refreshing all targets and model catalogs${GLYPH.ellipsis}`
-			: `refreshing selected target models${GLYPH.ellipsis}`;
+			? `refreshing all connections and model catalogs${GLYPH.ellipsis}`
+			: `refreshing selected connection models${GLYPH.ellipsis}`;
 	return error ? formatRuntimeResolutionDiagnostic(error) : null;
 }
 
@@ -424,7 +424,7 @@ export class ModelOverlayView implements Component, RowBudgetedBody {
 		return this.query.length > 0
 			? buildResponsiveHint([FILTER_HINT, use, { key: "Tab", verb: "focus/all" }], "clear filter")(innerWidth)
 			: buildResponsiveHint([
-					{ key: "r", verb: "refresh target", short: "refresh" },
+					{ key: "r", verb: "refresh connection", short: "refresh" },
 					{ key: "R", verb: "refresh all" },
 					FILTER_HINT,
 					use,
@@ -472,7 +472,7 @@ export class ModelOverlayView implements Component, RowBudgetedBody {
 			this.selectionError = row
 				? row.model && row.capabilityDecisions && !supportsAgentRoleTools(row.capabilityDecisions)
 					? `${row.model} ${AGENT_ROLE_TOOLS_REQUIRED_REASON}`
-					: `target ${row.target} has no selectable model id`
+					: `connection ${row.target} has no selectable model id`
 				: "no model is selected";
 			this.refreshActions.requestRender?.();
 			return;
@@ -539,7 +539,7 @@ export function openModelOverlay(tui: TUI, deps: OpenModelOverlayDeps): OverlayH
 	};
 	const initial = build();
 	const overlayWidth = resolveOverlayWidth(tui.terminal?.columns ?? 0);
-	const activeTarget = currentSettings().chat?.target?.trim();
+	const activeTarget = currentSettings().chat?.connection?.trim();
 	const activeModel = currentSettings().chat?.model?.trim();
 	const view = new ModelOverlayView(
 		initial.rows,

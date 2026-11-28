@@ -98,7 +98,7 @@ export async function runHeadlessSurface(
 	const unpricedRoutes = runCostCap === null ? [] : unpricedRunRoutes(getCurrentSettings(), providers);
 	if (unpricedRoutes.length > 0) {
 		process.stderr.write(
-			`pancode run: --max-cost-usd does not bound unpriced routes: ${unpricedRoutes.join(", ")}; declare targets[].pricing to bound them\n`,
+			`pancode run: --max-cost-usd does not bound unpriced routes: ${unpricedRoutes.join(", ")}; declare connections[].pricing to bound them\n`,
 		);
 	}
 	const unsubscribeHeadlessPermission = toolRegistry.onPermissionRequired((call, decision, meta) => {

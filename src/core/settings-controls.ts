@@ -52,9 +52,9 @@ export function settingInactiveNote(
 		settings.context.semantic.enabled &&
 		!semanticUsable(settings.context.semantic)
 	)
-		return "Inactive until target, model and assetIdentity are pinned with pancode semantic configure.";
+		return "Inactive until connection, model and assetIdentity are pinned with pancode semantic configure.";
 	if (path === "chat.prewarm" && settings.chat.prewarm) {
-		const target = settings.targets.find((entry) => entry.id === settings.chat.target);
+		const target = settings.connections.find((entry) => entry.id === settings.chat.connection);
 		const localNative = target ? facts.localNative(target.runtime) : false;
 		if (!localNative && !(target?.runtime === "litellm" && target.cache?.deployment))
 			return "Inactive on this chat route; prompt pre-warm requires a local native runtime or a declared LiteLLM cache deployment.";
@@ -105,7 +105,7 @@ const MENU_ROWS = new Set([
 	"context.memory.surfaces.history",
 	"context.memory.thinkingLevel",
 	"context.semantic.enabled",
-	"context.semantic.target",
+	"context.semantic.connection",
 	"context.semantic.model",
 	"context.semantic.background",
 	"safety.limits.workerResponseTimeoutMs",
@@ -125,7 +125,7 @@ const MENU_ROWS = new Set([
 	"safety.unattendedAfterMs",
 	"safety.yoloConfinement",
 	"safety.judge.enabled",
-	"safety.judge.target",
+	"safety.judge.connection",
 	"safety.judge.model",
 	"interface.exitSummary",
 	"interface.demo",
@@ -224,7 +224,7 @@ const NULLABLE_NUMBERS = new Set<string>([
 ]);
 const OPTIONAL_STRINGS = new Set([
 	"fleet.default.node",
-	"safety.review.target",
+	"safety.review.connection",
 	"context.compaction.model",
 	"context.compaction.systemPrompt",
 	"store.projectId",
@@ -245,7 +245,7 @@ export const SETTING_CONTROLS: readonly SettingControl[] = (() => {
 	);
 	const paths = new Set([...collectControlPaths(DEFAULT_SETTINGS), ...OPTIONAL_NUMBERS, ...OPTIONAL_STRINGS]);
 	return [...paths]
-		.filter((path) => path !== "version" && path !== "targets")
+		.filter((path) => path !== "version" && path !== "connections")
 		.map((path) => {
 			const id = metadata.get(path);
 			const raw = getAtPath(DEFAULT_SETTINGS, path);
@@ -419,17 +419,17 @@ export function applyControlValue(
 	setAtPath(candidate, path, value);
 	// Startup tolerates stale references. An editor must reject a typo rather than silently discard it.
 	const routeRoots = ["chat", "fleet.default", "context.memory"];
-	const routeRoot = routeRoots.find((root) => path === `${root}.target`);
+	const routeRoot = routeRoots.find((root) => path === `${root}.connection`);
 	if (routeRoot) {
-		if (value !== null && !candidate.targets.some((target) => target.id === value))
+		if (value !== null && !candidate.connections.some((target) => target.id === value))
 			throw new Error("Choose an existing connection id from Connections.");
-		const target = candidate.targets.find((target) => target.id === value);
+		const target = candidate.connections.find((target) => target.id === value);
 		if (routeRoot !== "fleet.default" && target && facts.workerOnly(target.runtime))
 			throw new Error("Chat and memory need an HTTP/native connection; this connection is for workers only.");
 		if (getAtPath(settings, path) !== value) setAtPath(candidate, `${routeRoot}.model`, null);
 	}
 	for (const root of routeRoots) {
-		if (path === `${root}.model` && value && !getAtPath(candidate, `${root}.target`))
+		if (path === `${root}.model` && value && !getAtPath(candidate, `${root}.connection`))
 			throw new Error("Choose a connection for this role before setting a model override.");
 	}
 	if (
@@ -441,7 +441,7 @@ export function applyControlValue(
 		throw new Error("Use local, a configured remote node id, or clear the field for automatic placement.");
 	if (path === "fleet.profiles") {
 		for (const [name, profile] of Object.entries(candidate.fleet.profiles ?? {})) {
-			if (!candidate.targets.some((target) => target.id === profile?.target))
+			if (!candidate.connections.some((target) => target.id === profile?.connection))
 				throw new Error(`Profile ${name} must name an existing connection.`);
 		}
 	}
@@ -457,7 +457,7 @@ export function applyControlValue(
 		path === "chat.modelPicker.favorites" &&
 		JSON.stringify(value) !== JSON.stringify(result.settings.chat.modelPicker.favorites)
 	)
-		throw new Error("Use target-id/model-id favorites from an existing connection.");
+		throw new Error("Use connection-id/model-id favorites from an existing connection.");
 	setAtPath(settings, path, getAtPath(candidate, path));
 	if (routeRoot) setAtPath(settings, `${routeRoot}.model`, getAtPath(candidate, `${routeRoot}.model`));
 }

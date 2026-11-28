@@ -12,7 +12,7 @@ import { isolatePancodeEnv } from "../harness/scratch-env.js";
 function settings(url: string, contextWindow?: number): string {
 	return [
 		"version: 2",
-		"targets:",
+		"connections:",
 		"  - id: decider-npu",
 		"    runtime: systemone",
 		`    url: ${url}/v1`,
@@ -22,7 +22,7 @@ function settings(url: string, contextWindow?: number): string {
 		"  engines:",
 		"    npu:",
 		"      kind: systemone",
-		"      target: decider-npu",
+		"      connection: decider-npu",
 		"      profile: strands-decider",
 		"",
 	].join("\n");
@@ -59,7 +59,7 @@ test("doctor shows each bound System One engine's profile, window and passive ro
 	assert.match(row?.detail ?? "", /`pancode systemone check [^`]+ --live`/u);
 	assert.match(
 		row?.detail ?? "",
-		/profile strands-decider; window 4096 tokens \(target decider-npu declares 8192, profile ceiling 4096\)/u,
+		/profile strands-decider; window 4096 tokens \(connection decider-npu declares 8192, profile ceiling 4096\)/u,
 	);
 	assert.match(
 		row?.detail ?? "",

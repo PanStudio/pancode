@@ -648,7 +648,7 @@ test("the judge reads the call's own turn when the session leaf lags, and never 
 	const audits: SafetyJudgementInput[] = [];
 	const seat = createSafetyJudgeHost({
 		settings: () =>
-			({ ...DEFAULT_SETTINGS, chat: { ...DEFAULT_SETTINGS.chat, target: "local", model: "m" } }) as PancodeSettings,
+			({ ...DEFAULT_SETTINGS, chat: { ...DEFAULT_SETTINGS.chat, connection: "local", model: "m" } }) as PancodeSettings,
 		complete: async (request) => {
 			prompts.push(request.user);
 			return { text: answer("allow", "operator-named", "Asked for.") };
@@ -716,7 +716,7 @@ test("the judge reads typed messages and ask_user answers in ledger order, so th
 	const systems: string[] = [];
 	const seat = createSafetyJudgeHost({
 		settings: () =>
-			({ ...DEFAULT_SETTINGS, chat: { ...DEFAULT_SETTINGS.chat, target: "local", model: "m" } }) as PancodeSettings,
+			({ ...DEFAULT_SETTINGS, chat: { ...DEFAULT_SETTINGS.chat, connection: "local", model: "m" } }) as PancodeSettings,
 		complete: async (request) => {
 			prompts.push(request.user);
 			systems.push(request.system);
@@ -840,22 +840,29 @@ test("the judge reads typed messages and ask_user answers in ledger order, so th
 test("safety.judge parses from user settings and a project layer cannot set its rules", async (t) => {
 	const parsed = validateSettings({
 		version: 2,
-		targets: [{ id: "local", runtime: "openai-compat", defaultModel: "m" }],
+		connections: [{ id: "local", runtime: "openai-compat", defaultModel: "m" }],
 		safety: {
-			judge: { enabled: false, target: "local", model: "small", environment: ["shared HPC"], allow: ["a"], deny: ["d"] },
+			judge: {
+				enabled: false,
+				connection: "local",
+				model: "small",
+				environment: ["shared HPC"],
+				allow: ["a"],
+				deny: ["d"],
+			},
 		},
 	});
 	deepStrictEqual(parsed.issues, []);
 	deepStrictEqual(parsed.settings.safety.judge, {
 		enabled: false,
-		target: "local",
+		connection: "local",
 		model: "small",
 		environment: ["shared HPC"],
 		allow: ["a"],
 		deny: ["d"],
 	});
-	const unknown = validateSettings({ version: 2, safety: { judge: { target: "nowhere", extra: 1 } } });
-	deepStrictEqual(unknown.issues.map((issue) => issue.path).sort(), ["safety.judge.extra", "safety.judge.target"]);
+	const unknown = validateSettings({ version: 2, safety: { judge: { connection: "nowhere", extra: 1 } } });
+	deepStrictEqual(unknown.issues.map((issue) => issue.path).sort(), ["safety.judge.connection", "safety.judge.extra"]);
 
 	const home = await isolatePancodeEnv("pancode-safety-judge-project-");
 	t.after(() => home.restore());
@@ -880,13 +887,13 @@ test("safety.judge parses from user settings and a project layer cannot set its 
 		for (const path of ["safety.judge.enabled", "safety.judge.allow"])
 			match(
 				layered.issues.find((issue) => issue.origin === "project.local" && issue.path === path)?.message ?? "",
-				/only the safety judge's target and model/u,
+				/only the safety judge's connection and model/u,
 				path,
 			);
 	}
 });
 
-test("a trusted project moves the safety judge to a target the user layer declares, and nowhere else (F-C3)", async (t) => {
+test("a trusted project moves the safety judge to a connection the user layer declares, and nowhere else (F-C3)", async (t) => {
 	const home = await isolatePancodeEnv("pancode-safety-judge-route-");
 	t.after(() => home.restore());
 	const workspace = join(home.dir, "workspace");
@@ -896,11 +903,11 @@ test("a trusted project moves the safety judge to a target the user layer declar
 		join(home.dir, "config", "settings.yaml"),
 		[
 			"version: 2",
-			"targets:",
+			"connections:",
 			"  - { id: local, runtime: openai-compat, url: 'http://127.0.0.1:9', defaultModel: m }",
 			"  - { id: openai-codex, runtime: openai-codex, defaultModel: gpt-6-luna }",
 			"safety:",
-			"  judge: { target: local, model: m, deny: [operator rule] }",
+			"  judge: { connection: local, model: m, deny: [operator rule] }",
 			"",
 		].join("\n"),
 	);
@@ -910,23 +917,23 @@ test("a trusted project moves the safety judge to a target the user layer declar
 		if (!snapshot.contentHash) throw new Error("missing project settings hash");
 		recordProjectSurfaceTrust(workspace, "settings", snapshot.contentHash);
 	};
-	writeFileSync(local, "safety:\n  judge: { target: openai-codex, model: gpt-6-luna }\n");
+	writeFileSync(local, "safety:\n  judge: { connection: openai-codex, model: gpt-6-luna }\n");
 	const untrusted = readLayeredSettings(workspace).settings.safety.judge;
-	strictEqual(untrusted.target, "local");
+	strictEqual(untrusted.connection, "local");
 	trust();
 	const moved = readLayeredSettings(workspace);
-	strictEqual(moved.settings.safety.judge.target, "openai-codex");
+	strictEqual(moved.settings.safety.judge.connection, "openai-codex");
 	strictEqual(moved.settings.safety.judge.model, "gpt-6-luna");
 	deepStrictEqual(moved.settings.safety.judge.deny, ["operator rule"]);
 	strictEqual(moved.settings.safety.judge.enabled, true);
 
-	writeFileSync(local, "safety:\n  judge: { target: repo-endpoint, model: exfil }\n");
+	writeFileSync(local, "safety:\n  judge: { connection: repo-endpoint, model: exfil }\n");
 	trust();
 	const refused = readLayeredSettings(workspace);
-	strictEqual(refused.settings.safety.judge.target, "local");
+	strictEqual(refused.settings.safety.judge.connection, "local");
 	strictEqual(refused.settings.safety.judge.model, "m");
 	match(
-		refused.issues.find((issue) => issue.path === "safety.judge.target")?.message ?? "",
-		/only at a target your user settings declare/u,
+		refused.issues.find((issue) => issue.path === "safety.judge.connection")?.message ?? "",
+		/only at a connection your user settings declare/u,
 	);
 });

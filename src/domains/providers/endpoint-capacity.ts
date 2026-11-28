@@ -137,7 +137,7 @@ export function maxConcurrentRequestsRemedy(endpointKey: string, urlRemedy: stri
 	const gateway = gatewayEndpointKey(endpointKey);
 	if (!gateway.startsWith(COPILOT_SDK_KEY_PREFIX)) return urlRemedy;
 	const targetId = decodeURIComponent(gateway.slice(COPILOT_SDK_KEY_PREFIX.length));
-	return `set maxConcurrentRequests on target '${targetId}' above its default of ${COPILOT_SDK_DEFAULT_CONCURRENCY}`;
+	return `set maxConcurrentRequests on connection '${targetId}' above its default of ${COPILOT_SDK_DEFAULT_CONCURRENCY}`;
 }
 
 function positiveInteger(value: unknown): number | undefined {

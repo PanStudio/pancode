@@ -32,7 +32,7 @@ export const COUNCIL_MAX_MEMBERS = 5;
  */
 export function councilSeatDownReason(error: unknown): string | null {
 	const message = error instanceof Error ? error.message : String(error);
-	const match = /^dispatch: (target '[^']*' unavailable: .+)$/su.exec(message);
+	const match = /^dispatch: (connection '[^']*' unavailable: .+)$/su.exec(message);
 	return match?.[1] === undefined ? null : `seat not run: ${match[1]}`;
 }
 

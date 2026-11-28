@@ -47,9 +47,9 @@ it("titles a session from the typed input when a prompt template expanded it", a
 	const settings = structuredClone(DEFAULT_SETTINGS);
 	settings.chat.prewarm = false;
 	const context = dispatchStubContext({ settings });
-	const target = settings.targets[0];
+	const target = settings.connections[0];
 	ok(target);
-	settings.chat.target = target.id;
+	settings.chat.connection = target.id;
 	settings.chat.model = target.defaultModel ?? "gpt-4o";
 	const session = createSessionBundle(context).contract;
 	const prompted: string[] = [];
@@ -199,8 +199,8 @@ it("persists and replays machine origin after the real engine injects a busy fol
 	faux.setResponses([response, response, response, response]);
 	const settings = structuredClone(DEFAULT_SETTINGS);
 	settings.chat.prewarm = false;
-	settings.targets = [{ id: "peer-target", runtime: "peer-fixture", defaultModel: model.id }];
-	settings.chat.target = "peer-target";
+	settings.connections = [{ id: "peer-target", runtime: "peer-fixture", defaultModel: model.id }];
+	settings.chat.connection = "peer-target";
 	settings.chat.model = model.id;
 	const context = dispatchStubContext({
 		settings,

@@ -105,7 +105,7 @@ export function evaluateRouteFacts(
 		if (requirement.mode === "shadow") return { ok: true, unknowns };
 		return {
 			ok: false,
-			reason: `no probe fact for target '${requirement.targetId}' on node '${requirement.nodeId}'; run 'pancode doctor --fix'`,
+			reason: `no probe fact for connection '${requirement.targetId}' on node '${requirement.nodeId}'; run 'pancode doctor --fix'`,
 			unknowns,
 		};
 	}
@@ -113,7 +113,7 @@ export function evaluateRouteFacts(
 	if (fact.endpointIdentityHash !== requirement.endpointIdentityHash) {
 		return {
 			ok: false,
-			reason: `node '${requirement.nodeId}' endpoint identity for target '${requirement.targetId}' does not match settings`,
+			reason: `node '${requirement.nodeId}' endpoint identity for connection '${requirement.targetId}' does not match settings`,
 			unknowns,
 		};
 	}
@@ -129,21 +129,21 @@ export function evaluateRouteFacts(
 		if (state === "false") {
 			return {
 				ok: false,
-				reason: `node '${requirement.nodeId}' proved ${name}=false for target '${requirement.targetId}'`,
+				reason: `node '${requirement.nodeId}' proved ${name}=false for connection '${requirement.targetId}'`,
 				unknowns,
 			};
 		}
 		if (state === "unknown" && requirement.mode === "active") {
 			return {
 				ok: false,
-				reason: `node '${requirement.nodeId}' has no ${name} evidence for target '${requirement.targetId}'`,
+				reason: `node '${requirement.nodeId}' has no ${name} evidence for connection '${requirement.targetId}'`,
 				unknowns,
 			};
 		}
 		if (!fresh && requirement.mode === "active") {
 			return {
 				ok: false,
-				reason: `node '${requirement.nodeId}' ${name} evidence for target '${requirement.targetId}' is stale (probed ${fact.probedAt})`,
+				reason: `node '${requirement.nodeId}' ${name} evidence for connection '${requirement.targetId}' is stale (probed ${fact.probedAt})`,
 				unknowns,
 			};
 		}

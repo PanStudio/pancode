@@ -342,7 +342,7 @@ function SessionView({ client, id }: { client: Client; id: string }) {
 		() =>
 			routeFacts(
 				settings
-					? { target: settings.target ?? null, model: settings.model ?? null, thinking: settings.thinkingLevel }
+					? { target: settings.connection ?? null, model: settings.model ?? null, thinking: settings.thinkingLevel }
 					: undefined,
 				health,
 				config,

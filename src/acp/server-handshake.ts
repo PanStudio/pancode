@@ -674,8 +674,8 @@ export function createAcpHandshake(features: AcpHandshakeFeatures): AcpHandshake
 						? [
 								{
 									id: "pancode-login",
-									name: "PanCode Target Auth & Setup",
-									description: "Configure models, API keys, and target endpoints in terminal",
+									name: "PanCode Connection Auth & Setup",
+									description: "Configure models, API keys, and connection endpoints in terminal",
 									type: "terminal",
 									args: ["auth", "login"],
 								},

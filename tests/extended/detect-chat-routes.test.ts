@@ -61,7 +61,7 @@ export class CopilotClient {
 		updatedAt: new Date().toISOString(),
 	});
 	updateSettings((settings) => {
-		settings.targets = [{ id: "mine", runtime: "openai", defaultModel: "gpt-6-luna" }];
+		settings.connections = [{ id: "mine", runtime: "openai", defaultModel: "gpt-6-luna" }];
 	});
 	const signals: AbortSignal[] = [];
 	const readJson = async (input: string, signal: AbortSignal) => {
@@ -113,20 +113,20 @@ test("a detected chat route saves configure's descriptor only when no chat choic
 	const route = { source: "OPENAI_API_KEY", runtime, target, model: "gpt-6-luna" };
 	const first = useDetectedChatRoute(readSettings(), route);
 	assert.equal(first.persisted, true);
-	assert.deepEqual(readSettings().targets, [target]);
+	assert.deepEqual(readSettings().connections, [target]);
 	assert.equal(readSettings().chat.model, route.model);
 	delete process.env.ANTHROPIC_API_KEY;
 	writeFileSync(
 		settingsPath(),
-		"version: 2\ntargets:\n  - { id: broken, runtime: anthropic, defaultModel: saved-model, auth: { apiKeyRef: missing } }\nchat: { target: broken, model: saved-model }\n",
+		"version: 2\nconnections:\n  - { id: broken, runtime: anthropic, defaultModel: saved-model, auth: { apiKeyRef: missing } }\nchat: { connection: broken, model: saved-model }\n",
 	);
 	assert.equal(classifyDefaultTarget(readSettings()).kind, "missing-credential");
 	for (const dangling of [false, true]) {
-		if (dangling) writeFileSync(settingsPath(), "version: 2\nchat: { target: deleted, model: saved-model }\n");
+		if (dangling) writeFileSync(settingsPath(), "version: 2\nchat: { connection: deleted, model: saved-model }\n");
 		const before = readFileSync(settingsPath(), "utf8");
 		const fallback = useDetectedChatRoute(readSettings(), route);
 		assert.equal(fallback.persisted, false);
-		assert.equal(fallback.settings.chat.target, "openai");
+		assert.equal(fallback.settings.chat.connection, "openai");
 		assert.equal(readFileSync(settingsPath(), "utf8"), before);
 	}
 });
@@ -226,7 +226,7 @@ test("headless borrowing never takes a saved copilot target, whatever memory poi
 	for (const memory of ["copilot", "litellm", "none"]) {
 		writeFileSync(
 			settingsPath(),
-			`version: 2\ntargets:\n  - { id: copilot, runtime: copilot-sdk, defaultModel: claude-opus-5.5 }\n  - { id: litellm, runtime: litellm, url: "http://127.0.0.1:9", defaultModel: m1, auth: { apiKeyEnvVar: ROUTEFIX_LITELLM_KEY } }\ncontext:\n  memory: { target: ${memory}, model: m1 }\n`,
+			`version: 2\nconnections:\n  - { id: copilot, runtime: copilot-sdk, defaultModel: claude-opus-5.5 }\n  - { id: litellm, runtime: litellm, url: "http://127.0.0.1:9", defaultModel: m1, auth: { apiKeyEnvVar: ROUTEFIX_LITELLM_KEY } }\ncontext:\n  memory: { connection: ${memory}, model: m1 }\n`,
 		);
 		const found = await headlessChatRoute(readSettings(), undefined, { model: "dynamo/x" });
 		const ids =
@@ -253,7 +253,7 @@ test("headless borrowing names the memory target when it was the only usable one
 	});
 	writeFileSync(
 		settingsPath(),
-		'version: 2\ntargets:\n  - { id: litellm, runtime: litellm, url: "http://127.0.0.1:9", defaultModel: m1, auth: { apiKeyEnvVar: ROUTEFIX_LITELLM_KEY } }\ncontext:\n  memory: { target: litellm, model: m1 }\n',
+		'version: 2\nconnections:\n  - { id: litellm, runtime: litellm, url: "http://127.0.0.1:9", defaultModel: m1, auth: { apiKeyEnvVar: ROUTEFIX_LITELLM_KEY } }\ncontext:\n  memory: { connection: litellm, model: m1 }\n',
 	);
 	assert.deepEqual(await headlessChatRoute(readSettings()), { kind: "none", reservedForMemory: "litellm" });
 });

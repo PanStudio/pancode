@@ -45,7 +45,7 @@ test("the map leads with four figures and keeps an unread report apart from an e
 	);
 	assert.equal(unread.figures[0]?.value, "—");
 	assert.match(unread.figures[0]?.note ?? "", /not been read/u);
-	const read = configMap(graph, report([row("chat.model"), row("chat.target", "project")]));
+	const read = configMap(graph, report([row("chat.model"), row("chat.connection", "project")]));
 	assert.deepEqual(
 		read.figures.map((figure) => [figure.value, figure.note]),
 		[
@@ -126,14 +126,14 @@ test("an entry names its path, the project root, or its scope alone", () => {
 
 test("settings group by family, families sort alphabetically, and the filter folds case", () => {
 	assert.equal(settingFamily("chat.model"), "chat");
-	assert.equal(settingFamily("targets[0].id"), "targets");
+	assert.equal(settingFamily("connections[0].id"), "connections");
 	assert.equal(settingFamily("theme"), "theme");
-	const rows = [row("targets.0.id"), row("chat.model"), row("theme"), row("chat.target")];
+	const rows = [row("connections.0.id"), row("chat.model"), row("theme"), row("chat.connection")];
 	assert.deepEqual(
 		settingFamilies(rows).map((group) => [group.family, group.rows.map((item) => item.key)]),
 		[
-			["chat", ["chat.model", "chat.target"]],
-			["targets", ["targets.0.id"]],
+			["chat", ["chat.model", "chat.connection"]],
+			["connections", ["connections.0.id"]],
 			["theme", ["theme"]],
 		],
 	);

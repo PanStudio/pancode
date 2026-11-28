@@ -185,7 +185,7 @@ const router = createBrowserRouter([
 				},
 			},
 			{
-				path: "/settings/targets",
+				path: "/settings/connections",
 				lazy: async () => {
 					const { TargetsPage } = await import("./pages/targets.js");
 					return { element: <TargetsPage client={client} view="targets" /> };

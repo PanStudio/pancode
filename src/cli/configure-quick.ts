@@ -51,7 +51,7 @@ function endpointUrl(value: string): string {
 async function connect(url: string, key: string | undefined): Promise<Connection> {
 	const settings = readSettings();
 	const registry = getRuntimeRegistry();
-	const matches = settings.targets.filter((target) => {
+	const matches = settings.connections.filter((target) => {
 		const runtime = registry.get(target.runtime);
 		if (!target.url || !runtime || !isOrchestratorEligibleRuntime(runtime)) return false;
 		try {
@@ -60,7 +60,7 @@ async function connect(url: string, key: string | undefined): Promise<Connection
 			return false;
 		}
 	});
-	const existing = matches.find((target) => target.id === settings.chat.target) ?? matches[0];
+	const existing = matches.find((target) => target.id === settings.chat.connection) ?? matches[0];
 	let runtime = existing ? registry.get(existing.runtime) : null;
 	let token = key;
 	if (existing && runtime && token === undefined) {
@@ -90,7 +90,7 @@ async function connect(url: string, key: string | undefined): Promise<Connection
 	const target: TargetDescriptor = existing
 		? structuredClone(existing)
 		: {
-				id: deriveTargetId(runtime.id, settings.targets),
+				id: deriveTargetId(runtime.id, settings.connections),
 				runtime: runtime.id,
 				url,
 			};
@@ -108,7 +108,7 @@ async function connect(url: string, key: string | undefined): Promise<Connection
 			if (catalog.length > 0) {
 				runtime = anthropic;
 				target.runtime = anthropic.id;
-				target.id = deriveTargetId(anthropic.id, settings.targets);
+				target.id = deriveTargetId(anthropic.id, settings.connections);
 				models = catalog;
 				probe = { ok: true, models };
 			}
@@ -121,8 +121,8 @@ async function connect(url: string, key: string | undefined): Promise<Connection
 /** URL → key only if required → model only if several → Connect. No settings questionnaire. */
 export async function runQuickConnect(prompts: ConfigurePrompts): Promise<"connected" | "back" | "quit"> {
 	const initial = readSettings();
-	const first = initial.targets.length === 0;
-	const current = initial.targets.find((target) => target.id === initial.chat.target);
+	const first = initial.connections.length === 0;
+	const current = initial.connections.find((target) => target.id === initial.chat.connection);
 	let url = current?.url ?? "";
 	let key: string | undefined;
 	let connection: Connection | undefined;
@@ -201,7 +201,7 @@ export async function runQuickConnect(prompts: ConfigurePrompts): Promise<"conne
 					continue;
 				}
 				const preferred =
-					connection.existing?.id === initial.chat.target ? initial.chat.model : connection.target.defaultModel;
+					connection.existing?.id === initial.chat.connection ? initial.chat.model : connection.target.defaultModel;
 				model = preferred && connection.models.includes(preferred) ? preferred : (connection.models[0] ?? "");
 				step = connection.models.length === 1 ? "save" : "model";
 				continue;
@@ -269,16 +269,16 @@ export async function runQuickConnect(prompts: ConfigurePrompts): Promise<"conne
 			const descriptor = structuredClone(connection.target);
 			if (!connection.existing) descriptor.defaultModel = model;
 			if (key) {
-				descriptor.auth = { ...descriptor.auth, apiKeyRef: targetApiKeyRef(descriptor.id, readSettings().targets) };
+				descriptor.auth = { ...descriptor.auth, apiKeyRef: targetApiKeyRef(descriptor.id, readSettings().connections) };
 				delete descriptor.auth.apiKeyEnvVar;
 			}
 			const apply = (settings: ReturnType<typeof readSettings>) => {
-				const target = settings.targets.find((entry) => entry.id === descriptor.id);
+				const target = settings.connections.find((entry) => entry.id === descriptor.id);
 				if (JSON.stringify(target) !== JSON.stringify(connection?.existing))
-					throw new Error("This target changed during setup. Reopen Quick Connect to keep those changes.");
+					throw new Error("This connection changed during setup. Reopen Quick Connect to keep those changes.");
 				applyTarget(settings, descriptor);
 				setOrchestratorPointer(settings, descriptor, model);
-				if (first && !settings.fleet.default.target) setWorkerDefaultPointer(settings, descriptor, model);
+				if (first && !settings.fleet.default.connection) setWorkerDefaultPointer(settings, descriptor, model);
 			};
 			const preview = readSettings();
 			apply(preview);

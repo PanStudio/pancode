@@ -12,12 +12,12 @@ import { createContextCliOperation, createContextCliProgress } from "./context-p
 const HELP = `Usage:
   pancode context
   pancode context init [--preview] [--heuristic] [--json] [--adopt] [--global] [--propose|--apply|--rewrite]
-                    [--depth quick|standard|deep] [--target <id> [--model <id>] [--thinking <level>]]
+                    [--depth quick|standard|deep] [--connection <id> [--model <id>] [--thinking <level>]]
   pancode context init --verify [--apply] [--json]
   pancode context init --accept [<proposal path or id>] [--json]
   pancode context refresh [--wiki]
   pancode context wiki [--update|--retry-pending] [--replan] [--status] [--depth auto|simple|medium|detailed] [--pages <path,path>]
-                    [--target <id>] [--model <id>] [--thinking off|low|medium|high]
+                    [--connection <id>] [--model <id>] [--thinking off|low|medium|high]
   pancode context reset [--all] [--yes]
   pancode context index [--json]
   pancode context map [--out <path>] [--json]
@@ -250,7 +250,7 @@ async function runWikiStatusCommand(): Promise<number> {
 
 type WikiCliThinking = "off" | "low" | "medium" | "high";
 
-const VALUE_FLAGS = new Set(["--target", "--model", "--thinking", "--depth", "--pages"]);
+const VALUE_FLAGS = new Set(["--connection", "--model", "--thinking", "--depth", "--pages"]);
 
 function isThinkingLevel(value: unknown): value is WikiCliThinking {
 	return value === "off" || value === "low" || value === "medium" || value === "high";
@@ -291,12 +291,12 @@ async function runWikiCommand(args: string[]): Promise<number> {
 		if (VALUE_FLAGS.has(arg ?? "")) {
 			const value = args[index + 1];
 			index += 1;
-			if (arg === "--target" || arg === "--model") {
+			if (arg === "--connection" || arg === "--model") {
 				if (!value || value.startsWith("--")) {
 					process.stderr.write(`pancode context wiki: ${arg} requires a value\n`);
 					return 2;
 				}
-				if (arg === "--target") target = value;
+				if (arg === "--connection") target = value;
 				else model = value;
 				continue;
 			}

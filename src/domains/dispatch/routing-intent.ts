@@ -71,7 +71,8 @@ export function parseRoutingIntent(value: unknown, pins: RoutingPins = {}): Rout
 	if (typeof posture !== "string" || !POSTURES.has(posture as RoutingPosture)) {
 		errors.push("routing.posture must be one of: manual|quality|balanced|latency|economy");
 	}
-	if (pinned && posture !== "manual") errors.push("exact target, model, or node pins require routing.posture manual");
+	if (pinned && posture !== "manual")
+		errors.push("exact connection, model, or node pins require routing.posture manual");
 	const positive = (key: "maxCostUsd" | "deadlineMs"): number | null => {
 		const candidate = input[key];
 		if (candidate === undefined) return null;

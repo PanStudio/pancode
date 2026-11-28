@@ -355,7 +355,7 @@ export function startBootChat(input: BootChatInput) {
 			const meta = session?.current();
 			if (!meta) throw new Error("task memory handoff requires an active session");
 			const settings = getCurrentSettings();
-			const targetId = meta.target ?? settings.chat?.target;
+			const targetId = meta.target ?? settings.chat?.connection;
 			const runtimeId = targetId ? providers.getTarget(targetId)?.runtime : undefined;
 			return renderTaskMemoryHandoffSource(taskMemoryBank.snapshot(), {
 				sessionId: meta.id,
@@ -598,7 +598,7 @@ export function startBootChat(input: BootChatInput) {
 			bus,
 			chat,
 			sessionId: () => session?.current()?.id ?? null,
-			targetId: () => options.headless?.target ?? getCurrentSettings().chat.target ?? "",
+			targetId: () => options.headless?.target ?? getCurrentSettings().chat.connection ?? "",
 			frozenTools: toolRegistry.listAll().flatMap((tool) => tool.sourceInfo?.extension || []),
 			services: { providers, telemetry, session },
 			sandboxUnixSockets: () => getCurrentSettings().safety.sandboxUnixSockets,

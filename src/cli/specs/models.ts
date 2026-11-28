@@ -4,6 +4,6 @@ import { defineCommandSpec } from "../lib/help.js";
 
 export const spec = defineCommandSpec({
 	path: ["models"],
-	summary: "list models for configured targets",
+	summary: "list models for configured connections",
 	hidden: false,
 });

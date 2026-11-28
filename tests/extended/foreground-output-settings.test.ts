@@ -19,7 +19,7 @@ test("foreground requests use the effective output budget when the existing sess
 	try {
 		process.env.PANCODE_TEST_OPENAI_KEY = "fixture-key";
 		const settings = structuredClone(DEFAULT_SETTINGS);
-		settings.targets = [
+		settings.connections = [
 			{
 				id: "fixture",
 				runtime: "openai-compat",
@@ -29,7 +29,7 @@ test("foreground requests use the effective output budget when the existing sess
 				capabilities: { chat: true, tools: true, contextWindow: 131072, maxTokens: 32768 },
 			},
 		];
-		settings.chat.target = "fixture";
+		settings.chat.connection = "fixture";
 		settings.chat.model = "mock-model";
 		settings.chat.maxOutputTokens = 32768;
 		settings.chat.prewarm = false;

@@ -50,7 +50,7 @@ const ROOT_NOTES = {
 	data:
 		"Data holds memory, the project store and vendored tools; stored blobs and records are not recoverable, and the tools have to be downloaded again.",
 	settings: "Settings return to their defaults.",
-	auth: "Saved API keys are gone; each target has to be authenticated again.",
+	auth: "Saved API keys are gone; each connection has to be authenticated again.",
 	cache: "Cache is disposable and rebuilds itself.",
 	all: "Everything goes: settings, credentials, memory, the project store, transcripts, and caches. A clean install remains.",
 } as const;

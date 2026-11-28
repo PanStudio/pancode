@@ -5,7 +5,7 @@ import { test } from "node:test";
 import { createTelemetryHub } from "../../src/core/telemetry/hub.js";
 import { ToolNames } from "../../src/core/tool-names.js";
 import { createWorkerSafety } from "../../src/engine/worker-tools.js";
-import { planFacts, readDispatchPlan } from "../../src/interactive/dispatch-plan-summary.js";
+import { planFacts, planRouteSources, readDispatchPlan } from "../../src/interactive/dispatch-plan-summary.js";
 import { createOverlayPermissionLifecycle } from "../../src/interactive/overlay-permission-lifecycle.js";
 import { describeDispatchPlan, RESOLVED_DISPATCH_PLAN_ARGUMENT } from "../../src/tools/dispatch-plan.js";
 import type { PermissionRequiredMeta } from "../../src/tools/registry/contract.js";
@@ -30,8 +30,10 @@ test("a resolved parallel plan's card rows name each task's agent, not its task 
 	const summary = readDispatchPlan(
 		[
 			"dispatch plan: topology=parallel tasks=2",
-			'    1. role=task#1 agent=scout target=openai-codex model=gpt-6-luna node=local task_preview="List the exports"',
-			'    2. role=task#2 agent=coder target=openai-codex model=gpt-6-luna node=local task_preview="Add a test"',
+			'    1. role=task#1 agent=scout connection=openai-codex model=gpt-6-luna node=local task_preview="List the exports"',
+			"      route: connection named in the call",
+			'    2. role=task#2 agent=coder connection=openai-codex model=gpt-6-luna node=local task_preview="Add a test"',
+			"      route: connection named in the call",
 		].join("\n"),
 	);
 	ok(summary, "the card reads the plan");
@@ -39,6 +41,7 @@ test("a resolved parallel plan's card rows name each task's agent, not its task 
 		summary.members.map((member) => member.label ?? member.agent),
 		["scout", "coder"],
 	);
+	strictEqual(planRouteSources(summary).shared, "connection named in the call");
 });
 
 test("the card's inspect lists the arguments the model sent, not the plan the harness attached", async () => {

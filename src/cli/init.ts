@@ -20,13 +20,13 @@ import { createContextCliOperation, createContextCliProgress } from "./context-p
 
 const HELP = `Usage:
   pancode context init [--preview] [--heuristic] [--json] [--adopt] [--global] [--propose|--apply|--rewrite]
-                    [--depth quick|standard|deep] [--target <id> [--model <id>] [--thinking <level>]]
+                    [--depth quick|standard|deep] [--connection <id> [--model <id>] [--thinking <level>]]
   pancode context init --verify [--apply] [--json]
   pancode context init --accept [<proposal path or id>] [--json]
 
 Explore the repository and bootstrap the project context in one pass: PANCODE.md,
 the codewiki index, and the .pancode state. The configured PanCode
-target drafts PANCODE.md grounded in the existing handbook, codewiki structure, and
+connection drafts PANCODE.md grounded in the existing handbook, codewiki structure, and
 sibling agent context. Existing PANCODE.md files are preserved by default; use
 --propose for an ignored draft, --apply to update the handbook using it as source,
 or --rewrite to replace it with a fresh draft that ignores the current PANCODE.md,
@@ -43,9 +43,10 @@ Options:
                    keeping Hard invariants whose cited paths and symbols still exist
   --json           emit one machine-readable result object on stdout
   --depth <level>  bounded exploration: quick (8 calls, 2m), standard (16 calls, 4m), deep (32 calls, 8m)
-  --target <id>    override the configured bootstrap target for this noninteractive run
-  --model <id>     override the bootstrap wire model (requires --target)
-  --thinking <n>   override bootstrap thinking: ${THINKING_LEVELS.join("|")} (requires --target)
+  --connection <id>
+                   override the configured bootstrap connection for this noninteractive run
+  --model <id>     override the bootstrap wire model (requires --connection)
+  --thinking <n>   override bootstrap thinking: ${THINKING_LEVELS.join("|")} (requires --connection)
   --verify         re-check every rule of the effective handbook against the current tree without a model;
                    lists rules as verified, stale, contradicted or unverifiable with file:line, records the
                    verdicts in the handbook ledger, and exits 1 when any rule is stale or contradicted.
@@ -174,11 +175,11 @@ function parseContextInitArgs(args: ReadonlyArray<string>): {
 			json = true;
 			continue;
 		}
-		if (arg === "--target" || arg === "--model" || arg === "--thinking" || arg === "--depth") {
+		if (arg === "--connection" || arg === "--model" || arg === "--thinking" || arg === "--depth") {
 			const value = args[index + 1];
 			if (!value || value.startsWith("-")) return { options, json, error: `${arg} requires a value` };
 			index += 1;
-			if (arg === "--target") target = value;
+			if (arg === "--connection") target = value;
 			else if (arg === "--model") model = value;
 			else if (arg === "--depth") {
 				if (value !== "quick" && value !== "standard" && value !== "deep")
@@ -199,7 +200,7 @@ function parseContextInitArgs(args: ReadonlyArray<string>): {
 		options[row.field] = true;
 	}
 	if (!target && (model || thinkingLevel)) {
-		return { options, json, error: "--model and --thinking require --target" };
+		return { options, json, error: "--model and --thinking require --connection" };
 	}
 	return {
 		options,
@@ -332,13 +333,13 @@ export async function runInitCommand(args: string[], io: InitCommandIo = PROCESS
 			const file = written ? result.pancodeMdPath : "the PANCODE.md proposal";
 			io.stderr(
 				`pancode context init: warning: ${file} is a heuristic draft, not a model draft (${reason}).\n` +
-					"  review it before committing, or rerun `pancode context init --rewrite` once the bootstrap target answers.\n",
+					"  review it before committing, or rerun `pancode context init --rewrite` once the bootstrap connection answers.\n",
 			);
 		}
 		if (parsed.options.rewritePancodeMd === true && result.telemetry.generation.mode === "existing") {
 			io.stderr(
 				"pancode context init: --rewrite did not rewrite PANCODE.md; the model draft failed and the existing file was preserved.\n" +
-					"  rerun `pancode context init --rewrite` once the bootstrap target answers, or `pancode context init --rewrite --heuristic` to replace it with the deterministic draft.\n",
+					"  rerun `pancode context init --rewrite` once the bootstrap connection answers, or `pancode context init --rewrite --heuristic` to replace it with the deterministic draft.\n",
 			);
 			return 1;
 		}

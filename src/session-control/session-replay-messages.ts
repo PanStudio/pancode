@@ -461,7 +461,7 @@ export function messageFailure(entry: MessageEntry): { stopReason: "error" | "ab
 			? raw
 			: stopReason === "aborted"
 				? "request aborted"
-				: "model target returned an error";
+				: "model connection returned an error";
 	return { stopReason, errorMessage };
 }
 

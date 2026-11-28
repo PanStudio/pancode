@@ -1048,7 +1048,7 @@ export class Supervisor {
 		if (update.sessionUpdate === "config_option_update") {
 			const options = projectConfigOptions(update.configOptions);
 			if (options === undefined) throw new AppProblem("upstream_acp", "PanCode omitted session configuration.");
-			const target = record(meta[ACP_SESSION_META_KEY]).target;
+			const target = record(meta[ACP_SESSION_META_KEY]).connection;
 			const config = {
 				...entry.client.config,
 				options,
@@ -1257,9 +1257,9 @@ export class Supervisor {
 	}
 	settings(id: string, patch?: SafeSettingsPatch) {
 		if (patch)
-			for (const key of ["chat.target", "chat.model"] as const) {
+			for (const key of ["chat.connection", "chat.model"] as const) {
 				const value = patch[key];
-				if (value && Buffer.byteLength(value) > (key === "chat.target" ? 128 : 256))
+				if (value && Buffer.byteLength(value) > (key === "chat.connection" ? 128 : 256))
 					throw new AppProblem("validation", "Setting exceeds its UTF-8 byte limit.");
 			}
 		return this.projected(
@@ -1290,21 +1290,21 @@ export class Supervisor {
 	async targets(id: string) {
 		const client = this.active(id).client;
 		if (!client.capabilities.targets?.list)
-			throw new AppProblem("unsupported", "This PanCode build does not expose target inventory.");
+			throw new AppProblem("unsupported", "This PanCode build does not expose connection inventory.");
 		const raw = Value.Clean(AcpTargetList, await client.request(ACP_TARGETS_LIST_METHOD, {}));
 		if (!Value.Check(AcpTargetList, raw))
-			throw new AppProblem("upstream_acp", "PanCode returned an invalid target list.");
+			throw new AppProblem("upstream_acp", "PanCode returned an invalid connection list.");
 		const projected = Value.Clean(SessionTargets, {
 			targets: raw.targets,
 			truncated: record(raw._meta)[ACP_TRUNCATED_META_KEY] === true,
 		});
 		if (!Value.Check(SessionTargets, projected))
-			throw new AppProblem("upstream_acp", "PanCode returned an invalid target list.");
+			throw new AppProblem("upstream_acp", "PanCode returned an invalid connection list.");
 		return projected;
 	}
 	probe(id: string, targetId: string) {
 		if (!this.active(id).client.capabilities.targets?.probe)
-			throw new AppProblem("unsupported", "This PanCode build does not expose target probes.");
+			throw new AppProblem("unsupported", "This PanCode build does not expose connection probes.");
 		return this.projected(id, ACP_TARGETS_PROBE_METHOD, { targetId }, TargetProbe);
 	}
 	async autonomy(id: string, level?: Static<typeof AutonomyLevel>) {

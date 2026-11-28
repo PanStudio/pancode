@@ -112,7 +112,7 @@ export function resolveAcpDelegationLifecycle(
 	assertWorkerContextRequest(req, false);
 	if (req.storeTags !== undefined && req.storeTags.length > 0) {
 		throw new Error(
-			"dispatch: store tags cannot be granted to an ACP delegation target; the external agent has no PanCode store tool. Dispatch to a native worker.",
+			"dispatch: store tags cannot be granted to an ACP delegation connection; the external agent has no PanCode store tool. Dispatch to a native worker.",
 		);
 	}
 	if (!settings) throw new Error("dispatch: effective settings required for ACP delegation");
@@ -123,7 +123,7 @@ export function resolveAcpDelegationLifecycle(
 	// so no ACP peer can keep a read-only run from changing user files.
 	if (req.readOnly === true) {
 		throw new Error(
-			`dispatch: ACP delegation agent '${agentId}' cannot run read-only work: a peer's permission requests cover only the calls it chooses to ask about, so PanCode cannot keep it from changing user files; choose a native, claude-sdk or codex-cli target`,
+			`dispatch: ACP delegation agent '${agentId}' cannot run read-only work: a peer's permission requests cover only the calls it chooses to ask about, so PanCode cannot keep it from changing user files; choose a native, claude-sdk or codex-cli connection`,
 		);
 	}
 	// Operator decision Q6: agent-managed governance approves every call the

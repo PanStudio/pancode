@@ -13,8 +13,8 @@ work in another repository with it as cwd, one per task; the worker gets its rul
 
 Write each task as the work itself, with its outcome and constraints; copy an exact operator assignment verbatim.
 Put what you verified in briefing; a suspicion goes in as a question to test, never a finding, or the worker
-confirms it. Pin an operator-named target or model for one dispatch with the `target` and `model` fields, not by
-editing routing settings. An undeclared `intent.verification` check id is refused naming the declared ids; no
+confirms it. Pin an operator-named connection or model for one dispatch in its `connection` and `model` fields, not in
+settings. An undeclared `intent.verification` check id is refused naming the declared ids; no
 prior `verify()` listing is needed.
 
 A failed run gives leads, not proof: confirm the few locations that matter and do not resend the same goal

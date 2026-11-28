@@ -162,13 +162,15 @@ export async function runBrowserConfigure(
 				initializePancodeHome();
 				const settings = readSettings();
 				const target =
-					typeof answer.targetId === "string" ? settings.targets.find((entry) => entry.id === answer.targetId) : undefined;
+					typeof answer.targetId === "string"
+						? settings.connections.find((entry) => entry.id === answer.targetId)
+						: undefined;
 				if (answer.targetId && !target) {
 					send({ kind: "failed", text: "This connection no longer exists. Refresh and try again." });
 					resolve();
 					return;
 				}
-				const chat = settings.targets.find((entry) => entry.id === settings.chat.target);
+				const chat = settings.connections.find((entry) => entry.id === settings.chat.connection);
 				const hasChat = chat && getRuntimeRegistry().get(chat.runtime)?.kind === "http";
 				// The terminal start gives a returning user the route it finds and lands in chat; so does the app. Only
 				// a saved route counts, because a session-only fallback has nowhere to live in the app.

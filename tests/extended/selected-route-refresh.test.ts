@@ -12,7 +12,7 @@ import { createChatLoop } from "../../src/session-control/chat-loop.js";
 
 it("compiles a resumed session's next request after the probe restores its window (M-26)", async () => {
 	const settings = structuredClone(DEFAULT_SETTINGS);
-	settings.chat.target = "route";
+	settings.chat.connection = "route";
 	settings.chat.model = "model";
 	settings.chat.prewarm = false;
 	const capabilities = { chat: true, tools: true, reasoning: false, vision: false, contextWindow: 0, maxTokens: 4096 };
@@ -108,7 +108,7 @@ it("refreshes the attached serving window after the selected-route TTL without a
 	timeout: 12_000,
 }, async () => {
 	const settings = structuredClone(DEFAULT_SETTINGS);
-	settings.chat.target = "route";
+	settings.chat.connection = "route";
 	settings.chat.model = "model";
 	settings.chat.maxOutputTokens = 1024;
 	settings.chat.prewarm = false;
@@ -220,7 +220,7 @@ it("refreshes the attached serving window after the selected-route TTL without a
 		target.url = "https://another-fixture.invalid";
 		bus.emit("config.next_turn_scheduled", {
 			source: "file",
-			diff: { hotReload: [], nextTurn: ["targets.route.url"], restartRequired: [] },
+			diff: { hotReload: [], nextTurn: ["connections.route.url"], restartRequired: [] },
 			settings,
 		});
 		await new Promise<void>((resolve) => setImmediate(resolve));

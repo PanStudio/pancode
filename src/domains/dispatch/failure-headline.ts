@@ -138,8 +138,8 @@ const PLAIN_FAILURES: ReadonlyArray<readonly [RegExp, (match: RegExpExecArray) =
 	[/^worker executed no tools, so it did none of its assignment/iu, () => "it ran no tools, so the task was not done"],
 	// Admission refused the route before a worker started: the target's health check failed.
 	[
-		/^(?:dispatch: )?target '([^']+)' unavailable: health (?:down|degraded|unknown)\b/iu,
-		(match) => `its target ${match[1]} is not reachable, so nothing ran there`,
+		/^(?:dispatch: )?connection '([^']+)' unavailable: health (?:down|degraded|unknown)\b/iu,
+		(match) => `its connection ${match[1]} is not reachable, so nothing ran there`,
 	],
 	// The slot a run was admitted under was released before it started, because the work around it already stopped.
 	[/^(?:dispatch: )?reservation '[^']+' is not active\b/iu, () => NEVER_STARTED_WORDS],

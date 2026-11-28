@@ -234,8 +234,8 @@ describe("dispatch advisory admission and explicit authority", () => {
 			await bundle.extension.stop?.();
 		}
 		const settings = structuredClone(DEFAULT_SETTINGS);
-		settings.targets = [{ id: "api", runtime: "anthropic", defaultModel: "claude-haiku-5-5" }];
-		settings.fleet.default = { ...settings.fleet.default, target: "api", model: "claude-haiku-5-5" };
+		settings.connections = [{ id: "api", runtime: "anthropic", defaultModel: "claude-haiku-5-5" }];
+		settings.fleet.default = { ...settings.fleet.default, connection: "api", model: "claude-haiku-5-5" };
 		settings.chat.maxOutputTokens = 100;
 		const priced = makeDispatchBundle(dispatchStubContext({ settings, runtime: anthropic }), {
 			spawnWorker: () => {
@@ -290,8 +290,8 @@ describe("dispatch advisory admission and explicit authority", () => {
 	it("prices a route's admission estimate at its output bound, never at one token (M6)", async () => {
 		const estimate = async (maxOutputTokens: number) => {
 			const settings = structuredClone(DEFAULT_SETTINGS);
-			settings.targets = [{ id: "api", runtime: "anthropic", defaultModel: "claude-haiku-5-5" }];
-			settings.fleet.default = { ...settings.fleet.default, target: "api", model: "claude-haiku-5-5" };
+			settings.connections = [{ id: "api", runtime: "anthropic", defaultModel: "claude-haiku-5-5" }];
+			settings.fleet.default = { ...settings.fleet.default, connection: "api", model: "claude-haiku-5-5" };
 			settings.chat.maxOutputTokens = maxOutputTokens;
 			const bundle = makeDispatchBundle(dispatchStubContext({ settings, runtime: anthropic }));
 			await bundle.extension.start();

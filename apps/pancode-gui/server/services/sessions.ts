@@ -115,6 +115,7 @@ export class SessionService {
 					if (!meta || row.cwd !== cwd) throw new AppProblem("upstream_acp", "PanCode omitted workspace session metadata.");
 					const projected = Value.Clean(SessionSummary, {
 						...meta,
+						target: meta.connection,
 						id: row.sessionId,
 						workspaceId,
 						...(row.title !== undefined ? { name: row.title } : {}),

@@ -162,7 +162,7 @@ export function createPromptsBundle(
 				record,
 				configuredAcp: configured.has(record.kind),
 			}));
-			snapshot.peerTargets = (config()?.get().targets ?? []).map(({ id, runtime }) => ({ id, runtime }));
+			snapshot.peerTargets = (config()?.get().connections ?? []).map(({ id, runtime }) => ({ id, runtime }));
 		} catch {
 			// An unreadable report lists no peers; /interop shows the agents and why.
 		}
@@ -708,7 +708,7 @@ function readyPeerLines(catalogs: CatalogSnapshot, inputs: SessionPromptInputs):
 		const target = modes.find((mode) => mode.mode === "headless" && mode.status !== "unavailable")?.targetIds?.[0];
 		const reach = [
 			`panes(action="handoff", peer="${kind.id}")`,
-			...(target !== undefined && names.has("dispatch") ? [`dispatch with target="${target}"`] : []),
+			...(target !== undefined && names.has("dispatch") ? [`dispatch with connection="${target}"`] : []),
 		];
 		return [`- ${kind.id}: ${reach.join(", or ")}`];
 	});

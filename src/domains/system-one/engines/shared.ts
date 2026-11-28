@@ -40,7 +40,7 @@ export async function resolveToken(
 		// request still fails visibly at the server if one was required.
 		return undefined;
 	}
-	if (resolution.refused) throw new Error(resolution.detail ?? `credential refused for target '${target.id}'`);
+	if (resolution.refused) throw new Error(resolution.detail ?? `credential refused for connection '${target.id}'`);
 	return resolution.apiKey ?? undefined;
 }
 

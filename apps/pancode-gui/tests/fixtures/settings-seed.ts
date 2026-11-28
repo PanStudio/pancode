@@ -19,7 +19,7 @@ writeFileSync(
 	join(config, "settings.yaml"),
 	JSON.stringify({
 		version: 2,
-		targets: [
+		connections: [
 			{
 				id: targetId,
 				runtime: "openai-compat",
@@ -27,7 +27,7 @@ writeFileSync(
 				auth: { headers: { "X-Fixture": "fixture-header-secret" } },
 			},
 		],
-		chat: { target: targetId, thinkingLevel: "high", model: "fixture-user-model" },
+		chat: { connection: targetId, thinkingLevel: "high", model: "fixture-user-model" },
 		integrations: {
 			externalAgents: {
 				entries: [

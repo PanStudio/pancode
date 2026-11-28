@@ -28,10 +28,12 @@ async function routed(
 	if (outcome === "unchanged") return null;
 	if (outcome === "failed") {
 		throw new Error(
-			`The credential for target '${input.target.id}' could not be refreshed. Run pancode auth login ${input.runtime.id} again.`,
+			`The credential for connection '${input.target.id}' could not be refreshed. Run pancode auth login ${input.runtime.id} again.`,
 		);
 	}
-	process.stderr.write(`[worker] the host refreshed the credential for target '${input.target.id}'; retrying once\n`);
+	process.stderr.write(
+		`[worker] the host refreshed the credential for connection '${input.target.id}'; retrying once\n`,
+	);
 	return input.modelRoute.surrogate;
 }
 
@@ -43,12 +45,14 @@ export function createWorkerAuth(scope: WorkerRunScope) {
 	const refreshWorkerOAuthKey = async (): Promise<string | null> => {
 		const rejected = lastAuthResolution;
 		if (!input.authProfile || rejected?.source !== "stored-oauth" || rejected.apiKey === undefined) return routed(input);
-		process.stderr.write(`[worker] refreshing the OAuth credential for target '${input.target.id}' and retrying once\n`);
+		process.stderr.write(
+			`[worker] refreshing the OAuth credential for connection '${input.target.id}' and retrying once\n`,
+		);
 		const refreshed = await openAuthStorage().forceRefreshApiKey(input.authProfile, rejected.apiKey, input.signal);
 		if (!refreshed.available || refreshed.apiKey === undefined) {
 			// Reuse the CLI login syntax, and keep refresh-provider diagnostics out of the remedy (#427).
 			throw new Error(
-				`OAuth credential for target '${input.target.id}' could not be refreshed. Run pancode auth login ${rejected.providerId} again.`,
+				`OAuth credential for connection '${input.target.id}' could not be refreshed. Run pancode auth login ${rejected.providerId} again.`,
 			);
 		}
 		lastAuthResolution = refreshed;

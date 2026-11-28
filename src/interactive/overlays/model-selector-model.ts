@@ -338,7 +338,7 @@ export function buildModelItems(deps: {
 	settings: Readonly<PancodeSettings>;
 	providers: ProvidersContract;
 }): ModelItemsResult {
-	const activeTarget = deps.settings.chat?.target?.trim() ?? "";
+	const activeTarget = deps.settings.chat?.connection?.trim() ?? "";
 	const activeModel = deps.settings.chat?.model?.trim() ?? "";
 	const activeRef = activeTarget && activeModel ? modelRefWords(activeTarget, activeModel) : activeTarget;
 	const favoriteSet = new Set(deps.settings.chat.modelPicker?.favorites ?? []);
@@ -404,7 +404,7 @@ export function buildModelItems(deps: {
 				thinkingNote: resolution?.thinkingNote ?? null,
 				streaming: decisions.streaming,
 				diagnostics: resolution?.diagnostics ?? [
-					{ severity: "error", code: "model-not-configured", message: `target '${target.id}' has no model configured` },
+					{ severity: "error", code: "model-not-configured", message: `connection '${target.id}' has no model configured` },
 				],
 				badges: capabilityBadges(rowCaps),
 				context: contextDecisionLabel(decisions),

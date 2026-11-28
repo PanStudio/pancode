@@ -73,7 +73,7 @@ export function createChatLoopToolOptions(deps: CreateChatLoopDeps, state: ChatL
 	 */
 	const nullRuntimeAdmissionReason = (): string => {
 		const orchestrator = deps.getSettings().chat;
-		const target = orchestrator.target?.trim() ?? "";
+		const target = orchestrator.connection?.trim() ?? "";
 		const model = orchestrator.model?.trim() ?? "";
 		return target.length > 0 && model.length === 0 ? "model-not-configured" : "orchestrator-not-configured";
 	};

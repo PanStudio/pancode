@@ -42,7 +42,7 @@ test("changing a target's probe identity drops the previous endpoint's health an
 			defaultModel: "mock-model",
 		};
 		updateSettings((settings) => {
-			settings.targets = [target];
+			settings.connections = [target];
 		});
 		const loaded = await loadDomains([ConfigDomainModule, ProvidersDomainModule]);
 		try {
@@ -58,14 +58,14 @@ test("changing a target's probe identity drops the previous endpoint's health an
 				{ ...target, runtime: "unregistered-fixture" },
 			]) {
 				config.update((settings) => {
-					settings.targets = [target];
+					settings.connections = [target];
 				}, "settings-ui");
 				const probed: TargetStatus | null = await providers.probeTarget(target.id, { reasoning: false });
 				ok(probed);
 				strictEqual(probed.health.status, "healthy");
 				deepStrictEqual(probed.discoveredModels, ["mock-model"]);
 				config.update((settings) => {
-					settings.targets = [replacement];
+					settings.connections = [replacement];
 				}, "settings-ui");
 				const current: TargetStatus | undefined = providers.list()[0];
 				ok(current);
@@ -83,11 +83,11 @@ test("changing a target's probe identity drops the previous endpoint's health an
 				if (replacement.runtime === "unregistered-fixture") strictEqual(current.capabilities.chat, false);
 			}
 			config.update((settings) => {
-				settings.targets = [target];
+				settings.connections = [target];
 			}, "settings-ui");
 			duringReasoning = () =>
 				config.update?.((settings) => {
-					settings.targets = [{ ...target, url: `${fixture.url}/replacement` }];
+					settings.connections = [{ ...target, url: `${fixture.url}/replacement` }];
 				}, "settings-ui");
 			strictEqual(await providers.probeReasoningForModel(target.id, "mock-model"), null);
 			strictEqual(providers.getDetectedReasoning(target.id, "mock-model"), null);
@@ -129,7 +129,7 @@ for (const ending of ["retargeted", "removed", "stopped", "overridden"] as const
 				defaultModel: fixture.modelId,
 			};
 			updateSettings((settings) => {
-				settings.targets = [target];
+				settings.connections = [target];
 			});
 			const loaded = await loadDomains([ConfigDomainModule, ProvidersDomainModule]);
 			let pending: Promise<TargetStatus | null> | undefined;
@@ -149,7 +149,7 @@ for (const ending of ["retargeted", "removed", "stopped", "overridden"] as const
 				if (ending === "stopped") await loaded.stop();
 				else
 					config.update((settings) => {
-						settings.targets =
+						settings.connections =
 							ending === "removed"
 								? []
 								: [

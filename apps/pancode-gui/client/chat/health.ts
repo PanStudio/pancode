@@ -179,14 +179,14 @@ function toRow(item: HealthItemLike): HealthRow | null {
 			};
 		}
 		case "health.provider": {
-			const targetId = text(payload.targetId) ?? "unnamed target";
+			const targetId = text(payload.targetId) ?? "unnamed connection";
 			const status = text(payload.status) ?? "unknown";
 			const available = flag(payload.available);
 			return {
 				...base,
 				kind: "provider",
 				key: targetId,
-				label: `Target ${targetId}`,
+				label: `Connection ${targetId}`,
 				detail: providerDetail(status, available, integer(payload.latencyMs)),
 				tone: PROVIDER_TONES[status] ?? "unverified",
 				attention: status !== "healthy",

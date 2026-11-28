@@ -41,7 +41,7 @@ async function probeCodexRoute(backend: { url: string }) {
 	const env = await isolatePancodeEnv("pancode-codex-window-");
 	const settings = structuredClone(DEFAULT_SETTINGS);
 	const target = { id: "codex", runtime: "openai-codex", url: backend.url, defaultModel: "gpt-6-sol" };
-	settings.targets = [target];
+	settings.connections = [target];
 	const bundle = createProvidersBundle(dispatchStubContext({ settings }));
 	bundle.contract.auth.setRuntimeOverrideForTarget(target, codexRuntime, token);
 	await bundle.extension.start();

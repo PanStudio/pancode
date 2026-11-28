@@ -334,7 +334,7 @@ export function workerMcpRuntimeRefusal(
 		runtime.id === "claude-sdk"
 			? "the Claude SDK runtime runs its own tool loop, which never reaches PanCode's MCP gateway"
 			: `runtime '${runtime.id}' runs its own tool loop, which never reaches PanCode's MCP gateway`;
-	return `dispatch: admission denied: agent '${agentId}' names MCP capabilities (${names.join(", ")}), and ${loop}; route the agent to a native target or remove the MCP tools from its recipe`;
+	return `dispatch: admission denied: agent '${agentId}' names MCP capabilities (${names.join(", ")}), and ${loop}; route the agent to a native connection or remove the MCP tools from its recipe`;
 }
 
 /** A refusal for an attested class the worker's admitted scope does not take, naming the remedy. */

@@ -465,7 +465,7 @@ test("config get, set and unset save one setting per scope, refuse bad input unw
 		for (const refused of [
 			["interface.exitSummary", "bogus"],
 			["nope.thing", "1"],
-			["chat.target", "x"],
+			["chat.connection", "x"],
 		]) {
 			strictEqual(config("set", ...refused).status, 2, refused.join(" "));
 		}

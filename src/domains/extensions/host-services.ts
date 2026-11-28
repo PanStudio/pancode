@@ -104,7 +104,7 @@ const COMPLETION_TIMEOUT_MS = 120_000;
 const KEEP_UNAVAILABLE = "Keep it unavailable";
 
 function assignCommand(extensionId: string): string {
-	return `pancode extensions services ${extensionId} --model <target>/<model>`;
+	return `pancode extensions services ${extensionId} --model <connection>/<model>`;
 }
 
 /** Characters over four, plus a little per message for its framing. An estimate the provider's count replaces. */
@@ -130,7 +130,7 @@ function resolveModelRoute(
 	if (!resolved.ok)
 		throw new Error(
 			resolved.diagnostics.find((entry) => entry.severity === "error")?.message ??
-				`target ${targetId} does not resolve model ${wireModelId}`,
+				`connection ${targetId} does not resolve model ${wireModelId}`,
 		);
 	const route = resolved.target;
 	return {
@@ -286,7 +286,7 @@ export function createExtensionHostServices(deps: ExtensionHostServicesDeps): Ex
 					question: [
 						`Extension ${binding.extensionId} asks for model completions: ${why}.`,
 						`It may spend up to ${declared?.sessionTokens ?? 0} tokens a session, at most ${declared?.maxOutputTokens ?? 0} per reply.`,
-						"Choose the target and model its calls go to, or type <target>/<model>. It never uses another route.",
+						"Choose the connection and model its calls go to, or type <connection>/<model>. It never uses another route.",
 					].join("\n"),
 					options: [
 						...suggested.map((label) => ({ label, description: "Assign this model to the extension" })),
@@ -302,7 +302,7 @@ export function createExtensionHostServices(deps: ExtensionHostServicesDeps): Ex
 			const pick = answer?.value?.trim() || answer?.options?.[0];
 			if (!pick || pick === KEEP_UNAVAILABLE) return undefined;
 			const slash = pick.indexOf("/");
-			if (slash <= 0 || slash === pick.length - 1) throw new Error(`"${pick}" is not <target>/<model>`);
+			if (slash <= 0 || slash === pick.length - 1) throw new Error(`"${pick}" is not <connection>/<model>`);
 			const target = pick.slice(0, slash);
 			const model = pick.slice(slash + 1);
 			if (binding.scope === "dev") {

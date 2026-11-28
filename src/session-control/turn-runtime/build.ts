@@ -38,7 +38,7 @@ export function ensureRuntime(rt: TurnRuntimeScope, options?: { silent?: boolean
 	setGlobalDefaultMaxOutputTokens(deps.getSettings().chat.maxOutputTokens);
 	if (!deps.knownTargets().has(target.target.id)) {
 		throw new TurnAdmissionError(
-			`[PanCode] orchestrator target=${target.target.id} unknown. Run \`pancode targets\` to see configured targets.`,
+			`[PanCode] orchestrator connection=${target.target.id} unknown. Run \`pancode connections\` to see configured connections.`,
 			"target-unknown",
 		);
 	}

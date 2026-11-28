@@ -49,7 +49,7 @@ test("setup shutdown waits for starting children and refuses subsequent starts",
 test("CLI runner: closed command table, exact argv, canonical cwd and prose outcomes", async () => {
 	for (const input of [
 		[],
-		["targets", "--json"],
+		["connections", "--json"],
 		{ kind: "shell", text: "echo hi" },
 		{ kind: "routing.models", extra: "--online" },
 		{ kind: "targets.use", id: "--help" },
@@ -72,11 +72,11 @@ test("CLI runner: closed command table, exact argv, canonical cwd and prose outc
 	const runner = new CliRunner({ ...h.env, PANCODE_WEB_CLI: fixture, PANCODE_WEB_COMMAND_LOG: log });
 	try {
 		const commands: { command: CliCommand; argv: string[] }[] = [
-			{ command: { kind: "targets.use", id: "local-1" }, argv: ["targets", "use", "local-1"] },
-			{ command: { kind: "targets.remove", id: "local-1" }, argv: ["targets", "remove", "local-1"] },
+			{ command: { kind: "targets.use", id: "local-1" }, argv: ["connections", "use", "local-1"] },
+			{ command: { kind: "targets.remove", id: "local-1" }, argv: ["connections", "remove", "local-1"] },
 			{ command: { kind: "routing.models" }, argv: ["models", "--json", "--offline"] },
-			{ command: { kind: "routing.profiles" }, argv: ["targets", "profile", "list", "--json"] },
-			{ command: { kind: "routing.bindings" }, argv: ["targets", "profile", "bindings", "--json"] },
+			{ command: { kind: "routing.profiles" }, argv: ["connections", "profile", "list", "--json"] },
+			{ command: { kind: "routing.bindings" }, argv: ["connections", "profile", "bindings", "--json"] },
 			{ command: { kind: "memory.list" }, argv: ["memory", "list", "--json"] },
 			{
 				command: { kind: "memory.decide", id: "mem-0123456789abcdef", decision: "reject" },

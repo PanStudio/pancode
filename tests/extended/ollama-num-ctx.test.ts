@@ -96,14 +96,14 @@ it("keeps the loaded window in charge when numCtx is unset", () => {
 	strictEqual(details.contextWindowSource, "loaded");
 });
 
-it("validates targets[].ollama.numCtx as a positive integer", () => {
+it("validates connections[].ollama.numCtx as a positive integer", () => {
 	const target = (ollama: unknown) => ({
-		targets: [{ id: "o", runtime: "ollama", url: "http://127.0.0.1:11434", ollama }],
+		connections: [{ id: "o", runtime: "ollama", url: "http://127.0.0.1:11434", ollama }],
 	});
 
 	const valid = validateSettings(target({ numCtx: 65_536 }));
 	deepStrictEqual(valid.issues, []);
-	deepStrictEqual(valid.settings.targets[0]?.ollama, { numCtx: 65_536 });
+	deepStrictEqual(valid.settings.connections[0]?.ollama, { numCtx: 65_536 });
 
 	for (const bad of [{ numCtx: 0 }, { numCtx: 1.5 }, { numCtx: "65536" }, { numCtx: 1, keepAlive: 1 }]) {
 		const result = validateSettings(target(bad));

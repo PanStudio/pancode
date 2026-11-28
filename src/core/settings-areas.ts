@@ -129,12 +129,13 @@ const place = (area: SettingsAreaId, group = ""): SettingsPlacement => ({ area, 
  * path. Anything unplaced falls into Advanced "Other" so no row is unreachable.
  */
 export function settingsPlacementForRow(id: string, path: string): SettingsPlacement {
-	if (path === "targets[].funding") return place("models", "Funding");
-	if (id === "targets" || id === "targets.add-cta" || under(path, "targets")) return place("models", "Connections");
+	if (path === "connections[].funding") return place("models", "Funding");
+	if (id === "connections" || id === "connections.add-cta" || under(path, "connections"))
+		return place("models", "Connections");
 	if (id.startsWith("maintenance.")) return place("advanced", "Maintenance");
 	if (RAW_COLLECTIONS.has(path) && !GUIDED_ROW_IDS.has(id)) return place("advanced", "Raw collections");
 	switch (path) {
-		case "chat.target":
+		case "chat.connection":
 		case "chat.model":
 			return place("models", "Chat model");
 		case "chat.thinkingLevel":
@@ -208,7 +209,7 @@ export function settingsPlacementForRow(id: string, path: string): SettingsPlace
 		case "context.workingSet.protectLastTurns":
 			return place("context", "Context cleanup");
 		case "context.memory.enabled":
-		case "context.memory.target":
+		case "context.memory.connection":
 		case "context.memory.model":
 		case "context.memory.thinkingLevel":
 		case "context.memory.cadenceToolCalls":
@@ -221,7 +222,7 @@ export function settingsPlacementForRow(id: string, path: string): SettingsPlace
 		case "context.memory.surfaces.history":
 			return place("context", "Proactive memory");
 		case "context.semantic.enabled":
-		case "context.semantic.target":
+		case "context.semantic.connection":
 		case "context.semantic.model":
 		case "context.semantic.assetIdentity":
 		case "context.semantic.projectorIdentity":
@@ -249,7 +250,7 @@ export function settingsPlacementForRow(id: string, path: string): SettingsPlace
 			return place("safety", "Spending & tool limits");
 		case "safety.sandbox":
 		case "safety.sandboxPassEnv":
-		case "safety.liveCheckTargets":
+		case "safety.liveCheckConnections":
 		case "safety.sandboxUnixSockets":
 		case "safety.sandboxUnconfinedLocalWorkers":
 		case "safety.workerIsolation":

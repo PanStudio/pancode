@@ -80,7 +80,7 @@ export interface ExecuteFleetRunInput {
 	 * verification's checks do; absent reads as `safety.sandbox: auto`.
 	 */
 	settings?: Readonly<
-		Pick<PancodeSettings, "safety" | "targets"> & {
+		Pick<PancodeSettings, "safety" | "connections"> & {
 			fleet?: Pick<PancodeSettings["fleet"], "limits"> & Partial<Pick<PancodeSettings["fleet"], "worktrees" | "nodes">>;
 		}
 	>;

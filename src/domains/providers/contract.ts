@@ -77,7 +77,7 @@ export interface TargetStatus {
 	/** Probe-only per-model load state keyed by wire model id. */
 	discoveredModelStates?: Readonly<Record<string, ProbeModelStatus>> | null;
 	/**
-	 * Result of the last opt-in live tool-call probe (`targets --probe --tools`).
+	 * Result of the last opt-in live tool-call probe (`connections --probe --tools`).
 	 * Held in memory with the rest of the status; never persisted.
 	 */
 	toolProbe?: ToolCallVerification;
@@ -125,7 +125,7 @@ export const PROVIDER_PROBE_TIMEOUT_MS = 5_000;
 export interface ProvidersContract {
 	list(): ReadonlyArray<TargetStatus>;
 
-	/** Null when the id is not in settings.targets. */
+	/** Null when the id is not in settings.connections. */
 	getTarget(id: string): TargetDescriptor | null;
 
 	/**
@@ -138,7 +138,7 @@ export interface ProvidersContract {
 	probeAllLive(options?: LiveProbeOptions): Promise<void>;
 
 	/**
-	 * Probe a single target live. Null when the id is not in settings.targets.
+	 * Probe a single target live. Null when the id is not in settings.connections.
 	 * `reasoning: true` opts into generating reasoning qualification; otherwise
 	 * only passive liveness and model-catalog checks run. `tools: true`
 	 * adds the streamed tool-call probe against the chat or default model.

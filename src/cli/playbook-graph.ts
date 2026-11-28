@@ -100,7 +100,7 @@ export function runPlaybookGraph(args: ReadonlyArray<string>): number {
 							: "";
 				const route =
 					step.target !== undefined
-						? ` target=${step.target}`
+						? ` connection=${step.target}`
 						: step.profile !== undefined
 							? ` profile=${step.profile}`
 							: "";

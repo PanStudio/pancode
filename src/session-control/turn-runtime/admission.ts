@@ -277,7 +277,7 @@ export function createStreamAdmission(scope: AgentBuildScope, watchdog: StallWat
 			// A refusal is not "no credential": Pi's "No API key" error would hide why, and the engine's env fallback must not run.
 			if (resolved.refused)
 				throw new Error(
-					resolved.detail ?? `PanCode refuses to send a credential to target '${scope.localRuntime.targetId}'.`,
+					resolved.detail ?? `PanCode refuses to send a credential to connection '${scope.localRuntime.targetId}'.`,
 				);
 			// A failed OAuth refresh carries its remedy in detail; Pi's own "No API key" error would drop it.
 			if (

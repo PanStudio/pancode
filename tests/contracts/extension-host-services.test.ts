@@ -183,7 +183,7 @@ test("a model call with no assignment names the command that assigns one, and re
 	const host = createExtensionHostServices({ providers, assignment: () => undefined });
 	await rejects(
 		host.complete?.(binding(env.dir), ask("hi"), live()) ?? Promise.resolve(),
-		/no model is assigned to extension scribe; run pancode extensions services scribe --model <target>\/<model>/u,
+		/no model is assigned to extension scribe; run pancode extensions services scribe --model <connection>\/<model>/u,
 	);
 	equal(faux.state.callCount, 0);
 });

@@ -82,7 +82,8 @@ export function campaignFacts(view: ResearchCampaign): Fact[] {
 		},
 		{
 			label: "Agent",
-			value: [campaign.agent.target, campaign.agent.model].filter(Boolean).join("/") || "the workspace's default target",
+			value:
+				[campaign.agent.target, campaign.agent.model].filter(Boolean).join("/") || "the workspace's default connection",
 		},
 		...(campaign.agent.goal ? [{ label: "Goal", value: campaign.agent.goal }] : []),
 	];
@@ -333,10 +334,10 @@ export function researchRequest(draft: ResearchDraft): { request: ResearchStartR
 	const goal = draft.goal.replace(/\s+/g, " ").trim();
 	if (goal.startsWith("-")) return { problem: "The goal cannot start with a dash." };
 	if (goal.length > 2000) return { problem: "The goal is longer than 2000 characters." };
-	if (draft.target && !ID.test(draft.target)) return { problem: "Pick a configured target." };
+	if (draft.target && !ID.test(draft.target)) return { problem: "Pick a configured connection." };
 	const model = draft.model.trim();
-	if (model && !MODEL.test(model)) return { problem: "The model id has characters a target never uses." };
-	if (model && !draft.target) return { problem: "Pick the target that serves this model." };
+	if (model && !MODEL.test(model)) return { problem: "The model id has characters a connection never uses." };
+	if (model && !draft.target) return { problem: "Pick the connection that serves this model." };
 	return {
 		request: {
 			check: draft.check,

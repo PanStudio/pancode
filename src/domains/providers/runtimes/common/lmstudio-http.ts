@@ -395,7 +395,7 @@ export async function listLmStudioModels(
 	maxAgeMs = 0,
 ): Promise<LmStudioCatalog> {
 	ctx.signal?.throwIfAborted();
-	if (!target.url) return { ok: false, models: [], error: "target has no url" };
+	if (!target.url) return { ok: false, models: [], error: "connection has no url" };
 	const root = lmStudioRootUrl(target.url);
 	const headers = lmStudioProbeHeaders(target, ctx);
 	const requestHeaders = JSON.stringify(headers);
@@ -443,7 +443,7 @@ export async function greetLmStudio(
 	target: TargetDescriptor,
 	ctx: ProbeContext,
 ): Promise<{ ok: boolean; latencyMs?: number; error?: string }> {
-	if (!target.url) return { ok: false, error: "target has no url" };
+	if (!target.url) return { ok: false, error: "connection has no url" };
 	const result = await requestLmStudioJson(
 		`${lmStudioRootUrl(target.url)}/lmstudio-greeting`,
 		{ headers: lmStudioProbeHeaders(target, ctx) },

@@ -32,7 +32,7 @@ import { telemetryCall } from "../harness/telemetry-view.js";
 it("a session writer opens with its settings and journals each change once, with both documents (#434)", async () => {
 	const env = await isolatePancodeEnv("pancode-config-records-");
 	const before = structuredClone(DEFAULT_SETTINGS);
-	before.targets = [
+	before.connections = [
 		{
 			id: "proxy",
 			runtime: "litellm",

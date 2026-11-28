@@ -142,29 +142,29 @@ export function groupHeader(
 
 export function targetAddCta(): SettingsCenterItem {
 	return {
-		id: "targets.add-cta",
-		label: "Add a target",
-		currentValue: "Open target wizard",
-		description: "Add a target without leaving the TUI. Review and save its runtime, credentials, URL and model.",
+		id: "connections.add-cta",
+		label: "Add a connection",
+		currentValue: "Open connection wizard",
+		description: "Add a connection without leaving the TUI. Review and save its runtime, credentials, URL and model.",
 		section: "models",
-		configPath: "targets.add-cta",
-		affordance: "Enter: open target wizard",
+		configPath: "connections.add-cta",
+		affordance: "Enter: open connection wizard",
 		scope: "live",
 		readOnly: false,
 		presentationKind: "action",
-		valueSegments: [{ text: "Open target wizard", tone: "neutral" }],
+		valueSegments: [{ text: "Open connection wizard", tone: "neutral" }],
 	};
 }
 
 export function targetUrlCta(): SettingsCenterItem {
 	return {
-		id: "targets.url-cta",
+		id: "connections.url-cta",
 		label: "Connect by URL",
 		currentValue: "Enter an endpoint URL",
 		description:
 			"Connect a model server or API by its URL: PanCode reads its model list, asks for a key only when the endpoint needs one, and uses the model you choose for chat.",
 		section: "models",
-		configPath: "targets.url-cta",
+		configPath: "connections.url-cta",
 		affordance: "Enter: connect by URL",
 		scope: "live",
 		readOnly: false,

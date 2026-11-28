@@ -26,7 +26,7 @@ export function printPlaintextCredentialWarning(): void {
 	process.stderr.write(
 		`${chalk.yellow("warning:")} API key stored unencrypted at ${authStoragePath()} (${credentialFileProtection()}).\n` +
 			"  It is readable by any process running as you. To keep the key off disk, configure the\n" +
-			"  target with an environment variable instead: pancode configure ... --api-key-env <VAR>.\n",
+			"  connection with an environment variable instead: pancode configure ... --api-key-env <VAR>.\n",
 	);
 }
 

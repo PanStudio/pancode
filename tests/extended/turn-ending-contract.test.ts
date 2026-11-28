@@ -251,7 +251,7 @@ describe("turn_end effects inside one chat-loop run", () => {
 			}),
 		} as unknown as MiddlewareContract;
 		const settings = structuredClone(DEFAULT_SETTINGS);
-		settings.chat.target = target.id;
+		settings.chat.connection = target.id;
 		settings.chat.model = "chat";
 		settings.chat.thinkingLevel = "off";
 		settings.chat.prewarm = false;

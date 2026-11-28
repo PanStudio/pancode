@@ -20,15 +20,16 @@ async function setup(beforeMetadata?: () => Promise<void>) {
 	const env = await isolatePancodeEnv("pancode-dispatch-thinking-");
 	const fixture = await startGatewayThinkingFixture("lm-studio", "local/gemma-4-26b-a4b-it", beforeMetadata);
 	const settings = structuredClone(DEFAULT_SETTINGS);
-	settings.targets = [
+	settings.connections = [
 		{ id: "worker", runtime: "litellm", url: fixture.url, defaultModel: fixture.modelId },
 		{ id: "chat", runtime: "litellm", url: fixture.url, defaultModel: "dynamo/qwen3.8-27b" },
 	];
-	settings.fleet.default.target = "worker";
+	settings.fleet.default.connection = "worker";
 	settings.fleet.default.model = fixture.modelId;
 	const context = dispatchStubContext({ settings });
 	const providers = createProvidersBundle(context);
-	for (const target of settings.targets) providers.contract.auth.setRuntimeOverrideForTarget(target, litellm, "fixture");
+	for (const target of settings.connections)
+		providers.contract.auth.setRuntimeOverrideForTarget(target, litellm, "fixture");
 	await providers.extension.start();
 	const specs: WorkerSpec[] = [];
 	const probes: Array<ReturnType<typeof providers.contract.probeTarget>> = [];
@@ -215,7 +216,7 @@ test("a URL changed while metadata is pending cannot silently reroute the worker
 	});
 	try {
 		changeRoute = () => {
-			const target = f.settings.targets[0];
+			const target = f.settings.connections[0];
 			ok(target);
 			target.url = `${f.fixture.url}/changed`;
 		};

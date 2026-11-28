@@ -9,7 +9,7 @@ import { ConfigGraph, SettingsReport } from "./settings.js";
 import { SettingsControls, SettingWrite, SettingWritten } from "./settings-controls.js";
 import { CliTargets, Routing } from "./targets-cli.js";
 
-const targetParams = Type.Object({ targetId: Id }, { additionalProperties: false });
+const targetParams = Type.Object({ connectionId: Id }, { additionalProperties: false });
 /** Settings are the user layer alone until a workspace is named; then that project's layers apply too. */
 const settingsScope = Type.Object({ workspace: Type.Optional(Id) }, { additionalProperties: false });
 /** Targets, routing, settings and the config graph. */
@@ -18,7 +18,7 @@ export const settingsRoutes = {
 		...get,
 		params: operationParams,
 		response: CliTargets,
-		summary: "Configured targets through the canonical CLI",
+		summary: "Configured connections through the canonical CLI",
 		...runtimeRoutes.targetsList,
 	}),
 	routing: defineRoute({
@@ -30,36 +30,36 @@ export const settingsRoutes = {
 	}),
 	targetsProbe: defineRoute({
 		...post,
-		params: Type.Object({ id: Id, targetId: Id }, { additionalProperties: false }),
+		params: Type.Object({ id: Id, connectionId: Id }, { additionalProperties: false }),
 		response: Accepted,
-		summary: "Probe configured targets and return this target's status",
+		summary: "Probe configured connections and return this connection's status",
 		...runtimeRoutes.targetsProbe,
 	}),
 	targetsUse: defineRoute({
 		...post,
-		params: Type.Object({ id: Id, targetId: Id }, { additionalProperties: false }),
+		params: Type.Object({ id: Id, connectionId: Id }, { additionalProperties: false }),
 		response: Accepted,
-		summary: "Use a target for chat and fleet through the CLI",
+		summary: "Use a connection for chat and fleet through the CLI",
 		...runtimeRoutes.targetsUse,
 	}),
 	targetsRemove: defineRoute({
 		...post,
-		params: Type.Object({ id: Id, targetId: Id }, { additionalProperties: false }),
+		params: Type.Object({ id: Id, connectionId: Id }, { additionalProperties: false }),
 		response: Accepted,
-		summary: "Remove a configured target through the CLI",
+		summary: "Remove a configured connection through the CLI",
 		...runtimeRoutes.targetsRemove,
 	}),
 	targetsSignOut: defineRoute({
 		...post,
-		params: Type.Object({ id: Id, targetId: Id }, { additionalProperties: false }),
+		params: Type.Object({ id: Id, connectionId: Id }, { additionalProperties: false }),
 		response: Accepted,
-		summary: "Remove the stored credential for a target through the CLI",
+		summary: "Remove the stored credential for a connection through the CLI",
 		...runtimeRoutes.targetsSignOut,
 	}),
 	userTargetsList: defineRoute({
 		...get,
 		response: CliTargets,
-		summary: "The user's configured targets with no workspace open",
+		summary: "The user's configured connections with no workspace open",
 		...runtimeRoutes.userTargetsList,
 	}),
 	userRouting: defineRoute({
@@ -72,28 +72,28 @@ export const settingsRoutes = {
 		...post,
 		params: targetParams,
 		response: Accepted,
-		summary: "Probe a user-level target with no workspace open",
+		summary: "Probe a user-level connection with no workspace open",
 		...runtimeRoutes.userTargetsProbe,
 	}),
 	userTargetsUse: defineRoute({
 		...post,
 		params: targetParams,
 		response: Accepted,
-		summary: "Use a target for chat and fleet with no workspace open",
+		summary: "Use a connection for chat and fleet with no workspace open",
 		...runtimeRoutes.userTargetsUse,
 	}),
 	userTargetsRemove: defineRoute({
 		...post,
 		params: targetParams,
 		response: Accepted,
-		summary: "Remove a user-level target with no workspace open",
+		summary: "Remove a user-level connection with no workspace open",
 		...runtimeRoutes.userTargetsRemove,
 	}),
 	userTargetsSignOut: defineRoute({
 		...post,
 		params: targetParams,
 		response: Accepted,
-		summary: "Remove the stored credential for a target with no workspace open",
+		summary: "Remove the stored credential for a connection with no workspace open",
 		...runtimeRoutes.userTargetsSignOut,
 	}),
 	settingsReport: defineRoute({

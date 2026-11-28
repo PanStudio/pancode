@@ -4,7 +4,7 @@ import { defineCommandSpec, type LeafFlagsSpec } from "../lib/help.js";
 
 export const spec = defineCommandSpec({
 	path: ["configure"],
-	summary: "guided setup for targets, models and settings",
+	summary: "guided setup for connections, models and settings",
 	hidden: false,
 });
 

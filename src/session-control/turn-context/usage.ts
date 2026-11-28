@@ -55,7 +55,7 @@ export function createTurnContextUsage(shared: TurnContextScope) {
 		>
 	> = {
 		inspectLiveBudget(): BudgetInspection {
-			const targetId = shared.deps.getSettings().chat?.target;
+			const targetId = shared.deps.getSettings().chat?.connection;
 			const target = !shared.state.runtime && targetId ? shared.deps.providers.getTarget(targetId) : null;
 			const runtime =
 				shared.state.runtime?.runtimeResolution.runtime ??
@@ -159,7 +159,7 @@ export function createTurnContextUsage(shared: TurnContextScope) {
 					settings.context.compaction.maxTokens,
 					getCatalogModelForRuntime(
 						(shared.state.runtime ? undefined : shared.currentContextSnapshot?.runtimeId) ??
-							settings.targets.find((target) => target.id === settings.chat.target)?.runtime ??
+							settings.connections.find((target) => target.id === settings.chat.connection)?.runtime ??
 							"",
 						settings.chat.model ?? "",
 					),
@@ -177,7 +177,7 @@ export function createTurnContextUsage(shared: TurnContextScope) {
 								route.triggerReserve(economic.threshold * economic.triggerWindow),
 							)
 						: economic.threshold;
-			const provider = routed?.targetId ?? settings.chat?.target ?? null;
+			const provider = routed?.targetId ?? settings.chat?.connection ?? null;
 			const model = routed?.wireModelId ?? settings.chat?.model ?? null;
 			const liveToolCount = shared.state.runtime?.agent.state.tools.length ?? 0;
 			// The total is the published view's, the figure the footer and admission read; the capture only splits it.

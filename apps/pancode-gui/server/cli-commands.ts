@@ -91,17 +91,17 @@ export function commandPlan(input: unknown, cwd?: string): { argv: string[]; out
 		case "run.verify":
 			return { argv: ["fleet", "verify", input.id, "--json"], output: "json" };
 		case "targets.use":
-			return { argv: ["targets", "use", input.id], output: "exit" };
+			return { argv: ["connections", "use", input.id], output: "exit" };
 		case "targets.remove":
-			return { argv: ["targets", "remove", input.id], output: "exit" };
+			return { argv: ["connections", "remove", input.id], output: "exit" };
 		case "targets.signout":
 			return { argv: ["auth", "logout", input.id], output: "exit" };
 		case "routing.models":
 			return { argv: ["models", "--json", "--offline"], output: "json" };
 		case "routing.profiles":
-			return { argv: ["targets", "profile", "list", "--json"], output: "json" };
+			return { argv: ["connections", "profile", "list", "--json"], output: "json" };
 		case "routing.bindings":
-			return { argv: ["targets", "profile", "bindings", "--json"], output: "json" };
+			return { argv: ["connections", "profile", "bindings", "--json"], output: "json" };
 		case "arena.list":
 			return { argv: ["arena", "list", "--json"], output: "json" };
 		case "arena.standings":

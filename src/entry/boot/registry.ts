@@ -216,7 +216,7 @@ export function buildBootRegistry(stageInput: BootRegistryInput) {
 		stateDir: pancodeStateDir(),
 		session: () => session?.current(),
 		autonomy: resolveEffectiveAutonomy,
-		identitySettings: () => ({ targets: cells.getCurrentSettings().targets }),
+		identitySettings: () => ({ connections: cells.getCurrentSettings().connections }),
 	});
 	// ask_user is a human interview tool, so it is registered only where a person
 	// answers: the TUI, an ACP client that advertised interviews, or a run's --answers

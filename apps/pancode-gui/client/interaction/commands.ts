@@ -70,7 +70,7 @@ export const DESTINATIONS: readonly Destination[] = [
 	{ label: "Hub", path: "/hub", keywords: ["packs", "skills", "components", "agents", "extensions"] },
 	{ label: "System", path: "/system", keywords: ["doctor", "health", "paths"] },
 	{ label: "Usage", path: "/usage", keywords: ["tokens", "cost", "spend", "report"] },
-	{ label: "Targets", path: "/settings/targets", keywords: ["providers", "models"] },
+	{ label: "Connections", path: "/settings/connections", keywords: ["providers", "models"] },
 	{ label: "Routing", path: "/settings/routing", keywords: ["profiles", "bindings", "offline"] },
 	{ label: "Effective settings", path: "/settings/effective", keywords: ["values", "layers", "origin"] },
 	{ label: "Why these settings", path: "/settings/why", keywords: ["provenance", "source"] },

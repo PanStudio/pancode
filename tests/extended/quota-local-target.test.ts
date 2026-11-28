@@ -17,7 +17,7 @@ test("BT-006 local cost appears only for configured local runtime targets", asyn
 		const configure = (runtime: string) =>
 			writeFileSync(
 				join(env.dir, "config/settings.yaml"),
-				`version: 2\ntargets:\n  - id: test\n    runtime: ${runtime}\n`,
+				`version: 2\nconnections:\n  - id: test\n    runtime: ${runtime}\n`,
 			);
 		configure("openrouter");
 		const cloud = createQuotaService({ providers: [] });

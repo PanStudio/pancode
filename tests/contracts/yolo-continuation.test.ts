@@ -44,11 +44,11 @@ async function harness(script: readonly Step[], options: { autonomy?: "yolo" | "
 	const settings = structuredClone(DEFAULT_SETTINGS);
 	settings.chat.prewarm = false;
 	if (options.runtimeId !== undefined)
-		settings.targets = [{ id: "fixture", runtime: options.runtimeId, defaultModel: "fixture-model" }];
+		settings.connections = [{ id: "fixture", runtime: options.runtimeId, defaultModel: "fixture-model" }];
 	const context = dispatchStubContext({ settings });
-	const target = settings.targets[0];
+	const target = settings.connections[0];
 	ok(target);
-	settings.chat.target = target.id;
+	settings.chat.connection = target.id;
 	settings.chat.model = target.defaultModel ?? "gpt-4o";
 	const entries: SessionEntry[] = [];
 	let leaf: string | null = null;

@@ -87,7 +87,7 @@ export function listConnectableProviderRows(): ConnectableProviderRow[] {
 		.filter((entry) => entry.connectable || entry.runtimeId === OWN_LOGIN_RUNTIME)
 		.map((entry) => {
 			const runtime = getRuntimeRegistry().get(entry.runtimeId);
-			const targets = settings.targets.filter((target) => target.runtime === entry.runtimeId);
+			const targets = settings.connections.filter((target) => target.runtime === entry.runtimeId);
 			if (!entry.connectable) return { entry, status: null, targetCount: targets.length };
 			let status = runtime ? auth.statusForTarget(resolveRuntimeAuthTarget(runtime), { includeFallback: false }) : null;
 			// configure stores a target's key under its own `apiKeyRef` (`target:<id>`),
@@ -144,7 +144,7 @@ export function listLogoutChoices(): LogoutChoice[] {
 	ensureRegistryPopulated();
 	const settings = readSettings();
 	const auth = openAuthStorage();
-	const targetIds = new Set(settings.targets.map((target) => target.id));
+	const targetIds = new Set(settings.connections.map((target) => target.id));
 	const stored = (status: AuthStatus): LogoutChoice["source"] | null =>
 		status.available && (status.source === "stored-api-key" || status.source === "stored-oauth") ? status.source : null;
 	const byKey = new Map<string, { choice: LogoutChoice; sharedWith: string[] }>();
@@ -169,11 +169,11 @@ export function listLogoutChoices(): LogoutChoice[] {
 			{ id, label: entry.label, group: entry.group, authTarget: runtimeAuth },
 			auth.statusForTarget(runtimeAuth, { includeFallback: false }),
 		);
-		for (const target of settings.targets) {
+		for (const target of settings.connections) {
 			if (target.runtime !== entry.runtimeId || !targetRequiresAuth(target, runtime)) continue;
 			const targetAuth = resolveAuthTarget(target, runtime);
 			add(
-				{ id: target.id, label: `${entry.label} target`, group: entry.group, authTarget: targetAuth },
+				{ id: target.id, label: `${entry.label} connection`, group: entry.group, authTarget: targetAuth },
 				auth.statusForTarget(targetAuth, { includeFallback: false }),
 			);
 		}
@@ -230,7 +230,7 @@ export function renderConnectableProviderRows(rows: ReadonlyArray<ConnectablePro
 					: "disconnected";
 		return {
 			group: row.entry.group,
-			cells: [row.entry.runtimeId, row.entry.label, status, `targets=${row.targetCount}`],
+			cells: [row.entry.runtimeId, row.entry.label, status, `connections=${row.targetCount}`],
 		};
 	});
 	const widths = columnWidths(renderedRows.map((row) => row.cells));

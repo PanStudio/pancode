@@ -59,7 +59,7 @@ export function createSideRequestAdmission(deps: {
 		const session = deps.currentSession();
 		const repoIdentity = deps.repoIdentity();
 		const target = deps.providers.getTarget(targetId);
-		if (target === null) throw new LlmAdmissionRefused(`target '${targetId}' is no longer configured`);
+		if (target === null) throw new LlmAdmissionRefused(`connection '${targetId}' is no longer configured`);
 		const pricing = resolveEffectivePricing(
 			target,
 			deps.providers.getRuntime?.(target.runtime) ?? { id: target.runtime },

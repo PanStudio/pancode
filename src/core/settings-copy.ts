@@ -17,9 +17,9 @@ export const SETTINGS_LABELS_BY_ID = {
 	"integrations.git.commitAuthor": "Author of autonomous commits",
 	safetyNet: "Safety net",
 	"chat.thinkingLevel": "Thinking level",
-	"chat.target": "Chat connection",
+	"chat.connection": "Chat connection",
 	"chat.model": "Chat model",
-	"context.memory.target": "Memory connection",
+	"context.memory.connection": "Memory connection",
 	"context.memory.model": "Memory model",
 	"context.memory.enabled": "Proactive memory",
 	"context.memory.cadenceToolCalls": "Tools between memory updates",
@@ -27,7 +27,7 @@ export const SETTINGS_LABELS_BY_ID = {
 	"context.memory.maxOutputTokens": "Memory note length",
 	"context.memory.timeoutMs": "Memory response time",
 	"chat.prewarm": "Prompt pre-warm",
-	"fleet.default.target": "Default fleet connection",
+	"fleet.default.connection": "Default fleet connection",
 	"fleet.default.model": "Default fleet model",
 	"fleet.default.thinkingLevel": "Default thinking level",
 	"fleet.profiles": "Add profile",
@@ -85,7 +85,7 @@ export const SETTINGS_LABELS_BY_ID = {
 	"interface.smoothStreaming": "Smooth streaming",
 	"interface.desktopNotifications": "Desktop notifications",
 	"safety.review.enabled": "Review changed work",
-	"safety.review.target": "Review connection",
+	"safety.review.connection": "Review connection",
 	"safety.review.cadenceToolCalls": "Tools between reviews",
 	"integrations.providerPackages": "Provider packages",
 	"context.compaction.model": "Compaction model",
@@ -93,7 +93,7 @@ export const SETTINGS_LABELS_BY_ID = {
 	"integrations.externalAgents.defaults.connectTimeoutMs": "Time for agent to connect",
 	"integrations.externalAgents.defaults.turnTimeoutMs": "Maximum agent turn time",
 	"integrations.externalAgents.defaults.permissionTimeoutMs": "Time for agent permission",
-	targets: "Configured connections",
+	connections: "Configured connections",
 	funding: "Funding pools",
 	"interface.keybindings": "Keybinding overrides",
 	"integrations.externalAgents.entries": "Available agents",
@@ -118,9 +118,9 @@ export const SETTINGS_DESCRIPTIONS_BY_ID = {
 		"Who authors commits PanCode makes on its own: dispatched workers and their landing, headless runs, and scheduled jobs.",
 	safetyNet: "Always-on rails; tuned in .pancode/safety.yaml.",
 	"chat.thinkingLevel": "How much reasoning the chat model uses before answering.",
-	"chat.target": "Connection that answers in chat.",
+	"chat.connection": "Connection that answers in chat.",
 	"chat.model": "Chat model override; unset uses the connection default.",
-	"context.memory.target":
+	"context.memory.connection":
 		"Connection for task memory. With no memory connection or model set, memory uses the chat route.",
 	"context.memory.model":
 		"Dedicated task-memory model. With no memory connection or model set, memory uses the chat route.",
@@ -130,7 +130,7 @@ export const SETTINGS_DESCRIPTIONS_BY_ID = {
 	"context.memory.maxOutputTokens": "Maximum length of one memory reminder, in tokens.",
 	"context.memory.timeoutMs": "How long PanCode waits for a memory model response.",
 	"chat.prewarm": "Send the next turn's known prefix ahead of time so a local server has already prefilled it.",
-	"fleet.default.target": "Default connection for delegated fleet work.",
+	"fleet.default.connection": "Default connection for delegated fleet work.",
 	"fleet.default.model": "Default fleet model override; unset uses the connection default.",
 	"fleet.default.thinkingLevel": "Reasoning budget for dispatched workers.",
 	"fleet.profiles": "Saved connection, model, and reasoning choices for workers. Enter adds one.",
@@ -139,7 +139,7 @@ export const SETTINGS_DESCRIPTIONS_BY_ID = {
 	"fleet.staggerSharedPrefix":
 		"On by default; workers that share a prompt prefix start after the leader streams (at most 15 s), so they reuse its cache.",
 	"fleet.retry.routeCooldownMs":
-		"How long a failing target, runtime, and model route is skipped before it is tried again.",
+		"How long a failing connection, runtime, and model route is skipped before it is tried again.",
 	"fleet.adaptiveRouting.roles": "Types of worker allowed to use an automatically selected model.",
 	"fleet.adaptiveRouting.postures": "Priorities that automatic model selection may use for workers.",
 	"fleet.adaptiveRouting.agentRoles": "Specific agents allowed to use automatic model selection.",
@@ -157,7 +157,7 @@ export const SETTINGS_DESCRIPTIONS_BY_ID = {
 	"chat.modelPicker.recentLimit": "How many recently used models /model remembers.",
 	"chat.modelPicker.favorites": "Connections and models pinned in the model picker.",
 	"safety.limits.sessionCostUsd": "Per-session cost cap.",
-	"chat.maxOutputTokens": "Output tokens requested per turn, applied to every target.",
+	"chat.maxOutputTokens": "Output tokens requested per turn, applied to every connection.",
 	"context.toolResultMaxBytes": "Maximum bytes returned from one tool result before the full text spills to scratch.",
 	"fleet.concurrency": "Maximum number of workers running at the same time.",
 	"safety.limits.chatToolCallsPerTurn": "Maximum tool uses PanCode may make during one chat turn.",
@@ -195,7 +195,7 @@ export const SETTINGS_DESCRIPTIONS_BY_ID = {
 	"interface.desktopNotifications":
 		"Content-free desktop notification when a turn ends, a detached batch settles, or an approval parks.",
 	"safety.review.enabled": "After PanCode changes files, ask a read-only reviewer to check the work.",
-	"safety.review.target": "Connection used for the review. Leave blank to use the chat connection.",
+	"safety.review.connection": "Connection used for the review. Leave blank to use the chat connection.",
 	"safety.review.cadenceToolCalls":
 		"Also review during a long turn after this many tool uses; leave blank for an end-of-turn review only.",
 	"integrations.providerPackages":
@@ -207,7 +207,7 @@ export const SETTINGS_DESCRIPTIONS_BY_ID = {
 	"integrations.externalAgents.defaults.turnTimeoutMs": "How long a single delegated turn may run.",
 	"integrations.externalAgents.defaults.permissionTimeoutMs":
 		"How long PanCode waits for your answer to an external agent's permission request.",
-	targets: "Inference targets available for chat and workers. Add one with `pancode configure`.",
+	connections: "Inference connections available for chat and workers. Add one with `pancode configure`.",
 	funding:
 		"Optional user-owned fees, grants, payers and electricity facts for reports. Never grants spending authority.",
 	"interface.keybindings": "Custom key overrides layered on the defaults.",
@@ -306,7 +306,7 @@ export const SETTINGS_HELP_BY_ID: Partial<Record<string, string>> = {
 		"Supported terminals show a brief desktop alert. Alerts never include your prompt, file paths, or model output.",
 	"safety.review.enabled":
 		"The reviewer reads the files changed during the turn and reports blockers in the transcript. It runs in interactive sessions only.",
-	"safety.review.target": "Choose a connection for the reviewer. Leave blank to use the current chat connection.",
+	"safety.review.connection": "Choose a connection for the reviewer. Leave blank to use the current chat connection.",
 	"safety.review.cadenceToolCalls":
 		"Set a tool count to check work during a long turn. Leave blank to review only when the turn ends.",
 	"interface.keybindings":
@@ -482,8 +482,8 @@ export const EXTRA_HELP: Record<string, [string, string]> = {
 		"Semantic search",
 		"Make the optional project search index available to PanCode after pinning a qualified embedding route.",
 	],
-	"context.semantic.target": ["Embedding connection", "Target id of the qualified embedding route."],
-	"context.semantic.model": ["Embedding model", "Exact model id served by the embedding target."],
+	"context.semantic.connection": ["Embedding connection", "Connection id of the qualified embedding route."],
+	"context.semantic.model": ["Embedding model", "Exact model id served by the embedding connection."],
 	"context.semantic.assetIdentity": ["Embedding asset identity", "GGUF SHA-256 or a visible unverified operator label."],
 	"context.semantic.projectorIdentity": [
 		"Embedding projector identity",
@@ -594,7 +594,7 @@ export const EXTRA_HELP: Record<string, [string, string]> = {
 		"Safety judge",
 		"At autonomy default, a model reviews each call that would need your approval against your own messages, then runs it or refuses it back to PanCode with a reason. It asks you when it cannot decide, and after 3 refusals in a row or 20 in a session. User settings only.",
 	],
-	"safety.judge.target": [
+	"safety.judge.connection": [
 		"Safety judge connection",
 		"Connection the safety judge asks. Leave blank to use the chat connection. User settings only.",
 	],
@@ -618,9 +618,9 @@ export const EXTRA_HELP: Record<string, [string, string]> = {
 		"Sandbox environment pass-through",
 		"Environment variables your sandboxed commands keep although they look like credentials. Every other token, key, password and URL with a password is removed before a sandboxed command starts, because it can reach the network without asking. User settings only.",
 	],
-	"safety.liveCheckTargets": [
-		"Live-check login targets",
-		"Target ids whose own login file your sandboxed commands may read, read-only, so a live check of a build can sign in (copilot-sdk targets: the official copilot login in $COPILOT_HOME/config.json). Dispatched workers keep it hidden. User settings only.",
+	"safety.liveCheckConnections": [
+		"Live-check login connections",
+		"Connection ids whose own login file your sandboxed commands may read, read-only, so a live check of a build can sign in (copilot-sdk connections: the official copilot login in $COPILOT_HOME/config.json). Dispatched workers keep it hidden. User settings only.",
 	],
 	"safety.sandboxUnixSockets": [
 		"Sandbox unix sockets",
@@ -692,7 +692,7 @@ export const EXTRA_HELP: Record<string, [string, string]> = {
 	],
 	"fleet.profiles": [
 		"Worker profiles",
-		"Named target, model, thinking, and placement choices. Use Fleet's profile actions for guided edits, or edit this JSON object.",
+		"Named connection, model, thinking, and placement choices. Use Fleet's profile actions for guided edits, or edit this JSON object.",
 	],
 	models: [
 		"Model tiers",
@@ -706,7 +706,7 @@ export const EXTRA_HELP: Record<string, [string, string]> = {
 		"Steering triage",
 		"Experimental. Once messages queued during a run settle, a side model reads them: an unrelated task waits for the end of the turn and a confident stop may interrupt the run. Off, every queued message lands where your key put it.",
 	],
-	"chat.steering.triage.target": [
+	"chat.steering.triage.connection": [
 		"Steering triage connection",
 		"Connection the triage round uses. Empty uses the session's active connection.",
 	],
@@ -816,7 +816,7 @@ export const EXTRA_HELP: Record<string, [string, string]> = {
 	],
 	"systemOne.use": [
 		"Decision engine",
-		"Experimental opt-in. Off until chosen. Names what answers the consult tool, the judge screen and steering triage, one route or an ordered list: jev, memory, main, a declared engine or a target. Applies on the next start. A hosted route receives web and MCP result text at judge time.",
+		"Experimental opt-in. Off until chosen. Names what answers the consult tool, the judge screen and steering triage, one route or an ordered list: jev, memory, main, a declared engine or a connection. Applies on the next start. A hosted route receives web and MCP result text at judge time.",
 	],
 	"fleet.retry.breakerThreshold": [
 		"Failures before cooldown",

@@ -24,15 +24,15 @@ export function selectModel(
 	recentLimit?: number,
 ): { target: string; model: string; thinkingLevel: ThinkingLevel } {
 	const descriptor = providers.getTarget(selection.target);
-	if (!descriptor) throw new Error(`unknown orchestrator target '${selection.target}'`);
+	if (!descriptor) throw new Error(`unknown orchestrator connection '${selection.target}'`);
 	const runtime = providers.getRuntime(descriptor.runtime);
 	if (!runtime)
 		throw new Error(
-			`cannot use target '${selection.target}' as orchestrator target because ${runtimeNotRegistered(descriptor.runtime)}`,
+			`cannot use connection '${selection.target}' as orchestrator connection because ${runtimeNotRegistered(descriptor.runtime)}`,
 		);
 	if (!isOrchestratorEligibleRuntime(runtime))
 		throw new Error(
-			`cannot use target '${selection.target}' as orchestrator target because runtime '${runtime.id}' is not an HTTP/native runtime`,
+			`cannot use connection '${selection.target}' as orchestrator connection because runtime '${runtime.id}' is not an HTTP/native runtime`,
 		);
 	// The setting keeps what the operator asked for, and each request resolves what the model does with it. Saving
 	// the clamped level left thinking off for good after one stop on a model that has none.

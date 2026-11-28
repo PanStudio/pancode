@@ -4,7 +4,7 @@ import { defineCommandSpec, type LeafFlagsSpec } from "../lib/help.js";
 
 export const spec = defineCommandSpec({
 	path: ["auth"],
-	summary: "list, check, sign in to or sign out of target and runtime credentials",
+	summary: "list, check, sign in to or sign out of connection and runtime credentials",
 	hidden: false,
 });
 

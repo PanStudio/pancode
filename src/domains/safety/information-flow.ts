@@ -619,7 +619,7 @@ function describeDestination(destination: FlowDestination): string {
 			? `tool ${destination.tool}`
 			: `tool ${destination.tool} -> ${destination.endpoint}`;
 	}
-	return `target ${destination.targetId} (${destination.runtime}, ${destination.endpoint ?? "no endpoint"})`;
+	return `connection ${destination.targetId} (${destination.runtime}, ${destination.endpoint ?? "no endpoint"})`;
 }
 
 /** A pinned recipient in the words the destination is described with; other references as written. */
@@ -628,7 +628,7 @@ function describeRecipient(ref: string): string {
 	try {
 		const tuple = JSON.parse(ref.slice(ref.indexOf(":") + 1)) as unknown[];
 		if (ref.startsWith("mcp:")) return `mcp server ${String(tuple[0])}`;
-		return `target ${String(tuple[0])} (${String(tuple[1])}, ${tuple[2] === null ? "no endpoint" : String(tuple[2])})`;
+		return `connection ${String(tuple[0])} (${String(tuple[1])}, ${tuple[2] === null ? "no endpoint" : String(tuple[2])})`;
 	} catch {
 		return ref;
 	}
@@ -832,7 +832,7 @@ export function flowUnmediatedAgentRefusal(
 	const unapproved = denied.filter((rule) => !policy.trusted && !policy.approvedRuleIds?.includes(rule.id));
 	const remedy =
 		unapproved.length > 0
-			? `Dispatch to a native HTTP target, or approve the policy with pancode config trust safety and restart; unapproved rules (${unapproved.map((rule) => rule.id).join(", ")}) admit no destination`
-			: "Dispatch to a native HTTP target, or add the target to the rules' recipients and approve again with pancode config trust safety";
+			? `Dispatch to a native HTTP connection, or approve the policy with pancode config trust safety and restart; unapproved rules (${unapproved.map((rule) => rule.id).join(", ")}) admit no destination`
+			: "Dispatch to a native HTTP connection, or add the connection to the rules' recipients and approve again with pancode config trust safety";
 	return `dispatch: information-flow rules (${denied.map((rule) => rule.id).join(", ")}) do not allow ${where}; its runtime cannot admit its own model requests. ${remedy}`;
 }

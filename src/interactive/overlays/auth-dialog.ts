@@ -57,8 +57,8 @@ function classifyAuthLine(line: string): AuthRow {
 			label: choice.groups.label ?? "",
 		};
 	}
-	if (/^Target ready\b/.test(normalized)) return { kind: "ok", text: normalized };
-	if (/^(Target check failed|Unknown selection:)/.test(normalized)) return { kind: "error", text: normalized };
+	if (/^Connection ready\b/.test(normalized)) return { kind: "ok", text: normalized };
+	if (/^(Connection check failed|Unknown selection:)/.test(normalized)) return { kind: "error", text: normalized };
 	const fact = FACT_LINE.exec(normalized);
 	if (fact?.groups) return { kind: "fact", label: fact.groups.key ?? "", value: fact.groups.value ?? "" };
 	return { kind: "text", text: normalized };

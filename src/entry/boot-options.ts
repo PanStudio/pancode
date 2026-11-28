@@ -79,7 +79,7 @@ export interface BootOptions {
 	 * boot, so the orchestrator receives the full id; `latest` with nothing to continue starts a fresh session.
 	 */
 	resume?: StartupResume;
-	/** Global `--target`/`--model`: the interactive session's chat route, resolved like `run`'s; settings.yaml is untouched. */
+	/** Global `--connection`/`--model`: the interactive session's chat route, resolved like `run`'s; settings.yaml is untouched. */
 	route?: { target?: string; model?: string };
 	headless?: {
 		/** `run --systemone`: the one setting for this run, an engine name or `off`. */

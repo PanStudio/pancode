@@ -249,7 +249,7 @@ function dispatchRequestFromArgs(
 		}
 		if (briefing.length > 0) request.briefing = briefing;
 	}
-	const target = stringArg(args, "target");
+	const target = stringArg(args, "connection");
 	if (target) request.target = target;
 	const model = stringArg(args, "model");
 	if (model) request.model = model;

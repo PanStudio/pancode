@@ -305,7 +305,7 @@ export function validateJobSpec(spec: unknown): Validated {
 
 	if ("target" in spec && spec.target !== undefined) {
 		if (typeof spec.target !== "string" || spec.target.length === 0) {
-			errors.push("target must be a non-empty string");
+			errors.push("connection must be a non-empty string");
 		}
 	}
 
@@ -354,7 +354,7 @@ export function validateJobSpec(spec: unknown): Validated {
 			spec.allowedCandidates.length === 0 ||
 			spec.allowedCandidates.some((candidate) => !isValidFailoverCandidate(candidate))
 		) {
-			errors.push("allowedCandidates must be a non-empty array of exact {agentId, target, model, node} tuples");
+			errors.push("allowedCandidates must be a non-empty array of exact {agentId, connection, model, node} tuples");
 		}
 	}
 	if (spec.failover === "approved" && (!Array.isArray(spec.allowedCandidates) || spec.allowedCandidates.length === 0)) {

@@ -168,7 +168,7 @@ const captureStderr = (run: () => Promise<number>) => captureStream(process.stde
 describe("provider transport boundary", () => {
 	it("applies a model-picker selection for the session on Enter", () => {
 		const settings = structuredClone(DEFAULT_SETTINGS) as PancodeSettings;
-		settings.chat.target = "old-target";
+		settings.chat.connection = "old-target";
 		settings.chat.model = "old-model";
 		const transitions: { state: OverlayState; handle: OverlayHandle | null } = { state: "closed", handle: null };
 		const captured: { modelView?: ModelOverlayView; scopeDeps?: OpenModelScopeOverlayDeps } = {};
@@ -190,7 +190,7 @@ describe("provider transport boundary", () => {
 			getSettings: () => settings,
 			onSelectModel: (ref, scope) => {
 				strictEqual(scope, "session");
-				settings.chat.target = ref.target;
+				settings.chat.connection = ref.target;
 				settings.chat.model = ref.model;
 			},
 			openModelOverlay: (_tui, deps) => {
@@ -214,7 +214,7 @@ describe("provider transport boundary", () => {
 		captured.modelView?.handleInput("\r");
 		strictEqual(transitions.state, "closed", "Enter must apply without a scope card");
 		strictEqual(captured.scopeDeps, undefined);
-		strictEqual(settings.chat.target, "next-target");
+		strictEqual(settings.chat.connection, "next-target");
 		strictEqual(settings.chat.model, "next-model");
 	});
 
@@ -554,7 +554,7 @@ describe("provider transport boundary", () => {
 		strictEqual(requests, 1);
 		ok(failure.includes("unavailable"), failure);
 		ok(failure.includes("dynamo/qwen3.8-27b"), failure);
-		ok(failure.includes("target 'blade'"), failure);
+		ok(failure.includes("connection 'blade'"), failure);
 		ok(failure.includes("/model"), failure);
 		ok(failure.includes("did not substitute"), failure);
 	});
@@ -758,7 +758,7 @@ describe("provider transport boundary", () => {
 		const stub = await startGeminiStub();
 		try {
 			updateSettings((settings) => {
-				settings.targets.push({
+				settings.connections.push({
 					id: "gem",
 					runtime: "google",
 					url: `${stub.url}/v1beta`,
@@ -766,7 +766,7 @@ describe("provider transport boundary", () => {
 				});
 			});
 			process.env.GOOGLE_API_KEY = "bad-key";
-			const refused = await captureStdout(() => runModelsCommand(["--target", "gem"]));
+			const refused = await captureStdout(() => runModelsCommand(["--connection", "gem"]));
 			ok(refused.output.includes("gemini-2.5-pro"), `the catalog is the fallback:\n${refused.output}`);
 			ok(
 				refused.output.includes(
@@ -776,7 +776,7 @@ describe("provider transport boundary", () => {
 			);
 
 			process.env.GOOGLE_API_KEY = "gem-test-key";
-			const live = await captureStdout(() => runModelsCommand(["--target", "gem", "--json"]));
+			const live = await captureStdout(() => runModelsCommand(["--connection", "gem", "--json"]));
 			const rows = JSON.parse(live.output) as Array<{
 				modelId: string;
 				source: string;
@@ -803,13 +803,13 @@ describe("provider transport boundary", () => {
 				await providers?.probeAllLive();
 				const status = providers?.list().find((entry) => entry.target.id === "gem");
 				strictEqual(status?.health.status, "degraded");
-				strictEqual(status?.health.lastError, "default model 'gemini-unlisted' is not advertised by the target");
+				strictEqual(status?.health.lastError, "default model 'gemini-unlisted' is not advertised by the connection");
 			} finally {
 				await loaded.stop();
 			}
 
 			process.env.GOOGLE_API_KEY = "bad-key";
-			const stale = await captureStdout(() => runModelsCommand(["--target", "gem"]));
+			const stale = await captureStdout(() => runModelsCommand(["--connection", "gem"]));
 			ok(
 				stale.output.includes("gem: cached list, not verified live: the Gemini API refused the key (HTTP 403: Forbidden)"),
 				stale.output,
@@ -820,20 +820,20 @@ describe("provider transport boundary", () => {
 		}
 	});
 
-	it("checks a `targets use` model against the key's live list and words the catalog fallback", async () => {
+	it("checks a `connections use` model against the key's live list and words the catalog fallback", async () => {
 		const env = await isolatePancodeEnv("pancode-targets-use-live-");
 		const stub = await startGeminiStub();
 		try {
 			updateSettings((settings) => {
 				for (const id of ["gem", "gem-refused"]) {
-					settings.targets.push({ id, runtime: "google", url: `${stub.url}/v1beta`, defaultModel: "gemini-a" });
+					settings.connections.push({ id, runtime: "google", url: `${stub.url}/v1beta`, defaultModel: "gemini-a" });
 				}
 			});
 			process.env.GOOGLE_API_KEY = "gem-test-key";
 			const unlisted = await captureStderr(() => runTargetsCommand(["use", "gem", "--model", "gemini-2.5-pro"]));
 			strictEqual(unlisted.code, 1);
 			ok(
-				unlisted.output.includes("target 'gem' does not list model 'gemini-2.5-pro' for chat (probe inventory)"),
+				unlisted.output.includes("connection 'gem' does not list model 'gemini-2.5-pro' for chat (probe inventory)"),
 				unlisted.output,
 			);
 			strictEqual((await captureStderr(() => runTargetsCommand(["use", "gem", "--model", "gemini-b"]))).code, 0);
@@ -843,7 +843,7 @@ describe("provider transport boundary", () => {
 			strictEqual(fallback.code, 0, fallback.output);
 			ok(
 				fallback.output.includes(
-					"warning: model list for target 'gem-refused' is the provider catalog, not verified live: the Gemini API refused the key (HTTP 403: Forbidden)",
+					"warning: model list for connection 'gem-refused' is the provider catalog, not verified live: the Gemini API refused the key (HTTP 403: Forbidden)",
 				),
 				fallback.output,
 			);
@@ -892,7 +892,9 @@ describe("provider transport boundary", () => {
 			const unset = await configure("gem-unset");
 			strictEqual(unset.code, 0, unset.output);
 			ok(
-				unset.output.includes("warning: GOOGLE_API_KEY is not set in this shell; export it before using target gem-unset"),
+				unset.output.includes(
+					"warning: GOOGLE_API_KEY is not set in this shell; export it before using connection gem-unset",
+				),
 				unset.output,
 			);
 		} finally {

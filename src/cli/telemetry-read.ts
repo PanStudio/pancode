@@ -292,7 +292,7 @@ function printCalls(dto: CallsReportV1): string {
 		billingCell(call.billing),
 		call.stop?.failure ?? "",
 	]);
-	const header = ["started", "role", "disposition", "target/model", "tokens", "cost", "ttft", "billing", "failure"];
+	const header = ["started", "role", "disposition", "connection/model", "tokens", "cost", "ttft", "billing", "failure"];
 	const shown =
 		dto.matched > dto.calls.length ? `\n${dto.calls.length} of ${dto.matched} matching attempts shown\n` : "";
 	return rows.length === 0 ? "no matching attempts\n" : `${formatColumns([header, ...rows])}${shown}`;

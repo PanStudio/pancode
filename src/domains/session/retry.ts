@@ -132,7 +132,7 @@ export function firstTokenStallLimitMs(
  * Deliberately kept outside pi's generic classifier: this is transient in
  * a different unit. A rate limit clears in a second or two; a 35B model loads
  * off disk in twenty to sixty, and retrying it on a rate limit's backoff burns
- * every attempt before the server is ready. `pancode run --target node-a --model
+ * every attempt before the server is ready. `pancode run --connection node-a --model
  * example-coder-model` failed exactly this way: two attempts, six
  * seconds, "Model is unloaded." on stdout, while the load was still running.
  */

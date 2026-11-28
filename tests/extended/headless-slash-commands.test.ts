@@ -27,7 +27,7 @@ it("headless commands refuse interactive actions before boot while preserving sk
 	const run = (task: string) =>
 		spawnSync(
 			process.execPath,
-			[CLI, "run", "--target", "headless-slash-missing-target", "--output-format", "stream-json", task],
+			[CLI, "run", "--connection", "headless-slash-missing-target", "--output-format", "stream-json", task],
 			{
 				cwd: root,
 				env,
@@ -71,7 +71,7 @@ it("headless commands refuse interactive actions before boot while preserving sk
 		]) {
 			const result = run(task);
 			strictEqual(result.status, 2, `${task}: ${result.stderr}`);
-			match(result.stderr, /target 'headless-slash-missing-target' not found/, task);
+			match(result.stderr, /connection 'headless-slash-missing-target' not found/, task);
 			doesNotMatch(result.stderr, /interactive commands are not supported|is not a command/, task);
 		}
 		match(run("/not-a-real-command").stderr, /is not a command/);
@@ -99,7 +99,7 @@ it("headless run prints a display-only template to stdout and exits without boot
 	};
 	try {
 		for (const task of ["/pkg:help", "/pkg:help with arguments"]) {
-			const result = spawnSync(process.execPath, [CLI, "run", "--target", "headless-slash-missing-target", task], {
+			const result = spawnSync(process.execPath, [CLI, "run", "--connection", "headless-slash-missing-target", task], {
 				cwd: root,
 				env,
 				encoding: "utf8",

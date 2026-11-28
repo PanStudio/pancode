@@ -215,9 +215,9 @@ export function createSafetyJudgeCompletion(deps: {
 }): SafetyJudgeCompletion {
 	return async (request) => {
 		const target = deps.providers.getTarget(request.targetId);
-		if (target === null) throw new Error(`target '${request.targetId}' is not configured`);
+		if (target === null) throw new Error(`connection '${request.targetId}' is not configured`);
 		const wireModelId = request.model ?? target.defaultModel ?? null;
-		if (wireModelId === null) throw new Error(`target '${request.targetId}' names no model to ask`);
+		if (wireModelId === null) throw new Error(`connection '${request.targetId}' names no model to ask`);
 		const refusal = deps.flowRefusal({ targetId: target.id, runtimeId: target.runtime, wireModelId });
 		if (refusal !== null) throw new Error(refusal);
 		const endpointKey = modelEndpointKey(target, wireModelId);

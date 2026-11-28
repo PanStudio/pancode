@@ -119,7 +119,7 @@ test("/thinking resolves a typed level through the settings clamp and refuses wo
 	});
 	const run = (model: string, typed: ReadonlyArray<string>) => {
 		const settings = structuredClone(DEFAULT_SETTINGS);
-		settings.chat = { ...settings.chat, target: "mini", model, thinkingLevel: "medium" };
+		settings.chat = { ...settings.chat, connection: "mini", model, thinkingLevel: "medium" };
 		const status = {
 			target: { id: "mini", runtime: "litellm", defaultModel: model },
 			runtime: null,

@@ -489,7 +489,7 @@ function renderEvidenceDetails(evidence: RunEvidence, path: string): string[] {
 			? [
 					`- outcome: ${settled.outcome} (exit ${settled.exitCode ?? "?"})`,
 					`- agent: ${settled.agentId}`,
-					`- target: ${settled.targetId}`,
+					`- connection: ${settled.targetId}`,
 					`- runtime: ${settled.runtimeId}`,
 					`- model: ${settled.wireModelId}`,
 				]
@@ -997,7 +997,7 @@ export class DispatchArtifactProvider implements ArtifactProvider {
 						// Primary rows say this in words, so the exact code stays readable here.
 						...(run?.settled.outcomeCode ? [`outcome code: ${run.settled.outcomeCode}`] : []),
 						`exit: ${env.exitCode ?? "?"}`,
-						`target: ${env.targetId}`,
+						`connection: ${env.targetId}`,
 						`model: ${this.deps.formatModelId?.(env.wireModelId) ?? sanitizeCallTargetText(env.wireModelId)}`,
 						`runtime: ${env.runtimeKind}:${env.runtimeId}`,
 						`started: ${formatLocalTime(env.startedAt)}`,

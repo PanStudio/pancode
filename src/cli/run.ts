@@ -115,8 +115,8 @@ function armRunTimeout(seconds: number): HeadlessRunDeadline {
 }
 
 /**
- * True when an explicit --target override names a target that is not in
- * effective settings.targets. Include project overlays just as the runtime
+ * True when an explicit --connection override names a target that is not in
+ * effective settings.connections. Include project overlays just as the runtime
  * resolver does (providers.getTarget), so this mirrors its `target-not-found`
  * verdict without booting the providers domain. Unreadable/invalid settings
  * fall through (returns false) so the normal boot path surfaces that error
@@ -124,7 +124,7 @@ function armRunTimeout(seconds: number): HeadlessRunDeadline {
  */
 export function explicitTargetMissing(targetId: string): boolean {
 	try {
-		return !readStrictLayeredSettings(process.cwd()).settings.targets.some((target) => target.id === targetId);
+		return !readStrictLayeredSettings(process.cwd()).settings.connections.some((target) => target.id === targetId);
 	} catch {
 		return false;
 	}
@@ -144,8 +144,8 @@ export async function borrowHeadlessRoute(
 	try {
 		const layered = readStrictLayeredSettings(process.cwd());
 		settings = layered.settings;
-		// `targets` replaces wholesale across layers, so a project origin means every saved target is the project's.
-		projectTargets = settingsSourceFor(layered.sources, "targets").startsWith("project");
+		// `connections` replaces wholesale across layers, so a project origin means every saved target is the project's.
+		projectTargets = settingsSourceFor(layered.sources, "connections").startsWith("project");
 	} catch {
 		// The boot path reports unreadable settings with its own diagnostic.
 		return null;
@@ -153,7 +153,7 @@ export async function borrowHeadlessRoute(
 	// A project that chose its targets chose the route too; borrowing anything else would override that choice.
 	if (projectTargets) return null;
 	if (classifyDefaultTarget(settings).kind !== "no-target") return null;
-	if (targetId !== undefined && settings.targets.some((target) => target.id === targetId)) return null;
+	if (targetId !== undefined && settings.connections.some((target) => target.id === targetId)) return null;
 	const { headlessChatRoute } = await import("./detect-chat-routes.js");
 	const found = await headlessChatRoute(settings, targetId, {
 		...(model !== undefined ? { model } : {}),
@@ -163,7 +163,7 @@ export async function borrowHeadlessRoute(
 		// The memory refusal is the whole answer; booting on would add the generic no-target line after it.
 		if (found.reservedForMemory !== undefined && model === undefined) {
 			writeRunDiagnostic(
-				`pancode run: the only usable saved target, ${found.reservedForMemory}, is reserved for memory (context.memory.target); add a chat target or pass --target <id>\n`,
+				`pancode run: the only usable saved connection, ${found.reservedForMemory}, is reserved for memory (context.memory.connection); add a chat connection or pass --connection <id>\n`,
 			);
 			return 2;
 		}
@@ -171,7 +171,7 @@ export async function borrowHeadlessRoute(
 	}
 	if (found.kind === "several") {
 		const list = found.routes.map((route) => `${route.target.id} from ${route.source}`).join(", ");
-		writeRunDiagnostic(`pancode run: several routes are usable (${list}); choose one with --target <id>\n`);
+		writeRunDiagnostic(`pancode run: several routes are usable (${list}); choose one with --connection <id>\n`);
 		return 2;
 	}
 	if (found.kind === "needs-model") {
@@ -615,7 +615,7 @@ async function executeRunCommand(
 						writeLocalAnswer(preflight.display, parsed.json === true);
 						return 0;
 					}
-					// An explicit --target override is a one-run target; a missing id is an
+					// An explicit --connection override is a one-run target; a missing id is an
 					// operator config error, not an assistant response. Reject it before the
 					// headless turn so the resolver diagnostic never streams to stdout as a
 					// message_end/agent_end assistant turn.
@@ -649,14 +649,14 @@ async function executeRunCommand(
 						}
 						if (unconfigured) {
 							writeRunDiagnostic(
-								"pancode run: not configured: no model target is saved; run `pancode configure` or pass --target <id>\n",
+								"pancode run: not configured: no model connection is saved; run `pancode configure` or pass --connection <id>\n",
 								"not_configured",
 							);
 							return 2;
 						}
 					}
 					if (borrowed === null && parsed.target !== undefined && explicitTargetMissing(parsed.target)) {
-						writeRunDiagnostic(`pancode run: target '${parsed.target}' not found in settings.targets\n`);
+						writeRunDiagnostic(`pancode run: connection '${parsed.target}' not found in settings.connections\n`);
 						return 2;
 					}
 					// The boot path's graph loads here, after every pre-boot refusal above has had its say.
@@ -842,12 +842,12 @@ async function runDispatch(
 	}
 	if (parsed.target && parsed.agentProfile) {
 		process.stderr.write(
-			`pancode run: --target ${parsed.target} takes precedence; --agent-profile ${parsed.agentProfile} will be ignored\n`,
+			`pancode run: --connection ${parsed.target} takes precedence; --agent-profile ${parsed.agentProfile} will be ignored\n`,
 		);
 	}
 	if (parsed.target && parsed.agentRuntime) {
 		process.stderr.write(
-			`pancode run: --target ${parsed.target} takes precedence; --agent-runtime ${parsed.agentRuntime} will be ignored\n`,
+			`pancode run: --connection ${parsed.target} takes precedence; --agent-runtime ${parsed.agentRuntime} will be ignored\n`,
 		);
 	}
 
@@ -939,7 +939,7 @@ async function runDispatch(
 	// throw site.
 	configureRunEventJournal(baseSettings.fleet.history.journal);
 	effectiveSettings = structuredClone(baseSettings);
-	keepTargetOrigins(baseSettings.targets, effectiveSettings.targets);
+	keepTargetOrigins(baseSettings.connections, effectiveSettings.connections);
 	// D1: headless takes yolo only from --autonomy on the command line, and the
 	// parser rejects --autonomy with --agent, so this path never takes it. Pin
 	// the clone to default so a settings-file yolo cannot reach it either.
@@ -957,28 +957,32 @@ async function runDispatch(
 			return await stopDomains(1);
 		}
 		const settings = effectiveSettings;
-		const profileTargetId = parsed.agentProfile ? settings.fleet?.profiles?.[parsed.agentProfile]?.target : undefined;
-		const runtimeByTarget = new Map(settings.targets.map((target) => [target.id, target.runtime] as const));
+		const profileTargetId = parsed.agentProfile ? settings.fleet?.profiles?.[parsed.agentProfile]?.connection : undefined;
+		const runtimeByTarget = new Map(settings.connections.map((target) => [target.id, target.runtime] as const));
 		const runtimeTargetId = parsed.agentRuntime
 			? [settings.fleet?.default, ...Object.values(settings.fleet?.profiles ?? {})].find(
-					(profile) => profile?.target && runtimeByTarget.get(profile.target) === parsed.agentRuntime,
-				)?.target
+					(profile) => profile?.connection && runtimeByTarget.get(profile.connection) === parsed.agentRuntime,
+				)?.connection
 			: undefined;
 		const targetId =
-			parsed.target ?? profileTargetId ?? runtimeTargetId ?? settings.fleet?.default?.target ?? settings.chat?.target;
+			parsed.target ??
+			profileTargetId ??
+			runtimeTargetId ??
+			settings.fleet?.default?.connection ??
+			settings.chat?.connection;
 		if (!targetId) {
-			writeRunDiagnostic("pancode run: --api-key supplied but no target resolved; pass --target <id>\n");
+			writeRunDiagnostic("pancode run: --api-key supplied but no connection resolved; pass --connection <id>\n");
 			return await stopDomains(2);
 		}
 		const target = providers.getTarget(targetId);
 		if (!target) {
-			writeRunDiagnostic(`pancode run: --api-key supplied but target '${targetId}' not found\n`);
+			writeRunDiagnostic(`pancode run: --api-key supplied but connection '${targetId}' not found\n`);
 			return await stopDomains(2);
 		}
 		// Dispatch refuses this target the same way, with exit 1, when no key is supplied.
 		const runtime = providers.getRuntime(target.runtime);
 		if (!runtime) {
-			writeRunDiagnostic(`pancode run: cannot use target '${target.id}': ${runtimeNotRegistered(target.runtime)}\n`);
+			writeRunDiagnostic(`pancode run: cannot use connection '${target.id}': ${runtimeNotRegistered(target.runtime)}\n`);
 			return await stopDomains(1);
 		}
 		providers.auth.setRuntimeOverrideForTarget(target, runtime, options.apiKey);
@@ -1317,7 +1321,7 @@ async function isAdmissionRefusal(
 	const spec = await import("../domains/agents/spec.js");
 	return (
 		(failedSpec ? spec.isUserOriginAudienceRefusal(failedSpec, msg) : false) ||
-		/target '.+' not found/.test(msg) ||
+		/connection '.+' not found/.test(msg) ||
 		msg.includes("unknown agent recipe") ||
 		msg.includes("admission") ||
 		msg.includes("capability") ||
@@ -1347,7 +1351,7 @@ function shadowStandInCommand(parsed: RunCliArgs, standIn: string): string {
 	const parts = ["pancode run", "--agent", standIn, "--read-only"];
 	if (parsed.cwd !== undefined) parts.push("--cwd", quote(parsed.cwd));
 	if (parsed.review !== undefined) parts.push("--review", quote(parsed.review));
-	if (parsed.target !== undefined) parts.push("--target", quote(parsed.target));
+	if (parsed.target !== undefined) parts.push("--connection", quote(parsed.target));
 	if (parsed.model !== undefined) parts.push("--model", quote(parsed.model));
 	if (parsed.thinking !== undefined) parts.push("--thinking", parsed.thinking);
 	parts.push('"<task>"');

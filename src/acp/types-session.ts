@@ -27,7 +27,7 @@ export const AcpSessionListMeta = Type.Object(
 	{
 		createdAt: Type.String({ maxLength: 64 }),
 		endedAt: Type.Union([Type.String({ maxLength: 64 }), Type.Null()]),
-		target: Type.Union([Type.String({ maxLength: ACP_MAX_TARGET_ID_BYTES }), Type.Null()]),
+		connection: Type.Union([Type.String({ maxLength: ACP_MAX_TARGET_ID_BYTES }), Type.Null()]),
 		model: Type.Union([Type.String({ maxLength: ACP_MAX_MODEL_ID_BYTES }), Type.Null()]),
 		firstMessagePreview: Type.Optional(Type.String({ maxLength: 1024 })),
 		messageCount: Type.Optional(Type.Integer({ minimum: 0 })),

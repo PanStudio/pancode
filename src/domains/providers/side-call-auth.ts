@@ -26,7 +26,7 @@ export async function resolveSideCallAuth(
 	if (!targetRequiresAuth(target, runtime)) return { apiKey: fallback };
 	const resolved = await auth.resolveForTarget(target, runtime, signal ? { signal } : undefined);
 	// Streaming on with no key would let the engine's env fallback send the refused credential.
-	if (resolved.refused) throw new Error(resolved.detail ?? `credential refused for target '${target.id}'`);
+	if (resolved.refused) throw new Error(resolved.detail ?? `credential refused for connection '${target.id}'`);
 	return {
 		...(!resolved.available || resolved.apiKey === undefined ? {} : { apiKey: resolved.apiKey }),
 		...(!resolved.available || resolved.source !== "stored-oauth" || resolved.apiKey === undefined
@@ -45,7 +45,7 @@ export async function resolveSideCallAuth(
 							signal?.throwIfAborted();
 							// Keep provider refresh diagnostics out of the login remedy (#427).
 							throw new Error(
-								`OAuth credential for target '${target.id}' could not be refreshed. Run pancode auth login ${resolved.providerId} again.`,
+								`OAuth credential for connection '${target.id}' could not be refreshed. Run pancode auth login ${resolved.providerId} again.`,
 							);
 						}
 					},

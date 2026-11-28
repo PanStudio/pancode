@@ -106,8 +106,8 @@ describe("fleet run worker extension hooks", () => {
 		writeFileSync(
 			settingsPath,
 			readFileSync(settingsPath, "utf8").replace(
-				/^targets:$/m,
-				"targets:\n  - id: sdk\n    runtime: claude-sdk\n    defaultModel: claude-fixture",
+				/^connections:$/m,
+				"connections:\n  - id: sdk\n    runtime: claude-sdk\n    defaultModel: claude-fixture",
 			),
 		);
 		const project = join(scratch.root, "project");

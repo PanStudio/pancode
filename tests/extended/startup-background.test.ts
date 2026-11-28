@@ -9,8 +9,8 @@ import { prepareWorkerTargets } from "../../src/interactive/startup-background.j
 
 function fixture(startup = false) {
 	const settings = structuredClone(DEFAULT_SETTINGS);
-	settings.chat.target = "main";
-	settings.fleet.default = { target: "worker", model: "model", thinkingLevel: "off" };
+	settings.chat.connection = "main";
+	settings.fleet.default = { connection: "worker", model: "model", thinkingLevel: "off" };
 	settings.fleet.profiles = {};
 	settings.fleet.rosters = {};
 	const target = { id: "worker", runtime: "llamacpp", url: "http://127.0.0.1:9876/v1", cache: { warm: { startup } } };

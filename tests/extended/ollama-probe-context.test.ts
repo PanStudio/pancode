@@ -200,11 +200,11 @@ async function probeTable(
 	writeFileSync(
 		join(root, "config", "settings.yaml"),
 		JSON.stringify({
-			targets: [{ id: "local-ollama", runtime: "ollama", url, defaultModel: "qwen3:30b-a3b-instruct", ...extra }],
+			connections: [{ id: "local-ollama", runtime: "ollama", url, defaultModel: "qwen3:30b-a3b-instruct", ...extra }],
 		}),
 	);
 	const run = async (args: string[]): Promise<string> => {
-		const { stdout } = await execFileAsync(process.execPath, [CLI, "targets", ...args], {
+		const { stdout } = await execFileAsync(process.execPath, [CLI, "connections", ...args], {
 			cwd: ROOT,
 			env,
 		});

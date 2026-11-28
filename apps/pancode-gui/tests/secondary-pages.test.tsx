@@ -88,7 +88,7 @@ test("operator tables expose recorded model, target, latency, tool and compactio
 	const html = render(queries(), "/metrics", <OperatorMetrics client={client} {...metrics} />);
 	for (const label of [
 		"Per model",
-		"Per target",
+		"Per connection",
 		"Cache read",
 		"Cache / prompt",
 		"Main TTFT p50 / p95",
@@ -408,7 +408,7 @@ for (const [path, expected] of [
 		);
 		assert.match(html, new RegExp(`<option value="${expected}" selected=""`));
 		assert.match(html, new RegExp(`<output>${expected}-value</output>`));
-		assert.match(html, new RegExp(`href="/settings/targets\\?workspace=${expected}"`));
+		assert.match(html, new RegExp(`href="/settings/connections\\?workspace=${expected}"`));
 		assert.match(html, new RegExp(`href="/settings/routing\\?workspace=${expected}"`));
 	});
 }

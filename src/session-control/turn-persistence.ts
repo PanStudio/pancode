@@ -350,7 +350,7 @@ export function createTurnPersistence(deps: TurnPersistenceDeps): TurnPersistenc
 			if (!deps.session.current()) {
 				const settings = deps.getSettings();
 				const input: { cwd: string; target?: string; model?: string } = { cwd: process.cwd() };
-				if (settings.chat.target) input.target = settings.chat.target;
+				if (settings.chat.connection) input.target = settings.chat.connection;
 				if (settings.chat.model) input.model = settings.chat.model;
 				deps.session.create(input);
 			}

@@ -42,9 +42,9 @@ export type DefaultTargetVerdict =
 export function homeIsReturning(): boolean {
 	const read = readSettingsDocument(join(resolvePancodeDirs().config, "settings.yaml"));
 	if (read.kind !== "parsed") return false;
-	const raw = read.document as { targets?: unknown; chat?: { target?: unknown } } | null;
+	const raw = read.document as { connections?: unknown; chat?: { connection?: unknown } } | null;
 	if (!raw || typeof raw !== "object") return false;
-	return (Array.isArray(raw.targets) && raw.targets.length > 0) || (raw.chat?.target ?? null) !== null;
+	return (Array.isArray(raw.connections) && raw.connections.length > 0) || (raw.chat?.connection ?? null) !== null;
 }
 
 /**
@@ -52,10 +52,10 @@ export function homeIsReturning(): boolean {
  * credential presence, never a probe. Only an unusable answer loads route discovery.
  */
 function setupFactsFor(settings: Readonly<PancodeSettings>): SetupFacts {
-	const targetId = settings.chat.target;
-	// A chat target naming an id that is not in `targets` cannot arrive here: the schema normalizes dangling
+	const targetId = settings.chat.connection;
+	// A chat target naming an id that is not in `connections` cannot arrive here: the schema normalizes dangling
 	// routing references to null, so deleting a target reaches `setupStatus` as an unchosen route.
-	const target = targetId ? settings.targets.find((entry) => entry.id === targetId) : undefined;
+	const target = targetId ? settings.connections.find((entry) => entry.id === targetId) : undefined;
 	if (!target) return { chat: settings.chat };
 	const runtime = findBuiltinRuntimeBootMetadata(target.runtime);
 	const facts: SetupTargetFacts = {
@@ -110,7 +110,7 @@ export function firstMissing(settings: Readonly<PancodeSettings>): Missing | nul
 
 /** The key or sign-in a saved target still needs from this shell, or null when it has what it needs. */
 export function credentialMissing(settings: Readonly<PancodeSettings>, targetId: string): Missing | null {
-	const status = setupStatus(setupFactsFor({ ...settings, chat: { ...settings.chat, target: targetId } }));
+	const status = setupStatus(setupFactsFor({ ...settings, chat: { ...settings.chat, connection: targetId } }));
 	if (status.stage !== "needs") return null;
 	return status.missing.find((missing) => missing.kind === "credential" || missing.kind === "env") ?? null;
 }
@@ -119,13 +119,13 @@ export function credentialMissing(settings: Readonly<PancodeSettings>, targetId:
 export function describeVerdict(verdict: DefaultTargetVerdict): string {
 	switch (verdict.kind) {
 		case "no-target":
-			return "No model target is configured.";
+			return "No model connection is configured.";
 		case "ineligible-runtime":
 			return describeMissing({ kind: "runtime", target: verdict.targetId, runtime: verdict.runtime }).sentence;
 		case "no-model":
 			return describeMissing({ kind: "model", target: verdict.targetId }).sentence;
 		default:
-			return "No usable default target is configured.";
+			return "No usable default connection is configured.";
 	}
 }
 
@@ -141,7 +141,7 @@ export function describeKeptChatRoute(
 	settings: Readonly<PancodeSettings>,
 	verdict: Extract<DefaultTargetVerdict, { kind: "missing-credential" }>,
 ): string {
-	const target = settings.targets.find((entry) => entry.id === verdict.targetId);
+	const target = settings.connections.find((entry) => entry.id === verdict.targetId);
 	const model = settings.chat.model ?? target?.defaultModel;
 	const missing = firstMissing(settings) ?? { kind: "credential", target: verdict.targetId, provider: verdict.store };
 	return `Chat: ${verdict.targetId}${model ? ` / ${model}` : ""} is unavailable. ${describeMissing(missing).sentence} Your saved chat route is kept.`;

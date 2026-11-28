@@ -33,14 +33,14 @@ export interface ModelRow {
 	note?: string;
 }
 
-const HELP = `pancode models [search] [--target <id>] [--json] [--offline]
+const HELP = `pancode models [search] [--connection <id>] [--json] [--offline]
 
-List the models each configured target serves. A target whose provider lists
+List the models each configured connection serves. A connection whose provider lists
 its models live is asked; when it cannot be asked or does not answer, the list
 is the cached list or the provider catalog, with a note saying why.
 
 Options:
-  --offline   use cached/configured/catalog model hints without probing targets
+  --offline   use cached/configured/catalog model hints without probing connections
 `;
 
 interface ModelArgs {
@@ -68,9 +68,9 @@ function parseModelArgs(args: ReadonlyArray<string>): ModelArgs {
 			parsed.offline = true;
 			continue;
 		}
-		if (arg === "--target") {
+		if (arg === "--connection") {
 			const value = args[i + 1];
-			if (!value) throw new Error("--target requires a value");
+			if (!value) throw new Error("--connection requires a value");
 			parsed.target = value;
 			i += 1;
 			continue;
@@ -113,7 +113,7 @@ export async function runModelsCommand(args: ReadonlyArray<string>): Promise<num
 	}
 	const entries = providers.list();
 	if (parsed.target !== undefined && !entries.some((e) => e.target.id === parsed.target)) {
-		printError(`no target with id ${parsed.target}. ${targetCount(entries.length)} configured.`);
+		printError(`no connection with id ${parsed.target}. ${targetCount(entries.length)} configured.`);
 		await loaded.stop();
 		return 2;
 	}
@@ -226,10 +226,10 @@ function emptyModelsMessage(
 	matchedTargets: number,
 ): string {
 	if (configuredTargets === 0) {
-		return "no targets configured; run `pancode configure` to add one.";
+		return "no connections configured; run `pancode configure` to add one.";
 	}
 	if (args.target !== undefined && matchedTargets === 0) {
-		return `no target with id ${args.target}. ${targetCount(configuredTargets)} configured.`;
+		return `no connection with id ${args.target}. ${targetCount(configuredTargets)} configured.`;
 	}
 	if (args.search !== undefined) {
 		return `no models matched "${args.search}" across ${targetCount(matchedTargets)}.`;
@@ -238,7 +238,7 @@ function emptyModelsMessage(
 }
 
 function targetCount(n: number): string {
-	return `${n} target${n === 1 ? "" : "s"}`;
+	return `${n} connection${n === 1 ? "" : "s"}`;
 }
 
 const MODEL_ID_WIDTH_CAP = 56;
@@ -254,7 +254,7 @@ function modelTableLines(rows: ReadonlyArray<ModelRow>): string[] {
 	const includeLabel = rows.some((row) => row.label && row.label !== row.modelId);
 	const headers = includeState
 		? [
-				"target",
+				"connection",
 				"runtime",
 				"model",
 				...(includeLabel ? ["label"] : []),
@@ -265,7 +265,7 @@ function modelTableLines(rows: ReadonlyArray<ModelRow>): string[] {
 				"max",
 				"thinking",
 			]
-		: ["target", "runtime", "model", ...(includeLabel ? ["label"] : []), "source", "caps", "ctx", "max", "thinking"];
+		: ["connection", "runtime", "model", ...(includeLabel ? ["label"] : []), "source", "caps", "ctx", "max", "thinking"];
 	const cells = rows.map((row) => {
 		const base = [row.targetId, row.runtimeId, truncateModelId(row.modelId)];
 		if (includeLabel) base.push(row.label ?? "-");

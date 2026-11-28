@@ -164,7 +164,7 @@ export function acpProblem(error: unknown) {
 		if (modelSelection)
 			return new AppProblem(
 				"validation",
-				"PanCode did not change the conversation route because the requested model is not declared for this target. Choose an available model or update targets[].wireModels in settings.yaml, then restart the ACP session.",
+				"PanCode did not change the conversation route because the requested model is not declared for this connection. Choose an available model or update connections[].wireModels in settings.yaml, then restart the ACP session.",
 				undefined,
 				undefined,
 				{ modelSelection },
@@ -172,7 +172,7 @@ export function acpProblem(error: unknown) {
 		if (code === "prompt_not_admitted" && record(detail).reason === "authentication-required")
 			return new AppProblem(
 				"upstream_acp",
-				"PanCode cannot access credentials for the selected target. Connect it with pancode auth login <target> in a terminal, then close and reopen this session. Background apps use PanCode's saved credentials; terminal-only API keys are unavailable after login or restart.",
+				"PanCode cannot access credentials for the selected connection. Connect it with pancode auth login <connection> in a terminal, then close and reopen this session. Background apps use PanCode's saved credentials; terminal-only API keys are unavailable after login or restart.",
 			);
 		if (code === "prompt_not_admitted")
 			return new AppProblem("upstream_acp", promptAdmissionDetail(record(detail).reason));
@@ -181,7 +181,7 @@ export function acpProblem(error: unknown) {
 		if (code === "turn_failed")
 			return new AppProblem(
 				"upstream_acp",
-				"PanCode could not complete this turn. Probe the selected target and check this session's trace for the cause, then retry. (turn_failed)",
+				"PanCode could not complete this turn. Probe the selected connection and check this session's trace for the cause, then retry. (turn_failed)",
 			);
 		if (code === "prompt_active" || code === "shell_active")
 			return new AppProblem(
@@ -304,7 +304,7 @@ export class AcpClient {
 		const mode = record(record(result).modes).currentModeId;
 		const described = readModeDescriptions(record(result).modes);
 		const options = projectConfigOptions(record(result).configOptions);
-		const target = record(record(record(result)._meta)[ACP_SESSION_META_KEY]).target;
+		const target = record(record(record(result)._meta)[ACP_SESSION_META_KEY]).connection;
 		if (options !== undefined && this.config === previousConfig)
 			this.config = {
 				options,
@@ -400,7 +400,7 @@ export class AcpClient {
 		const options = projectConfigOptions(result.configOptions);
 		if (options === undefined) throw new AppProblem("upstream_acp", "PanCode omitted session configuration.");
 		if (this.config === previous) {
-			const target = record(record(result._meta)[ACP_SESSION_META_KEY]).target;
+			const target = record(record(result._meta)[ACP_SESSION_META_KEY]).connection;
 			this.config = {
 				...previous,
 				options,

@@ -9,13 +9,14 @@ import { visibleWidth } from "../../src/engine/tui.js";
 import { SETTINGS_LABELS_BY_ID, SettingsCenter } from "../../src/interactive/overlays/settings.js";
 import { SETTINGS_SECTION_ROWS } from "../../src/interactive/overlays/settings-center-model.js";
 import { buildSettingItems } from "../../src/interactive/overlays/settings-items.js";
+import { formatSettingsValue } from "../../src/interactive/overlays/settings-presentation.js";
 import { buildSettingsSections } from "../../src/interactive/overlays/settings-sections.js";
 import { parseSlashCommand } from "../../src/session-control/slash-commands.js";
 
 function fixture() {
 	const settings = structuredClone(DEFAULT_SETTINGS);
-	settings.targets = [{ id: "local", runtime: "openai-compat", defaultModel: "coder" }];
-	settings.fleet.profiles.reviewer = { target: "local", model: "coder", thinkingLevel: "low" };
+	settings.connections = [{ id: "local", runtime: "openai-compat", defaultModel: "coder" }];
+	settings.fleet.profiles.reviewer = { connection: "local", model: "coder", thinkingLevel: "low" };
 	settings.fleet.agentProfiles.reviewer = "reviewer";
 	return buildSettingItems(settings);
 }
@@ -62,7 +63,7 @@ test("every existing settings control has exactly one home and canonical persist
 		["integrations.externalAgents.defaults.toolGovernance", "safety"],
 		["safety.review.enabled", "safety"],
 		["context.compaction.model", "context"],
-		["context.memory.target", "context"],
+		["context.memory.connection", "context"],
 		["chat.maxOutputTokens", "models"],
 	] as const)
 		strictEqual(byId.get(id)?.section, home, id);
@@ -149,7 +150,7 @@ test("every area renders within narrow and wide terminals, and headings are skip
 
 test("settings groups collect related controls and preserve the target inventory column heading", () => {
 	const sections = buildSettingsSections(fixture());
-	strictEqual(sections.find((section) => section.id === "models")?.items[1]?.id, "targets");
+	strictEqual(sections.find((section) => section.id === "models")?.items[1]?.id, "connections");
 	const context = sections.find((section) => section.id === "context");
 	ok(context);
 	let group = "";
@@ -160,7 +161,7 @@ test("settings groups collect related controls and preserve the target inventory
 	}
 	strictEqual(memberships.get("context.compaction.auto"), "Compaction");
 	strictEqual(memberships.get("context.compaction.model"), "Compaction");
-	strictEqual(memberships.get("context.memory.target"), "Proactive memory");
+	strictEqual(memberships.get("context.memory.connection"), "Proactive memory");
 	strictEqual(memberships.get("context.memory.enabled"), "Proactive memory");
 });
 
@@ -202,4 +203,9 @@ test("Space previews only rows a preview can show, and Means explains the previe
 	ok(!before.includes("[Space] preview"), "a restart-only row offers no preview");
 	center.handleInput(" ");
 	strictEqual(screen(), before);
+});
+
+test("settings presentation maps connection fallback sentinels to human labels", () => {
+	strictEqual(formatSettingsValue("safety.review.connection", "(session connection)"), "Chat connection");
+	strictEqual(formatSettingsValue("fleet.default.connection", "(orchestrator connection)"), "Chat model");
 });

@@ -123,7 +123,7 @@ export function buildSettingsSections(
 		const rows = orderAreaEntries(
 			section.id,
 			items.filter(
-				(item) => item.section === section.id && (item.id === "targets" || item.presentationKind !== "group-header"),
+				(item) => item.section === section.id && (item.id === "connections" || item.presentationKind !== "group-header"),
 			),
 			(item) => ({ id: item.id, path: item.configPath ?? item.id }),
 		);

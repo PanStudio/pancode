@@ -68,7 +68,7 @@ const vllm: RuntimeDescriptor = {
 		if (candidates.some((id) => isHarmonyModelId(id))) {
 			// The flags live in harmony-server.ts so the probe, the engine and the
 			// targets report name the same ones (#435).
-			const note = `gpt-oss on vLLM parses Harmony only with ${VLLM_GPT_OSS_SERVE_FLAGS}; run targets --probe --tools to read the server's Harmony parsing level`;
+			const note = `gpt-oss on vLLM parses Harmony only with ${VLLM_GPT_OSS_SERVE_FLAGS}; run connections --probe --tools to read the server's Harmony parsing level`;
 			enriched.notes = [...(result.notes ?? []), note];
 		}
 		return enriched;

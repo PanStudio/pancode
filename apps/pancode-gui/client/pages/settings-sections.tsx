@@ -78,7 +78,7 @@ export function ModelsSettings({ client }: { client: Client }) {
 					{workspaceId && (
 						<>
 							<li>
-								<Link to={settingsDestination("/settings/targets", workspaceId)}>
+								<Link to={settingsDestination("/settings/connections", workspaceId)}>
 									Connections <span aria-hidden="true">→</span>
 								</Link>
 								<small>Check each connection, choose the one that answers, repair or remove one.</small>

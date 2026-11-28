@@ -490,7 +490,7 @@ function describeRole(role: ResidencyRole | undefined): string {
 	if (role === "chat") return "the chat model";
 	if (role === "memory") return "the memory model";
 	if (role === "worker") return "a worker model";
-	if (role === "target-default") return "a target default model";
+	if (role === "target-default") return "a connection default model";
 	return "a configured model";
 }
 
@@ -812,7 +812,7 @@ async function restoreEvictedModels(
 			targetId: adapter.targetId,
 			runtimeId: adapter.runtimeId,
 			model: adapter.keepModelId,
-			message: `loading '${adapter.keepModelId}' on '${adapter.targetId}' failed (${reason}); restored ${restored.map((id) => `'${id}'`).join(", ")} so the target keeps serving.`,
+			message: `loading '${adapter.keepModelId}' on '${adapter.targetId}' failed (${reason}); restored ${restored.map((id) => `'${id}'`).join(", ")} so the connection keeps serving.`,
 			detail: { restored: restored.join(", ") },
 		});
 	}
@@ -823,7 +823,7 @@ async function restoreEvictedModels(
 			targetId: adapter.targetId,
 			runtimeId: adapter.runtimeId,
 			model: adapter.keepModelId,
-			message: `loading '${adapter.keepModelId}' on '${adapter.targetId}' failed (${reason}) and ${failed.map((id) => `'${id}'`).join(", ")} could not be restored; the target may now serve nothing. Reload it on the server.`,
+			message: `loading '${adapter.keepModelId}' on '${adapter.targetId}' failed (${reason}) and ${failed.map((id) => `'${id}'`).join(", ")} could not be restored; the connection may now serve nothing. Reload it on the server.`,
 			detail: { unrestored: failed.join(", ") },
 		});
 	}

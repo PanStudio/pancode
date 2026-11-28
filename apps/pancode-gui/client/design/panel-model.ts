@@ -97,7 +97,7 @@ export const PANELS = {
 		eyebrow: eyebrow("Model endpoints", "your user settings", "add, probe and remove"),
 		title: "Connections",
 		boundary:
-			"Targets are written to your user settings on this machine, and credentials are never entered or shown here. A probe contacts the endpoints you configured and no other host.",
+			"Connections are written to your user settings on this machine, and credentials are never entered or shown here. A probe contacts the endpoints you configured and no other host.",
 	},
 	hub: {
 		eyebrow: eyebrow("Capabilities", "you and this project", "plan, then apply"),

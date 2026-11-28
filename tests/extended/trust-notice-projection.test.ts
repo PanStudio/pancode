@@ -147,17 +147,17 @@ test("M-25: a rejected settings reload names its key first in the footer and sta
 			refreshSettingsOverlay: noop,
 		});
 		const failure = settingsReloadFailure(
-			new SettingsValidationError([{ path: "safety.liveCheckTargets", message: "unknown key" }]),
+			new SettingsValidationError([{ path: "safety.liveCheckConnections", message: "unknown key" }]),
 		);
 		bus.emit("config.reload_failed", failure);
 		strictEqual(footer.length, 1);
 		strictEqual(footer[0]?.level, "error");
 		strictEqual(footer[0]?.key, "config:reload-failed");
 		// The pane clamps the footer from the right, so the failing key leads.
-		ok(footer[0]?.text.startsWith("safety.liveCheckTargets"), footer[0]?.text);
+		ok(footer[0]?.text.startsWith("safety.liveCheckConnections"), footer[0]?.text);
 		strictEqual(transcript.length, 1);
 		strictEqual(transcript[0]?.level, "error");
-		for (const part of [settingsPath(), "safety.liveCheckTargets", "unknown key", "last good settings"])
+		for (const part of [settingsPath(), "safety.liveCheckConnections", "unknown key", "last good settings"])
 			ok(transcript[0]?.text.includes(part), `${part} missing from: ${transcript[0]?.text}`);
 		bus.emit("config.reload_failed", { message: null });
 		deepStrictEqual(dismissed, ["config:reload-failed"]);

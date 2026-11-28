@@ -88,8 +88,8 @@ const HELP = `pancode doctor [--fix [--yes]] [--json] [--verbose] [--deep [--too
 
 Diagnose PanCode state without creating files. The first row says whether
 chat can run and what to run when it cannot. On a home PanCode has never
-written to, or one with no chat target, doctor says so and exits 0; a chat
-target its route cannot reach exits 1. Use --fix to repair structure:
+written to, or one with no chat connection, doctor says so and exits 0; a chat
+connection its route cannot reach exits 1. Use --fix to repair structure:
 missing directories, missing template files, and credential permissions.
 --fix also repairs YAML 1.1 on/off booleans, preserving comments and
 formatting. It repairs GUI ownership
@@ -108,7 +108,7 @@ Settings are validated directly against the current schema.
 Pass --json to emit a machine-readable report on stdout.
 The text report shows the chat row, the version and every row that needs
 attention, then counts the rest; --verbose prints every row.
---deep adds a live tool-call probe on every configured target, which can load
+--deep adds a live tool-call probe on every configured connection, which can load
 a cold local model and releases it afterwards, and a dry run of the workspace
 validation contract that resolves each validator command and reports whether
 it would run without an approval ask at the configured autonomy. The dry run
@@ -147,7 +147,7 @@ function configuredAutonomy(): AutonomyLevel {
 function copilotTierFindings(): DoctorFinding[] {
 	let targets: ReadonlyArray<{ id: string; runtime: string; contextTier?: "default" | "long_context" }>;
 	try {
-		targets = readSettings().targets;
+		targets = readSettings().connections;
 	} catch {
 		// An unreadable settings file has its own doctor row.
 		return [];
@@ -439,7 +439,7 @@ async function deepFindings(
 		// nothing, and on an untouched home there are no settings to read.
 		let targetCount = 0;
 		try {
-			targetCount = readLayeredSettings(process.cwd()).settings.targets.length;
+			targetCount = readLayeredSettings(process.cwd()).settings.connections.length;
 		} catch {
 			// The settings row already reports an unreadable document.
 		}
@@ -472,7 +472,7 @@ async function deepFindings(
 }
 
 const SETUP_COMMAND = "run `pancode configure` to choose one";
-const UNCONFIGURED = `cannot run yet: no model target is configured; ${SETUP_COMMAND}`;
+const UNCONFIGURED = `cannot run yet: no model connection is configured; ${SETUP_COMMAND}`;
 
 /**
  * Whether chat can run: a target, a model, and a credential where one is
@@ -501,16 +501,16 @@ export function chatReadinessFinding(untouched: boolean, connectionRows: Readonl
 	const verdict = classifyDefaultTarget(settings);
 	if (verdict.kind === "no-target") return warn(UNCONFIGURED);
 	if (verdict.kind === "ineligible-runtime") {
-		return broken(`cannot run: ${describeVerdict(verdict)} Run \`pancode configure\` to choose a chat target.`);
+		return broken(`cannot run: ${describeVerdict(verdict)} Run \`pancode configure\` to choose a chat connection.`);
 	}
-	const targetId = settings.chat.target ?? "";
+	const targetId = settings.chat.connection ?? "";
 	const model = settings.chat.model?.trim();
 	if (!model) return broken(`cannot run yet: ${describeMissing({ kind: "model", target: targetId }).sentence}`);
-	const route = `target '${targetId}', model '${model}'`;
+	const route = `connection '${targetId}', model '${model}'`;
 	if (verdict.kind === "missing-credential") {
 		const missing = firstMissing(settings) ?? { kind: "credential", target: targetId, provider: verdict.store };
 		// A key variable a project target names is fixed in the shell or in that project file, never by configure.
-		const targetsOrigin = settingsSourceFor(layered.sources, "targets");
+		const targetsOrigin = settingsSourceFor(layered.sources, "connections");
 		const projectFile =
 			missing.kind === "env" && (targetsOrigin === "project" || targetsOrigin === "project.local")
 				? layered.layers.find((layer) => layer.origin === targetsOrigin)?.path
@@ -523,7 +523,7 @@ export function chatReadinessFinding(untouched: boolean, connectionRows: Readonl
 		(row) =>
 			(row.name === `connection ${targetId}` || row.name === `model ${targetId}`) && (!row.ok || row.level === "warn"),
 	);
-	const url = settings.targets.find((entry) => entry.id === targetId)?.url;
+	const url = settings.connections.find((entry) => entry.id === targetId)?.url;
 	const unanswered = failing
 		.map((row) => (row.name === `connection ${targetId}` ? /was not verified: (.+?)\. /u.exec(row.detail)?.[1] : null))
 		.find((detail) => detail != null && !/\b40[13]\b|auth|credential|key/iu.test(detail));

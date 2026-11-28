@@ -865,7 +865,7 @@ function validateV5Declarations(playbook: Playbook): void {
 	if (playbook.version < PLAYBOOK_DYNAMIC_STEP_VERSION) return;
 	const route = (id: string, value: { target?: string; profile?: string }): void => {
 		if (value.target !== undefined && value.profile !== undefined) {
-			throw new Error(`playbook ${playbook.path}: step '${id}' may declare target or profile, never both`);
+			throw new Error(`playbook ${playbook.path}: step '${id}' may declare connection or profile, never both`);
 		}
 	};
 	for (const step of playbook.steps) {

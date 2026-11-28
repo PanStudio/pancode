@@ -105,7 +105,7 @@ export async function prepareWorkerTargets(input: StartupPreparation): Promise<v
 		...Object.values(settings.fleet.profiles),
 		...Object.values(settings.fleet.rosters).flatMap((roster) => roster.members),
 	];
-	const mainTarget = settings.chat.target ? providers.getTarget(settings.chat.target) : null;
+	const mainTarget = settings.chat.connection ? providers.getTarget(settings.chat.connection) : null;
 	const mainEndpoints = new Set([
 		mainTarget ? canonicalEndpointKey(mainTarget) : null,
 		canonicalEndpointUrl(mainTarget?.cache?.deployment?.controlUrl),
@@ -114,8 +114,8 @@ export async function prepareWorkerTargets(input: StartupPreparation): Promise<v
 	let remaining = 4;
 	for (const route of routes) {
 		if (signal.aborted || isBusy()) return;
-		if (!route.target || route.target === settings.chat.target || ("node" in route && route.node)) continue;
-		const status = providers.list().find((entry) => entry.target.id === route.target);
+		if (!route.connection || route.connection === settings.chat.connection || ("node" in route && route.node)) continue;
+		const status = providers.list().find((entry) => entry.target.id === route.connection);
 		if (!status?.available || !status.runtime || status.runtime.kind !== "http") continue;
 		if (
 			status.runtime.tier !== "local-native" &&
@@ -133,7 +133,7 @@ export async function prepareWorkerTargets(input: StartupPreparation): Promise<v
 		if (remaining-- <= 0) break;
 		try {
 			if (status.health.lastCheckAt === null) {
-				await providers.probeTarget(route.target, {
+				await providers.probeTarget(route.connection, {
 					reasoning: false,
 					tools: false,
 					signal: AbortSignal.any([signal, AbortSignal.timeout(1500)]),

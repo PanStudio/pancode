@@ -373,7 +373,7 @@ export const SETTINGS_SECTIONS: readonly SettingsSection[] = [
 		path: "/settings/models",
 		icon: "models",
 		group: "settings",
-		owns: ["/settings/models", "/settings/targets", "/settings/routing"],
+		owns: ["/settings/models", "/settings/connections", "/settings/routing"],
 	},
 	{
 		id: "safety",
@@ -431,7 +431,7 @@ export function settingsDestination(path: string, workspaceId: string | null | u
 	return workspaceId ? `${path}?${new URLSearchParams({ workspace: workspaceId })}` : path;
 }
 
-/** The section a pathname belongs to. The longest matching prefix wins so `/settings/targets` is Models, not Harness. */
+/** The section a pathname belongs to. The longest matching prefix wins so `/settings/connections` is Models, not Harness. */
 export function settingsSectionFor(pathname: string): SettingsSection | undefined {
 	let best: { section: SettingsSection; length: number } | undefined;
 	for (const section of SETTINGS_SECTIONS)

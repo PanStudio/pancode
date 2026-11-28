@@ -90,8 +90,8 @@ readline.createInterface({ input: process.stdin }).once("line", () => {
 async function dispatchReportingWorker(url: string, load: Record<string, unknown>): Promise<void> {
 	const settings = structuredClone(DEFAULT_SETTINGS);
 	settings.fleet.retry.maxRetries = 0;
-	settings.targets = [{ id: "ollama-t", runtime: "ollama", url, defaultModel: MODEL }];
-	settings.fleet.default.target = "ollama-t";
+	settings.connections = [{ id: "ollama-t", runtime: "ollama", url, defaultModel: MODEL }];
+	settings.fleet.default.connection = "ollama-t";
 	settings.fleet.default.model = MODEL;
 	let worker: SpawnedWorker | undefined;
 	const bundle = makeDispatchBundle(dispatchStubContext({ settings, runtime: ollamaRuntime }), {

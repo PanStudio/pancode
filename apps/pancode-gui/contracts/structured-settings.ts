@@ -15,7 +15,7 @@ export const STRUCTURED_SETTINGS: Readonly<Record<string, StructuredSettingEdito
 		kind: "map",
 		name: "Profile",
 		fields: [
-			{ key: "target", label: "Connection" },
+			{ key: "connection", label: "Connection" },
 			{ key: "model", label: "Model" },
 			{ key: "thinkingLevel", label: "Thinking", choices: THINKING_LEVELS },
 			{ key: "node", label: "Worker node" },
@@ -31,7 +31,7 @@ export const STRUCTURED_SETTINGS: Readonly<Record<string, StructuredSettingEdito
 		name: "Roster",
 		fields: [
 			{ key: "label", label: "Member label" },
-			{ key: "target", label: "Connection" },
+			{ key: "connection", label: "Connection" },
 			{ key: "model", label: "Model" },
 			{ key: "thinkingLevel", label: "Thinking", choices: THINKING_LEVELS },
 			{ key: "color", label: "Member color" },

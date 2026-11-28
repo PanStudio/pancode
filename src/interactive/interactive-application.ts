@@ -185,8 +185,8 @@ export async function createInteractiveApplication(host: InteractiveDeps): Promi
 		undeliveredTurns: () => undeliveredMessages().length,
 		getModel: () => {
 			const settings = deps.getSettings?.();
-			return settings?.chat.target && settings.chat.model
-				? { target: settings.chat.target, model: settings.chat.model }
+			return settings?.chat.connection && settings.chat.model
+				? { target: settings.chat.connection, model: settings.chat.model }
 				: null;
 		},
 	});
@@ -1656,7 +1656,7 @@ export async function createInteractiveApplication(host: InteractiveDeps): Promi
 					if (startupAbort.signal.aborted) return;
 					const settings = deps.getSettings?.();
 					const model = settings?.chat.model;
-					const target = settings?.targets.find((entry) => entry.id === settings.chat.target);
+					const target = settings?.connections.find((entry) => entry.id === settings.chat.connection);
 					if (!model || !target) return;
 					const snapshot = readTargetModelSnapshot(target);
 					if (!snapshot) return;

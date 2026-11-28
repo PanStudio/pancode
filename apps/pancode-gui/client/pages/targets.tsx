@@ -53,12 +53,18 @@ export function TargetsPage({ client, view }: { client: Client; view: "targets" 
 		return request.workspaceId
 			? client.call(
 					scoped,
-					{ ...emptyInput, params: { id: request.workspaceId, targetId } },
+					{ ...emptyInput, params: { id: request.workspaceId, connectionId: targetId } },
 					request.key,
 					undefined,
 					request.epoch ?? undefined,
 				)
-			: client.call(user, { ...emptyInput, params: { targetId } }, request.key, undefined, request.epoch ?? undefined);
+			: client.call(
+					user,
+					{ ...emptyInput, params: { connectionId: targetId } },
+					request.key,
+					undefined,
+					request.epoch ?? undefined,
+				);
 	});
 	const { operation, request, busy } = tracking;
 	const operationView = operation.data ? connectionOperationView(operation.data) : null;

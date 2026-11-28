@@ -369,7 +369,7 @@ export async function conversationSteps(run: SmokeRun) {
 		await originalField.dispose();
 	});
 	await step("route picker", async () => {
-		// Conversation controls use ACP config options, and saved scope alone can switch targets.
+		// Conversation controls use ACP config options, and saved scope alone can switch connections.
 		const route = page.locator(".route-picker");
 		// The model name, not only the thinking level, shows that it opens a choice.
 		assert.equal(await route.locator("summary .route-chip__text + .route-chip__caret").isVisible(), true);
@@ -383,7 +383,7 @@ export async function conversationSteps(run: SmokeRun) {
 		await route.locator("summary .route-chip__text").getByText("fixture-small", { exact: true }).waitFor();
 		assert.match(
 			(await route.locator("summary").getAttribute("title")) ?? "",
-			/Target: fixture\. Model: fixture-small\./,
+			/Connection: fixture\. Model: fixture-small\./,
 		);
 		await page.waitForFunction(() => !(document.querySelector(".route-picker") as HTMLDetailsElement).open);
 		assert.match((await route.locator("summary").getAttribute("title")) ?? "", /Thinking: high/);
