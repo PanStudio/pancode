@@ -2,11 +2,9 @@
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import { CONTEXT_OPERATION_CUSTOM_TYPE, createContextOperation } from "../core/context-operation.js";
 import { enterAutonomousCommitScope } from "../core/git-commit-attribution.js";
-import { continuationCountsAgainstCap, JobClockExpired, TURN_CONTINUATION_CAP } from "../core/job-types.js";
-import { resourceLimitsFromSettings } from "../core/sandbox/resource-limits.js";
+import { JobClockExpired } from "../core/job-types.js";
 import type { SandboxAvailability } from "../core/sandbox/types.js";
-import { observedToolCallOrigin, ownerTelemetryContext, toolCallBatch } from "../core/telemetry/context.js";
-import { routeCallsPerRound, turnBudgetWidthScale } from "../core/turn-budget-width.js";
+import { ownerTelemetryContext } from "../core/telemetry/context.js";
 import { createConversationEggs } from "../domains/session/easter-eggs.js";
 import type { AskUserHandler } from "../tools/ask-user.js";
 import type { SealedCompletion } from "../tools/finish.js";
@@ -45,7 +43,6 @@ import { continueEngineWithoutInput, engineLiveTurnRequest, replaceEngineMessage
  * machine, and the shared ChatTurnState the modules coordinate through.
  */
 
-import { AsyncLocalStorage } from "node:async_hooks";
 import { realpathSync } from "node:fs";
 import type { PancodeSettings } from "../core/config.js";
 import { formatCount } from "../core/format-time.js";
@@ -77,7 +74,6 @@ import {
 } from "../domains/middleware/index.js";
 import type { PromptsContract } from "../domains/prompts/contract.js";
 import type { ProvidersContract } from "../domains/providers/index.js";
-import { acceptsImageInput, modelCandidatesForStatus, resolveModelCapabilities } from "../domains/providers/index.js";
 import type { AutonomyHalt, AutonomyStatus } from "../domains/safety/autonomy-window.js";
 import type { ProtectedArtifactState } from "../domains/safety/protected-artifacts.js";
 import type { SchedulingContract } from "../domains/scheduling/contract.js";
@@ -85,16 +81,13 @@ import type { CompactInput, CompactResult } from "../domains/session/compaction/
 import type { ContextLedger } from "../domains/session/context-ledger.js";
 import type { SessionContract } from "../domains/session/contract.js";
 import type { CompactionTrigger, SessionEntry } from "../domains/session/entries.js";
-import { absentOutputs, namedOutputs } from "../domains/session/output-obligations.js";
 import { protectedArtifactStateFromSessionEntries } from "../domains/session/protected-artifacts.js";
-import type { RetrySettings } from "../domains/session/retry.js";
 import { activePath, findLastEntry } from "../domains/session/tree/active-path.js";
 import type { TelemetryContract } from "../domains/telemetry/contract.js";
 import { createEngineAgent } from "../engine/agent.js";
 import type { AgentEvent, AgentMessage, ImageContent } from "../engine/types.js";
 import type { AutonomyLevel } from "../lib/autonomy/autonomy.js";
 import { ensureDetailLedgerForSession } from "../tools/extension-runtime-tools.js";
-import { createHeadlessObservationPool } from "../tools/observation.js";
 import type { AskUserToolPolicy, ToolInvokeOptions, ToolRegistry } from "../tools/registry-contract.js";
 import type { VisionSidecar } from "../tools/vision-sidecar.js";
 import type { ApprovalRequestView } from "./approval-request-view.js";
@@ -102,10 +95,10 @@ import { createChatLoopNotices } from "./chat-loop/notices.js";
 import { createTurnPreparation } from "./chat-loop/preparation.js";
 import { compactionFailureReason } from "./chat-loop/submit-fit.js";
 import { isRedirectReason } from "./chat-loop/submit-turn.js";
+import { createChatLoopToolOptions, toolInvokeOptions } from "./chat-loop/tool-options.js";
 import { createChatLoopBus } from "./chat-loop-bus.js";
 import { createChatLoopComposition } from "./chat-loop-composition.js";
 import { isOperatorCancelReason, notConfiguredNotice, OPERATOR_CANCEL_REASON } from "./chat-loop-messages.js";
-import { normalizeRetrySettings } from "./chat-loop-policy.js";
 import type { ChatLoopScope } from "./chat-loop-scope.js";
 import { createChatLoopStateMachine } from "./chat-loop-state-machine.js";
 import { createChatLoopSteering } from "./chat-loop-steering.js";
@@ -143,7 +136,6 @@ import {
 	createTurnState,
 	type TurnPreparationPhase,
 	type TurnPreparationStep,
-	type TurnStop,
 } from "./turn-state.js";
 
 export type { QueuedChatMessage } from "./turn-queues.js";
@@ -976,25 +968,6 @@ export interface StepPipelineEnd {
 	stoppedBy?: "cap" | "turn" | "cancel" | "failure" | "unreported";
 }
 
-/**
- * Whether a turn the per-turn tool budget ends now is continued without the operator, as `yoloContinuationDue`
- * decides when it settles: yolo, not a machine turn (its job decides), and the stop it settles on not capped. A plain
- * budget crossing never counts against the cap, so it continues past it; a turn whose tools the loop guard already
- * locked, or that failed, settles on a counted stop and does not once the cap is spent (CLI-H1).
- */
-export function budgetCrossingContinues(input: {
-	yolo: boolean;
-	machineTurn: boolean;
-	failure: TurnStop | null;
-	locked: boolean;
-	continuations: number;
-}): boolean {
-	const failure = input.failure;
-	if (!input.yolo || input.machineTurn || failure?.cause === "wait_past_budget") return false;
-	const cause = failure !== null ? failure.cause : input.locked ? "loop_guard" : "tool_budget";
-	return !(continuationCountsAgainstCap(cause) && input.continuations >= TURN_CONTINUATION_CAP);
-}
-
 export function createChatLoop(deps: CreateChatLoopDeps): ChatLoop {
 	const listeners = new Set<(event: ChatLoopEvent) => void>();
 	const sessionResetListeners = new Set<() => void>();
@@ -1045,84 +1018,14 @@ export function createChatLoop(deps: CreateChatLoopDeps): ChatLoop {
 	/** An operator `/context compact` is between its start and its settled card. */
 	let operatorCompactionRunning = false;
 
-	const visionModelOptions = (): string[] => {
-		const options: string[] = [];
-		for (const status of deps.providers.list()) {
-			for (const candidate of modelCandidatesForStatus(status)) {
-				const caps = resolveModelCapabilities(status, candidate.id, deps.providers.knowledgeBase);
-				if (!acceptsImageInput({ runtimeId: status.runtime?.id ?? status.target.runtime, vision: caps.vision })) continue;
-				options.push(`${status.target.id}/${candidate.id}`);
-				if (options.length === 5) return options;
-			}
-		}
-		return options;
-	};
-
-	/**
-	 * Which of the two settings is actually missing when the runtime resolves to
-	 * null. Both halves produce the same operator-facing notice, but a machine
-	 * consumer of the reason (the ACP server reports it as `data.reason`) needs
-	 * to tell "no orchestrator at all" from "a target that names no model", and
-	 * collapsing them sent a client with a configured target to the wrong fix.
-	 */
-	const nullRuntimeAdmissionReason = (): string => {
-		const orchestrator = deps.getSettings().chat;
-		const target = orchestrator.target?.trim() ?? "";
-		const model = orchestrator.model?.trim() ?? "";
-		return target.length > 0 && model.length === 0 ? "model-not-configured" : "orchestrator-not-configured";
-	};
-
-	const retrySettings = (): RetrySettings => normalizeRetrySettings(deps.getSettings().chat.retry);
-
-	const hostRunContext = new AsyncLocalStorage<ToolInvokeOptions["hostRun"]>();
-	// A headless run's observation pool rolls once spent instead of capping the run (CLI-P42); attended turns keep theirs.
-	const headlessObservation = deps.headless === true ? createHeadlessObservationPool() : null;
-	// M-4: the outputs this session's operator prompts named with an `output: <path>` line that do not exist now.
-	const missingOutputs = (): string[] =>
-		absentOutputs(
-			namedOutputs(activePath(deps.readSessionEntries?.() ?? [], state.lastTurnId ?? undefined)),
-			process.cwd(),
-		);
-	const currentToolInvokeOptions = (toolCallId?: string): Partial<ToolInvokeOptions> => {
-		const options: Partial<ToolInvokeOptions> = {
-			toolResultMaxBytes: deps.getSettings().context.toolResultMaxBytes,
-			abortCause: () => state.activeInterruptReason ?? state.toolProseAbortReason,
-			steerInterrupt: steerInterrupter,
-			...toolLimitOptions(deps.getSettings().safety),
-			...observedToolCallOrigin(state.runtime?.agent.state.messages ?? [], toolCallId),
-		};
-		const batch = toolCallBatch(state.runtime?.agent.state.messages ?? [], toolCallId);
-		if (batch !== undefined) {
-			options.correlationId = batch.id;
-			options.batchSize = batch.size;
-		}
-		const yolo = (deps.getAutonomy?.() ?? deps.getSettings().safety.autonomy) === "yolo";
-		options.turnBudgetContinues = budgetCrossingContinues({
-			yolo,
-			machineTurn: loop.machineTurnRunning !== null,
-			failure: state.continuation.stop,
-			locked: state.synthesisToolLock,
-			continuations: state.continuation.yoloContinuations,
-		});
-		if (options.turnBudgetContinues) options.observationBudgetRoll = () => requestBudgetRoll("observation");
-		// Yolo keeps XR-6 exactly, its stops included; the headless roll is never its fallback (CLI-P42).
-		else if (!yolo && headlessObservation !== null) Object.assign(options, headlessObservation.invokeOptions(batch?.id));
-		// The per-turn budgets follow this route's measured calls per round (CLI-P26).
-		const scale = turnBudgetWidthScale(
-			routeCallsPerRound(state.runtime?.agent.state.messages ?? [], state.runtime?.agent.state.model?.id),
-		);
-		if (scale > 1) options.turnBudgetScale = scale;
-		const hostRun = hostRunContext.getStore();
-		if (hostRun !== undefined) options.hostRun = hostRun;
-		const sessionId = deps.session?.current()?.id ?? null;
-		if (sessionId) options.sessionId = sessionId;
-		const turnId = state.activeUserTurnId ?? state.lastTurnId;
-		if (turnId) options.turnId = turnId;
-		if (state.currentPendingSkillPolicy) options.pendingSkillPolicy = state.currentPendingSkillPolicy;
-		if (state.currentTurnConstraints) options.turnConstraints = state.currentTurnConstraints;
-		if (state.currentAskUserPolicy) options.askUserPolicy = state.currentAskUserPolicy;
-		return options;
-	};
+	const {
+		visionModelOptions,
+		nullRuntimeAdmissionReason,
+		retrySettings,
+		hostRunContext,
+		headlessObservation,
+		missingOutputs,
+	} = createChatLoopToolOptions(deps, state);
 
 	const loop: ChatLoopScope = {
 		deps,
@@ -1144,7 +1047,8 @@ export function createChatLoop(deps: CreateChatLoopDeps): ChatLoop {
 		retrySettings,
 		headlessObservation,
 		missingOutputs,
-		currentToolInvokeOptions,
+		hostRunContext,
+		currentToolInvokeOptions: (toolCallId) => toolInvokeOptions(loop, state, toolCallId),
 		get sessionToolLimits() {
 			return sessionToolLimits;
 		},
@@ -1259,6 +1163,9 @@ export function createChatLoop(deps: CreateChatLoopDeps): ChatLoop {
 		},
 		get turnRuntime() {
 			return turnRuntime;
+		},
+		get steerInterrupter() {
+			return steerInterrupter;
 		},
 		get stepStarts() {
 			return stepStarts;
@@ -2372,13 +2279,4 @@ export function createChatLoop(deps: CreateChatLoopDeps): ChatLoop {
 		}
 	};
 	return api;
-}
-
-/** The per-call bounds settings put on every tool invocation: the bash idle timeout and the main session's resource ceilings. */
-function toolLimitOptions(safety: PancodeSettings["safety"]): Pick<ToolInvokeOptions, "bashIdleMs" | "resourceLimits"> {
-	const resourceLimits = resourceLimitsFromSettings(safety.resources.main);
-	return {
-		...(safety.limits.bashIdleSeconds > 0 ? { bashIdleMs: safety.limits.bashIdleSeconds * 1000 } : {}),
-		...(resourceLimits === undefined ? {} : { resourceLimits }),
-	};
 }

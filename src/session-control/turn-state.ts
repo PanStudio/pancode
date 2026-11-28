@@ -685,6 +685,21 @@ export type ChatLoopPreparationState = TurnStateView<
 /** chat-loop/notices: reads the turn a notice belongs to and arms the skill surface. */
 export type ChatLoopNoticesState = TurnStateView<"activeSkillSurface" | "lastTurnId", "activeSkillSurface">;
 
+/** chat-loop/tool-options: reads the running turn a tool call is invoked in. */
+export type ChatLoopToolOptionsState = TurnStateView<
+	| "activeInterruptReason"
+	| "activeUserTurnId"
+	| "continuation"
+	| "currentAskUserPolicy"
+	| "currentPendingSkillPolicy"
+	| "currentTurnConstraints"
+	| "lastTurnId"
+	| "runtime"
+	| "synthesisToolLock"
+	| "toolProseAbortReason",
+	never
+>;
+
 /**
  * The thinking level argument is ignored: the agent state owns the level and
  * turn state keeps no copy. The parameter stays optional because existing test

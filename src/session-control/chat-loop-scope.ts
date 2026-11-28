@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import type { AsyncLocalStorage } from "node:async_hooks";
 import type { PendingSkillRequest, PendingSkillToolPolicy, SkillSurfaceChange } from "../core/skill-activation.js";
 import type { TurnConstraints } from "../core/turn-constraints.js";
 import type { MiddlewareToolChoiceControl } from "../domains/middleware/index.js";
@@ -67,6 +68,7 @@ export interface ChatLoopScope {
 	readonly retrySettings: () => RetrySettings;
 	readonly headlessObservation: HeadlessObservationPool | null;
 	readonly missingOutputs: () => string[];
+	readonly hostRunContext: AsyncLocalStorage<ToolInvokeOptions["hostRun"]>;
 	readonly currentToolInvokeOptions: (toolCallId?: string) => Partial<ToolInvokeOptions>;
 	sessionToolLimits: TurnConstraints | undefined;
 	promptToolLimits: TurnConstraints | undefined;
@@ -114,6 +116,7 @@ export interface ChatLoopScope {
 	readonly recovery: ChatLoopComposition["recovery"];
 	readonly requestBudgetRoll: ChatLoopComposition["requestBudgetRoll"];
 	readonly turnRuntime: ChatLoopComposition["turnRuntime"];
+	readonly steerInterrupter: ChatLoopComposition["steerInterrupter"];
 	readonly stepStarts: ChatLoopBus["stepStarts"];
 	readonly stepPipeline: ChatLoopBus["stepPipeline"];
 	readonly yoloContinuationDue: ChatLoopStateMachine["yoloContinuationDue"];
