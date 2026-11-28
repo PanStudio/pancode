@@ -13,9 +13,6 @@ import type { TurnConstraints } from "../core/turn-constraints.js";
 /** Every `--output-schema` refusal starts with this, which the v2 envelope reads as cause `schema_unsupported`. */
 export const OUTPUT_SCHEMA_REFUSAL_PREFIX = "pancode run: --output-schema: ";
 
-/** Who enforced the schema: the host alone, or the host behind a provider's response-schema dialect. */
-export type StructuredEnforcement = "host" | "host+provider";
-
 /** A refused schema is C17 `schema_unsupported` (SPEC 6.8), refused before any model call. */
 export type OutputSchemaLoad =
 	| { ok: true; schema: Record<string, unknown> }

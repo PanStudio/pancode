@@ -50,11 +50,7 @@ import {
 	type WorkerProgressSnapshot,
 } from "../domains/telemetry/worker-progress.js";
 
-export {
-	boundSettledText,
-	WORKER_LIVE_TAIL_LINES,
-	WORKER_TOOL_NAME_LIMIT,
-} from "../domains/telemetry/worker-progress.js";
+export { boundSettledText } from "../domains/telemetry/worker-progress.js";
 export type { WorkerProgressSnapshot };
 
 export interface WorkerAttempt {

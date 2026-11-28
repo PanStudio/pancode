@@ -374,28 +374,6 @@ export interface AcpInitializeResponse {
 	authMethods?: AcpAuthMethod[];
 }
 
-export interface AcpSessionInfo {
-	sessionId: string;
-	cwd: string;
-	title?: string;
-	updatedAt?: string;
-	_meta?: Record<string, unknown>;
-}
-
-export interface AcpContentText {
-	type: "text";
-	text: string;
-}
-
-export interface AcpContentResourceLink {
-	type: "resource_link";
-	uri: string;
-	name: string;
-	mimeType?: string;
-}
-
-export type AcpContentBlock = AcpContentText | AcpContentResourceLink | Record<string, unknown>;
-
 /** ACP v1 `ToolCallLocation` (schema v1.23.0). */
 export interface AcpToolCallLocation {
 	/** The file path being accessed or modified. */
@@ -489,26 +467,6 @@ export interface AcpSessionResultMeta {
 	resumed: boolean;
 	replayed?: { turns: number; truncated: boolean };
 }
-/** `_meta["pancode/turn"]` on a `session/prompt` result. */
-export interface AcpTurnMeta {
-	model?: string;
-	target?: string;
-	ttftMs?: number;
-	outputTokensPerSecond?: number;
-}
-/** `_meta["pancode/toolTiming"]` on a terminal `tool_call_update`. */
-export interface AcpToolTimingMeta {
-	durationMs: number;
-}
-/** `_meta["pancode/replay"]` on a replayed `session/update` frame. */
-export interface AcpReplayMeta {
-	turn?: number;
-	run?: boolean;
-	stopReason?: string;
-	/** The ledger's time for the request that opened a replayed turn, and for its newest entry. */
-	startedAt?: string;
-	finishedAt?: string;
-}
 
 export const sessionId = Type.String({ minLength: 1, maxLength: 128 });
 export const sessionParams = { sessionId };
@@ -590,14 +548,11 @@ export const AcpTurnMetaSchema = Type.Object(
 	},
 	closed,
 );
-export const AcpToolTimingMetaSchema = Type.Object({ durationMs: Type.Integer({ minimum: 0 }) }, closed);
 export const AcpInitializeResultSchema = Type.Object(
 	{ protocolVersion: Type.Literal(1) },
 	{ additionalProperties: true },
 );
-export type AcpInitializeResult = Static<typeof AcpInitializeResultSchema>;
 export const AcpSessionIdentitySchema = Type.Object({ sessionId }, { additionalProperties: true });
-export type AcpSessionIdentity = Static<typeof AcpSessionIdentitySchema>;
 export const AcpPromptResultSchema = Type.Object(
 	{
 		stopReason: Type.Union([
@@ -617,4 +572,3 @@ export const AcpPromptResultSchema = Type.Object(
 	},
 	{ additionalProperties: true },
 );
-export type AcpPromptResult = Static<typeof AcpPromptResultSchema>;

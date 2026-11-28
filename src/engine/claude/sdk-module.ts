@@ -19,13 +19,6 @@ import {
 	resolveClaudeAgentSdkEntry,
 } from "../../domains/lifecycle/claude-sdk-install.js";
 
-export {
-	CLAUDE_AGENT_SDK_INSTALL_COMMAND,
-	CLAUDE_AGENT_SDK_PACKAGE,
-	CLAUDE_AGENT_SDK_VERSION,
-	ClaudeAgentSdkUnavailableError,
-} from "../../domains/lifecycle/claude-sdk-install.js";
-
 /** The slice of the SDK surface the worker runtime calls. */
 export interface ClaudeAgentSdkModule {
 	query: typeof query;

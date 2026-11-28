@@ -2,13 +2,10 @@
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 
 import type { AcpCompactUsageMeta } from "./types.js";
+import { ACP_PLAN_META_KEY, ACP_WORKSPACE_META_KEY } from "./types.js";
 import type { AcpWorkspaceView } from "./types-session.js";
 
-export type { AcpWorkspaceView } from "./types-session.js";
-
-import { ACP_PLAN_META_KEY, ACP_WORKSPACE_META_KEY } from "./types.js";
-
-export { ACP_PLAN_META_KEY, ACP_WORKSPACE_META_KEY } from "./types.js";
+export { ACP_WORKSPACE_META_KEY } from "./types.js";
 
 /**
  * Pushed session telemetry: the standard `usage_update` and `plan` session

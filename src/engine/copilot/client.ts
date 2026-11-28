@@ -369,7 +369,7 @@ export interface CopilotModelPrices {
 }
 
 /** One tier's token prices exactly as the listing states them; each price is per `batchSize` tokens. */
-export interface CopilotListingTierPrices {
+interface CopilotListingTierPrices {
 	inputPrice?: number;
 	outputPrice?: number;
 	/** The SDK marks this deprecated in favour of `cacheReadPrice`; carried while the listing still states it. */
@@ -382,13 +382,13 @@ export interface CopilotListingTierPrices {
 	maxPromptTokens?: number;
 }
 
-export interface CopilotListingTokenPrices extends CopilotListingTierPrices {
+interface CopilotListingTokenPrices extends CopilotListingTierPrices {
 	batchSize?: number;
 	longContext?: CopilotListingTierPrices;
 }
 
 /** A server-driven promotion the listing states for the signed-in account. */
-export interface CopilotListingPromo {
+interface CopilotListingPromo {
 	id?: string;
 	discountPercent?: number;
 	endsAt?: string;
@@ -400,14 +400,14 @@ export interface CopilotListingPromo {
  * The seat's tariff for one model as the SDK listing (`@experimental`) reports it. A field the listing left
  * out stays absent; nothing here is defaulted, converted or priced.
  */
-export interface CopilotListingBilling {
+interface CopilotListingBilling {
 	multiplier?: number;
 	discountPercent?: number;
 	promo?: CopilotListingPromo;
 	tokenPrices?: CopilotListingTokenPrices;
 }
 
-export interface CopilotModelRow {
+interface CopilotModelRow {
 	id: string;
 	label: string;
 	contextWindow: number | undefined;

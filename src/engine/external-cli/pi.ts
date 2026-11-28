@@ -12,8 +12,6 @@ import { cliEventRecord, emptyCliUsage, finiteUsage, startJsonlCliRun } from "./
 
 export const PI_CLI_DEFAULT_MODEL = "pi-cli-default";
 
-export { piCliMode } from "../../domains/providers/runtimes/external-cli-policy.js";
-
 /** `noContextFiles` is false only for a Pi known to predate `--no-context-files` (0.67.4), which rejects it. */
 export function buildPiCliArgs(input: WorkerRunInput, builtinLlamaCpp = false, noContextFiles = true): string[] {
 	assertToolProfileEnforceable(input.toolProfile, "pi-cli");

@@ -91,14 +91,7 @@ export async function copilotSdkSignInProbe(keychain: boolean) {
 	return client.probeCopilotSignIn(keychain);
 }
 
-export type {
-	CopilotAccount,
-	CopilotListingBilling,
-	CopilotListingPromo,
-	CopilotListingTierPrices,
-	CopilotListingTokenPrices,
-	CopilotModelRow,
-} from "./copilot/client.js";
+export type { CopilotAccount } from "./copilot/client.js";
 
 /** The account the official Copilot runtime is signed in as; loads the optional SDK on first use. */
 export async function copilotSdkAccount() {
@@ -116,12 +109,8 @@ export type {
 	CopilotQuotaAccount,
 	CopilotQuotaEntry,
 	CopilotQuotaObservation,
-	CopilotQuotaObservationKind,
-	CopilotQuotaQuantityKind,
 	CopilotQuotaReadOptions,
 	CopilotQuotaReadResult,
-	CopilotQuotaRpcClient,
-	CopilotQuotaUnit,
 } from "./copilot/quota.js";
 
 /** Copilot account quota observations the live stream delivers, as they arrive; loads no SDK. */

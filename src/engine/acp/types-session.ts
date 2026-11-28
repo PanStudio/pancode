@@ -219,7 +219,7 @@ export interface AcpWorkspaceView {
 	capturedAt: string;
 }
 
-export type AcpTreeNodeKind =
+type AcpTreeNodeKind =
 	| "user"
 	| "assistant"
 	| "tool_call"

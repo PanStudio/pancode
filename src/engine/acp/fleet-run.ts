@@ -4,7 +4,7 @@ import { renderUsdLimit, renderUsdSpend } from "../../core/telemetry/render.js";
 import type { AcpFleetPreview, AcpFleetStep } from "./types-fleet.js";
 
 export { ACP_FLEET_META_KEY, ACP_FLEET_PREVIEW_METHOD, ACP_FLEET_RUN_METHOD } from "./types.js";
-export type { AcpFleetPreview, AcpFleetStep } from "./types-fleet.js";
+export type { AcpFleetPreview } from "./types-fleet.js";
 
 /**
  * `_pancode/fleet/preview` and `_pancode/fleet/run`: the terminal's

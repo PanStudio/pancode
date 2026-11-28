@@ -27,7 +27,7 @@ import {
 	warmableBackend,
 } from "../domains/providers/index.js";
 import type { SessionContract } from "../domains/session/contract.js";
-import { type PrewarmTrigger, prewarmPromptTokens, runPrewarmRound } from "./prewarm.js";
+import { type PrewarmTrigger, prewarmPromptTokens, runPrewarmRound } from "../engine/prewarm.js";
 import type { TurnContext } from "./turn-context.js";
 import type { AgentRuntime, TurnPrewarmState } from "./turn-state.js";
 

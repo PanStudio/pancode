@@ -42,7 +42,6 @@ import {
 	ACP_TOOL_PROGRESS_META_KEY,
 	ACP_TOOLS_META_KEY,
 	ACP_TRUST_META_KEY,
-	ACP_USAGE_META_KEY,
 	ACP_WORKER_PERMISSIONS_META_KEY,
 	ACP_WORKSPACE_META_KEY,
 	closed,
@@ -344,46 +343,6 @@ export interface AcpAgentCapabilitiesMeta {
 	[ACP_SHELL_META_KEY]?: AcpShellCapability;
 	[ACP_QUEUE_META_KEY]?: AcpWire<AcpQueueCapability>;
 	[ACP_READOUTS_META_KEY]: AcpReadoutsCapability;
-}
-
-/** What a client announces under `clientCapabilities._meta` to opt in to the attended extensions. */
-export interface AcpClientCapabilitiesMeta {
-	[ACP_EVENTS_META_KEY]?: { version: 1; kinds: ReadonlyArray<string> };
-	[ACP_TOOL_PROGRESS_META_KEY]?: { version: 1 };
-	[ACP_QUEUE_META_KEY]?: { version: 1 };
-	[ACP_INTERVIEWS_META_KEY]?: {
-		version: 1;
-		request: typeof ACP_INTERVIEW_REQUEST_METHOD;
-		cancel?: typeof ACP_INTERVIEW_CANCEL_METHOD;
-		/**
-		 * How long an interview round waits for the client, 1 to
-		 * {@link ACP_MAX_NEGOTIATED_TIMEOUT_MS}. Overrides the configured default,
-		 * never an explicit `pancode acp --permission-timeout`. Any other value
-		 * refuses the whole opt-in.
-		 */
-		timeoutMs?: number;
-	};
-	/**
-	 * A person at the client answers MCP servers' elicitations: forms and
-	 * links, over `_pancode/elicitation/request`. Without it no MCP server is
-	 * told PanCode can ask anyone. `timeoutMs` is bounded and pinned like the
-	 * interview one.
-	 */
-	[ACP_ELICITATION_META_KEY]?: {
-		version: 1;
-		request: typeof ACP_ELICITATION_REQUEST_METHOD;
-		cancel?: typeof ACP_ELICITATION_CANCEL_METHOD;
-		timeoutMs?: number;
-	};
-	[ACP_WORKER_PERMISSIONS_META_KEY]?: {
-		version: 1;
-		withdraw: typeof ACP_PERMISSION_WITHDRAW_METHOD;
-		/** The `session/request_permission` window, bounded and pinned like the interview one. */
-		timeoutMs?: number;
-	};
-	[ACP_READOUTS_META_KEY]?: { version: 1 };
-	/** The full read-model usage, each quantity with its fact and ref, in place of the compact displays. */
-	[ACP_USAGE_META_KEY]?: { version: 1 };
 }
 
 /** Preserve the announcement's inferred shape while checking every extension against its wire contract. */

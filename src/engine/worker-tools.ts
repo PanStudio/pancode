@@ -51,8 +51,6 @@ import type { RegistryDeps, ToolRegistry } from "../tools/registry-contract.js";
 import { runtimeAttachesGateway } from "../tools/surface.js";
 import { type AgentLedgerPort, toolSignatureOf } from "../worker/protocol.js";
 
-export { WORKER_RUNTIME_MEDIATES_PANCODE_DISPATCH } from "./worker-runtime-capabilities.js";
-
 /** Host-owned terminal protocol, never an additional workspace capability. */
 export const INTERNAL_HELPER_RESULT_TOOL = "pancode_submit_result";
 

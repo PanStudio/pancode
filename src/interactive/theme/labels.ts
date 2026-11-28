@@ -6,12 +6,10 @@ import { sanitizeCallTargetText } from "../../lib/call-target/call-target.js";
 import { GLYPH } from "./glyphs.js";
 
 /** The quantity formatters live in core so the pane process prints them the same way; the TUI reaches them here. */
-export type { FillSource } from "../../core/format-time.js";
 export {
 	formatCount,
 	formatCountdown,
 	formatElapsed,
-	formatFill,
 	formatLimit,
 	formatWaitClock,
 } from "../../core/format-time.js";

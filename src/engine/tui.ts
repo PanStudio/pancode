@@ -113,7 +113,7 @@ export {
 } from "@earendil-works/pi-tui";
 export { decodePrintableKey } from "@earendil-works/pi-tui/dist/keys.js";
 export { extractAnsiCode } from "@earendil-works/pi-tui/dist/utils.js";
-export type { ApplicationInputHost, ApplicationInputPolicy, ApplicationInputTui } from "./application-input-tui.js";
+export type { ApplicationInputTui } from "./application-input-tui.js";
 export { ApplicationInputTuiAltScreen, ApplicationInputTuiMainScreen } from "./application-input-tui.js";
 export {
 	InstrumentedTuiAltScreen,

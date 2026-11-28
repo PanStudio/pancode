@@ -3,7 +3,6 @@
 import type { AcpContextLedger } from "./types-views.js";
 
 export { ACP_CONTEXT_LEDGER_METHOD, ACP_CONTEXT_META_KEY } from "./types.js";
-export type { AcpContextLedger } from "./types-views.js";
 
 /**
  * `_pancode/context/ledger`: the terminal's `/context` window view as one

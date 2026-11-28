@@ -10,8 +10,6 @@ import { cliEventRecord, emptyCliUsage, finiteUsage, type JsonlCliConnector } fr
 
 export const OPENCODE_CLI_DEFAULT_MODEL = "opencode-cli-default";
 
-export { opencodeCliMode } from "../../domains/providers/runtimes/external-cli-policy.js";
-
 export function buildOpenCodeCliArgs(input: WorkerRunInput): string[] {
 	assertToolProfileEnforceable(input.toolProfile, "opencode-cli");
 	opencodeCliMode(input.readOnly === true);

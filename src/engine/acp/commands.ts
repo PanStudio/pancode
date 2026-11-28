@@ -12,16 +12,7 @@ import type {
 	AcpTypedCommand,
 } from "./types-views.js";
 
-export type {
-	AcpCommandArgsSpec,
-	AcpCommandCatalog,
-	AcpCommandDescriptor,
-	AcpCommandFlagSpec,
-	AcpCommandPositionalSpec,
-	AcpCommandReportMeta,
-	AcpCommandResult,
-	AcpTypedCommand,
-} from "./types-views.js";
+export type { AcpCommandArgsSpec, AcpCommandCatalog, AcpCommandDescriptor } from "./types-views.js";
 
 /**
  * The operator command catalog, projected onto ACP.

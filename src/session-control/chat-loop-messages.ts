@@ -1130,7 +1130,6 @@ export {
 	OUTPUT_SCHEMA_REFUSAL_PREFIX,
 	outputSchemaInstruction,
 	outputSchemaSummaryInstruction,
-	type StructuredEnforcement,
 	type StructuredVerdict,
 	schemaMismatchMessage,
 	structuredRepairConstraints,

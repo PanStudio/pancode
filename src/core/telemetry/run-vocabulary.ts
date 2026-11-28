@@ -168,7 +168,6 @@ export type WorkerStdoutFailure = (typeof WORKER_STDOUT_FAILURES)[number];
 
 /** A worker channel failure: the worker's own report, or a frame the host could not read. */
 export const WORKER_CHANNEL_FAILURES = [...WORKER_STDOUT_FAILURES, "invalid-frame"] as const;
-export type WorkerChannelFailure = (typeof WORKER_CHANNEL_FAILURES)[number];
 
 /** How each labelled hash a finished run carries was computed (`run-hashes.ts`, #434). */
 export const RUN_HASH_CANONICALIZATIONS = [

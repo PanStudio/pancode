@@ -32,9 +32,6 @@ export interface CodexRuntimeDependencies {
 	killGraceMs?: number;
 }
 
-export type { CodexSubprocessPermissionConfig } from "../../domains/providers/runtimes/external-cli-policy.js";
-export { codexSubprocessPermissionConfig } from "../../domains/providers/runtimes/external-cli-policy.js";
-
 export function buildCodexExecPrompt(input: WorkerRunInput): string {
 	return [
 		input.systemPrompt.trim(),

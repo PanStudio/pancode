@@ -2,11 +2,8 @@
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import type { AcpErrorDetail } from "./types.js";
 
-export type { AcpErrorDetail } from "./types.js";
-
 import { ACP_ERROR_META_KEY } from "./types.js";
 
-export { ACP_ERROR_META_KEY } from "./types.js";
 export class AcpError extends Error {
 	readonly code: string;
 	readonly data?: unknown;

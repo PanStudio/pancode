@@ -1,11 +1,8 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import { renderUsdLimit, renderUsdSpend } from "../../core/telemetry/render.js";
-import type { AcpBudgetBlock, AcpBudgetCapability } from "./types-capabilities.js";
-
-export type { AcpBudgetBlock } from "./types-capabilities.js";
-
 import { ACP_BUDGET_META_KEY, ACP_NOTICE_META_KEY } from "./types.js";
+import type { AcpBudgetBlock, AcpBudgetCapability } from "./types-capabilities.js";
 
 export { ACP_BUDGET_META_KEY } from "./types.js";
 
