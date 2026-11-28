@@ -12,6 +12,7 @@ import { createAssistantMessageEventStream } from "@earendil-works/pi-ai";
 import { assistantOutputBlockChars } from "../core/assistant-output.js";
 import { readDiffusionFrame } from "./apis/diffusion-frames.js";
 import { remainingContextMaxTokens } from "./apis/output-budget.js";
+import { zeroUsage } from "./types.js";
 
 // CLB-1: silence timers cannot bound an actively repeating argument stream.
 // A long, short-cycle run must also persist for a minute: ordinary repeated
@@ -95,14 +96,7 @@ export function guardToolArgumentStream<T extends StreamOptions>(
 					api: model.api,
 					provider: model.provider,
 					model: model.id,
-					usage: {
-						input: 0,
-						output: 0,
-						cacheRead: 0,
-						cacheWrite: 0,
-						totalTokens: 0,
-						cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
-					},
+					usage: zeroUsage(),
 					timestamp: Date.now(),
 				}),
 		stopReason: "aborted",

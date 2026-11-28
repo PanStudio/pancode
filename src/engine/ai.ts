@@ -52,7 +52,7 @@ import { sideCallCacheFamilyId } from "./apis/cache-family.js";
 import type { CopilotQuotaReadOptions } from "./copilot/quota.js";
 import { engineModels } from "./models.js";
 import { deterministicSampling } from "./provider-payload.js";
-import type { EngineModel } from "./types.js";
+import { type EngineModel, zeroUsage } from "./types.js";
 
 // Dispatch registers the admission store's cross-process cache lanes for main sessions here (M-11).
 export { useMainCacheLaneStore } from "./apis/cache-family.js";
@@ -205,7 +205,7 @@ function conversationMessage(
 		api: model.api,
 		provider: model.provider,
 		model: model.id,
-		usage: emptyUsage(),
+		usage: zeroUsage(),
 		stopReason: "stop",
 		timestamp,
 	};
@@ -281,7 +281,7 @@ async function completeEngineTextAttempt(input: EngineTextCompletionInput): Prom
 		throw error;
 	});
 	const failed = response.stopReason === "error" || response.stopReason === "aborted";
-	const usage = response.usage ?? emptyUsage();
+	const usage = response.usage ?? zeroUsage();
 	const failure = failed
 		? tracking.failure(
 				response,
@@ -342,17 +342,6 @@ export function createEngineAi(): EngineAi {
 				return undefined;
 			}
 		},
-	};
-}
-
-function emptyUsage(): Usage {
-	return {
-		input: 0,
-		output: 0,
-		cacheRead: 0,
-		cacheWrite: 0,
-		totalTokens: 0,
-		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
 	};
 }
 
@@ -421,7 +410,7 @@ function errorOnlyMessage(errorMessage: string): AssistantMessage {
 		api: "pancode",
 		provider: "pancode",
 		model: "unknown",
-		usage: emptyUsage(),
+		usage: zeroUsage(),
 		stopReason: "error",
 		errorMessage,
 		timestamp: Date.now(),

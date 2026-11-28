@@ -3,7 +3,7 @@
 import type { Api, AssistantMessage, AssistantMessageEventStream, Model, StreamOptions } from "@earendil-works/pi-ai";
 import { createAssistantMessageEventStream, registerSessionResourceCleanup } from "@earendil-works/pi-ai";
 import { isProviderAuthRejection } from "../../core/provider-auth-error.js";
-import type { CodexTransportCounters, CodexTransportObservation } from "../types.js";
+import { type CodexTransportCounters, type CodexTransportObservation, zeroUsage } from "../types.js";
 import { cacheConversationOf, withoutCacheConversation } from "./cache-family.js";
 import { withProxyConnectionNote } from "./proxy-connection-error.js";
 import {
@@ -164,12 +164,7 @@ export function observeResponsesTransport<T extends StreamOptions>(
 				model: model.id,
 				usage: {
 					callInvoked: false,
-					input: 0,
-					output: 0,
-					cacheRead: 0,
-					cacheWrite: 0,
-					totalTokens: 0,
-					cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+					...zeroUsage(),
 				},
 				stopReason: reason,
 				errorMessage: cause instanceof Error ? cause.message : String(cause),

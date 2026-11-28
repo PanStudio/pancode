@@ -15,7 +15,7 @@ import {
 	readBoundedLines,
 	readStderr,
 } from "../external-subprocess.js";
-import type { AgentEvent, AgentMessage, Usage } from "../types.js";
+import { type AgentEvent, type AgentMessage, type Usage, zeroUsage } from "../types.js";
 import type { WorkerEventEmit, WorkerRunHandle, WorkerRunInput, WorkerRunResult } from "../worker-run-types.js";
 
 type CliChild = ChildProcessByStdio<Writable, Readable, Readable>;
@@ -79,17 +79,6 @@ export function finiteUsage(value: unknown): number {
 	return typeof value === "number" && Number.isFinite(value) && value >= 0
 		? Math.min(value, Number.MAX_SAFE_INTEGER)
 		: 0;
-}
-
-export function emptyCliUsage(): Usage {
-	return {
-		input: 0,
-		output: 0,
-		cacheRead: 0,
-		cacheWrite: 0,
-		totalTokens: 0,
-		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
-	};
 }
 
 export function startJsonlCliRun(
@@ -160,7 +149,7 @@ export function startJsonlCliRun(
 
 	const message = (exitCode: number, diagnostic: string): AgentMessage & { role: "assistant" } => {
 		const succeeded = !aborted && exitCode === 0 && !diagnostic;
-		const usage = (state.usage ?? emptyCliUsage()) as Usage & { pancodeExternal?: Record<string, unknown> };
+		const usage = (state.usage ?? zeroUsage()) as Usage & { pancodeExternal?: Record<string, unknown> };
 		usage.pancodeExternal = {
 			tokenUsage: state.usageReported ? "provider-reported" : "missing",
 			cost: state.costReported ? "peer-estimated" : "missing",

@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import { markHostAuthored } from "../core/message-accounting.js";
 import { ToolNames } from "../core/tool-names.js";
-import type { AgentMessage } from "../engine/types.js";
+import { type AgentMessage, zeroUsage } from "../engine/types.js";
 
 /**
  * Degenerate generation: a stream that repeats the same sentences instead of
@@ -250,12 +250,7 @@ export function repetitionRepromptMessages(
 			content: [{ type: "toolCall", id, name: REPETITION_REPROMPT_TOOL, arguments: {} }],
 			stopReason: "toolUse",
 			usage: {
-				input: 0,
-				output: 0,
-				cacheRead: 0,
-				cacheWrite: 0,
-				totalTokens: 0,
-				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+				...zeroUsage(),
 				// PanCode wrote this message; no provider was called for it.
 				callInvoked: false,
 			},

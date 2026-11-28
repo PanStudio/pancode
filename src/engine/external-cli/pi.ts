@@ -6,10 +6,10 @@ import { buildSafeToolEnv, resolveSafeCwd, runCommandVector } from "../../core/s
 import { asRecord } from "../../core/type-guards.js";
 import { piCliMode } from "../../domains/providers/runtimes/external-cli-policy.js";
 import { assertToolProfileEnforceable } from "../../tools/profiles.js";
-import type { AgentMessage } from "../types.js";
+import { type AgentMessage, zeroUsage } from "../types.js";
 import type { WorkerEventEmit, WorkerRunHandle, WorkerRunInput, WorkerRunResult } from "../worker-run-types.js";
 import type { JsonlCliConnector, JsonlCliDependencies, JsonlCliState } from "./jsonl-runner.js";
-import { cliWorkOrderPrompt, emptyCliUsage, finiteUsage, startJsonlCliRun } from "./jsonl-runner.js";
+import { cliWorkOrderPrompt, finiteUsage, startJsonlCliRun } from "./jsonl-runner.js";
 
 export const PI_CLI_DEFAULT_MODEL = "pi-cli-default";
 
@@ -125,7 +125,7 @@ export function startPiCliWorkerRun(
 					api: "external-agent-subprocess",
 					provider: "pi-cli",
 					model: input.wireModelId,
-					usage: Object.assign(emptyCliUsage(), {
+					usage: Object.assign(zeroUsage(), {
 						pancodeExternal: { tokenUsage: "missing", cost: "missing", sessionId: null },
 					}),
 					stopReason: "aborted",
@@ -172,7 +172,7 @@ function textFromContent(value: unknown): string {
 function piUsage(raw: unknown): JsonlCliState["usage"] {
 	const observed = asRecord(raw);
 	if (!observed) return null;
-	const usage = emptyCliUsage();
+	const usage = zeroUsage();
 	usage.input = finiteUsage(observed.input);
 	usage.output = finiteUsage(observed.output);
 	usage.cacheRead = finiteUsage(observed.cacheRead);
@@ -210,7 +210,7 @@ export const PI_CLI_CONNECTOR: JsonlCliConnector = {
 			if (typeof message.responseId === "string") state.responseId = message.responseId;
 			const contribution = piUsage(message.usage);
 			if (contribution) {
-				const total = state.usage ?? emptyCliUsage();
+				const total = state.usage ?? zeroUsage();
 				for (const field of ["input", "output", "cacheRead", "cacheWrite", "totalTokens"] as const)
 					total[field] += contribution[field];
 				for (const field of ["input", "output", "cacheRead", "cacheWrite", "total"] as const)

@@ -10,6 +10,7 @@ import type { Api, Context, Model, SimpleStreamOptions, Usage } from "@earendil-
 import { calculateEngineCost } from "./ai.js";
 import { engineMainStreamSimple } from "./api-registry.js";
 import { effectiveCacheRetention } from "./provider-diagnostics.js";
+import { zeroUsage } from "./types.js";
 
 /** A main-turn request exactly as the turn sent it, which a keepalive replays to refresh its cache entry. */
 export interface CacheKeepaliveRequest {
@@ -133,12 +134,7 @@ function priced(
 	tokens: Partial<Pick<Usage, "input" | "output" | "cacheRead" | "cacheWrite">>,
 ): number {
 	const usage: Usage = {
-		input: 0,
-		output: 0,
-		cacheRead: 0,
-		cacheWrite: 0,
-		totalTokens: 0,
-		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+		...zeroUsage(),
 		...tokens,
 	};
 	return calculateEngineCost(model, usage).total;

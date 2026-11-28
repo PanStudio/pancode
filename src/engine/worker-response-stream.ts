@@ -13,6 +13,7 @@ import type { CallUsage } from "../core/token-split.js";
 import { normalizeCallUsage } from "../core/token-split.js";
 import { type PinnedInputTokens, remainingContextMaxTokens } from "./apis/output-budget.js";
 import { RESPONSE_DEADLINE } from "./response-deadline.js";
+import { zeroUsage } from "./types.js";
 
 export type WorkerResponseLimitCode = "worker_turn_timeout" | "worker_output_cap_exhausted";
 
@@ -83,14 +84,7 @@ export function boundWorkerResponse<T extends StreamOptions>(
 						provider: model.provider,
 						model: model.id,
 						timestamp: Date.now(),
-						usage: {
-							input: 0,
-							output: 0,
-							cacheRead: 0,
-							cacheWrite: 0,
-							totalTokens: 0,
-							cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
-						},
+						usage: zeroUsage(),
 					}),
 			stopReason: reason,
 			...(code ? { pancodeAbortReason: code } : {}),

@@ -7,8 +7,9 @@ import {
 	referencedOpenCodeCredentials,
 } from "../../domains/providers/runtimes/external-cli-policy.js";
 import { assertToolProfileEnforceable } from "../../tools/profiles.js";
+import { zeroUsage } from "../types.js";
 import type { WorkerRunInput } from "../worker-run-types.js";
-import { cliWorkOrderPrompt, emptyCliUsage, finiteUsage, type JsonlCliConnector } from "./jsonl-runner.js";
+import { cliWorkOrderPrompt, finiteUsage, type JsonlCliConnector } from "./jsonl-runner.js";
 
 export const OPENCODE_CLI_DEFAULT_MODEL = "opencode-cli-default";
 
@@ -60,7 +61,7 @@ export const OPENCODE_CLI_CONNECTOR: JsonlCliConnector = {
 				},
 				typeof part.id === "string" ? part.id : undefined,
 			);
-			const usage = state.usage ?? emptyCliUsage();
+			const usage = state.usage ?? zeroUsage();
 			usage.input += finiteUsage(tokens?.input);
 			usage.output += finiteUsage(tokens?.output);
 			usage.cacheRead += finiteUsage(cache?.read);
