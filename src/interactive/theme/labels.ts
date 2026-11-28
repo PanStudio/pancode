@@ -5,13 +5,6 @@ import { stripTerminalSequences, truncateToWidth, visibleWidth } from "../../eng
 import { sanitizeCallTargetText } from "../../lib/call-target/call-target.js";
 import { GLYPH } from "./glyphs.js";
 
-/** The quantity formatters live in core so the pane process prints them the same way; the TUI reaches them here. */
-export {
-	formatCount,
-	formatElapsed,
-	formatWaitClock,
-} from "../../core/format-time.js";
-
 const identitySegments = new Intl.Segmenter(undefined, { granularity: "grapheme" });
 
 /** Keep both placement and the distinguishing suffix when an identity must fit. */

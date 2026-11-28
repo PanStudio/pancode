@@ -1,13 +1,14 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 
+import { formatElapsed } from "../../core/format-time.js";
 import { LONG_TOOL_DURATION_MS, type ToolDurationBudget } from "../../core/presentation-tier.js";
 import { ToolNames } from "../../core/tool-names.js";
 import { isRecord } from "../../core/type-guards.js";
 import { displayToolCall, isGatewayChain } from "../../tools/gateway-display.js";
 /** The tool-call wire shapes, the card ink, and the field readers every tool row renderer shares. */
 import { cardRail } from "../card.js";
-import { formatElapsed, functionText, GLYPH, pancodeTheme } from "../theme/index.js";
+import { functionText, GLYPH, pancodeTheme } from "../theme/index.js";
 import type { TranscriptDetailPolicy } from "../transcript-detail.js";
 
 export const theme = pancodeTheme();

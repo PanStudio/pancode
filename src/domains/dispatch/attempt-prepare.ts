@@ -3,6 +3,13 @@
 
 import { type CheckoutSnapshot, takeCheckoutBaseline } from "../../tools/checkout-changes.js";
 import { restoreTaskWorktreeOverlay } from "../../tools/task-worktree-overlay.js";
+import type {
+	AgentLedgerBody,
+	WorkerGrantRequestFrame,
+	WorkerHookEffect,
+	WorkerHookRequest,
+	WorkerModelLoad,
+} from "../../worker/protocol.js";
 import { recordAgentLedgerDispute } from "../claims/index.js";
 import { resolveClaudeLaunchCredential } from "../providers/auth/index.js";
 import { type FlowRestrictionSet, mergeFlowRestrictions } from "../safety/information-flow.js";
@@ -24,13 +31,6 @@ import { createRunCallUsage } from "./run-call-usage.js";
 import { assertMainGrantRoutable } from "./runtime-enforceability.js";
 import { workerApprovalCeilingMs } from "./worker-approval-window.js";
 import { adoptWorkerModelLoad } from "./worker-model-loads.js";
-import type {
-	AgentLedgerBody,
-	WorkerGrantRequestFrame,
-	WorkerHookEffect,
-	WorkerHookRequest,
-	WorkerModelLoad,
-} from "./worker-protocol.js";
 import type { WorkerSpec } from "./worker-spawn.js";
 import { buildDispatchWorkerSpec, hookExtensionIds } from "./worker-spec.js";
 

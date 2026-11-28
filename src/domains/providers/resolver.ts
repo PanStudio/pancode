@@ -38,7 +38,7 @@ function isThinkingLevel(token: string): token is ThinkingLevel {
  * are recognised; anything else is considered part of the model id (which can
  * legitimately contain colons, e.g. OpenRouter's `model:exacto`).
  */
-export function splitThinkingSuffix(pattern: string): { base: string; thinkingLevel?: ThinkingLevel } {
+function splitThinkingSuffix(pattern: string): { base: string; thinkingLevel?: ThinkingLevel } {
 	const idx = pattern.lastIndexOf(":");
 	if (idx === -1) return { base: pattern };
 	const suffix = pattern.slice(idx + 1).trim();

@@ -33,7 +33,7 @@ export function protectedArtifactEntryFromArtifact(
 	return entry;
 }
 
-export function protectedArtifactFromSessionEntry(entry: ProtectedArtifactEntry): ProtectedArtifact {
+function protectedArtifactFromSessionEntry(entry: ProtectedArtifactEntry): ProtectedArtifact {
 	return protectedArtifactFromSnapshot(entry.artifact);
 }
 

@@ -13,7 +13,7 @@ import { listenLoopback, renderPage } from "../../../core/oauth-loopback.js";
 import { openBrowser as openPlatformBrowser } from "../../../core/open-browser.js";
 import { readPancodeVersion } from "../../../core/package-root.js";
 import { type AuthStorage, openAuthStorage } from "../../providers/auth/index.js";
-import { MCP_CLIENT_NAME } from "./client.js";
+import { MCP_CLIENT_NAME } from "./client-session.js";
 import type { McpOAuthSettings } from "./config.js";
 import {
 	discoverMcpAuthorizationServer,

@@ -69,7 +69,7 @@ function findVendoredBinary(id: string, version: string, binary: string): string
 }
 
 /** The ladder for a known registry row and one of its binaries. */
-export function resolveEntryBinary(entry: PinnedTool, binary: string): ToolResolution {
+function resolveEntryBinary(entry: PinnedTool, binary: string): ToolResolution {
 	const pathCandidate = probePathCandidate(entry, binary);
 	const vendoredPath = findVendoredBinary(entry.id, entry.version, binary);
 

@@ -11,7 +11,6 @@ export {
 export {
 	type BuiltBundle,
 	buildBundle,
-	type ConsentScopes,
 	consentText,
 	previewBundle,
 	REPORT_BUNDLE_ENVELOPE_SCHEMA,
@@ -21,8 +20,6 @@ export {
 	reportBundlePath,
 	saveBuiltBundle,
 	sweepReportBundles,
-	TRANSCRIPT_TURNS_DEFAULT,
-	TRANSCRIPT_TURNS_MAX,
 	transcriptExcerpt,
 } from "./bundle.js";
 export { type CanaryHit, canaryRefusal, canaryScan, issueCanaryHits } from "./canary.js";
@@ -93,13 +90,10 @@ export {
 	SECRET_MASK_ID,
 	scrubText,
 } from "./scrub.js";
-export { type ShareDigest, telemetryShareDigest } from "./share/digest.js";
+export { telemetryShareDigest } from "./share/digest.js";
 export {
 	openShare,
 	type SealedShare,
-	SHARE_ID,
-	SHARE_RECIPIENT,
-	type ShareKind,
 	type SharePlaintext,
 	sealShare,
 } from "./share/seal.js";

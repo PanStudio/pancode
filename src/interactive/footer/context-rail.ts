@@ -7,6 +7,7 @@
  * and the task, dispatch and worker modules behind it (Stage 0 bundle).
  */
 
+import { formatCount } from "../../core/format-time.js";
 import { asciiOnly, colorDisabled, nerdFontEnabled } from "../../core/terminal-preferences.js";
 import type { LiveBudgetView } from "../../domains/context/budget/live-view.js";
 import type { ContextUsageBreakdown } from "../../domains/session/context-accounting.js";
@@ -15,7 +16,6 @@ import { visibleWidth } from "../../engine/tui.js";
 import { buildSegmentedContextBar, finiteNonNegative } from "../context-bar.js";
 import { contextPercentRole, renderContextMeterBar } from "../context-meter.js";
 import { GLYPH, type PancodeTheme } from "../theme/index.js";
-import { formatCount } from "../theme/labels.js";
 
 /** The published numbers an occupancy reading needs. */
 export interface ContextOccupancyFacts {

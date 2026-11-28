@@ -5,7 +5,6 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
-import type { McpToolDescriptor } from "../../src/domains/gateway/mcp/client.js";
 import {
 	MCP_METADATA_CACHE_CAPS,
 	MCP_METADATA_CACHE_TTL_MS,
@@ -15,6 +14,7 @@ import {
 	readMcpServerCatalog,
 	writeMcpServerCatalog,
 } from "../../src/domains/gateway/mcp/metadata-cache.js";
+import type { McpToolDescriptor } from "../../src/domains/gateway/mcp/tool-results.js";
 
 /**
  * The persisted MCP tool catalog. It exists so find and describe can answer

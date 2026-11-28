@@ -37,7 +37,7 @@ function freeze<T>(value: T): T {
 	return value;
 }
 
-export function buildPluginSnapshot(cwd = process.cwd(), snapshotGeneration = 0): PluginSnapshot {
+function buildPluginSnapshot(cwd = process.cwd(), snapshotGeneration = 0): PluginSnapshot {
 	const workspace = canonicalCwd(cwd);
 	const packages = listInstalledPlugins(workspace, { all: true });
 	const resourceRoots: Record<PluginResourceKind, PluginResourceRoot[]> = {

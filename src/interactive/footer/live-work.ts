@@ -9,6 +9,7 @@
  * same status the rail reads, so the two cannot disagree when the rail returns.
  */
 
+import { formatElapsed, formatWaitClock } from "../../core/format-time.js";
 import { ToolNames } from "../../core/tool-names.js";
 import { visibleWidth } from "../../engine/tui.js";
 import { sanitizeCallTargetText } from "../../lib/call-target/call-target.js";
@@ -16,7 +17,7 @@ import { COUNCIL_SYNTHESIS_LABEL } from "../../session-control/council.js";
 import type { BackgroundCall } from "../background-calls.js";
 import type { DispatchBoardRow } from "../dispatch-row-model.js";
 import type { AgentStatus } from "../status/index.js";
-import { formatElapsed, formatWaitClock, GLYPH } from "../theme/index.js";
+import { GLYPH } from "../theme/index.js";
 import { modelNickname } from "../theme/labels.js";
 import type { CompactionRailFacts } from "./widgets.js";
 
