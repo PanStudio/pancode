@@ -63,16 +63,16 @@ export const SIDE_QUESTION_INSTRUCTION = [
 ].join(" ");
 
 /** What the live turn would send for `messages` with `tail` after them, built by the turn's own agent (S12). */
-export type LiveTurnPrefix = (
+type LiveTurnPrefix = (
 	messages: AgentMessage[],
 	tail: AgentMessage[],
 	signal?: AbortSignal,
 ) => Promise<{ context: Parameters<typeof streamSimple>[1]; options: Record<string, unknown> }>;
 
 /** Default output budget for the round. A side question wants an answer, not an essay. */
-export const SIDE_QUESTION_MAX_TOKENS = 2048;
+const SIDE_QUESTION_MAX_TOKENS = 2048;
 
-export interface SideQuestionUsage {
+interface SideQuestionUsage {
 	input: number;
 	output: number;
 	cacheRead: number;
@@ -141,7 +141,7 @@ export interface SideQuestionInput extends SideCallAuth {
  * append one instruction, send no tools, and never touch the turn state
  * machine. Only the system prompt and the appended message differ.
  */
-export interface OutOfTurnRoundInput extends Omit<SideQuestionInput, "question"> {
+interface OutOfTurnRoundInput extends Omit<SideQuestionInput, "question"> {
 	/** The surface this round is for, when its role alone does not say (`helper` serves triage and `/draft`). */
 	purpose?: SurfaceId;
 	/** Ignored with `livePrefix`, which sends the live turn's own prompt. */
@@ -175,7 +175,7 @@ export interface OutOfTurnRoundInput extends Omit<SideQuestionInput, "question">
 }
 
 /** A caller that minted its own journal call for the request runs the stream inside it (#429, #434). */
-export interface RequestCallContext {
+interface RequestCallContext {
 	withContext?: <T>(work: () => T) => T;
 }
 
@@ -321,7 +321,7 @@ function sumSideQuestionUsage(a: SideQuestionUsage | null, b: SideQuestionUsage 
 	};
 }
 
-export const SIDE_QUESTION_NO_TOOLS_RETRY =
+const SIDE_QUESTION_NO_TOOLS_RETRY =
 	"No tool can run in this side question, so a tool call does nothing. Answer from the conversation above. If it does not contain the answer, say so in one sentence and name the file or command that would answer it.";
 
 export const SIDE_QUESTION_TOOL_CALL_NOTE =

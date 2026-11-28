@@ -20,7 +20,7 @@ export interface PostureGeneration {
 	promptHash: string;
 }
 
-export interface PostureUpdate {
+interface PostureUpdate {
 	version: 1;
 	origin: "host";
 	generationId: string;

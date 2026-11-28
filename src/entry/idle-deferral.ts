@@ -4,7 +4,7 @@ import type { TelemetryHub } from "../core/telemetry/hub.js";
 
 const RETRY_MS = 250;
 
-export interface IdleDeferral {
+interface IdleDeferral {
 	/**
 	 * Run `attempt` once the session is idle, after each settled turn and on a short retry. It returns false to be
 	 * tried again; a throw drops it. A later call replaces a waiting attempt.

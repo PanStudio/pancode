@@ -5,6 +5,8 @@ import { test } from "node:test";
 import { stripTerminalSequences, visibleWidth } from "../../src/engine/tui.js";
 import { createDispatchBoardView } from "../../src/interactive/dispatch-board.js";
 import type { DispatchBoardRow } from "../../src/interactive/dispatch-row-model.js";
+import type { OverlayGeneralOpenersDeps } from "../../src/interactive/overlay-general-openers.js";
+import { createOverlayGeneralOpeners } from "../../src/interactive/overlay-general-openers.js";
 import { GLYPH } from "../../src/interactive/theme/index.js";
 import { COUNCIL_SYNTHESIS_LABEL } from "../../src/session-control/council.js";
 import { footerState } from "../harness/footer-fixture.js";
@@ -45,4 +47,43 @@ test("council focus traverses only the members rendered in the current projectio
 	}
 	rows.push(member("alpha-3", "Alpha", 3));
 	strictEqual(board.selectedRow()?.runId, "alpha-3", "a new round replaces the focused member without hiding focus");
+});
+
+test("fleet hint offers detail only for a row with rendered detail", () => {
+	const base = footerState().dispatchRows[0];
+	ok(base);
+	const rows = [
+		{ ...base, runId: "council-member", council: { group: "review", label: "Alpha", round: 1 } },
+		{ ...base, runId: "ordinary", status: "completed" as const },
+	];
+	const board = createDispatchBoardView(
+		() => rows,
+		() => undefined,
+	);
+	for (const width of [60, 80, 120, 200]) {
+		let hint: ((width: number) => string | undefined) | undefined;
+		const deps = {
+			transitions: { state: "closed" },
+			dispatchBoard: board,
+			terminal: { columns: width },
+			requestRender() {},
+			startDispatchBoardTicker() {},
+			showOverlayFrame: (_tui: unknown, _child: unknown, options: { footerHint: typeof hint }) => {
+				hint = options.footerHint;
+				return {};
+			},
+		} as unknown as OverlayGeneralOpenersDeps;
+		board.resetSelection();
+		createOverlayGeneralOpeners(deps).toggleDispatchBoard();
+		const councilHint = hint?.(width) ?? "";
+		// A council's detail is its members' answers; Enter gives them the rows the table holds.
+		match(councilHint, /Enter.*detail/u);
+		ok(visibleWidth(councilHint) <= width);
+		board.selectNext();
+		const ordinaryHint = hint?.(width) ?? "";
+		match(ordinaryHint, /Enter.*detail/u);
+		ok(visibleWidth(ordinaryHint) <= width);
+		for (const line of [councilHint, ordinaryHint])
+			for (const tail of line.split(String.fromCharCode(27)).slice(1)) ok(/^\[[0-9;]*m/u.test(tail));
+	}
 });

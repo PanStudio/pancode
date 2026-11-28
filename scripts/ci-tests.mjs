@@ -176,7 +176,6 @@ export const coreTests = [
 	"copilot-sdk-route",
 	"copilot-keychain",
 	"copilot-context-tier",
-	"copilot-context-tier-setting",
 	"web-read-taint",
 	"doctor-unknown-runtime",
 	"plugin-engine",

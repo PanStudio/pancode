@@ -50,7 +50,7 @@ export interface ContinuityReductionHooks {
 	checkpointForSummary(summaryRef: string, tokensBefore: number, tokensAfter: number): ContinuityCheckpointPayload;
 }
 
-export interface ContinuityOrigin {
+interface ContinuityOrigin {
 	sessionId: string;
 	leafTurnId: string;
 	initiatingTurnId: string;
@@ -58,7 +58,7 @@ export interface ContinuityOrigin {
 	ports: ContinuityPersistencePorts;
 }
 
-export interface ContinuityControllerDeps {
+interface ContinuityControllerDeps {
 	/** Captures navigation/runtime ownership by value. Never follows a changed session. */
 	captureOrigin(): ContinuityOrigin;
 	entries(): ReadonlyArray<SessionEntry>;

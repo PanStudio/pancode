@@ -93,7 +93,7 @@ for (const name of Object.keys(process.env)) {
 }
 /** Names every root this harness makes, and the only names it will remove. */
 // Leave room for nested agent and browser Unix sockets under a long TMPDIR.
-export const TEST_TMP_ROOT_PREFIX = "ct-";
+const TEST_TMP_ROOT_PREFIX = "ct-";
 
 /**
  * The real temp dir, read before TMPDIR is repointed at the run root, and
@@ -124,7 +124,7 @@ function canonicalTmp(): string {
  * `rm -rf`. A path that fails any check is left alone; leaking one directory is
  * recoverable and deleting the wrong tree is not.
  */
-export function isRemovableRoot(dir: string): boolean {
+function isRemovableRoot(dir: string): boolean {
 	if (typeof dir !== "string" || dir.length === 0) return false;
 	const path = resolve(dir);
 	if (!path.startsWith(`${systemTmp}${sep}`)) return false;

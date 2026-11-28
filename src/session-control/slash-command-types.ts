@@ -230,7 +230,7 @@ export interface RunIo {
 	stderr: (s: string) => void;
 }
 
-export type SetThinkingLevelResult =
+type SetThinkingLevelResult =
 	| { status: "applied"; level: string; display: string; note?: string }
 	| { status: "unsupported"; level: string; supported: ReadonlyArray<string> }
 	| { status: "unavailable" };
@@ -254,7 +254,7 @@ export type CouncilDispatchOutcome =
 	  };
 
 /** Seats a council skipped because their target was down, and how many of the seats that ran answered. */
-export interface CouncilSkippedSeats {
+interface CouncilSkippedSeats {
 	answered: number;
 	ran: number;
 	labels: string[];
@@ -349,7 +349,7 @@ export interface FleetRunStartOptions {
 	resume?: string;
 }
 
-export interface SessionCommandContext {
+interface SessionCommandContext {
 	eggsCommand?: (action: "status" | "off", id?: string) => string;
 	keyboardActions?: {
 		/** The key, and its Ctrl+G letter, for the action behind a menu letter. */
@@ -674,10 +674,10 @@ export interface SessionCommandContext {
 export type SlashCommandContext = SessionCommandContext;
 
 /** What a command is about, in the order /help lists the groups. */
-export const SLASH_COMMAND_GROUPS = ["Session", "Model and context", "Work", "PanCode"] as const;
+const SLASH_COMMAND_GROUPS = ["Session", "Model and context", "Work", "PanCode"] as const;
 export type SlashCommandGroup = (typeof SLASH_COMMAND_GROUPS)[number];
 
-export interface CommandAcpAdmission {
+interface CommandAcpAdmission {
 	subcommands?: ReadonlyArray<string>;
 	streams?: "dispatch";
 	injectsUserTurn?: true;

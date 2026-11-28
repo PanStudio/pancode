@@ -24,7 +24,7 @@ export interface SessionNotice {
 	source?: NoticeSource;
 }
 
-export type SessionNoticeFact =
+type SessionNoticeFact =
 	| "config.restart_required"
 	| "safety.git_hooks_changed"
 	| "safety.internal_git_drifted"
@@ -33,7 +33,7 @@ export type SessionNoticeFact =
 	| "approval.foreign_changed"
 	| "reload.applied";
 
-export interface SessionNoticeOptions {
+interface SessionNoticeOptions {
 	/** A `/reload` report in progress states restart-bound settings itself. */
 	reloadReporting?: () => boolean;
 	/** Facts this surface already reports another way. */
@@ -41,7 +41,7 @@ export interface SessionNoticeOptions {
 }
 
 /** Restart-required settings changed under a running session. */
-export function restartRequiredNotice(payload: unknown): string | null {
+function restartRequiredNotice(payload: unknown): string | null {
 	const diff = (payload as { diff?: { restartRequired?: unknown } } | null | undefined)?.diff;
 	const raw = diff?.restartRequired;
 	if (!Array.isArray(raw)) return null;

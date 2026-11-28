@@ -11,6 +11,7 @@ import {
 } from "@earendil-works/pi-ai";
 import { ToolNames } from "../core/tool-names.js";
 import { explainToolArgumentsError } from "./tool-argument-refusal.js";
+import { zeroUsage } from "./types.js";
 
 /**
  * Turn a call to a tool that carries no attached schema into the gateway call
@@ -63,14 +64,7 @@ export function routeUnattachedToolCalls(
 					api: model.api,
 					provider: model.provider,
 					model: model.id,
-					usage: {
-						input: 0,
-						output: 0,
-						cacheRead: 0,
-						cacheWrite: 0,
-						totalTokens: 0,
-						cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
-					},
+					usage: zeroUsage(),
 					timestamp: Date.now(),
 				}),
 				stopReason: reason,

@@ -1,13 +1,8 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import { codexAccountScope } from "../../core/codex-account.js";
+import { asRecord } from "../../core/type-guards.js";
 import type { CodexQuotaObservation } from "../types.js";
-
-function record(value: unknown): Record<string, unknown> | null {
-	return typeof value === "object" && value !== null && !Array.isArray(value)
-		? (value as Record<string, unknown>)
-		: null;
-}
 
 /** OAI-1 / #423: Pi delivers this event on both WebSocket and SSE, without a usage GET. */
 export function parseCodexQuotaEvent(
@@ -15,13 +10,13 @@ export function parseCodexQuotaEvent(
 	accountScope: string | null,
 	nowMs = Date.now(),
 ): CodexQuotaObservation | null {
-	const data = record(event);
+	const data = asRecord(event);
 	if (data?.type !== "codex.rate_limits" || accountScope === null) return null;
-	const limits = record(data.rate_limits);
+	const limits = asRecord(data.rate_limits);
 	if (!limits) return null;
 	const windows: CodexQuotaObservation["windows"] = [];
 	for (const slot of [limits.primary, limits.secondary]) {
-		const raw = record(slot);
+		const raw = asRecord(slot);
 		if (
 			!raw ||
 			typeof raw.used_percent !== "number" ||
@@ -47,7 +42,7 @@ export function parseCodexQuotaEvent(
 	// A limit-only event (allowed or limit_reached without a window) still says whether the account can send.
 	if (windows.length === 0 && typeof limits.allowed !== "boolean" && typeof limits.limit_reached !== "boolean")
 		return null;
-	const credits = record(data.credits);
+	const credits = asRecord(data.credits);
 	const balance = credits?.balance;
 	return {
 		accountScope,

@@ -37,6 +37,7 @@ import { resolvedRequestContext } from "../context.js";
 import { createGemmaChannelFilter, usesGemmaChannelMarkers } from "../gemma-channel-filter.js";
 import { modelAdmissionReporter } from "../model-admission.js";
 import { createSentinelStripper } from "../strip-tokenizer-sentinels.js";
+import { zeroUsage } from "../types.js";
 import { createDegradedInferenceStream } from "./degraded-inference.js";
 import { ollamaJson, streamOllamaChat } from "./ollama-http.js";
 import { estimateReasoningTokens, remainingContextMaxTokens } from "./output-budget.js";
@@ -270,7 +271,7 @@ function buildRequest(
 	return req;
 }
 
-export interface EvictResidentEntry {
+interface EvictResidentEntry {
 	readonly model: string;
 	readonly name: string;
 	/** GPU-resident bytes, when Ollama reports it on `/api/ps`. */
@@ -279,7 +280,7 @@ export interface EvictResidentEntry {
 	readonly size?: number;
 }
 
-export interface EvictResidentResponse {
+interface EvictResidentResponse {
 	readonly models: ReadonlyArray<EvictResidentEntry>;
 }
 
@@ -448,14 +449,7 @@ function runStream(
 		api: model.api,
 		provider: model.provider,
 		model: model.id,
-		usage: {
-			input: 0,
-			output: 0,
-			cacheRead: 0,
-			cacheWrite: 0,
-			totalTokens: 0,
-			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
-		},
+		usage: zeroUsage(),
 		stopReason: "stop",
 		timestamp: Date.now(),
 	};

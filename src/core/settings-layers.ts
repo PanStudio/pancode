@@ -36,6 +36,7 @@ import {
 	STORE_PROJECT_ID_USER_MESSAGE,
 	settingsPath,
 	settingsReadPath,
+	settingsValuesEqual,
 	updateSavedSettingsDocument,
 	userStoreProjectIdIssue,
 } from "./config.js";
@@ -71,7 +72,7 @@ export interface SettingsLayerIssue {
 	kind?: NonNullable<SettingsIssue["kind"]>;
 }
 
-export interface SettingsLayerInfo {
+interface SettingsLayerInfo {
 	origin: SettingsOrigin;
 	path: string;
 	present: boolean;
@@ -92,18 +93,6 @@ type InternalLayeredSettings = LayeredSettings & { [STRICT_USER_ISSUES]: Setting
 // committed file. `auth` carries target headers and api keys; the rest cover
 // stray secrets. Stripped from project layers with a diagnostic.
 const CREDENTIAL_KEYS: ReadonlySet<string> = new Set(["auth", "apikey", "api_key", "token", "secret", "password"]);
-
-function deepEquals(a: unknown, b: unknown): boolean {
-	if (a === b) return true;
-	if (Array.isArray(a) || Array.isArray(b)) {
-		if (!Array.isArray(a) || !Array.isArray(b) || a.length !== b.length) return false;
-		return a.every((entry, index) => deepEquals(entry, b[index]));
-	}
-	if (!isRecord(a) || !isRecord(b)) return false;
-	const keys = Object.keys(a);
-	if (keys.length !== Object.keys(b).length) return false;
-	return keys.every((key) => key in b && deepEquals(a[key], b[key]));
-}
 
 function settingPath(segments: readonly string[]): string {
 	return segments.reduce(
@@ -972,7 +961,7 @@ function mergeInto(
 	}
 }
 
-export interface ReadLayeredSettingsOptions {
+interface ReadLayeredSettingsOptions {
 	/** Override the user settings.yaml path; defaults to the resolved config dir. */
 	userPath?: string;
 }
@@ -1186,7 +1175,7 @@ function validateLayerStack(
 		if (effective === undefined) {
 			delete sources[path];
 		} else if (
-			!deepEquals(raw, effective) &&
+			!settingsValuesEqual(raw, effective) &&
 			(!isRecord(effective) || !isRecord(raw)) &&
 			(!Array.isArray(effective) || !Array.isArray(raw)) &&
 			(downgraded.has(settingPathSegments(path).join(".")) ||
@@ -1304,7 +1293,7 @@ export function updateLayeredSettings(cwd: string | null, mutate: SettingsMutato
 			prepared,
 			finalIssues,
 		).settings;
-		if (!deepEquals(final, candidateValidation.settings)) {
+		if (!settingsValuesEqual(final, candidateValidation.settings)) {
 			throw new Error("a higher-precedence project setting prevents this settings update");
 		}
 		committed = final;
@@ -1387,7 +1376,7 @@ export function updateProjectLocalSettings(
 			},
 			stackIssues,
 		).settings;
-		if (stackIssues.length > 0 || !deepEquals(final, validation.settings)) {
+		if (stackIssues.length > 0 || !settingsValuesEqual(final, validation.settings)) {
 			throw new Error("project settings save would not produce the requested effective settings");
 		}
 		const bytes = renderYamlPreservingLayout(beforeSurface.files[1]?.text ?? null, saved);
@@ -1403,7 +1392,7 @@ export function updateProjectLocalSettings(
 		}
 		recordProjectSurfaceTrust(cwd, "settings", afterSurface.contentHash);
 		const committed = readStrictLayeredSettings(cwd).settings;
-		if (!deepEquals(committed, validation.settings)) {
+		if (!settingsValuesEqual(committed, validation.settings)) {
 			throw new Error("project settings save was overridden by another settings layer");
 		}
 		return committed;

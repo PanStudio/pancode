@@ -21,7 +21,7 @@ function rejectsSamplingTemperature(modelId: string): boolean {
 }
 
 /** The fields of a model that decide whether it takes a sampler. Structural so this file stays off the Pi types. */
-export interface SamplerModelShape {
+interface SamplerModelShape {
 	id: string;
 	api?: string;
 	reasoning?: boolean;

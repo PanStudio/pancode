@@ -9,6 +9,7 @@ import { Type } from "typebox";
 import { runHeadlessMainAgent } from "../../src/cli/modes/print.js";
 import { DEFAULT_SETTINGS } from "../../src/core/defaults.js";
 import { ToolNames } from "../../src/core/tool-names.js";
+import { asRecord } from "../../src/core/type-guards.js";
 import {
 	EMPTY_CAPABILITIES,
 	type ProvidersContract,
@@ -35,7 +36,7 @@ import { buildSummary, emptyRunTally, foldMessageIntoRunTally } from "../../src/
 import { resolveFooterVerb } from "../../src/interactive/status/verbs.js";
 import { GLYPH, pancodeTheme } from "../../src/interactive/theme/index.js";
 import { type ChatLoopEvent, createChatLoop } from "../../src/session-control/chat-loop.js";
-import { estimatedUsageForInterruptedTurn, recordValue } from "../../src/session-control/chat-loop-messages.js";
+import { estimatedUsageForInterruptedTurn } from "../../src/session-control/chat-loop-messages.js";
 import { buildModelReplayAgentMessagesFromTurns } from "../../src/session-control/model-session-replay.js";
 import { INITIAL_STATUS } from "../../src/session-control/status-types.js";
 import { createRegistry } from "../../src/tools/registry.js";
@@ -440,10 +441,10 @@ for (const mode of ["partial", "thinking", "empty"] as const) {
 			strictEqual(assistants.length, 1, JSON.stringify(assistants));
 			const assistant = assistants[0];
 			ok(assistant?.kind === "message");
-			const payload = recordValue(assistant.payload);
+			const payload = asRecord(assistant.payload);
 			ok(payload);
 			strictEqual(payload.stopReason, "aborted");
-			const usage = recordValue(payload.usage);
+			const usage = asRecord(payload.usage);
 			ok(usage);
 			for (const key of ["input", "output", "cacheRead", "cacheWrite", "totalTokens"]) strictEqual(usage[key], 0);
 			// The ledger is the conversation record; the journal owns the call's accounting and estimate (#434 §5.3).
@@ -526,7 +527,7 @@ it("the argument guard remains visible live and after persistence without an ope
 		strictEqual(assistants.length, 1);
 		const persisted = assistants[0];
 		ok(persisted?.kind === "message");
-		const payload = recordValue(persisted.payload);
+		const payload = asRecord(persisted.payload);
 		ok(payload);
 		strictEqual(payload.stopReason, "aborted");
 		strictEqual(payload.pancodeAbortReason, "tool_argument_generation");
@@ -585,7 +586,7 @@ for (const source of ["stream_cancel", "loop_guard"] as const) {
 			strictEqual(assistants.length, 1);
 			const assistant = assistants[0];
 			ok(assistant?.kind === "message");
-			const payload = recordValue(assistant.payload);
+			const payload = asRecord(assistant.payload);
 			// The read model's fold of the cancelled call as the producer settles the run's live message: sent, with no
 			// usage reported, and the estimate journaled beside its usage (#430, #434 §11.3).
 			const ended = f.events.filter((event) => event.type === "agent_end").at(-1);
@@ -631,9 +632,9 @@ for (const source of ["stream_cancel", "loop_guard"] as const) {
 				ok(row?.includes(`${theme.fg("warning", GLYPH.warn)} `), row);
 			}
 			strictEqual(payload?.callAccounting, undefined);
-			strictEqual(recordValue(payload?.usage)?.input, 0);
-			strictEqual(recordValue(payload?.failure)?.invoked, true);
-			strictEqual(recordValue(payload?.interruptClosure)?.operatorCancel, source === "stream_cancel");
+			strictEqual(asRecord(payload?.usage)?.input, 0);
+			strictEqual(asRecord(payload?.failure)?.invoked, true);
+			strictEqual(asRecord(payload?.interruptClosure)?.operatorCancel, source === "stream_cancel");
 			strictEqual(payload?.estimatedUsage, undefined);
 			ok(typeof payload?.apiMs === "number");
 			const replay = createChatPanel({ getOutputStyle: () => "detailed", getTelemetry: () => view });
@@ -665,7 +666,7 @@ for (const source of ["stream_cancel", "loop_guard"] as const) {
 			} else doesNotMatch(resumed, /!|Cancelled at your request\./u);
 			const historicalEntries = f.entries().map((entry) => {
 				if (entry.kind !== "message" || entry.role !== "assistant") return entry;
-				const historicalPayload = { ...recordValue(entry.payload) };
+				const historicalPayload = { ...asRecord(entry.payload) };
 				delete historicalPayload.interruptClosure;
 				return { ...entry, payload: historicalPayload };
 			});
@@ -693,7 +694,7 @@ it("a tool cancellation persists its result before exactly one closing assistant
 		const result = entries.findIndex((entry) => entry.kind === "message" && entry.role === "tool_result");
 		const closings = entries.filter(
 			(entry) =>
-				entry.kind === "message" && entry.role === "assistant" && recordValue(entry.payload)?.stopReason === "aborted",
+				entry.kind === "message" && entry.role === "assistant" && asRecord(entry.payload)?.stopReason === "aborted",
 		);
 		strictEqual(closings.length, 1);
 		const closing = closings[0];
@@ -1126,18 +1127,15 @@ it("a reply cut off by the operator's Esc or by shutdown is the harness's stop a
 		await f.loop.whenSettled();
 		const [cancelled, closing] = f
 			.entries()
-			.map((entry) => (entry.kind === "message" && entry.role === "assistant" ? recordValue(entry.payload) : undefined))
+			.map((entry) => (entry.kind === "message" && entry.role === "assistant" ? asRecord(entry.payload) : undefined))
 			.filter((payload) => payload?.stopReason === "aborted");
 		ok(cancelled && closing, JSON.stringify(f.entries()));
-		strictEqual(recordValue(cancelled.failure)?.errorClass, "operator_cancel");
+		strictEqual(asRecord(cancelled.failure)?.errorClass, "operator_cancel");
 		strictEqual(cancelled.failureRoute, undefined, "an operator's cancel names no route");
 		strictEqual(closing.failureRoute, undefined);
 		match(String(closing.errorMessage), /PanCode shut down/u);
 		// The persisted failure names the harness's cause, not a transport abort (bt-26 N2a).
-		deepStrictEqual(
-			[recordValue(closing.failure)?.stage, recordValue(closing.failure)?.errorClass],
-			["harness", "shutdown"],
-		);
+		deepStrictEqual([asRecord(closing.failure)?.stage, asRecord(closing.failure)?.errorClass], ["harness", "shutdown"]);
 	} finally {
 		await f.close();
 	}
@@ -1154,11 +1152,11 @@ it("a reply steering triage cuts off to deliver a stop persists triage's cause, 
 		await f.loop.submit("Start");
 		const closing = f
 			.entries()
-			.map((entry) => (entry.kind === "message" && entry.role === "assistant" ? recordValue(entry.payload) : undefined))
+			.map((entry) => (entry.kind === "message" && entry.role === "assistant" ? asRecord(entry.payload) : undefined))
 			.find((payload) => payload?.stopReason === "aborted");
 		ok(closing, JSON.stringify(f.entries()));
 		deepStrictEqual(
-			[recordValue(closing.failure)?.stage, recordValue(closing.failure)?.errorClass],
+			[asRecord(closing.failure)?.stage, asRecord(closing.failure)?.errorClass],
 			["harness", "triage_stop"],
 		);
 	} finally {

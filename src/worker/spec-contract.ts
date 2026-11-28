@@ -72,7 +72,7 @@ export const WORKER_SPEC_VERSION = 12;
 export const WORKER_SPEC_HOOKLESS_VERSION = 11;
 /** Every spec version this worker reads, lowest first. */
 export const WORKER_SPEC_VERSIONS: ReadonlyArray<number> = [WORKER_SPEC_HOOKLESS_VERSION, WORKER_SPEC_VERSION];
-export type WorkerSpecVersion = typeof WORKER_SPEC_HOOKLESS_VERSION | typeof WORKER_SPEC_VERSION;
+type WorkerSpecVersion = typeof WORKER_SPEC_HOOKLESS_VERSION | typeof WORKER_SPEC_VERSION;
 
 /** The lowest version that carries everything the spec holds. */
 export function workerSpecVersionFor(spec: { extensionHooks?: ReadonlyArray<unknown> }): WorkerSpecVersion {
@@ -86,7 +86,7 @@ export function workerSpecVersionFor(spec: { extensionHooks?: ReadonlyArray<unkn
  * run different builds, so another node may serve the same spec.
  */
 export const WORKER_SPEC_VERSION_SKEW = /workerspec version \S+ is (?:unsupported|not one this worker reads)\b/;
-export const WORKER_RUNTIME_DESCRIPTOR_VERSION = 2;
+const WORKER_RUNTIME_DESCRIPTOR_VERSION = 2;
 export const WORKER_PROTECTED_ARTIFACT_STATE_VERSION = 1;
 
 /**
@@ -116,7 +116,7 @@ export const WORKER_REFUSAL_LIMIT_PREFIX = "permission refusal limit reached:";
  */
 export const WORKER_PROVIDER_HTTP_STATUS_MARKER = "[worker] provider answered http ";
 
-export interface SerializedWorkerRuntimeDescriptor {
+interface SerializedWorkerRuntimeDescriptor {
 	version: typeof WORKER_RUNTIME_DESCRIPTOR_VERSION;
 	id: string;
 	kind: RuntimeKind;
@@ -284,7 +284,7 @@ interface WorkerSpecFields {
 }
 
 /** The host's task worktree identity, the same facts its ownership claim records. */
-export interface WorkerTaskWorktree {
+interface WorkerTaskWorktree {
 	root: string;
 	runId: string;
 	path: string;
@@ -295,7 +295,7 @@ export interface WorkerTaskWorktree {
 }
 
 /** Current wire shape. Every document carries its concrete admitted budget and its sealed run limits. */
-export type CurrentWorkerSpec = WorkerSpecFields & {
+type CurrentWorkerSpec = WorkerSpecFields & {
 	specVersion: WorkerSpecVersion;
 	budget: WorkerBudget;
 };

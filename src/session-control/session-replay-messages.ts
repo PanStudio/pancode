@@ -502,7 +502,7 @@ function firstContentBlock(payload: unknown, type: string): Record<string, unkno
 	return null;
 }
 
-export interface ReplayToolCall {
+interface ReplayToolCall {
 	id: string;
 	name: string;
 	args: unknown;
@@ -851,7 +851,7 @@ export interface ReplayRender {
  * render places inserts with it, so the two cannot disagree: a failed assistant and the synthetic terminal-tool row
  * render nothing and are never anchors.
  */
-export function rowRenders(entry: SessionEntry): boolean {
+function rowRenders(entry: SessionEntry): boolean {
 	switch (entry.kind) {
 		case "message":
 			if (entry.role === "assistant")

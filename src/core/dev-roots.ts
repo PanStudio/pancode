@@ -16,7 +16,7 @@ import { pancodeStateDir } from "./xdg.js";
  * nor lets its model write it. Nothing is shared: a folder two sessions both
  * want belongs to whichever registered first until that process exits.
  */
-export interface DevRootRecord {
+interface DevRootRecord {
 	owner: string;
 	pid: number;
 	birthToken: string | null;

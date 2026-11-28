@@ -14,7 +14,7 @@ import { type HarmonyServerParsing, VLLM_GPT_OSS_SERVE_FLAGS } from "../domains/
 
 export type { HarmonyServerParsing };
 
-export interface HarmonyDroppedToolCall {
+interface HarmonyDroppedToolCall {
 	name: string;
 	reason: "artifact" | "duplicate" | "incomplete";
 }
@@ -62,8 +62,8 @@ export function harmonyServerParsing(observation: HarmonyRecoveryObservation | u
  */
 export const HARMONY_SERVER_ERROR_PATTERN = /HarmonyError|unexpected tokens remaining in message header/i;
 
-export const HARMONY_ERROR_CODE = "provider_harmony_error";
-export const HARMONY_INCOMPLETE_CODE = "provider_harmony_incomplete";
+const HARMONY_ERROR_CODE = "provider_harmony_error";
+const HARMONY_INCOMPLETE_CODE = "provider_harmony_incomplete";
 
 const HARMONY_TERMINAL_PATTERN = new RegExp(`^(?:${HARMONY_ERROR_CODE}|${HARMONY_INCOMPLETE_CODE}):`);
 

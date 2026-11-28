@@ -45,7 +45,7 @@ import type { PinnedPromptPrefix } from "./apis/anthropic-system-split.js";
 import { filterAssistantProseStream } from "./assistant-prose-stream.js";
 import { pancodeClientIdentity } from "./client-identity.js";
 import { guardToolArgumentStream } from "./tool-argument-stream.js";
-import { LLM_MESSAGE_ROLES } from "./types.js";
+import { LLM_MESSAGE_ROLES, zeroUsage } from "./types.js";
 import { routeUnattachedToolCalls } from "./unattached-tool-call.js";
 
 export type EngineStreamFn = (...args: Parameters<typeof engineStreamSimple>) => ReturnType<StreamFn>;
@@ -54,7 +54,7 @@ export type EngineStreamFn = (...args: Parameters<typeof engineStreamSimple>) =>
 export type EnginePrepareNextTurnContext = Parameters<NonNullable<AgentOptions["prepareNextTurnWithContext"]>>[0];
 export type EnginePrepareNextTurnUpdate = Awaited<ReturnType<NonNullable<AgentOptions["prepareNextTurnWithContext"]>>>;
 export type EngineToolBatchContext = Pick<BeforeToolCallContext, "assistantMessage" | "context">;
-export interface EngineToolBatchRejection {
+interface EngineToolBatchRejection {
 	reason: string;
 }
 export interface EngineStreamRequest {
@@ -63,7 +63,7 @@ export interface EngineStreamRequest {
 	context: Parameters<StreamFn>[1];
 	options: Parameters<StreamFn>[2];
 }
-export type EngineStreamAdmission =
+type EngineStreamAdmission =
 	| { block: true; reason: string; modelRouteRefusal?: ModelRouteRefusal }
 	| { block: false; correlationId?: string };
 
@@ -135,14 +135,7 @@ function refusedStream(
 		api: request.model.api,
 		provider: request.model.provider,
 		model: request.model.id,
-		usage: {
-			input: 0,
-			output: 0,
-			cacheRead: 0,
-			cacheWrite: 0,
-			totalTokens: 0,
-			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
-		},
+		usage: zeroUsage(),
 		stopReason: aborted ? "aborted" : "error",
 		errorMessage: reason.slice(0, 1024) || "Request admission refused",
 		timestamp: Date.now(),
@@ -523,14 +516,7 @@ function isUsageRecord(value: unknown): boolean {
  * estimate anchors on the last real call; the record itself stays null.
  */
 function unsentCallUsage(): Usage {
-	return {
-		input: 0,
-		output: 0,
-		cacheRead: 0,
-		cacheWrite: 0,
-		totalTokens: 0,
-		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
-	};
+	return zeroUsage();
 }
 
 /**

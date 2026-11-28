@@ -84,7 +84,7 @@ function copilotContextTierFor(model: Model<Api>): ContextTier {
 	return (model as { copilotContextTier?: unknown }).copilotContextTier === "long_context" ? "long_context" : "default";
 }
 
-export const COPILOT_SDK_API = "copilot-sdk";
+const COPILOT_SDK_API = "copilot-sdk";
 
 /** What one Copilot model step billed, as the runtime reported it; carried beside the message usage. */
 export interface CopilotStepBilling {

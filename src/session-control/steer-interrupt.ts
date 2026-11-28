@@ -13,9 +13,9 @@
 import type { SteerInterruptHost } from "../tools/registry-contract.js";
 
 /** How long a queued steer lets a running call finish on its own before it ends it. */
-export const STEER_INTERRUPT_GRACE_MS = 10_000;
+const STEER_INTERRUPT_GRACE_MS = 10_000;
 
-export interface SteerInterrupter extends SteerInterruptHost {
+interface SteerInterrupter extends SteerInterruptHost {
 	/** The queue changed: a steer may have arrived or left. */
 	poke(): void;
 	dispose(): void;

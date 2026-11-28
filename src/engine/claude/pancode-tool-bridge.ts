@@ -75,7 +75,7 @@ function toCallToolResult(result: AgentToolResult<unknown>): CallToolResult {
 	return { content, ...(result.isError === true ? { isError: true } : {}) };
 }
 
-export interface PancodeToolBridgeInput {
+interface PancodeToolBridgeInput {
 	allowedTools: ReadonlySet<string>;
 	safety: SafetyContract;
 	/** Worker event sink: execution events and the authoritative finish for each bridged call. */

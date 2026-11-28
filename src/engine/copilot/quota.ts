@@ -12,19 +12,19 @@ import { sha256Hex } from "../../core/hash.js";
 import { isRecord } from "../../core/type-guards.js";
 import { COPILOT_LOGIN_MESSAGE, copilotClient, heldCopilotClient, holdCopilotClient } from "./client.js";
 
-export const COPILOT_QUOTA_TIMEOUT_MS = 15_000;
+const COPILOT_QUOTA_TIMEOUT_MS = 15_000;
 
-export type CopilotQuotaUnit = "requests" | "ai_credits" | "nano_aiu" | "tokens" | "unknown";
+type CopilotQuotaUnit = "requests" | "ai_credits" | "nano_aiu" | "tokens" | "unknown";
 
-export type CopilotQuotaQuantityKind = "authoritative_budget" | "advisory_balance" | "none" | "unknown";
+type CopilotQuotaQuantityKind = "authoritative_budget" | "advisory_balance" | "none" | "unknown";
 
-export type CopilotQuotaObservationKind = "account_snapshot" | "admission_state" | "unknown";
+type CopilotQuotaObservationKind = "account_snapshot" | "admission_state" | "unknown";
 
 /** The service's own admission verdict for a bucket, as the SDK states it. `unavailable` is a client placeholder. */
-export type CopilotQuotaAccessState = "allowed" | "denied" | "not_required" | "unknown" | "unavailable";
+type CopilotQuotaAccessState = "allowed" | "denied" | "not_required" | "unknown" | "unavailable";
 
 /** Whether the SDK received a service observation at all, apart from what it says. */
-export type CopilotQuotaAcquisition = "succeeded" | "unavailable" | "failed";
+type CopilotQuotaAcquisition = "succeeded" | "unavailable" | "failed";
 
 export interface CopilotQuotaAccount {
 	login: string;
@@ -76,7 +76,7 @@ export type CopilotQuotaReadResult =
 	| { kind: "unsupported"; message: string }
 	| { kind: "error"; message: string };
 
-export interface CopilotQuotaRpcClient {
+interface CopilotQuotaRpcClient {
 	getAuthStatus: () => Promise<{
 		isAuthenticated: boolean;
 		login?: string;

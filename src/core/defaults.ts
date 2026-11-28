@@ -29,9 +29,6 @@ import { ROUTING_POSTURES, type RoutingPosture } from "./telemetry/run-vocabular
 import { RUN_ROLES, type RunRole } from "./views/run-roles.js";
 import type { ThinkingLevel } from "./views/thinking-levels.js";
 
-export type { TargetDescriptor } from "../domains/providers/types/target-descriptor.js";
-export type { AutonomyLevel } from "../lib/autonomy/autonomy.js";
-
 export { THINKING_LEVELS, type ThinkingLevel } from "./views/thinking-levels.js";
 
 interface WorkerTarget {
@@ -598,7 +595,7 @@ export interface FleetSettings extends FleetRouteSettings {
 	defaultNode: string | null;
 	/** Experimental worker prewarm. After a turn reading predicts a dispatch, the `workerPrepare` site is asked which recipe it would name first, and only a measured build's answer starts a worker; off by default. */
 	nodes: FleetNodeSettings[];
-	adaptiveRouting: AdaptiveRoutingSettings;
+	adaptiveRouting: RoutingActivationSettings;
 	permissions: FleetPermissionsSettings;
 	concurrency: "auto" | number;
 	/** On by default: a parallel batch's native workers that share a prompt prefix start after the first one streams; handles return at once. */
@@ -626,15 +623,12 @@ export interface ActiveAgentRole {
 	executionRole: RunRole;
 }
 
-interface AdaptiveRoutingSettings {
+export interface RoutingActivationSettings {
 	roles: ActiveRoutingRole[];
 	postures: ActiveRoutingPosture[];
 	/** Exact pairs only; independent agent and role lists would authorize their cross-product. */
 	agentRoles: ActiveAgentRole[];
 }
-
-/** Compatibility type name for the dispatch planner; its fields are the canonical v2 fields. */
-export type RoutingActivationSettings = AdaptiveRoutingSettings;
 
 /**
  * Experimental. Triage reads the queued steering messages with a side model
@@ -1045,7 +1039,7 @@ export const DEFAULT_SETTINGS = {
 			roles: [] as ActiveRoutingRole[],
 			postures: [] as ActiveRoutingPosture[],
 			agentRoles: [] as ActiveAgentRole[],
-		} as AdaptiveRoutingSettings,
+		} as RoutingActivationSettings,
 		permissions: {
 			mode: "judge" as WorkerPermissionMode,
 			escalation: { timeoutMs: 120000, fallback: "deny" } as WorkerEscalationSettings,

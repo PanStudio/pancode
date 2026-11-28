@@ -43,13 +43,13 @@ const RECONNECT_MAX_MS = 300_000;
 const DATA_BYTES = 8192;
 const SUMMARY_DATA_CHARS = 600;
 
-export interface JobEventArrival {
+interface JobEventArrival {
 	eventId: string;
 	timestamp: string;
 	data: Record<string, unknown>;
 }
 
-export interface JobEventFailure {
+interface JobEventFailure {
 	errorClass: "permission" | "execution" | "infrastructure";
 	/** The extension's error name, when the server answered with one. */
 	error: string | null;
@@ -57,7 +57,7 @@ export interface JobEventFailure {
 }
 
 /** What one start takes from a subscription. */
-export interface JobEventDrain {
+interface JobEventDrain {
 	arrivals: JobEventArrival[];
 	/** The server reported occurrences it could not replay, or this host dropped some. */
 	gap: boolean;
@@ -71,7 +71,7 @@ export interface JobEventDrain {
 	eventIds: string[];
 }
 
-export interface JobEventHubDeps {
+interface JobEventHubDeps {
 	source(): McpCapabilitySource | null;
 	wake(id: string): void;
 	recordCursor(id: string, cursor: string): void;
@@ -79,7 +79,7 @@ export interface JobEventHubDeps {
 	random?: () => number;
 }
 
-export interface JobEventHub {
+interface JobEventHub {
 	/** Open, keep or cancel a job's subscription; `live` is whether this host owns the job and it is active. */
 	reconcile(job: JobRecord, live: boolean): void;
 	drain(id: string): JobEventDrain | null;

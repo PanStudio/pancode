@@ -37,7 +37,7 @@ import type { AgentRuntime, ChatLoopStateMachineState } from "./turn-state.js";
 import { createWorkerReceipts, noOutcomeUsage } from "./worker-receipts.js";
 
 /** The endpoint stream slot an out-of-turn round holds; both calls are idempotent (#250). */
-export interface EndpointSlot {
+interface EndpointSlot {
 	acquire(): void;
 	release(): void;
 }
@@ -50,7 +50,7 @@ export interface EndpointSlot {
 export const LOCAL_SIDE_QUESTION_API_KEY = "pancode-local-target";
 
 /** Why a settled turn gets another one at yolo; `step` marks a step continuation, which spends the cap (bt-6). */
-export interface YoloContinuation {
+interface YoloContinuation {
 	cause: TurnContinuationCause;
 	reason: string;
 	retryAfterMs?: number;
@@ -62,7 +62,7 @@ export interface YoloContinuation {
 	rolled?: true;
 }
 
-export const countsAgainstCap = (stop: YoloContinuation): boolean =>
+const countsAgainstCap = (stop: YoloContinuation): boolean =>
 	stop.step === true || continuationCountsAgainstCap(stop.cause);
 
 /** The chat loop's turn state machine: admission, settlement, side-call slots, prewarm and keepalive. */

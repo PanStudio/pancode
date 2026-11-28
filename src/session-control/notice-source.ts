@@ -9,7 +9,7 @@
 
 import type { NoticeLevel } from "../core/views/notice-words.js";
 
-export const NOTICE_SOURCES = [
+const NOTICE_SOURCES = [
 	"tip",
 	"reminder",
 	"memory",
