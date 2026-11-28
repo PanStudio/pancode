@@ -238,7 +238,7 @@ export const coreTests = [
 	"step-compact-start",
 	"extension-pinned-restart",
 	"responses-pinned-round-tools",
-	"campaign-run",
+	"campaign-pack",
 	"extension-ignorable-keys",
 	"template-step-when",
 	"context-fold-pins",

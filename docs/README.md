@@ -125,6 +125,7 @@ in your browser.
 | Required checks by changed path, fresh verification snapshots, and completion findings | [Project Quality Policies](guide/quality-policy.md) |
 | Improve a measured metric with verified research campaigns | [Research and Arena](guide/research-and-arena.md) |
 | Compare models blind with vote-based standings, shipped as the arena extension pack | [Arena pack](../hub/packs/extensions/arena/README.md) |
+| Run one seeded project across a roster of models, shipped as the campaign extension pack | [Campaign pack](../hub/packs/extensions/campaign/README.md) |
 | The `/view` artifact viewer | [Observability](architecture/observability.md#view) |
 | Run evidence assessments, findings, and reviewed memory | [Evidence and Memory](architecture/evidence-and-memory.md) |
 | Telemetry events, per-scope journals, capture modes and consent, objects, seals and bundles, verify, share and import, retention, and the read model | [Telemetry](architecture/telemetry.md) |

@@ -1,8 +1,8 @@
 {
 	"source": {
 		"path": "hub/index.yaml",
-		"sha256": "abc9d3de162f1e10a616f69629a3151a65744b69301d4981e495772a6a9754a1",
-		"rows": 47,
+		"sha256": "5c6ac01226c2dbb35cf69d6a2bb07f619cb40dd7236cf8bea39d68fad82e2263",
+		"rows": 48,
 		"revoked": 0
 	},
 	"rows": [
@@ -20,6 +20,21 @@
 			},
 			"sha256": "41079852225ff939ac0fb5ca6cf9f8175e1425b282ba472e08f571d8c43ec548",
 			"install": "pancode hub install extension:arena"
+		},
+		{
+			"kind": "extension",
+			"name": "campaign",
+			"publisher": "pancode",
+			"version": "0.1.0",
+			"description": "Run one seeded project across a roster of models and report how each run ended, its gates, refusals and tokens.",
+			"category": null,
+			"tier": "core",
+			"licence": "LicenseRef-PanCode-1.0",
+			"source": {
+				"path": "hub/packs/extensions/campaign"
+			},
+			"sha256": "7d3e8f9f1cc458b9886eef7f03ac632923ee8c16243a23bff85869b371a15053",
+			"install": "pancode hub install extension:campaign"
 		},
 		{
 			"kind": "extension",

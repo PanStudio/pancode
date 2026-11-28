@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
-import { lstatSync, mkdirSync, rmdirSync } from "node:fs";
+import { lstatSync, mkdirSync, rmdirSync, statSync } from "node:fs";
 import path from "node:path";
 import type { ExtensionRuntimeDeclarationV2 } from "@pancode/sdk/pack";
 import { canonicalizeExistingPath } from "../../core/path-canonical.js";
@@ -25,6 +25,7 @@ import { taskWorktreeClaimParent } from "../../core/task-worktree-claim.js";
 import { workspaceTrustDirectory } from "../../core/workspace-trust.js";
 import { pancodeConfigDir } from "../../core/xdg.js";
 import { isExtensionId } from "./discovery.js";
+import type { ResolvedPathGrant } from "./path-grants.js";
 
 /**
  * The declaration a runtime starts with in a read-only session, which leaves
@@ -69,11 +70,11 @@ export interface ExtensionLaunchRoots {
 	storeDir: string;
 	bootstrap: string;
 	/** The project directory of a runtime that declares `runtime.state.project`, and whether this session may write it. */
-	project?: {
-		dir: string;
-		writable: boolean;
-	} /** The worktree parent of a runtime that declares `services.worktrees`, which it may read. */;
+	project?: { dir: string; writable: boolean };
+	/** The worktree parent of a runtime that declares `services.worktrees`, which it may read. */
 	worktrees?: string;
+	/** Paths the operator named on this verb's command line: write roots bound writable, existing read paths readable. */
+	grants?: ReadonlyArray<ResolvedPathGrant>;
 }
 
 export interface ExtensionLaunch {
@@ -283,11 +284,16 @@ function workspaceSecretMasks(
 	declaration: ExtensionRuntimeDeclarationV2,
 	workspace: string,
 	base: ReadonlyArray<SandboxMaskedPath>,
+	grants: ReadonlyArray<ResolvedPathGrant>,
 ): SandboxMaskedPath[] {
 	const workspaceRoots = [workspace];
 	for (const entry of declaration.permissions.fs.read)
 		if (entry !== "workspace" && entry !== "home")
 			workspaceRoots.push(path.isAbsolute(entry) ? entry : path.join(workspace, entry));
+	// A granted file is the operator's explicit choice; a granted directory is scanned as the workspace is.
+	for (const grant of grants)
+		if (statSync(grant.canonical, { throwIfNoEntry: false })?.isDirectory() === true)
+			workspaceRoots.push(grant.canonical);
 	return discoverSecretMasks({ workspaceRoots }, base).masks;
 }
 
@@ -344,6 +350,8 @@ function planLaunch(input: {
 	const writable = new Set<string>();
 	if (declaration.permissions.fs.write.includes("store")) writable.add(roots.storeDir);
 	for (const entry of declaration.permissions.fs.write) if (entry !== "store") writable.add(path.join(workspace, entry));
+	const grants = roots.grants ?? [];
+	for (const grant of grants) if (grant.access === "write") writable.add(grant.canonical);
 	let invocation: ReturnType<typeof composeWorkerSandboxInvocation>;
 	try {
 		// An extension never reads PanCode's settings, which can hold target auth headers, so they are masked always.
@@ -369,6 +377,7 @@ function planLaunch(input: {
 					path.dirname(roots.bootstrap),
 					...(roots.project !== undefined ? [roots.project.dir] : []),
 					...(roots.worktrees !== undefined ? [roots.worktrees] : []),
+					...grants.filter((grant) => grant.access === "read" && grant.exists).map((grant) => grant.canonical),
 				],
 				network: net,
 				...(input.unixSockets !== undefined && input.unixSockets !== "block" ? { unixSockets: input.unixSockets } : {}),
@@ -376,7 +385,7 @@ function planLaunch(input: {
 			{ argv },
 			workspace,
 			availability,
-			[...base, ...workspaceSecretMasks(declaration, workspace, base)],
+			[...base, ...workspaceSecretMasks(declaration, workspace, base, grants)],
 		);
 	} catch (error) {
 		return {

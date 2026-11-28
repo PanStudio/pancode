@@ -6,8 +6,11 @@
  * when `runtime.services.<name>` is declared and approved; tools, hooks and fleet workers never receive them.
  */
 
-/** Where a run, a check or a git call works: the session's workspace, or a worktree this extension created. */
-export type ExtensionWorkPlace = "workspace" | { worktree: string; sub?: string };
+/**
+ * Where a run, a check or a git call works: the session's workspace, a worktree this extension created, or `path`, an
+ * absolute directory inside a write root the operator granted this command (`ctx.paths`).
+ */
+export type ExtensionWorkPlace = "workspace" | { worktree: string; sub?: string } | { path: string };
 
 export interface ExtensionRunRequest {
 	prompt: string;
@@ -28,6 +31,13 @@ export interface ExtensionRunRequest {
 	timeoutSeconds: number;
 	/** At most the manifest's `runs.maxCostUsd`, which is also the default when it declares one. */
 	maxCostUsd?: number;
+	/**
+	 * An absolute directory inside a write root the operator granted this command (`ctx.paths`). The run keeps its
+	 * PanCode data, state and cache in `home/{data,state,cache}`, which the host creates, so it shares no sessions or
+	 * memory with any other run; it still uses the operator's config (targets, credentials, installed extensions) and
+	 * reads their installed components and tools. `runs.digest` reads what such a run persisted.
+	 */
+	home?: string;
 }
 
 /** A page of a run's `--output-format stream-json` frames. `next` is the cursor for the following page. */
@@ -52,6 +62,62 @@ export interface ExtensionRunEnd {
 	error?: string;
 }
 
+/**
+ * What a run started with a `home` persisted, read from that home after it ended. The main session is the earliest
+ * one opened in the run's directory, else the earliest in the home.
+ */
+export interface ExtensionRunDigest {
+	sessionId: string | null;
+	/**
+	 * Interviews an extension tool put to the author. `reached` holds the distinct checkpoint ids their questions
+	 * declared, in first-asked order; `answered` interviews finished, `unscripted` were cancelled because the
+	 * answers file had no answer, and `unanswered` were cancelled any other way.
+	 */
+	gates: { reached: string[]; interviews: number; answered: number; unscripted: number; unanswered: number };
+	/**
+	 * Refusals by an extension: `hookBlocks` are its hooks' block_tool effects (journal `hook.ran`), `toolRefusals`
+	 * its own tools' calls that returned an error outside an interview (session ledger).
+	 */
+	refusals: { hookBlocks: number; toolRefusals: number };
+	/** Calls the loop guard blocked (journal `middleware.fired` from `guard.loop` with a block_tool effect). */
+	loopGuardBlocks: number;
+	/** The session's token attribution (`pancode telemetry tokens`): provider-measured input and output; null without a session. */
+	tokens: {
+		usage: string;
+		calls: number;
+		unmeasuredCalls: number;
+		fresh: number | null;
+		cached: number | null;
+		input: number;
+		output: number;
+		/** Measured calls with no cache-read count: in input, in neither fresh nor cached. */
+		unsplitCalls?: number;
+	} | null;
+}
+
+/** `pancode extensions run <extension> <command> --json` in a place, as `runs.command` starts it. */
+export interface ExtensionRunCommandRequest {
+	extension: string;
+	command: string;
+	/** Defaults to the workspace. */
+	cwd?: ExtensionWorkPlace;
+	/** Runs against this run home's PanCode data, state and cache, as `runs.start` does. */
+	home?: string;
+	/** At most the manifest's `runs.maxTimeoutSeconds`. */
+	timeoutSeconds: number;
+}
+
+export interface ExtensionRunCommandResult {
+	/** Null when the command did not exit on its own (stopped, timed out or never started). */
+	exitCode: number | null;
+	/** Its standard output, at most 1 MiB: the `--json` result when it answered. */
+	stdout: string;
+	/** The last 4 KiB of its standard error. */
+	stderrTail: string;
+	/** Why it did not start or was stopped, when it was. */
+	error?: string;
+}
+
 export interface ExtensionRuns {
 	start(request: ExtensionRunRequest): Promise<{ id: string }>;
 	/** At most `limit` frames (default 200, at most 1000) from `cursor`; waits up to `waitMs` (at most 30000) for one. */
@@ -61,9 +127,26 @@ export interface ExtensionRuns {
 	/**
 	 * Why `start` would refuse runs with these settings here before any starts, null when it would not: an autonomy
 	 * the manifest does not allow, a writable or yolo run in a read-only session, runs nested too deep, or contained
-	 * yolo this host cannot confine. A busy service or an unusable `cwd` still refuse at `start`.
+	 * yolo this host cannot confine. A busy service or an unusable `cwd` still refuse at `start`. With `answers`, the
+	 * text of a `run --answers` file, it is first why that text is no valid answers file, as `pancode run` words it
+	 * without the file name.
 	 */
-	refusal(options?: { autonomy?: "default" | "yolo"; readOnly?: boolean }): Promise<string | null>;
+	refusal(options?: { autonomy?: "default" | "yolo"; readOnly?: boolean; answers?: string }): Promise<string | null>;
+	/** What an ended run started with a `home` persisted. */
+	digest(id: string): Promise<ExtensionRunDigest>;
+	/**
+	 * Run another installed extension's command headless and return its `--json` answer. Present only when the
+	 * manifest declares `runs.commands: true`; it counts as a run toward `maxConcurrent` and the nesting depth.
+	 */
+	command(request: ExtensionRunCommandRequest): Promise<ExtensionRunCommandResult>;
+}
+
+/** A path the operator named on the command line for a flag the verb declares in `runtime.cli[].paths`. */
+export interface ExtensionPathGrant {
+	flag: string;
+	access: "read" | "write";
+	/** Absolute: the flag's value resolved against the workspace. A write root exists; a read path may not. */
+	path: string;
 }
 
 export interface ExtensionWorktree {

@@ -68,10 +68,16 @@ class Request {
 	place(field = "place"): ExtensionWorkPlace | undefined {
 		const value = this.raw[field];
 		if (value === undefined || value === "workspace") return value;
-		if (value === null || typeof value !== "object" || Array.isArray(value)) this.fail(field, "workspace or a worktree");
-		const { worktree, sub, ...rest } = value as Record<string, unknown>;
+		if (value === null || typeof value !== "object" || Array.isArray(value))
+			this.fail(field, "workspace, a worktree or { path }");
+		const { worktree, sub, path, ...rest } = value as Record<string, unknown>;
+		if (path !== undefined) {
+			if (typeof path !== "string" || worktree !== undefined || sub !== undefined || Object.keys(rest).length > 0)
+				this.fail(field, "workspace, { worktree, sub? } or { path }");
+			return { path };
+		}
 		if (typeof worktree !== "string" || (sub !== undefined && typeof sub !== "string") || Object.keys(rest).length > 0)
-			this.fail(field, "workspace or { worktree, sub? }");
+			this.fail(field, "workspace, { worktree, sub? } or { path }");
 		return sub === undefined ? { worktree } : { worktree, sub };
 	}
 	object(field: string): Record<string, unknown> {
@@ -127,7 +133,22 @@ export function createExtensionWorkHost(services: ExtensionWorkServices): Extens
 			const autonomy = request.optionalText("autonomy");
 			if (autonomy !== undefined && autonomy !== "default" && autonomy !== "yolo")
 				throw new Error("runs.refusal: autonomy must be default or yolo");
-			return service.refusal(omitUndefined({ autonomy, readOnly: request.optionalFlag("readOnly") }));
+			return service.refusal(
+				omitUndefined({ autonomy, readOnly: request.optionalFlag("readOnly"), answers: request.optionalText("answers") }),
+			);
+		},
+		digest: (service, request) => service.digest(request.text("id")),
+		command: (service, request, scope) => {
+			const command = new Request("runs", "command", request.object("command"));
+			return service.command(
+				{
+					extension: command.text("extension"),
+					command: command.text("command"),
+					timeoutSeconds: command.optionalNumber("timeoutSeconds") ?? Number.NaN,
+					...omitUndefined({ cwd: command.place("cwd"), home: command.optionalText("home") }),
+				},
+				scope,
+			);
 		},
 	});
 	const worktrees = dispatcher("worktrees", services.worktrees, {
