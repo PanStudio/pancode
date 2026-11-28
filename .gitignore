@@ -65,7 +65,7 @@ AGENTS.md
 /scripts/harness-probe.ts
 /scripts/smoke-real-home.sh
 /scripts/verify-portable-hosts.sh
-/tests/contracts/harness-probe.test.ts
+/tests/extended/harness-probe.test.ts
 /tests/extended/real-home-smoke-isolation.test.ts
 /assets/recordings/gui-calibration-master.webm
 /tests/fixtures/harness-probes/capability.json

@@ -27,233 +27,23 @@ function packageTestFiles() {
 		);
 }
 
-// Keep the development gate small and source-only. Package, platform and
-// historical regressions stay available through their explicit commands.
+/** The `*.test.ts` files directly in `dir`, sorted. */
+function testFilesIn(dir) {
+	return readdirSync(join(root, dir))
+		.filter((name) => name.endsWith(".test.ts"))
+		.sort()
+		.map((name) => `${dir}/${name}`);
+}
+
+// The directory is the tier. tests/contracts is the development gate, small and
+// source-only; tests/extended (slower regressions) and tests/smoke (the built
+// CLI) run only in test:full. Package and platform checks keep their own commands.
 export const coreTests = [
-	"node-tools-remedy-relay",
-	"provider-oauth-apikey-env",
-	"cost-ceiling-side-calls",
-	"escalation-timeout-clamp",
-	"telemetry-apikey-envvar-name",
-	"run-agent-admission-frame",
-	"run-memory-refusal",
-	"run-project-targets-no-borrow",
-	"run-exit-summary-no-usage",
-	"copilot-worker-failure",
-	"package-manager-launch",
-	"release-clean-build",
-	"stale-build-replaced",
-	"arcade-egg",
-	"check-lane-selection",
-	"handbook-bench",
-	"dispatch-plan-preview-newlines",
-	"interactive-ticker-idle",
-	"streamed-code-fence",
-	"reload-prompts",
-	"telemetry-share-linkability",
-	"mcp-extension-secret-mask",
-	"runtime-plugin-env-key",
-	"memory-off-marker",
-	"headless-observed",
-	"prompt-preconditions",
-	"prompt-tier-golden",
-	"prompt-section-matrix",
-	"prompt-peers-catalog",
-	"memory-recall-hygiene",
-	"memory-observation-envelope",
-	"dispatch-memory-scope",
-	"oracle-second-opinion",
-	"verifiability-routing",
-	"mux-private-host",
-	"memory-route-redaction",
-	"prior-session-hint",
-	"auth-storage-durability",
-	"bash-exec-settlement",
-	"bash-output-cap",
-	"damage-control-shell-segments",
-	"damage-control-git-words",
-	"internal-git-hooks",
-	"safety-gates",
-	"safety-gate-findings",
-	"default-containment",
-	"setup-status",
-	"key-prefix",
-	"configure-import",
-	"setup-next",
-	"contained-secrets",
-	"true-yolo",
-	"contained-yolo",
-	"autonomy-window",
-	"transcript-operator-grant",
-	"yolo-script-sandbox",
-	"verify-sandbox-trojan",
-	"search-completeness",
-	"tool-boundaries",
-	"engine-utilities",
-	"assistant-text-tool-order",
-	"test-runner-vocabulary",
-	"worker-check-bypass-hardening",
-	"sandbox-daemon-socket-masks",
-	"bootstrap-schema-retry-identity",
-	"installed-package-ci",
-	"release-boundary",
-	"release-plan",
-	"workflow-policy",
-	"store-admission",
-	"store-paths",
-	"store-backend-conformance",
-	"store-records",
-	"store-tool",
-	"store-cli",
-	"store-tag-grants",
-	"mcp-store-references",
-	"dispatch-session-ownership",
-	"detached-batch-wake",
-	"run-script-store-inputs",
-	"hub-skill-ranking",
-	"hub-signature",
-	"hub-trust",
-	"hub-packs-plugin-servers",
-	"prefix-stagger",
-	"monitor-steer-tools",
-	"dispatch-write-root-request",
-	"gateway-authority",
-	"gateway-corrections",
-	"mutation-atomicity",
-	"open-browser",
-	"physical-dotdot",
-	"proxy-env-bypass",
-	"read-scope",
-	"session-durability",
-	"project-settings-save",
-	"state-file-lock",
-	"verification-slot",
-	"symlink-escape",
-	"turn-outcome-settlement",
-	"worker-grant-broker",
-	"worker-permit",
-	"worker-refusal-limit",
-	"worker-result-contract-enforcement",
-	"job-admission",
-	"job-tool",
-	"monitor-collect",
-	"judge-screen-park-surfaces",
-	"acp-v1-basics",
-	"acp-readouts",
-	"acp-attended-remote",
-	"configure-routing",
-	"configure-pancode-tool",
-	"settings-authority",
-	"settings-controls",
-	"mcp-config-trust",
-	"project-trust-card",
-	"url-userinfo-hold",
-	"url-credential-surfaces",
-	"bootstrap-grounding",
-	"in-prefix-summary",
-	"compaction-exact-facts",
-	"stale-edit-guard",
-	"replay-unsent-call-usage",
-	"overflow-compaction-fit",
-	"overflow-fit-pin",
-	"compaction-summary-tool-results",
-	"packed-source-directory",
-	"eval-onboarding-rescore",
-	"code-nav",
-	"skill-frontmatter-cache",
-	"codewiki-grammar-note",
-	"read-only-user-files",
-	"read-only-remedy",
-	"sandbox-pancode-roots",
-	"fleet-run-history-prime",
-	"codewiki-worker-identity",
-	"telemetry-multi-install",
-	"approval-card-arguments",
-	"footer-snapshot",
-	"quota-tui",
-	"quota-poll-loop",
-	"tui-presentation-modes",
-	"copilot-sdk-route",
-	"copilot-keychain",
-	"copilot-context-tier",
-	"web-read-taint",
-	"doctor-unknown-runtime",
-	"plugin-engine",
-	"plugin-verified-tree",
-	"claims-ledger",
-	"research-pack",
-	"cli-leaf-help",
-	"mux-platform-win32",
-	"keyboard-model",
-	"background-surfaces",
-	"completed-worker-presentation",
-	"gateway-prompt",
-	"yolo-continuation",
-	"host-verification-admission",
-	"receipt-verify-latest-outcome",
-	"verify-numeric",
-	"verify-numeric-boundaries",
-	"verify-reproduce",
-	"verify-toolchain-checks",
-	"verify-task-gates",
-	"provider-error-presentation",
-	"handbook-discovery",
-	"report-share",
-	"typecheck-corpus",
-	"anthropic-thread-idle",
-	"store-put-identity",
-	"upgrade-command",
-	"hub-default-packs",
-	"launcher-guard",
-	"extension-hook-turn-origin",
-	"extension-interview-answer",
-	"extension-promoted-tools",
-	"extension-test-tmpdir",
-	"extension-validate-workspace",
-	"gateway-scope-shapes",
-	"loop-guard-scenarios",
-	"middleware-required-tool-gateway",
-	"repetition-detector",
-	"tool-markup-reprompt-budget",
-	"cache-read-unreported",
-	"turn-scope-shell-note",
-	"working-set-skill-protection",
-	"json-payload-trailing-result",
-	"verifier-review-verdict-label",
-	"operator-local-date",
-	"count-tool",
-	"template-turn-step-policy",
-	"model-tier-metadata",
-	"extension-pinned-context",
-	"run-answers-scripted",
-	"continuation-last-tool-call",
-	"telemetry-token-sources",
-	"compact-tool-results",
-	"observation-aging",
-	"observation-aging-gate",
-	"observation-aging-rebuild",
-	"detail-ledger-resume",
-	"step-compact-start",
-	"extension-pinned-restart",
-	"responses-pinned-round-tools",
-	"campaign-pack",
-	"extension-ignorable-keys",
-	"template-step-when",
-	"context-fold-pins",
-	"context-fold-witnesses",
-	"extension-host-services",
-]
-	.map((name) => `tests/contracts/${name}.test.ts`)
-	// Signature features whose guards live in the extended suite: the working
-	// set, judged perf checks and sealed receipts under heartbeat contention.
-	.concat(
-		["working-set-core", "verify-perf", "dispatch-heartbeat-finalization"].map(
-			(name) => `tests/extended/${name}.test.ts`,
-		),
-	)
+	...testFilesIn("tests/contracts"),
 	// The issue labeler runs on untrusted report bodies in GitHub Actions.
-	.concat(".github/scripts/report-labels.test.mjs")
-	.concat(packageTestFiles());
+	".github/scripts/report-labels.test.mjs",
+	...packageTestFiles(),
+];
 
 // Every top-level GUI test file. tests/real drives a real browser or a live agent and keeps its own commands.
 export const guiTests = readdirSync(join(root, "apps/pancode-gui/tests"))
@@ -264,16 +54,11 @@ export const guiTests = readdirSync(join(root, "apps/pancode-gui/tests"))
 export const packageTests = [
 	"tests/smoke/installed-package.test.ts",
 	"tests/smoke/native-call-timing.test.ts",
-	"tests/contracts/instant-shell-import-graph.test.ts",
+	"tests/extended/instant-shell-import-graph.test.ts",
 	"tests/extended/dogfood-doctor-readonly.test.ts",
 ];
 
-export const fullTests = ["contracts", "extended", "smoke"].flatMap((suite) =>
-	readdirSync(join(root, "tests", suite))
-		.filter((name) => name.endsWith(".test.ts"))
-		.sort()
-		.map((name) => `tests/${suite}/${name}`),
-);
+export const fullTests = ["tests/contracts", "tests/extended", "tests/smoke"].flatMap(testFilesIn);
 
 // Qualification runs the core, GUI and package tiers at once. Core at four
 // (da71294f7) was measured alone on 24 CPUs; on a 4-vCPU hosted runner the
@@ -420,15 +205,13 @@ function runFile(file, { cwd, preloads }) {
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
 	try {
 		if (process.argv[2] === "list") {
-			for (const [tier, dir, selected] of [
-				["core", "tests/contracts", coreTests],
-				["gui", "apps/pancode-gui/tests", guiTests.map((path) => `apps/pancode-gui/${path}`)],
+			// guiTests is every top-level GUI test file, so the GUI tier has no full-only files to list.
+			for (const [tier, selected, candidates] of [
+				["core", coreTests, fullTests],
+				["gui", guiTests.map((path) => `apps/pancode-gui/${path}`), []],
 			]) {
 				console.log(`\n${tier}: default behavior checks\n${selected.join("\n")}`);
-				const omitted = readdirSync(join(root, dir))
-					.filter((name) => /\.test\.tsx?$/u.test(name))
-					.map((name) => `${dir}/${name}`)
-					.filter((name) => !selected.includes(name));
+				const omitted = candidates.filter((name) => !selected.includes(name));
 				console.log(`\n${tier}: full investigation only\n${omitted.join("\n")}`);
 			}
 		} else await runTests(process.argv[2]);

@@ -6,7 +6,7 @@ triggers:
   - test PanCode context compaction or memory
   - verify PanCode skill activation
   - choose PanCode test gates
-version: 0.5.3
+version: 0.5.4
 license: LicenseRef-PanCode-1.0
 pancode:
   registry-id: PanStudio/pancode
@@ -29,10 +29,10 @@ covers implementation.
 | `pnpm run typecheck` | src, tests, scripts | no | types |
 | `pnpm run lint` | biome, then `scripts/check-hygiene.ts` (formatting, export hygiene, inventories, packaging, every boundary rule) | no | static contracts |
 | `pnpm run test:file -- <files>` | the named files, from the repo root | if the file spawns the CLI | one behaviour |
-| `pnpm run test` | the curated `coreTests` list in `scripts/ci-tests.mjs`, about one file in seven | no | the default contracts only |
-| `pnpm run test:gui` | the curated `guiTests` list, including the OpenAPI contract | no | GUI API and models |
+| `pnpm run test` | every file in `tests/contracts/` | no | the default contracts only |
+| `pnpm run test:gui` | every top-level file in `apps/pancode-gui/tests/`, including the OpenAPI contract | no | GUI API and models |
 | `pnpm run test:package` | four files against the packed build | yes, current | the installed artifact |
-| `pnpm run test:full` | every root test file | yes, built from HEAD | everything, slowly |
+| `pnpm run test:full` | every file in `tests/contracts/`, `tests/extended/` and `tests/smoke/` | yes, built from HEAD | everything, slowly |
 | `pnpm run check:gui` | GUI types and lint | no | GUI static |
 
 `pnpm run ci` is the whole gate CI runs: a release build, the test tiers
@@ -46,7 +46,7 @@ heavy: run one at a time and follow the brief's lock rule.
 2. Find the tests that exercise the change, in every directory:
    `grep -rl "<module stem>" tests apps/pancode-gui/tests`. Run them with
    `test:file`. Most regressions live in `tests/extended/`, which the core
-   list never runs.
+   tier never runs.
 3. A test that spawns `dist/cli/index.js` sees the last build, not your edit.
    Build first. No test command rebuilds a stale `dist/`.
 4. Contract seams: a change to a type the GUI server exposes needs the
@@ -54,9 +54,9 @@ heavy: run one at a time and follow the brief's lock rule.
 5. Run the affected files on Node 22 as well as Node 24 when the change
    touches timers, `unref`, event-loop lifetime, streams, child processes or
    signals. Node 22.19 is the supported floor and the gate runs both.
-6. A new test file must be added to `coreTests`, `guiTests` or
-   `packageTests`, or no gate runs it. `pnpm run test:list` shows what is
-   omitted.
+6. A root test file's directory is its tier: `tests/contracts/` is core,
+   `tests/extended/` and `tests/smoke/` run only in `test:full`.
+   `pnpm run test:list` shows what is omitted.
 7. A red test is yours until you have run the same file on the lane's base
    commit and seen it fail there. Say which commit you compared against.
 8. A run with skipped tests is missing evidence. Sandbox tests skip when the

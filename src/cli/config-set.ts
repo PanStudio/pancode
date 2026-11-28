@@ -30,6 +30,7 @@ import { validateSettings } from "../core/settings-validate.js";
 import { StateFileLockTimeoutError, withStateFileLockSync } from "../core/state-file-lock.js";
 import { captureProjectSurface, recordProjectSurfaceTrust } from "../core/workspace-trust.js";
 import { renderYamlPreservingLayout } from "../core/yaml-preserve.js";
+import { settingsRuntimeFacts } from "../domains/providers/settings-facts.js";
 import { EXIT_CODES } from "./kit/exit-codes.js";
 import { parseCommandFlags } from "./kit/flags.js";
 import { jsonDocument, writeCliFailure, writeJson } from "./kit/json-out.js";
@@ -92,7 +93,7 @@ function valueText(control: SettingControl, raw: string): string {
 /** applyControlValue's own refusals (cross-field rules, schema issues) are about the value, not the file. */
 function applyValue(settings: Parameters<typeof applyControlValue>[0], path: string, text: string): void {
 	try {
-		applyControlValue(settings, path, text);
+		applyControlValue(settings, path, text, settingsRuntimeFacts());
 	} catch (error) {
 		throw new SettingUsageError(describe(error));
 	}

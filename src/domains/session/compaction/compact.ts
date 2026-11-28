@@ -665,7 +665,7 @@ function historicalSkillReceipt(
 	// The model read the body only if it sits whole under its own step header
 	// and runs to the next section or the end. The header spelling mirrors
 	// `chainStepHeader` in src/tools/gateway/chain.ts; the chained-skill
-	// contract in tests/contracts/chain-output-eviction.test.ts fails if they drift.
+	// contract in tests/extended/chain-output-eviction.test.ts fails if they drift.
 	const section = `### step ${call.stepId} (context): ok\n${body}`;
 	const at = aggregate.indexOf(section);
 	const end = at + section.length;
