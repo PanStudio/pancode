@@ -41,7 +41,7 @@ import { type IsolatedPancodeEnv, isolatePancodeEnv } from "../harness/scratch-e
 /**
  * ContextFold CF-0 pins. Each passes today and must keep passing through every CF lane. P3 is pinned where it already
  * lives (tests/extended/live-context-anchor.test.ts, the measured-anchor and stale-anchor cases); P4's raw child-file
- * exclusions stay in tests/contracts/continuity-replay-fork.test.ts and are extended here through the capture.
+ * exclusions stay in tests/extended/continuity-replay-fork.test.ts and are extended here through the capture.
  */
 
 let env: IsolatedPancodeEnv;

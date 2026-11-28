@@ -267,6 +267,7 @@ describe("pancode run --timeout", () => {
 				durationMs: 0,
 				timedOut: false,
 				ranAfterLastEdit: true,
+				confinement: "host",
 			}),
 		);
 		strictEqual(failing?.id, "run-acceptance-2");

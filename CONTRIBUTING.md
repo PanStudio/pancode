@@ -46,7 +46,7 @@ pnpm run test:file -- tests/contracts/<one>.test.ts tests/extended/<two>.test.ts
 
 `test:file` runs `node --test` with `tests/harness/tmp-root.ts` preloaded, so each run gets its own temporary directory and PanCode home and never touches yours. Some tests spawn `dist/cli/index.js` or start `dist/worker/entry.js`; run `pnpm run build` again after changing code those processes run.
 
-Tests live in `tests/contracts/` (behavior contracts), `tests/extended/` (slower regressions) and `apps/pancode-gui/tests/` (the GUI). `pnpm run test` runs the default contract selection and `pnpm run test:list` prints which files each selection holds. Use `tests/harness/scratch-env.ts` for state isolation inside a test, and never replace `process.stdout.write` across async test boundaries.
+Tests live in `tests/contracts/` (behavior contracts), `tests/extended/` (slower regressions), `tests/smoke/` (the built CLI) and `apps/pancode-gui/tests/` (the GUI). The directory is the tier: `pnpm run test` runs every file in `tests/contracts/`, `pnpm run test:full` adds `tests/extended/` and `tests/smoke/`, and `pnpm run test:list` prints which files each tier holds. Use `tests/harness/scratch-env.ts` for state isolation inside a test, and never replace `process.stdout.write` across async test boundaries.
 
 ## Submitting changes
 

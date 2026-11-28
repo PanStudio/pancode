@@ -29,11 +29,21 @@ import {
 } from "../xdg.js";
 import { sandboxAvailability, sandboxNetworkIsolation, sandboxUsable } from "./availability.js";
 import type { EgressBridgePlan } from "./egress/bridge.js";
+import { egressGrants } from "./egress/policy.js";
 import { EGRESS_PROXY_PORT, egressProxyEnv } from "./egress/setup.js";
 import { mainSandboxEnvPolicy } from "./env-scrub.js";
 import { homeReadList } from "./home-read-roots.js";
 import { type HomeReadPlan, planHomeReads } from "./home-reads.js";
+import {
+	type ConfineEntry,
+	confines,
+	type HostLaunchLabel,
+	notConfinedLabel,
+	sandboxedLabel,
+	uncontainedLabel,
+} from "./host-launch.js";
 import { buildSandboxInvocation } from "./invocation.js";
+import type { SandboxPlanFacts } from "./launch-record.js";
 import { withMountAliases } from "./mount-aliases.js";
 import { holdSandboxCacheLease, sandboxCacheDir } from "./sandbox-cache.js";
 import { missingBaselineLine } from "./seccomp.js";
@@ -46,6 +56,7 @@ import type {
 	SandboxCommand,
 	SandboxEnvPolicy,
 	SandboxInvocationSpec,
+	SandboxLauncher,
 	SandboxMaskedPath,
 	SandboxMode,
 	UnixSocketMode,
@@ -57,6 +68,8 @@ import {
 	physicalSandboxPath,
 	SANDBOX_UNSET_ENV,
 	settingsFileMasks,
+	workerSandboxApplies,
+	workerSandboxConfigured,
 	workerSandboxMasks,
 } from "./worker-process.js";
 
@@ -241,6 +254,18 @@ export interface MainSandboxPolicy {
 	homeReads?: HomeReadList;
 	/** Also a writable root; bound again after the read-only paths, since it lives inside PanCode's cache dir. */
 	sandboxCache?: string;
+	/**
+	 * Writable directories inside PanCode's own roots, bound after the read-only
+	 * paths like the sandbox cache: a confined integration's own state and data
+	 * directories (P8). Each is created at spawn.
+	 */
+	lateWritableRoots?: ReadonlyArray<string>;
+	/**
+	 * Extra read-only roots admitted under `listed` homeReads so a confined
+	 * integration can execute its own vendored files without widening writes or
+	 * exposing the rest of `$HOME`.
+	 */
+	extraReadableRoots?: ReadonlyArray<string>;
 	/**
 	 * The read-only sandbox of a read-only session: the one writable root is
 	 * the session's scratch directory, created at spawn, and the command gets
@@ -615,18 +640,23 @@ export function resolveMainSandboxPolicy(input: MainSandboxPolicyInput): MainSan
  */
 function sandboxWritable(
 	target: string,
-	policy: Pick<MainSandboxPolicy, "writableRoots" | "readOnlyPaths" | "sandboxCache">,
+	policy: Pick<MainSandboxPolicy, "writableRoots" | "readOnlyPaths" | "sandboxCache" | "lateWritableRoots">,
 ): boolean {
 	let writable = false;
 	const layers: Array<[ReadonlyArray<string>, boolean]> = [
 		[policy.writableRoots, true],
 		[policy.readOnlyPaths, false],
-		[policy.sandboxCache !== undefined ? [policy.sandboxCache] : [], true],
+		[lateWritablePaths(policy), true],
 	];
 	for (const [roots, canWrite] of layers) {
 		if (roots.some((root) => !relativePathEscapes(path.relative(root, target)))) writable = canWrite;
 	}
 	return writable;
+}
+
+/** The writable paths bound after the read-only ones: the sandbox cache, then a confined integration's own roots. */
+function lateWritablePaths(policy: Pick<MainSandboxPolicy, "sandboxCache" | "lateWritableRoots">): string[] {
+	return [...(policy.sandboxCache !== undefined ? [policy.sandboxCache] : []), ...(policy.lateWritableRoots ?? [])];
 }
 
 function envHas(env: NodeJS.ProcessEnv, name: string): boolean {
@@ -648,7 +678,7 @@ function mainSandboxCacheEnv(
 	cache: string,
 	npmUserConfig?: string,
 	env: NodeJS.ProcessEnv = process.env,
-	policy?: Pick<MainSandboxPolicy, "writableRoots" | "readOnlyPaths" | "sandboxCache">,
+	policy?: Pick<MainSandboxPolicy, "writableRoots" | "readOnlyPaths" | "sandboxCache" | "lateWritableRoots">,
 ): Record<string, string> {
 	const pnpmHome = env.PNPM_HOME;
 	const storeChosen =
@@ -683,7 +713,7 @@ export function mainSandboxNpmUserConfig(
 	cache: string,
 	masks: ReadonlyArray<SandboxMaskedPath>,
 	home: string,
-	policy: Pick<MainSandboxPolicy, "writableRoots" | "readOnlyPaths" | "sandboxCache">,
+	policy: Pick<MainSandboxPolicy, "writableRoots" | "readOnlyPaths" | "sandboxCache" | "lateWritableRoots">,
 ): string | undefined {
 	const npmrc = physicalSandboxPath(path.join(home, ".npmrc"));
 	if (!masks.some((mask) => mask.path === npmrc)) return undefined;
@@ -736,6 +766,54 @@ export function mainSandboxPolicy(roots: {
 		pancodeDirs: [pancodeConfigPath(), pancodeDataPath(), pancodeStatePath(), pancodeCachePath()],
 		...(git !== undefined ? { git } : {}),
 	});
+}
+
+/** How a confined integration reaches the network: not at all, the host's network unmonitored, or only `allow` through PanCode's proxy. */
+export type ConfinedNetwork =
+	| "off"
+	| "open"
+	| { allow: ReadonlyArray<string>; denyHint: string; upstreamProxy?: string };
+
+/**
+ * The policy an integration the operator confined (`safety.confine`, P8) runs
+ * under: the main session's, with the session's `workspace` and the scratch
+ * roots writable and its own `stateDirs`, which may lie inside PanCode's
+ * roots, writable after them. Everything else, PanCode's directories
+ * included, stays read-only, and the main sandbox's secret masks hold, as
+ * does a `listed` `safety.homeReads.main` (`homeReads`). Its network is
+ * `network`; a proxied one needs a spawn that serves the bridge.
+ */
+export function confinedIntegrationPolicy(input: {
+	workspace: string;
+	scratchRoots: ReadonlyArray<string>;
+	stateDirs: ReadonlyArray<string>;
+	extraReadableRoots?: ReadonlyArray<string>;
+	network: ConfinedNetwork;
+	homeReads: HomeReadList | undefined;
+}): MainSandboxPolicy {
+	const base = mainSandboxPolicy({
+		workspace: input.workspace,
+		scratchRoots: input.scratchRoots,
+		...(input.homeReads !== undefined ? { homeReads: input.homeReads } : {}),
+	});
+	const { network } = input;
+	return {
+		...base,
+		...(input.stateDirs.length > 0 ? { lateWritableRoots: [...new Set(input.stateDirs)] } : {}),
+		...(input.extraReadableRoots !== undefined && input.extraReadableRoots.length > 0
+			? { extraReadableRoots: [...new Set(input.extraReadableRoots)] }
+			: {}),
+		network: network !== "off",
+		...(typeof network === "object"
+			? {
+					egress: {
+						grants: egressGrants(network.allow, []),
+						denyHint: network.denyHint,
+						...(network.upstreamProxy !== undefined ? { upstreamProxy: network.upstreamProxy } : {}),
+					},
+				}
+			: {}),
+	};
 }
 
 /**
@@ -793,6 +871,76 @@ export function readOnlyMainSandboxPolicy(roots: {
 	};
 }
 
+/** Where an opt-in integration's process runs, or why it may not start. */
+export type OptInLaunch = { label: HostLaunchLabel; confined: boolean } | { refused: string };
+
+/**
+ * Where a main-session integration's process runs (P8, D11). One that
+ * `safety.confine` names runs in the main-session sandbox, and on a host with
+ * no backend it does not start rather than run bare; any other runs on the
+ * host, as before, and says so.
+ */
+export function optInLaunch(
+	launcher: SandboxLauncher,
+	integration: ConfineEntry,
+	confine: ReadonlyArray<string>,
+): OptInLaunch {
+	if (workerSandboxConfigured()) {
+		return {
+			label: workerSandboxApplies()
+				? sandboxedLabel(launcher, "worker-policy", integration)
+				: uncontainedLabel(launcher, "unconfined-opt-in", integration),
+			confined: false,
+		};
+	}
+	if (!confines(confine, integration)) return { label: notConfinedLabel(launcher, integration), confined: false };
+	const availability = sandboxAvailability();
+	if (!availability.available) {
+		return {
+			refused: `${integration} is in safety.confine and this host has no sandbox backend (${availability.reason ?? "none found"}); remove it from safety.confine to run it unconfined`,
+		};
+	}
+	return { label: sandboxedLabel(launcher, "confine-opt-in", integration), confined: true };
+}
+
+/**
+ * How a document reader (the sqlite reader, poppler) runs (P8). A worker's
+ * runs under the worker's sandbox. In the main session it runs under the
+ * read-only sandbox, network off, reading with `dir` as its tree, wherever
+ * bubblewrap can isolate it: a reader writes nothing, so nothing breaks.
+ * Elsewhere it runs on the host, as before, labelled so.
+ */
+export function documentReaderLaunch(
+	launcher: "sqlite" | "pdf",
+	dir: string,
+	mode: SandboxMode,
+	scratchDir: string = readOnlyScratchDir(undefined),
+): { shellSandbox?: MainSandboxPolicy; label: HostLaunchLabel } {
+	if (workerSandboxConfigured()) {
+		return workerSandboxApplies()
+			? { label: sandboxedLabel(launcher, "worker-policy") }
+			: { label: uncontainedLabel(launcher, "unconfined-opt-in") };
+	}
+	if (mode === "off") return { label: uncontainedLabel(launcher, "sandbox-off") };
+	const availability = sandboxAvailability();
+	if (documentReaderSandboxProblem(availability) !== null) return { label: uncontainedLabel(launcher, "no-backend") };
+	return {
+		shellSandbox: {
+			...readOnlyMainSandboxPolicy({ workspace: dir, scratchRoots: [], scratchDir }),
+			network: false,
+		},
+		label: sandboxedLabel(launcher, "confined-by-default"),
+	};
+}
+
+/** The read-only reader sandbox needs bubblewrap that can isolate the network; else why not, or null. */
+export function documentReaderSandboxProblem(availability: SandboxAvailability = sandboxAvailability()): string | null {
+	if (!availability.available) return availability.reason ?? "no sandbox backend";
+	if (availability.backend !== "bwrap")
+		return `the read-only sandbox needs bubblewrap, and this host has ${availability.backend}`;
+	return sandboxNetworkIsolation(availability);
+}
+
 /**
  * Pure: the backend-neutral spec for one script command. Credentials and
  * runtime sockets are masked with the worker sandbox's own list, and the
@@ -822,17 +970,15 @@ export function mainSandboxInvocationSpec(
 				}
 			: {
 					privateTmp: false,
+					...(lateWritablePaths(policy).length > 0 ? { gitWritablePaths: lateWritablePaths(policy) } : {}),
 					...(policy.sandboxCache !== undefined
-						? {
-								gitWritablePaths: [policy.sandboxCache],
-								setEnv: mainSandboxCacheEnv(policy.sandboxCache, npmUserConfig, env, policy),
-							}
+						? { setEnv: mainSandboxCacheEnv(policy.sandboxCache, npmUserConfig, env, policy) }
 						: {}),
 				}),
 	};
 }
 
-export type MainSandboxSpawnPlan =
+export type MainSandboxSpawnPlan = (
 	| {
 			kind: "sandboxed";
 			file: string;
@@ -842,15 +988,28 @@ export type MainSandboxSpawnPlan =
 			/** Proxied: spawn with `egressStdio` and serve the launch with `bridgeEgress`. */
 			egress?: EgressBridgePlan;
 	  }
-	| { kind: "refused"; message: string };
+	| { kind: "refused"; message: string }
+) & {
+	/** What the launch record says about this launch, refused or run. */
+	launch: SandboxPlanFacts;
+};
 
 /** The main session's contained-shell settings, as the tool registry reads them for each contained call. */
 export function mainShellSandboxSettings(
 	settings: () => Parameters<typeof mainSandboxEnvPolicy>[0] & {
-		safety: { sandboxUnixSockets: UnixSocketMode; egress: EgressSettings; homeReads: HomeReadsSettings };
+		safety: {
+			sandbox: SandboxMode;
+			sandboxUnixSockets: UnixSocketMode;
+			egress: EgressSettings;
+			homeReads: HomeReadsSettings;
+		};
 	},
 ) {
 	return {
+		sandboxState: (): { mode: SandboxMode; backend: SandboxBackend | null } => ({
+			mode: settings().safety.sandbox,
+			backend: sandboxAvailability().backend,
+		}),
 		sandboxEnv: (): SandboxEnvPolicy => mainSandboxEnvPolicy(settings()),
 		sandboxUnixSockets: (): UnixSocketMode => settings().safety.sandboxUnixSockets,
 		sandboxEgress: (): EgressSettings => settings().safety.egress,
@@ -898,6 +1057,29 @@ export function planMainSandboxSpawn(
 		bridge?: boolean;
 	} = {},
 ): MainSandboxSpawnPlan {
+	const launch: SandboxPlanFacts = {
+		caller: policy.readOnly === true ? "main-read-only" : "main",
+		confinement: "sandboxed",
+		why: "main-policy",
+		backend: availability.available ? availability.backend : null,
+		network: mainLaunchEgress(policy, availability.backend, options.bridge === true),
+	};
+	return { ...planMainSandboxLaunch(policy, command, cwd, availability, options), launch };
+}
+
+type MainSandboxLaunch = MainSandboxSpawnPlan extends infer Plan
+	? Plan extends MainSandboxSpawnPlan
+		? Omit<Plan, "launch">
+		: never
+	: never;
+
+function planMainSandboxLaunch(
+	policy: MainSandboxPolicy,
+	command: SandboxCommand,
+	cwd: string,
+	availability: SandboxAvailability,
+	options: { bridge?: boolean },
+): MainSandboxLaunch {
 	if (!availability.available || availability.backend === null || availability.executable === null) {
 		return {
 			kind: "refused",
@@ -929,7 +1111,7 @@ export function planMainSandboxSpawn(
 	// A read-only run's scratch directory is created the same way.
 	for (const dir of [
 		...policy.pancodeDirs,
-		...(policy.sandboxCache !== undefined ? [policy.sandboxCache] : []),
+		...lateWritablePaths(policy),
 		...(policy.readOnly === true ? policy.writableRoots : []),
 	]) {
 		try {
@@ -949,6 +1131,12 @@ export function planMainSandboxSpawn(
 		writableRoots: policy.writableRoots.map(physicalSandboxPath),
 		readOnlyPaths: policy.readOnlyPaths.map(physicalSandboxPath),
 		...(policy.sandboxCache !== undefined ? { sandboxCache: physicalSandboxPath(policy.sandboxCache) } : {}),
+		...(policy.lateWritableRoots !== undefined
+			? { lateWritableRoots: policy.lateWritableRoots.map(physicalSandboxPath) }
+			: {}),
+		...(policy.extraReadableRoots !== undefined
+			? { extraReadableRoots: policy.extraReadableRoots.map(physicalSandboxPath) }
+			: {}),
 	};
 	const hookMasks: SandboxMaskedPath[] = policy.absentGitHooks
 		.filter((hooks) => !pathExists(hooks))
@@ -960,7 +1148,7 @@ export function planMainSandboxSpawn(
 						policy.secretRoots.workspace,
 						...policy.secretRoots.scratchRoots,
 						...policy.writableRoots,
-						...(policy.sandboxCache !== undefined ? [policy.sandboxCache] : []),
+						...lateWritablePaths(policy),
 					],
 					{ revealSettings: policy.env.maskSettings !== true },
 				)
@@ -1017,6 +1205,8 @@ export function planMainSandboxSpawn(
 						? [physicalSandboxPath(policy.secretRoots.sourceCheckout)]
 						: []),
 					...physicalPolicy.writableRoots,
+					...(physicalPolicy.lateWritableRoots ?? []),
+					...(physicalPolicy.extraReadableRoots ?? []),
 				])
 			: masks;
 	if (aliased instanceof Error) {
@@ -1096,7 +1286,15 @@ function mainHomeReadPlan(
 		list: policy.homeReads,
 		backend,
 		admitted: [
-			...new Set([workspace, ...readGitDirs, ...ownFiles].map(physicalSandboxPath).concat(physicalPolicy.writableRoots)),
+			...new Set(
+				[workspace, ...readGitDirs, ...ownFiles]
+					.map(physicalSandboxPath)
+					.concat(
+						physicalPolicy.writableRoots,
+						physicalPolicy.lateWritableRoots ?? [],
+						physicalPolicy.extraReadableRoots ?? [],
+					),
+			),
 		],
 		cwd: physicalSandboxPath(cwd),
 	});
@@ -1272,6 +1470,11 @@ function sweepMainSandboxGitFiles(absent: ReadonlyArray<string>): string[] {
 }
 
 const WRITE_REFUSED = /\b(?:EROFS|EACCES|EPERM)\b|Read-only file system|Permission denied|Operation not permitted/u;
+
+/** A contained command's output reads like the sandbox refused a write: a heuristic, never proof. */
+export function sandboxWriteRefused(output: string): boolean {
+	return WRITE_REFUSED.test(output);
+}
 
 function displayWritableRoots(roots: ReadonlyArray<string>): string {
 	const rootSet = new Set(roots);

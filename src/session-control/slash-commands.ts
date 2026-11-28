@@ -51,7 +51,7 @@ import { matchFromSpec, type ParsedArgs, usageLine } from "./slash-spec.js";
  * not from overlays that re-export them.
  *
  * Boundaries rule6 in `tests/boundaries/check-boundaries.ts` refuses a violation
- * at lint time; `tests/contracts/instant-shell-import-graph.test.ts` is the
+ * at lint time; `tests/extended/instant-shell-import-graph.test.ts` is the
  * measurement it protects.
  *
  * The registry entries live in `./slash-handlers/`, and this file imports them

@@ -13,6 +13,7 @@ import {
 import { SettingsValidationError } from "../core/settings-issues.js";
 import { validateSettings } from "../core/settings-validate.js";
 import { diffSettings } from "../domains/config/classify.js";
+import { settingsRuntimeFacts } from "../domains/providers/settings-facts.js";
 import type { ConfigurePrompts } from "./configure-prompts.js";
 import { createLifecyclePresenter } from "./lifecycle-presenter.js";
 
@@ -31,7 +32,7 @@ export function saveControl(path: string, input: string): void {
 	updateSavedSettingsDocument((saved) => {
 		const before = validateSettings(saved).settings;
 		const preview = structuredClone(before);
-		applyControlValue(preview, path, input);
+		applyControlValue(preview, path, input, settingsRuntimeFacts());
 		const diff = diffSettings(before, preview);
 		// Keep the explicit value even if it equals the resolved default, especially null inheritance.
 		const paths = new Set([path, ...diff.hotReload, ...diff.nextTurn, ...diff.restartRequired]);
@@ -79,7 +80,7 @@ export async function editSettingControl(prompts: ConfigurePrompts, control: Set
 		? await prompts.choose("New value", values, String(current))
 		: await prompts.text("New value", prompts.interactive ? editText(control, current) : "");
 	const proposed = readSettings();
-	applyControlValue(proposed, control.path, value);
+	applyControlValue(proposed, control.path, value, settingsRuntimeFacts());
 	if ((await prompts.choose(`Save ${control.label} globally?`, ["Save", "Cancel"], "Save")) !== "Save") return false;
 	saveControl(control.path, value);
 	return true;

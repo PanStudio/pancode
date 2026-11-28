@@ -11,6 +11,7 @@ import { DEFAULT_SETTINGS } from "../../src/core/defaults.js";
 import { getAtPath } from "../../src/core/session-routing.js";
 import { applyControlValue, orderAreaEntries, SETTING_CONTROLS } from "../../src/core/settings-controls.js";
 import { renderYamlPreservingLayout } from "../../src/core/yaml-preserve.js";
+import { settingsRuntimeFacts } from "../../src/domains/providers/settings-facts.js";
 import { stripTerminalSequences } from "../../src/engine/tui.js";
 import { SettingsCenter } from "../../src/interactive/overlays/settings.js";
 import { buildSettingItems } from "../../src/interactive/overlays/settings-items.js";
@@ -48,7 +49,7 @@ test("a control has a TUI row exactly when it is on the menu, and accepts its sh
 						? JSON.stringify(value)
 						: String(value);
 		const settings = structuredClone(DEFAULT_SETTINGS);
-		assert.doesNotThrow(() => applyControlValue(settings, control.path, text), control.path);
+		assert.doesNotThrow(() => applyControlValue(settings, control.path, text, settingsRuntimeFacts()), control.path);
 	}
 });
 
@@ -71,7 +72,7 @@ test("invalid typed values, references, and cross-field edits leave the original
 	] as const) {
 		const settings = fixture();
 		const before = structuredClone(settings);
-		assert.throws(() => applyControlValue(settings, path, input), Error, path);
+		assert.throws(() => applyControlValue(settings, path, input, settingsRuntimeFacts()), Error, path);
 		assert.deepEqual(settings, before, path);
 	}
 });
@@ -79,7 +80,7 @@ test("invalid typed values, references, and cross-field edits leave the original
 test("changing a role connection clears only that role's previous model override", () => {
 	const settings = fixture();
 	const before = structuredClone(settings);
-	applyControlValue(settings, "chat.target", "second");
+	applyControlValue(settings, "chat.target", "second", settingsRuntimeFacts());
 	assert.equal(settings.chat.target, "second");
 	assert.equal(settings.chat.model, null);
 	assert.deepEqual(settings.fleet, before.fleet);

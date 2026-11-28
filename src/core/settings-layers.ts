@@ -49,7 +49,8 @@ import {
 	noteProjectTargets,
 } from "./project-target-urls.js";
 import { safeResourceWrite } from "./safe-resource-write.js";
-import { RESOURCE_LIMIT_KEYS, RESOURCE_LIMIT_MAX } from "./sandbox/types.js";
+import { homeReadList } from "./sandbox/home-read-roots.js";
+import { type HomeReadList, RESOURCE_LIMIT_KEYS, RESOURCE_LIMIT_MAX, type SandboxMode } from "./sandbox/types.js";
 import type { SettingsDocumentRead } from "./settings-document.js";
 import { readSettingsDocument } from "./settings-document.js";
 import { type SettingsIssue, SettingsValidationError } from "./settings-issues.js";
@@ -706,6 +707,7 @@ function stripProjectOperatorSafety(
 	origin: SettingsOrigin,
 	issues: SettingsLayerIssue[],
 	userBlob: Record<string, unknown> | undefined,
+	inheritedConfine?: ReadonlyArray<unknown>,
 ): Record<string, unknown> {
 	if (!isRecord(blob.safety)) return blob;
 	const safety: Record<string, unknown> = { ...blob.safety };
@@ -722,6 +724,24 @@ function stripProjectOperatorSafety(
 			stripped = true;
 			if (modes === undefined) delete safety.egress;
 			else safety.egress = modes;
+		}
+	}
+	if (Object.hasOwn(safety, "confine")) {
+		// A project may confine more of its integrations, never release one an earlier layer confined.
+		const floor =
+			inheritedConfine ??
+			(isRecord(userBlob?.safety) && Array.isArray(userBlob.safety.confine) ? userBlob.safety.confine : []);
+		const merged = Array.isArray(safety.confine) ? [...new Set([...floor, ...safety.confine])] : undefined;
+		if (merged === undefined)
+			issues.push({
+				origin,
+				path: "safety.confine",
+				message: "a project adds confined integrations as a list; project value ignored",
+			});
+		if (!isDeepStrictEqual(merged, safety.confine)) {
+			stripped = true;
+			if (merged === undefined) delete safety.confine;
+			else safety.confine = merged;
 		}
 	}
 	if (Object.hasOwn(safety, "judge")) {
@@ -1070,7 +1090,12 @@ function prepareProjectLayers(
 	const projectFile = join(root, ".pancode", "settings.yaml");
 	const localFile = join(root, ".pancode", "settings.local.yaml");
 	const snapshot = captureProjectSurface(cwd, "settings");
-	const readProjectLayer = (origin: SettingsOrigin, path: string, file: ProjectSurfaceFile | undefined): RawLayer => {
+	const readProjectLayer = (
+		origin: SettingsOrigin,
+		path: string,
+		file: ProjectSurfaceFile | undefined,
+		inheritedConfine?: ReadonlyArray<unknown>,
+	): RawLayer => {
 		if (file?.error !== undefined) issues.push({ origin, path, message: file.error, kind: "unreadable" });
 		if (file?.text === null || file === undefined) return { origin, path, blob: undefined };
 		const raw = readRawLayer(origin, path, issues, file.text);
@@ -1094,6 +1119,7 @@ function prepareProjectLayers(
 									origin,
 									issues,
 									userBlob,
+									inheritedConfine,
 								),
 								origin,
 								issues,
@@ -1114,7 +1140,11 @@ function prepareProjectLayers(
 		return { ...raw, blob };
 	};
 	const projectRaw = readProjectLayer("project", projectFile, snapshot.files[0]);
-	const localRaw = readProjectLayer("project.local", localFile, snapshot.files[1]);
+	const projectConfine =
+		isRecord(projectRaw.blob?.safety) && Array.isArray(projectRaw.blob.safety.confine)
+			? projectRaw.blob.safety.confine
+			: undefined;
+	const localRaw = readProjectLayer("project.local", localFile, snapshot.files[1], projectConfine);
 	const project: RawLayer = {
 		...projectRaw,
 		blob:
@@ -1499,4 +1529,31 @@ export function settingsSourceFor(sources: Record<string, SettingsOrigin>, keyPa
 		segments.pop();
 	}
 	return "built-in";
+}
+
+/** `safety.confine` as the layers for `cwd` give it now (P8); unreadable settings confine nothing. */
+export function layeredConfineList(cwd: string | null): ReadonlyArray<string> {
+	try {
+		return readLayeredSettings(cwd).settings.safety.confine;
+	} catch {
+		return [];
+	}
+}
+
+/** `safety.homeReads` for the main session as the layers for `cwd` give it now, which a confined integration (P8) reads by too. */
+export function layeredMainHomeReads(cwd: string | null): HomeReadList | undefined {
+	try {
+		return homeReadList(readLayeredSettings(cwd).settings.safety.homeReads, "main");
+	} catch {
+		return undefined;
+	}
+}
+
+/** `safety.sandbox` as the layers resolve it for `cwd`; the default when the settings cannot be read. */
+export function layeredSandboxMode(cwd: string | null): SandboxMode {
+	try {
+		return readLayeredSettings(cwd).settings.safety.sandbox;
+	} catch {
+		return DEFAULT_SETTINGS.safety.sandbox;
+	}
 }

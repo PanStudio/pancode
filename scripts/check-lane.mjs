@@ -234,7 +234,7 @@ async function main() {
 	);
 	const { affected, unlisted } = selectLaneTests({ changed, added, importsOf, lists });
 	for (const file of unlisted)
-		fail("test-lists", `${file} is in no gate list; add its stem to coreTests in scripts/ci-tests.mjs`);
+		fail("test-lists", `${file} is in no tier; root tests go in tests/contracts (core) or tests/extended (full only)`);
 	for (const file of added.filter((path) => /^tests\/(extended|smoke)\/.*\.test\.ts$/u.test(path)))
 		console.log(`notice: ${file} runs only in test:full`);
 	if (unlisted.length === 0) pass("test-lists");

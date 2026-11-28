@@ -148,10 +148,13 @@ export function createShellEgress(
 	 * its answer still holds for the session's next command. Workers,
 	 * headless runs and contained yolo, which nobody answers, are refused at once.
 	 */
-	const requestApproval = async (origin: EgressOrigin, options: ToolInvokeOptions | undefined): Promise<boolean> => {
+	const requestApproval = async (
+		origin: EgressOrigin,
+		options: ToolInvokeOptions | undefined,
+	): Promise<boolean | "session" | "unasked"> => {
 		const key = originKey(origin);
 		const state = session(options);
-		if (state.granted.has(key)) return true;
+		if (state.granted.has(key)) return "session";
 		if (state.denied.has(key)) return false;
 		if (
 			(deps.principal ?? "main") !== "main" ||
@@ -160,7 +163,7 @@ export function createShellEgress(
 			deps.operatorAttends?.() !== true ||
 			deps.unattendedAsks?.() === true
 		)
-			return false;
+			return "unasked";
 		const askKey = `${sessionKey(options)}\u0000${key}`;
 		const pending = asks.get(askKey);
 		if (pending !== undefined) return await pending;

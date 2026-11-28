@@ -8,6 +8,7 @@ import { applyControlValue, SETTING_CONTROLS } from "../../src/core/settings-con
 import { validateSettings } from "../../src/core/settings-validate.js";
 import { compile } from "../../src/domains/prompts/compiler.js";
 import { loadFragments } from "../../src/domains/prompts/fragment-loader.js";
+import { settingsRuntimeFacts } from "../../src/domains/providers/settings-facts.js";
 import { stripTerminalSequences, visibleWidth } from "../../src/engine/tui.js";
 import {
 	renderCapabilityMap,
@@ -19,7 +20,7 @@ import { footerState } from "../harness/footer-fixture.js";
 test("demo ships enabled, supports validated settings and last-wins session flags", () => {
 	strictEqual(DEFAULT_SETTINGS.interface.demo, true);
 	const settings = structuredClone(DEFAULT_SETTINGS);
-	applyControlValue(settings, "interface.demo", "false");
+	applyControlValue(settings, "interface.demo", "false", settingsRuntimeFacts());
 	strictEqual(settings.interface.demo, false);
 	strictEqual(SETTING_CONTROLS.find((c) => c.path === "interface.demo")?.label, "Demo presentation and guidance");
 	strictEqual(

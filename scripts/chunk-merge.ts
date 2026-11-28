@@ -85,7 +85,7 @@ const SESSION_STAGES: ReadonlyArray<readonly [name: string, roots: ReadonlyArray
  * crosses from the entry on, so chunks all of them load anyway are not split
  * apart. `stage0` lists the instant shell's owner alone, and `runHelp` exists
  * although `headless` covers it, because
- * tests/contracts/instant-shell-import-graph.test.ts budgets the owner's
+ * tests/extended/instant-shell-import-graph.test.ts budgets the owner's
  * static closure and pins `run --help` to load nothing of the run command.
  * `help` keeps `help --json` to the kit and the command specs: without it the
  * kit shared a file with the import() namespace stub of
@@ -97,18 +97,23 @@ const SESSION_STAGES: ReadonlyArray<readonly [name: string, roots: ReadonlyArray
  * off the plugin domain: guards alone let src/domains/dispatch/ownership.ts,
  * which src/cli/fleet-project-scope.ts imports, share a file with
  * src/core/settings-controls.ts, whose import of src/domains/config/classify.ts
- * sits in the same file as src/domains/plugins/index.ts. It also roots
+ * sat in the same file as src/domains/plugins/index.ts. It also roots
  * src/domains/dispatch/capacity-lease.ts, which `fleet status` imports for the
  * drain line: guards alone let it share a file with src/domains/store/index.ts
  * once the safety domain's shell scanners left protected-artifacts.ts. It roots
  * src/domains/telemetry/run-journal-read.ts, the rows' run-journal reader, too:
  * after the dispatch and worker files split into smaller modules, guards alone
  * let src/domains/store/index.ts share the file of the safety domain's shell
- * scanners that reader's merged closure loads. It roots
- * src/domains/dispatch/fleet-event-journal.ts for the same reason: without it
- * the fold pass merged its dynamic-import stub with
- * src/domains/system-one/julia-tokenizer.ts, pulling src/domains/context/index.ts
- * through src/core/pinned-asset.ts.
+ * scanners that reader's merged closure loads. It roots the two read-model
+ * modules and the budget envelope the rows load by `import()` as well: once
+ * src/core/settings-controls.ts stopped importing the providers domain, guards
+ * alone grouped them with telemetry call-fact and store modules the rows never
+ * run (61 files and 1,689,457 B against 57 and 1,654,992 B; 52 and 1,601,087 B
+ * rooted). It roots the assignment store and the fleet event journal the rows
+ * read too: after the install and programs moves, guards alone put them in a
+ * file whose import of src/domains/system-one/julia-tokenizer.ts loaded
+ * src/core/pinned-asset.ts beside src/domains/context/index.ts (45 files
+ * against 39 and 1,521,183 B rooted).
  */
 const EXACT_PATHS: ReadonlyArray<readonly [name: string, roots: ReadonlyArray<string>]> = [
 	// The workspace launcher: the launch stage plus what starts the pane host and the session inside it.
@@ -155,8 +160,12 @@ const EXACT_PATHS: ReadonlyArray<readonly [name: string, roots: ReadonlyArray<st
 			"src/cli/fleet-status.ts",
 			"src/cli/fleet-project-scope.ts",
 			"src/domains/dispatch/capacity-lease.ts",
-			"src/domains/dispatch/fleet-event-journal.ts",
 			"src/domains/telemetry/run-journal-read.ts",
+			"src/domains/telemetry/read-model-runs.ts",
+			"src/domains/telemetry/read-model-usage.ts",
+			"src/domains/dispatch/budget-envelope.ts",
+			"src/domains/dispatch/assignment-store.ts",
+			"src/domains/dispatch/fleet-event-journal.ts",
 		],
 	],
 ];

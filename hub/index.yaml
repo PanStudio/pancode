@@ -663,9 +663,9 @@ entries:
       - test PanCode context compaction or memory
       - verify PanCode skill activation
       - choose PanCode test gates
-    version: 0.5.3
+    version: 0.5.4
     sourceUrl: packs/skills/meta/pancode-test
-    sha256: a7bc09a42e0b4494d5da7a24090a6ef3a714a58642a4577eb7b2c0d587e46350
+    sha256: 30072f40e0dc3b2b5326d5a7efaa8a2f4772e1353499b0c3837a37483450a2de
     license: LicenseRef-PanCode-1.0
     tier: core
     provides:

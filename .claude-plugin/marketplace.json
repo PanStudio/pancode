@@ -176,7 +176,7 @@
 			"name": "pancode-test",
 			"source": "./hub/packs/skills/meta/pancode-test",
 			"description": "Validate PanCode changes: pick checks from the diff, know what each test tier proves, keep runs isolated, verify behaviour live in a candidate build and report evidence without claiming unrun coverage. Use when developing or diagnosing PanCode itself.",
-			"version": "0.5.3",
+			"version": "0.5.4",
 			"category": "meta",
 			"license": "LicenseRef-PanCode-1.0"
 		},

@@ -4,8 +4,8 @@ import { deepStrictEqual, match, strictEqual } from "node:assert/strict";
 import { it } from "node:test";
 import { parse } from "yaml";
 import { DEFAULT_SETTINGS, SETTINGS_SCAFFOLD_YAML } from "../../src/core/defaults.js";
+import { settingsChangeKind } from "../../src/core/settings-change-kind.js";
 import { validateSettings } from "../../src/core/settings-validate.js";
-import { settingsChangeKind } from "../../src/domains/config/classify.js";
 import type { TurnFacts } from "../../src/lib/turn-control/index.js";
 import {
 	decide,

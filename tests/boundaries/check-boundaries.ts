@@ -788,7 +788,6 @@ const FUNCTION_LINE_CEILING = 500;
  */
 const FUNCTION_LINE_EXEMPTIONS: ReadonlyMap<string, number> = new Map([
 	["src/cli/modes/print.ts#runHeadlessMainAgent", 851],
-	["src/core/settings-validate.ts#validateSettings", 1270],
 	["src/domains/dispatch/admission.ts#createCapacityAdmissionController", 547],
 	["src/domains/dispatch/execution-scheduler.ts#executePlan", 662],
 	["src/domains/dispatch/fleet-run.ts#runFleetHoldingWorkspace", 1043],
@@ -825,7 +824,6 @@ const FUNCTION_LINE_EXEMPTIONS: ReadonlyMap<string, number> = new Map([
 	["src/interactive/overlays/settings-items.ts#buildSettingItems", 523],
 	["src/interactive/panes-runtime.ts#createPanesRuntime", 582],
 	["src/session-control/chat-loop-composition.ts#createChatLoopComposition", 662],
-	["src/session-control/chat-loop-state-machine.ts#createChatLoopStateMachine", 645],
 	["src/session-control/chat-loop-submit.ts#createChatLoopSubmit", 1483],
 	["src/session-control/chat-loop-submit.ts#createChatLoopSubmit.submit", 1439],
 	["src/session-control/chat-loop.ts#createChatLoop", 1570],
@@ -834,7 +832,7 @@ const FUNCTION_LINE_EXEMPTIONS: ReadonlyMap<string, number> = new Map([
 	["src/session-control/turn-context-prompt.ts#createTurnContextPrompt", 588],
 	["src/session-control/turn-context.ts#createTurnContext", 2787],
 	["src/session-control/turn-middleware.ts#createTurnMiddleware", 823],
-	["src/session-control/turn-recovery.ts#createTurnRecovery", 676],
+	["src/session-control/turn-recovery.ts#createTurnRecovery", 578],
 	["src/session-control/turn-runtime.ts#createTurnRuntime", 2222],
 	["src/session-control/turn-runtime.ts#createTurnRuntime.ensureRuntime", 1812],
 	["src/session-control/turn-runtime.ts#createTurnRuntime.ensureRuntime.onAgentEvent", 530],
@@ -842,8 +840,8 @@ const FUNCTION_LINE_EXEMPTIONS: ReadonlyMap<string, number> = new Map([
 	["src/tools/dispatch-compete.ts#runCompete", 543],
 	["src/tools/dispatch-runner.ts#runDispatchTool", 550],
 	["src/tools/gateway/index.ts#createGatewayTool", 875],
-	["src/tools/gateway/mcp-capabilities.ts#createMcpCapabilitySource", 1680],
-	["src/tools/registry.ts#createRegistry", 2340],
+	["src/tools/gateway/mcp-capabilities.ts#createMcpCapabilitySource", 1673],
+	["src/tools/registry.ts#createRegistry", 2338],
 ]);
 
 function memberNameText(name: ts.PropertyName | ts.BindingName, tree: ts.SourceFile): string {
@@ -1075,7 +1073,7 @@ function isChatLoopTurnModule(filePath: string): boolean {
 }
 
 /**
- * The instant shell's Stage 0 owner. `tests/contracts/instant-shell-import-graph.test.ts`
+ * The instant shell's Stage 0 owner. `tests/extended/instant-shell-import-graph.test.ts`
  * walks the built chunk that contains this module and holds its static closure
  * to 32 chunks, 1,400,000 total bytes and 400,000 PanCode source bytes, because that closure is what a cold
  * `pancode` start pays before it can draw anything.
@@ -2156,7 +2154,7 @@ function checkLayerEdges(edges: { core: LayerEdges; barrel: LayerEdges; dependsO
  *      Stage 0 unless that existing composition-root overlap is explicitly
  *      declared. CLI type edges retain the older declaration requirement.
  *      Both halves protect the instant shell's cold-start chunk graph, pinned by
- *      tests/contracts/instant-shell-import-graph.test.ts.
+ *      tests/extended/instant-shell-import-graph.test.ts.
  *  19, 20, 21. Workspace packages under packages/ stay independent of the
  *      harness and of each other's internals (checkPackageBoundaries).
  *  22. src/core/views/** is the presentation the terminal and the GUI client
@@ -2337,7 +2335,7 @@ export function runBoundaryCheck(projectRoot: string): BoundaryCheckResult {
 				if (seam === undefined) {
 					const qualifier = typeOnly ? " (type-only)" : "";
 					violations.push(
-						`rule6: ${path.relative(projectRoot, filePath)} ${kind}${qualifier} ${specifier} which resolves to ${seamPath}; runtime importers outside the computed Stage 0 closure and its src/interactive/**, src/engine/** and src/acp/** trees may enter those protected trees only through a seam declared in STAGE0_SEAMS (tests/boundaries/check-boundaries.ts). A new disjoint reacher makes esbuild split the merged chunk the instant shell's Stage 0 closure sits on. That closure is held to 32 chunks, 1,400,000 total bytes and 400,000 PanCode source bytes by tests/contracts/instant-shell-import-graph.test.ts, which only fails after a full build. Move the needed value into a leaf seam, route through an existing seam, or declare a legitimate edge with its reason.`,
+						`rule6: ${path.relative(projectRoot, filePath)} ${kind}${qualifier} ${specifier} which resolves to ${seamPath}; runtime importers outside the computed Stage 0 closure and its src/interactive/**, src/engine/** and src/acp/** trees may enter those protected trees only through a seam declared in STAGE0_SEAMS (tests/boundaries/check-boundaries.ts). A new disjoint reacher makes esbuild split the merged chunk the instant shell's Stage 0 closure sits on. That closure is held to 32 chunks, 1,400,000 total bytes and 400,000 PanCode source bytes by tests/extended/instant-shell-import-graph.test.ts, which only fails after a full build. Move the needed value into a leaf seam, route through an existing seam, or declare a legitimate edge with its reason.`,
 					);
 				} else if (!typeOnly) {
 					const importers = valueReachedSeams.get(resolved) ?? new Set<string>();
@@ -2410,7 +2408,7 @@ export function runBoundaryCheck(projectRoot: string): BoundaryCheckResult {
 			.sort();
 		if (importers.length === 0) continue;
 		violations.push(
-			`rule6: seam ${seamPath}, reached by ${importers.join(", ")}, value-imports its way into the Stage 0 closure (${reached.join(", ")}); an external seam must stay off the modules ${STAGE_0_OWNER} already reaches, or its importer becomes a second reacher and esbuild splits their merged chunk. That closure is held to 32 chunks, 1,400,000 total bytes and 400,000 PanCode source bytes by tests/contracts/instant-shell-import-graph.test.ts, which only fails after a full build. Move the value the seam needs into a leaf module instead of importing the render module that happens to hold it.`,
+			`rule6: seam ${seamPath}, reached by ${importers.join(", ")}, value-imports its way into the Stage 0 closure (${reached.join(", ")}); an external seam must stay off the modules ${STAGE_0_OWNER} already reaches, or its importer becomes a second reacher and esbuild splits their merged chunk. That closure is held to 32 chunks, 1,400,000 total bytes and 400,000 PanCode source bytes by tests/extended/instant-shell-import-graph.test.ts, which only fails after a full build. Move the value the seam needs into a leaf module instead of importing the render module that happens to hold it.`,
 		);
 	}
 
