@@ -37,11 +37,19 @@ const httpModules = new Map([
 	["src/acp/transport.ts", new Set(["createStdioTransport", "AcpJsonRpcTransport"])],
 	["src/acp/errors.ts", new Set(["AcpProcessError", "AcpTimeoutError", "AcpRequestError", "AcpProtocolError"])],
 	...acpWireTypes.map((path) => [path, new Set(["*"])] as const),
-	["src/core/xdg.ts", new Set(["pancodeStateDir", "pancodeDataDir", "pancodeConfigDir", "resolvePancodeDirs"])],
+	[
+		"src/core/xdg.ts",
+		new Set(["pancodeStateDir", "pancodeDataDir", "pancodeConfigDir", "resolvePancodeDirs", "xdgBaseDir"]),
+	],
 	["src/core/package-root.ts", new Set(["resolvePackageRoot"])],
 	["src/core/path-containment.ts", new Set(["relativePathEscapes"])],
 	["src/core/context-operation.ts", new Set(["ACP_CONTEXT_STATUS_METHOD"])],
-	["src/core/process-identity.ts", new Set(["processAlive", "processBirthToken"])],
+	[
+		"src/core/process-identity.ts",
+		new Set(["ownerIdentity", "ownerState", "processAlive", "processBirthToken", "processIsZombie"]),
+	],
+	// The background setup's publish lock is the engine's one advisory file lock.
+	["src/core/state-file-lock.ts", new Set(["StateFileLockTimeoutError", "withStateFileLock"])],
 	["src/domains/install/install-method.ts", new Set(["readInstallerRecord"])],
 	["src/domains/install/version.ts", new Set(["getVersionInfo"])],
 	// The approval card reads the scope out of the session option the engine names with this prefix.
