@@ -32,8 +32,6 @@ import {
 } from "../tools/edit-diff.js";
 import { resolveToCwd } from "../tools/path-utils.js";
 
-export { MUTATION_PREVIEW_KEY } from "./permission-hint.js";
-
 /** Rows of mutation shown at once. Anything longer scrolls, as `/handoff` review does. */
 export const MUTATION_PREVIEW_VISIBLE_ROWS = 16;
 
@@ -43,9 +41,6 @@ export const MUTATION_PREVIEW_VISIBLE_ROWS = 16;
  * Reaching it prints an explicit line naming what was withheld.
  */
 export const MUTATION_PREVIEW_MAX_CHARS = 262_144;
-
-export { mutationFacts } from "../session-control/approval-request-facts.js";
-export type { MutationFacts } from "../session-control/approval-request-view.js";
 
 export interface MutationPreview {
 	facts: MutationFacts;

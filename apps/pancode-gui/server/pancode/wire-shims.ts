@@ -12,30 +12,21 @@ export type {
 export type {
 	CacheReportV1,
 	CallFilter,
-	CallRowV1,
-	CallsReportV1,
 	CostReportV1,
 	ExplanationV1,
-	FactRef,
 	Quantity,
 	RunEvidenceV1,
-	RunRowV1,
 	RunTelemetryV1,
 	RunTimelineEntry,
-	RunTimelineV1,
 	SessionTelemetryV1,
-	TelemetryTopic,
 	TelemetryUpdateV1,
 	TimelineEntry,
-	TimelineV1,
-	WhyStoppedV1,
 } from "../../../../src/core/telemetry/dto.js";
 export {
 	CallFilterSchema,
 	FactRefSchema,
 	parseFactRef,
 	TELEMETRY_DTO_SCHEMAS,
-	TELEMETRY_TOPICS,
 } from "../../../../src/core/telemetry/dto.js";
 export type { ContextActivityPayload } from "../../../../src/core/telemetry/live-events.js";
 export * from "../../../../src/engine/acp/types.js";

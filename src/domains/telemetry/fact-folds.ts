@@ -1,18 +1,15 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 /**
- * The read model's folds over the Phase 3 fact families (#434), one per family: decisions (approvals, tool and safety
- * decisions, completion evaluations), gate verdicts, memory steps and process health. Run lifecycle and route
- * decisions are entries on the run timeline (`runTimeline` in read-model-timeline.ts); quota is `foldAccountQuota`. Each fold
- * reads journal records and nothing else, so every surface that shows these facts counts them the same way. The fold
- * version is `TELEMETRY_FOLD_VERSION` (folds.ts).
+ * The read model's fold over the Phase 3 decision facts (#434): approvals, tool and safety decisions, completion
+ * evaluations. Run lifecycle and route decisions are entries on the run timeline (`runTimeline` in
+ * read-model-timeline.ts); quota is `foldAccountQuota`. The fold reads journal records and nothing else, so every
+ * surface that shows these facts counts them the same way. The fold version is `TELEMETRY_FOLD_VERSION` (folds.ts).
  */
 
-import type { TelemetryRecord } from "../../core/telemetry/envelope.js";
 import type { EventPayload } from "../../core/telemetry/events.js";
 import { countsAsToolCall } from "../../core/telemetry/tool-schemas.js";
 import type { AccountabilityEventName, AccountabilityRecord } from "./read-model-runs.js";
-import type { JournalSource } from "./read-model-sources.js";
 
 // ---------------------------------------------------------------------------
 // Decisions: approvals, tool decisions, safety judgments, completion evaluations
@@ -154,133 +151,4 @@ export function foldDecisions(records: Iterable<AccountabilityRecord>): Decision
 		completion,
 		rows,
 	};
-}
-
-// ---------------------------------------------------------------------------
-// Gate verdicts
-// ---------------------------------------------------------------------------
-
-export type GateVerdictRow = EventPayload<"gate.decided"> & { at: string; runId: string | null };
-
-/**
- * The decided review and compete gates the journals hold, oldest first, each decision once: a run journal a session
- * and a repo both read is counted once, and a republished decision with the same digest is the same verdict.
- */
-export function foldGateVerdicts(journals: Iterable<JournalSource>): GateVerdictRow[] {
-	const seen = new Set<string>();
-	const rows: GateVerdictRow[] = [];
-	for (const journal of journals) {
-		for (const record of journal.records) {
-			if (record.k !== "gate.decided") continue;
-			const key = `${record.data.decisionId}\u0000${record.data.digest}`;
-			if (seen.has(key)) continue;
-			seen.add(key);
-			rows.push({ ...record.data, at: record.t, runId: record.ctx.runId ?? null });
-		}
-	}
-	return rows.sort((a, b) => a.at.localeCompare(b.at) || a.decisionId.localeCompare(b.decisionId));
-}
-
-// ---------------------------------------------------------------------------
-// Memory steps
-// ---------------------------------------------------------------------------
-
-type MemoryStep = EventPayload<"memory.step_decided">;
-
-export interface MemoryStepRow {
-	at: string;
-	tier: MemoryStep["tier"];
-	decision: MemoryStep["decision"];
-	reason: MemoryStep["reason"];
-	triggerReasons: MemoryStep["triggerReasons"];
-	bankOperations: number;
-	droppedOperations: number;
-	citedEntries: number;
-	route: MemoryStep["route"] | null;
-}
-
-export interface MemoryStepsFold {
-	steps: MemoryStepRow[];
-	decisions: Partial<Counts<MemoryStep["decision"]>>;
-	reasons: Partial<Counts<MemoryStep["reason"]>>;
-	/** Background memory calls that released their endpoint, by target. */
-	completedByTarget: Record<string, number>;
-}
-
-/** The memory steps a scope decided and the endpoint completions it journaled; spend is `foldSideSurfaces`. */
-export function foldMemorySteps(records: Iterable<TelemetryRecord>): MemoryStepsFold {
-	const fold: MemoryStepsFold = { steps: [], decisions: {}, reasons: {}, completedByTarget: {} };
-	for (const record of records) {
-		if (record.k === "memory.step_completed") {
-			fold.completedByTarget[record.data.targetId] = (fold.completedByTarget[record.data.targetId] ?? 0) + 1;
-			continue;
-		}
-		if (record.k !== "memory.step_decided") continue;
-		const data = record.data;
-		fold.decisions[data.decision] = (fold.decisions[data.decision] ?? 0) + 1;
-		fold.reasons[data.reason] = (fold.reasons[data.reason] ?? 0) + 1;
-		fold.steps.push({
-			at: record.t,
-			tier: data.tier,
-			decision: data.decision,
-			reason: data.reason,
-			triggerReasons: data.triggerReasons,
-			bankOperations: data.bankOperations,
-			droppedOperations: data.droppedOperations,
-			citedEntries: data.citedEntries,
-			route: data.route ?? null,
-		});
-	}
-	fold.steps.sort((a, b) => a.at.localeCompare(b.at));
-	return fold;
-}
-
-// ---------------------------------------------------------------------------
-// Process health
-// ---------------------------------------------------------------------------
-
-export interface ProcessHealthFold {
-	windows: number;
-	firstAt: string | null;
-	lastAt: string | null;
-	/** The worst window's p99 and max event-loop lag; null when no window landed a lag sample. */
-	peakLag: { p99Ms: number; maxMs: number } | null;
-	peakRssBytes: number | null;
-	peakQueueDepth: number | null;
-	/** Records the process's writers dropped, as its last window counted them since opening. */
-	dropped: number | null;
-	last: (EventPayload<"health.sampled"> & { at: string }) | null;
-}
-
-/** A process journal's health windows (health.sampled) folded into peaks and the last sample. */
-export function foldProcessHealth(source: Pick<JournalSource, "records">): ProcessHealthFold {
-	const fold: ProcessHealthFold = {
-		windows: 0,
-		firstAt: null,
-		lastAt: null,
-		peakLag: null,
-		peakRssBytes: null,
-		peakQueueDepth: null,
-		dropped: null,
-		last: null,
-	};
-	for (const record of source.records) {
-		if (record.k !== "health.sampled") continue;
-		const data = record.data;
-		fold.windows += 1;
-		if (fold.firstAt === null || record.t < fold.firstAt) fold.firstAt = record.t;
-		if (data.loopLag !== undefined)
-			fold.peakLag = {
-				p99Ms: Math.max(fold.peakLag?.p99Ms ?? 0, data.loopLag.p99Ms),
-				maxMs: Math.max(fold.peakLag?.maxMs ?? 0, data.loopLag.maxMs),
-			};
-		fold.peakRssBytes = Math.max(fold.peakRssBytes ?? 0, data.rssBytes);
-		fold.peakQueueDepth = Math.max(fold.peakQueueDepth ?? 0, data.writer.queueDepth);
-		if (fold.lastAt === null || record.t >= fold.lastAt) {
-			fold.lastAt = record.t;
-			fold.dropped = data.writer.dropped;
-			fold.last = { ...data, at: record.t };
-		}
-	}
-	return fold;
 }

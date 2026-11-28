@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { lazy, Suspense, useEffect, useId, useMemo, useRef, useState } from "react";
-import { Link, Navigate, useNavigate, useOutletContext, useParams } from "react-router";
+import { Link, useNavigate, useOutletContext, useParams } from "react-router";
 import { routes } from "../../contracts/runtime-routes.js";
 import type { SessionSummary } from "../../contracts/sessions.js";
 import type { Client } from "../api/client.js";
@@ -72,11 +72,6 @@ import "../chat/conversation.css";
 const RewindHost = lazy(() => import("../chat/RewindDialog.js").then((module) => ({ default: module.RewindHost })));
 const Interview = lazy(() => import("../chat/Interview.js").then((module) => ({ default: module.Interview })));
 const Elicitation = lazy(() => import("../chat/Elicitation.js").then((module) => ({ default: module.Elicitation })));
-
-/** The old projects page. Choosing and opening projects now lives in the rail and the Open workspace dialog. */
-export function Workspaces() {
-	return <Navigate to="/" replace />;
-}
 
 export function Session({ client }: { client: Client }) {
 	const { id = "" } = useParams();

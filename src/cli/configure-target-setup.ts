@@ -37,6 +37,7 @@ import { greetLmStudio } from "../domains/providers/runtimes/common/lmstudio-htt
 import type { ProbeResult, RuntimeDescriptor } from "../domains/providers/types/runtime-descriptor.js";
 import type { TargetDescriptor } from "../domains/providers/types/target-descriptor.js";
 import { registerPancodeOAuthProviders } from "../engine/oauth.js";
+import { printError, printOk } from "./argv.js";
 import { ask, askYesNo } from "./ask.js";
 import type { ParsedArgs } from "./configure-args.js";
 import { runInteropReview } from "./configure-interop.js";
@@ -80,13 +81,7 @@ import {
 	warnUndiscoveredContextWindow,
 } from "./configure-target.js";
 import { offerCopilotSignIn } from "./copilot-sign-in.js";
-import {
-	credentialFileProtection,
-	credentialWriteFailed,
-	printError,
-	printOk,
-	printPlaintextCredentialWarning,
-} from "./shared.js";
+import { credentialFileProtection, credentialWriteFailed, printPlaintextCredentialWarning } from "./shared.js";
 import { terminalColumns } from "./text-layout.js";
 
 export function ensureRegistryPopulated(): void {

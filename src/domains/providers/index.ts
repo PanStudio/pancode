@@ -131,7 +131,6 @@ export {
 } from "./resolver.js";
 export {
 	readOnlyWorkAdmitted,
-	runtimeAdmitsReadOnlyWork,
 	runtimeEnforcement,
 	UNMEDIATED_ENFORCEMENT,
 } from "./runtime-enforcement.js";
