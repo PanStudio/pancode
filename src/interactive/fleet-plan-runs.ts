@@ -56,10 +56,12 @@ export interface FleetPlanRunView {
 	failure?: string;
 	/** Read from its durable root because an earlier PanCode process ran it. */
 	earlier?: true;
+	/** The main agent asked for the run and the operator approved it. */
+	origin?: "model";
 }
 
 export interface FleetPlanRuns {
-	start(rootId: string, preview: FleetRunPreview): void;
+	start(rootId: string, preview: FleetRunPreview, origin?: "model"): void;
 	stepDispatched(rootId: string, event: FleetRunStepEvent): void;
 	stepSettled(rootId: string, outcome: FleetRunStepOutcome): void;
 	settle(rootId: string, outcome: FleetRunOutcome): FleetPlanRunView | null;
@@ -115,7 +117,7 @@ export function createFleetPlanRuns(
 		}));
 	};
 	return {
-		start(rootId, preview) {
+		start(rootId, preview, origin) {
 			const steps = preview.waves.flatMap((wave) =>
 				wave.steps.map(
 					(step): FleetPlanStepView => ({
@@ -139,6 +141,7 @@ export function createFleetPlanRuns(
 				requiredStepCount: steps.length,
 				succeededStepCount: 0,
 				costText: null,
+				...(origin !== undefined ? { origin } : {}),
 			});
 		},
 		stepDispatched(rootId, event) {

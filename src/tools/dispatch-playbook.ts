@@ -147,6 +147,8 @@ export async function runApprovedPlaybook(input: {
 	detach: boolean;
 	headless: boolean;
 	turnConstraints?: TurnConstraints;
+	/** The dispatch call that asked for the run; its steps read as model-asked. */
+	toolCallId?: string;
 	signal?: AbortSignal;
 	observer?: FleetRunObserver;
 }): Promise<PlaybookRunResult> {
@@ -155,6 +157,7 @@ export async function runApprovedPlaybook(input: {
 		preview,
 		origin: "model",
 		...(input.turnConstraints !== undefined ? { turnConstraints: input.turnConstraints } : {}),
+		...(input.toolCallId !== undefined ? { parentToolCallId: input.toolCallId } : {}),
 		...(input.observer !== undefined ? { observer: input.observer } : {}),
 	});
 	if (launch.status === "refused") {

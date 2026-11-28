@@ -593,6 +593,7 @@ async function runFleetHoldingWorkspace(
 									task: step.task,
 									cwd: workspaceRoot,
 									requestOrigin: "user",
+									...(input.parentToolCallId !== undefined ? { parentToolCallId: input.parentToolCallId } : {}),
 									...(decisionRefs.length > 0 ? { decisionRefs } : {}),
 									readOnly: true,
 									lineage: { parentRunId: fleetRootId, rootRunId: fleetRootId, attempt: 0, depth: 1 },
@@ -679,6 +680,7 @@ async function runFleetHoldingWorkspace(
 					...(input.turnConstraints !== undefined ? { turnConstraints: input.turnConstraints } : {}),
 					predecessorHandoffs: handoffs,
 					requestOrigin: "user",
+					...(input.parentToolCallId !== undefined ? { parentToolCallId: input.parentToolCallId } : {}),
 					...(decisionRefs.length > 0 ? { decisionRefs } : {}),
 					lineage: {
 						parentRunId: parentReceipt?.runId ?? input.resume?.record.id ?? fleetRootId,

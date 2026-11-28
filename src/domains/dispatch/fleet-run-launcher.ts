@@ -64,6 +64,8 @@ export interface FleetRunLaunchInput {
 	readonly preview: FleetRunPreview;
 	readonly origin: FleetRunOrigin;
 	readonly turnConstraints?: TurnConstraints;
+	/** The main agent's dispatch call that asked for a model-started run. */
+	readonly parentToolCallId?: string;
 	readonly observer?: FleetRunObserver;
 }
 
@@ -200,6 +202,7 @@ export function createFleetRunLauncher(deps: FleetRunLauncherDeps): FleetRunLaun
 				? { resume: { record: preview.resume.record, replayed: preview.resume.replayed } }
 				: {}),
 			...(input.turnConstraints !== undefined ? { turnConstraints: input.turnConstraints } : {}),
+			...(input.parentToolCallId !== undefined ? { parentToolCallId: input.parentToolCallId } : {}),
 			beforeStepAdmission: checkRootStop,
 			onStarted: () => {
 				started = true;

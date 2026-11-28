@@ -101,6 +101,8 @@ export interface ExecuteFleetRunInput {
 	 * hands a playbook step write or bash (Z1).
 	 */
 	turnConstraints?: TurnConstraints;
+	/** The main agent's dispatch call that started the run, so each step reads as model-asked. */
+	parentToolCallId?: string;
 	/**
 	 * Fires once the workspace lock and the whole-plan reservation are held, so a run the lock or the admission gate
 	 * refuses never announces its minted root.
