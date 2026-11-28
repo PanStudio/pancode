@@ -26,7 +26,7 @@ import {
 } from "../shell/shell-model.js";
 import { TopBar } from "../shell/TopBar.js";
 import { useMinuteClock, useRenameTask, useSessionOverview, useTaskActions } from "../shell/tasks.js";
-import { liveSearchWith, useSearchDraft } from "../shell/use-search-draft.js";
+import { liveSearchWith, searchWith, useSearchDraft } from "../shell/use-search-draft.js";
 import { PROJECT_TASK_FILTERS, PROJECT_TASK_SORTS, projectTaskInventory } from "./project-tasks-model.js";
 import { DeleteSession } from "./session-controls.js";
 import "./tasks.css";
@@ -106,15 +106,7 @@ export function Sessions({ client }: { client: Client }) {
 	const page = useInventoryWindow(JSON.stringify([workspaceId, deferredQuery, filter, sort]));
 	const list = useRef<HTMLUListElement>(null);
 	const set = (key: string, value: string) =>
-		setSearch(
-			(previous) => {
-				const next = new URLSearchParams(previous);
-				if (value) next.set(key, value);
-				else next.delete(key);
-				return next;
-			},
-			{ replace: true },
-		);
+		setSearch((previous) => searchWith(previous, key, value), { replace: true });
 	const input = { params: { id: workspaceId }, query: {}, body: {} };
 	const workspace = useQuery({
 		queryKey: ["workspace", workspaceId],

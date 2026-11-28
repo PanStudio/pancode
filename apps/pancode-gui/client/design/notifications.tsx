@@ -90,6 +90,20 @@ export function useNotices(): readonly Notice[] {
 }
 
 /** Every thrown value becomes a notice. An unrecognised error is still shown, never swallowed. */
+/** An inline alert naming a failed request, with the problem code and reference when the API sent one. */
+export function ProblemAlert({ error }: { error: Error }) {
+	return (
+		<div className="problem" role="alert">
+			<strong>{error.message}</strong>
+			{error instanceof ApiProblem && (
+				<small>
+					{error.problem.code} · {error.problem.instance}
+				</small>
+			)}
+		</div>
+	);
+}
+
 export function reportProblem(error: unknown, scope?: string): void {
 	// A refused token fails every request the same way. The shell replaces the page with one
 	// reconnect panel, so a toast per query would only bury it.

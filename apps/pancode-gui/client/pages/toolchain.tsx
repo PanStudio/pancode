@@ -1,10 +1,11 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { routes } from "../../contracts/runtime-routes.js";
 import { ApiProblem, type Client, emptyInput } from "../api/client.js";
 import { useOperation } from "../api/queries.js";
+import { ProblemAlert } from "../design/notifications.js";
 import { PanelEmpty, PanelHeading } from "../design/panel.js";
 import { emptyState, PANELS } from "../design/panel-model.js";
 import { StatusMark, toneForOutcome } from "../design/status.js";
@@ -21,19 +22,6 @@ import {
 	toolResolution,
 } from "./toolchain-model.js";
 import "./toolchain.css";
-
-function Failure({ error }: { error: Error }) {
-	return (
-		<div className="problem" role="alert">
-			<strong>{error.message}</strong>
-			{error instanceof ApiProblem && (
-				<small>
-					{error.problem.code} · {error.problem.instance}
-				</small>
-			)}
-		</div>
-	);
-}
 export function Toolchain({
 	client,
 	compact = false,
@@ -77,6 +65,14 @@ export function Toolchain({
 		action.mutate({ id, kind, key: crypto.randomUUID() });
 	};
 	const visibleTools = tools.data?.filter((tool) => matchesTool(tool, compact ? filter : search, availability));
+	// Availability counts change only with the tool list, not with each keystroke in the search box.
+	const filterCounts = useMemo(
+		() =>
+			new Map(
+				TOOL_FILTERS.map((value) => [value, tools.data?.filter((tool) => matchesTool(tool, "", value)).length ?? 0]),
+			),
+		[tools.data],
+	);
 
 	return (
 		<>
@@ -118,7 +114,7 @@ export function Toolchain({
 						<legend>Availability</legend>
 						{TOOL_FILTERS.map((value) => (
 							<button key={value} type="button" aria-pressed={availability === value} onClick={() => setAvailability(value)}>
-								{TOOL_FILTER_LABELS[value]} · {tools.data.filter((tool) => matchesTool(tool, "", value)).length}
+								{TOOL_FILTER_LABELS[value]} · {filterCounts.get(value)}
 							</button>
 						))}
 					</fieldset>
@@ -146,7 +142,7 @@ export function Toolchain({
 			{tools.isPending && <p role="status">Resolving tools…</p>}
 			{tools.error && (
 				<>
-					<Failure error={tools.error} />
+					<ProblemAlert error={tools.error} />
 					<button type="button" disabled={tools.isFetching} onClick={() => void tools.refetch()}>
 						Refresh resolution
 					</button>
@@ -159,7 +155,7 @@ export function Toolchain({
 					Sending {action.variables?.kind} request for {action.variables?.id}…
 				</p>
 			)}
-			{action.error && <Failure error={action.error} />}
+			{action.error && <ProblemAlert error={action.error} />}
 			{uncertainRequest && (
 				<>
 					<p className="panel-note">
@@ -182,7 +178,7 @@ export function Toolchain({
 			)}
 			{operation.error && (
 				<>
-					<Failure error={operation.error} />
+					<ProblemAlert error={operation.error} />
 					<p className="panel-note">
 						Progress could not be read. The accepted operation may still be running. Installation actions remain paused until
 						its outcome is known.
@@ -223,7 +219,7 @@ export function Toolchain({
 					{operation.data.status === "succeeded" && <p className="result">{operation.data.result.message}</p>}
 					{operation.data.status === "failed" && (
 						<>
-							<Failure error={new ApiProblem(operation.data.problem)} />
+							<ProblemAlert error={new ApiProblem(operation.data.problem)} />
 							<p className="panel-note">
 								Refresh resolution to inspect the remaining installation, then retry the action. An install failure does not
 								remove an existing PATH copy.

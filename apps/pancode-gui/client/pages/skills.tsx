@@ -9,7 +9,7 @@ import { StatusMark } from "../design/status.js";
 import { setPageTitle } from "../interaction/announcer.js";
 import { useShell } from "../shell/shell-context.js";
 import { TopBar } from "../shell/TopBar.js";
-import { liveSearchWith, useSearchDraft } from "../shell/use-search-draft.js";
+import { liveSearchWith, searchWith, useSearchDraft } from "../shell/use-search-draft.js";
 import {
 	discoverSkills,
 	type Resource,
@@ -92,15 +92,7 @@ export function SkillsPage({ client }: { client: Client }) {
 	const access = SKILL_ACCESS.find((value) => value === search.get("access")) ?? "all";
 	const origin = search.get("origin") ?? "";
 	const discover = (key: string, value: string) =>
-		setSearch(
-			(current) => {
-				const next = new URLSearchParams(current);
-				if (value) next.set(key, value);
-				else next.delete(key);
-				return next;
-			},
-			{ replace: true },
-		);
+		setSearch((current) => searchWith(current, key, value), { replace: true });
 	const clear = () =>
 		setSearch((current) => {
 			const next = new URLSearchParams(current);
