@@ -367,8 +367,8 @@ The words you meet first, each in a sentence or two, with the guide that explain
 - **Owning Type**: `ResearchCampaign` in [types.ts](../../src/domains/research/types.ts).
 
 ### 82. Arena match
-- **Definition**: One prompt run by `pancode arena run` on 2 to 4 target/model contenders, each in its own worktree. They are shown under blind labels in a seeded order until you vote. Standings are built from those votes and never from a model's judgment. See [Research and Arena](research-and-arena.md#arena-blind-side-by-side-comparison).
-- **Owning Type**: `ArenaMatch` in [types.ts](../../src/domains/arena/types.ts).
+- **Definition**: One prompt run by `pancode arena run` on 2 to 4 target/model contenders, each in its own worktree. They are shown under blind labels in a seeded order until you vote. Standings are built from those votes and never from a model's judgment. It comes from the [arena pack](../../hub/packs/extensions/arena/README.md).
+- **Owning Type**: `ArenaMatch` in the arena pack's [types.ts](../../hub/packs/extensions/arena/runtime/types.ts).
 
 ### 83. Model tier
 - **Definition**: How much scaffolding a model needs: `small` (explicit steps, short context), `standard`, or `frontier` (terse intent, room to plan). Unless `models.<id>.tier` sets it, the tier is guessed in order: a known window under 32,768 tokens is `small`; a parameter count in the model id under 20B is `small` and 20B or more `standard`; a cloud or subscription catalog model with a window of at least 128,000 tokens is `frontier`, unless its id names a reduced variant such as `mini` or `haiku`; everything else is `standard`. Hooks and api 2 extension hooks receive it on the running `model`, and prompt templates pick per-tier `variants` and gate `turnPolicy` with it. The system prompt never reads it, so a tier change never breaks a cached prefix.

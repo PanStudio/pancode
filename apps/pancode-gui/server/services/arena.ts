@@ -11,7 +11,7 @@ import {
 	type ArenaVoteRequest,
 } from "../../contracts/arena.js";
 import { runPancodeCommand, stopPancodeCommand } from "../process-policy.js";
-import type { CliRunner } from "./cli-runner.js";
+import { arenaPackProblem, type CliRunner } from "./cli-runner.js";
 import { fingerprint, type OperationRegistry } from "./operations.js";
 import { AppProblem } from "./problem.js";
 import type { WorkspaceService } from "./workspaces.js";
@@ -123,6 +123,7 @@ export class ArenaService {
 			let stdoutBytes = 0;
 			const chunks: Buffer[] = [];
 			let pending = "";
+			let stderrHead = "";
 			let kill: NodeJS.Timeout | undefined;
 			const alive = () => !!child.pid && child.exitCode === null && child.signalCode === null;
 			const stop = (error: Error) => {
@@ -145,6 +146,7 @@ export class ArenaService {
 			});
 			child.stderr.setEncoding("utf8");
 			child.stderr.on("data", (chunk: string) => {
+				if (stderrHead.length < 4096) stderrHead += chunk.slice(0, 4096 - stderrHead.length);
 				pending = (pending + chunk).slice(-65_536);
 				const lines = pending.split("\n");
 				pending = lines.pop() ?? "";
@@ -183,6 +185,13 @@ export class ArenaService {
 								: `Match ${match.id} ended ${match.status}${match.error ? `: ${match.error}` : ""}.`,
 					});
 					return;
+				}
+				if (code === 2) {
+					const pack = arenaPackProblem(stderrHead);
+					if (pack) {
+						reject(pack);
+						return;
+					}
 				}
 				reject(
 					new AppProblem(

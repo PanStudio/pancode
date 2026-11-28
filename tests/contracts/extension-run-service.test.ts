@@ -2,23 +2,44 @@
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import { strict as assert } from "node:assert";
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+	existsSync,
+	mkdirSync,
+	mkdtempSync,
+	readdirSync,
+	readFileSync,
+	realpathSync,
+	rmSync,
+	symlinkSync,
+	writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it } from "node:test";
-import { capabilityEnvelope, envelopeGrowth, parseExtensionRuntimeV2 } from "@pancode/sdk/pack";
+import {
+	capabilityEnvelope,
+	envelopeGrowth,
+	parseExtensionOutputV2,
+	parseExtensionRuntimeV2,
+	RUNTIME_V2_LIMITS,
+} from "@pancode/sdk/pack";
 import { runPackVerb } from "../../src/cli/extensions.js";
 import type { RunCommandVectorOptions, SafeCommandResult } from "../../src/core/safe-exec.js";
 import { applyToolEnvControls, EXTENSION_RUN_DEPTH_ENV } from "../../src/core/tool-env-controls.js";
 import { extensionInvocation } from "../../src/domains/extensions/operator-commands.js";
 import { OperatorExtensions } from "../../src/domains/extensions/operator-extensions.js";
 import {
+	assertPlainProjectDir,
+	extensionProjectDir,
+	prepareProjectDir,
+} from "../../src/domains/extensions/runtime-sandbox.js";
+import {
 	createExtensionRunService,
 	type ExtensionRunCeilings,
 	type ExtensionRunError,
 } from "../../src/domains/extensions/services/runs.js";
 import { createExtensionRequestScope } from "../../src/domains/extensions/services/scope.js";
-import { installExtension } from "../../src/domains/extensions/state.js";
+import { disableExtension, installExtension } from "../../src/domains/extensions/state.js";
 import { isolatePancodeEnv } from "../harness/scratch-env.js";
 
 interface Call {
@@ -207,6 +228,24 @@ describe("extension run service", () => {
 		h.cleanup();
 	});
 
+	it("answers in advance the refusal start would give, without starting a run", async () => {
+		const defaultOnly = harness();
+		assert.equal(await defaultOnly.service.refusal(), null);
+		assert.match((await defaultOnly.service.refusal({ autonomy: "yolo" })) ?? "", /does not allow autonomy yolo/u);
+		defaultOnly.cleanup();
+		const gated = harness({ autonomy: ["default", "yolo"] }, "yolo is not contained here");
+		assert.equal(await gated.service.refusal({ autonomy: "yolo" }), "yolo is not contained here");
+		gated.cleanup();
+		const readOnly = harness({}, null, true);
+		assert.match((await readOnly.service.refusal()) ?? "", /read-only session/u);
+		assert.equal(await readOnly.service.refusal({ readOnly: true }), null);
+		readOnly.cleanup();
+		const deep = harness({}, null, false, { PANCODE_EXTENSION_RUN_DEPTH: "2" });
+		assert.match((await deep.service.refusal()) ?? "", /2 extension runs deep/u);
+		assert.equal(deep.calls.length + readOnly.calls.length + gated.calls.length + defaultOnly.calls.length, 0);
+		deep.cleanup();
+	});
+
 	it("refuses writable or yolo runs in a read-only session while allowing read-only runs", async () => {
 		const h = harness({ autonomy: ["default", "yolo"] }, null, true);
 		await assert.rejects(h.service.start(base), (error: ExtensionRunError) => error.code === "refused");
@@ -256,6 +295,20 @@ describe("runs, long commands and verbs in a manifest", () => {
 		assert.deepEqual(runtime({ services: runs }).services?.runs?.autonomy, ["default"]);
 	});
 
+	it("lets only a command answer the operator past the limits a model-bound answer keeps", () => {
+		const declaration = runtime({});
+		const long = "x".repeat(40_000);
+		assert.equal(parseExtensionOutputV2({ text: long, stderr: "note" }, declaration, "command").text, long);
+		for (const origin of ["tool", "observation", "action"] as const) {
+			assert.throws(() => parseExtensionOutputV2({ text: long }, declaration, origin), /text/u, origin);
+			assert.throws(() => parseExtensionOutputV2({ text: "ok", stderr: "note" }, declaration, origin), /only a command/u);
+		}
+		assert.throws(
+			() => parseExtensionOutputV2({ text: "y".repeat(RUNTIME_V2_LIMITS.commandTextChars + 1) }, declaration, "command"),
+			/text/u,
+		);
+	});
+
 	it("reports runs, worktrees, long commands and verbs as envelope growth", () => {
 		const base = capabilityEnvelope(runtime({}));
 		const grown = capabilityEnvelope(
@@ -280,14 +333,158 @@ const driverSource = `export default (api) => {
 		ctx.progress("starting " + args);
 		const { id } = await ctx.runs.start({ prompt: args, target: "fixture", model: "chat", timeoutSeconds: 60 });
 		const end = await ctx.runs.wait(id);
+		ctx.progress("waited");
+		ctx.progress("finished");
 		return { text: end.outcome + " " + typeof ctx.storeDir, exitCode: end.outcome === "succeeded" ? 0 : 3 };
 	});
 	api.handle("plain", (args, ctx) => ({
-		text: [typeof ctx.progress, typeof ctx.runs, args].filter(Boolean).join(" "),
+		text: [typeof ctx.progress, typeof ctx.runs, args, ctx.argv && JSON.stringify(ctx.argv)].filter(Boolean).join(" "),
+		...(ctx.argv ? { stderr: "plain: a note" } : {}),
 		exitCode: 4,
 	}));
 };
 `;
+
+describe("an extension's project directory", () => {
+	it("sits under the repository root's .pancode/data, and refuses a component that is not a plain directory", (t) => {
+		const root = realpathSync(mkdtempSync(join(tmpdir(), "ext-project-")));
+		t.after(() => rmSync(root, { recursive: true, force: true }));
+		execFileSync("git", ["-C", root, "init", "-q"]);
+		mkdirSync(join(root, "sub"));
+		const project = extensionProjectDir(join(root, "sub"), "arena");
+		assert.deepEqual(project, { root, dir: join(root, ".pancode", "data", "arena") });
+		assert.throws(() => extensionProjectDir(root, "../escape"), /invalid extension id/u);
+		assert.throws(() => extensionProjectDir(root, "a/b"), /invalid extension id/u);
+		assert.throws(() => extensionProjectDir(root, ".."), /invalid extension id/u);
+		// Read-only validation allows absent directories without creating them.
+		assert.doesNotThrow(() => assertPlainProjectDir(project));
+		assert.equal(existsSync(join(root, ".pancode")), false);
+		assert.deepEqual(prepareProjectDir(project), [
+			join(root, ".pancode"),
+			join(root, ".pancode", "data"),
+			join(root, ".pancode", "data", "arena"),
+		]);
+		assert.deepEqual(prepareProjectDir(project), []);
+		assert.doesNotThrow(() => assertPlainProjectDir(project));
+		rmSync(join(root, ".pancode", "data"), { recursive: true });
+		symlinkSync(tmpdir(), join(root, ".pancode", "data"));
+		assert.throws(() => prepareProjectDir(project), /not a plain directory/u);
+		assert.throws(() => assertPlainProjectDir(project), /not a plain directory/u);
+	});
+
+	it("isolates ctx.projectDir between two packs and enforces read-only sessions", async (t) => {
+		const env = await isolatePancodeEnv("pancode-ext-proj-iso-");
+		const previous = process.cwd();
+		const cleanup: Array<() => Promise<void>> = [];
+		t.after(async () => {
+			for (const step of cleanup.reverse()) await step();
+			process.chdir(previous);
+			env.restore();
+		});
+		const repo = join(env.dir, "repo");
+		const sub = join(repo, "sub");
+		mkdirSync(sub, { recursive: true });
+		execFileSync("git", ["init", "-q"], { cwd: repo });
+		process.env.HOME = env.dir;
+		const makePack = (id: string, readWorkspace: boolean) => {
+			const src = join(env.dir, `src-${id}`);
+			mkdirSync(src);
+			writeFileSync(
+				join(src, "pancode-extension.json"),
+				JSON.stringify({
+					id,
+					version: "1.0.0",
+					description: `Pack ${id}`,
+					runtime: {
+						api: 2,
+						entrypoint: "extension.mjs",
+						state: { project: true },
+						permissions: readWorkspace ? { fs: { read: ["workspace"] } } : {},
+						commands: [{ name: "probe", description: "probe projectDir" }],
+					},
+				}),
+			);
+			writeFileSync(
+				join(src, "extension.mjs"),
+				`import { readFileSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+export default function (api) {
+  api.handle("probe", (args, ctx) => {
+    const [op, file, content] = args.split(" ");
+    if (op === "write") {
+      writeFileSync(join(ctx.projectDir, file), content);
+      return { text: "wrote:" + ctx.projectDir };
+    }
+    if (op === "read") return { text: readFileSync(join(ctx.projectDir, file), "utf8") };
+    if (op === "peek") {
+      try {
+        return { text: "leaked:" + readFileSync(file, "utf8") };
+      } catch (e) {
+        return { text: "blocked:" + (e && e.code ? e.code : String(e)) };
+      }
+    }
+    return { text: String(ctx.projectDir) };
+  });
+}
+`,
+			);
+			assert.ok(installExtension(src, { cwd: repo, scope: "user" }).extension?.loadable);
+		};
+		makePack("pack-alpha", false);
+		makePack("pack-beta", true);
+		process.chdir(repo);
+
+		const writer = new OperatorExtensions({
+			context: () => ({ workspace: repo, sessionId: "s1", mode: "interactive" }),
+			isIdle: () => true,
+		});
+		cleanup.push(() => writer.dispose());
+		assert.equal((await writer.reload("startup")).status, "committed");
+
+		const wroteA = await writer.invoke(extensionInvocation("pack-alpha", "probe"), "write secret.txt alpha-secret");
+		assert.match(wroteA.text, /^wrote:/);
+		const alphaSecretPath = join(realpathSync(repo), ".pancode", "data", "pack-alpha", "secret.txt");
+		assert.equal(readFileSync(alphaSecretPath, "utf8"), "alpha-secret");
+
+		// Even with workspace read permission, pack-beta cannot read pack-alpha's projectDir.
+		const peekB = await writer.invoke(extensionInvocation("pack-beta", "probe"), `peek ${alphaSecretPath}`);
+		assert.match(peekB.text, /^blocked:/, `pack-beta unexpectedly read pack-alpha's file: ${peekB.text}`);
+
+		// In a read-only session from a subdirectory, pack-alpha reads its own projectDir but cannot write to it.
+		const reader = new OperatorExtensions({
+			context: () => ({ workspace: sub, sessionId: "s2", mode: "interactive" }),
+			isIdle: () => true,
+			onlyId: "pack-alpha",
+			readOnly: () => true,
+		});
+		cleanup.push(() => reader.dispose());
+		assert.equal((await reader.reload("startup")).status, "committed");
+		const readA = await reader.invoke(extensionInvocation("pack-alpha", "probe"), "read secret.txt");
+		assert.equal(readA.text, "alpha-secret");
+		await assert.rejects(
+			() => reader.invoke(extensionInvocation("pack-alpha", "probe"), "write ro.txt nope"),
+			/Access to this API has been restricted|EACCES|EROFS|ERR_ACCESS_DENIED/u,
+		);
+
+		// A symlink planted along .pancode/data/pack-alpha is refused even in a read-only session.
+		await writer.dispose();
+		await reader.dispose();
+		rmSync(join(repo, ".pancode", "data", "pack-alpha"), { recursive: true });
+		symlinkSync(tmpdir(), join(repo, ".pancode", "data", "pack-alpha"));
+		const badReader = new OperatorExtensions({
+			context: () => ({ workspace: repo, sessionId: "s3", mode: "interactive" }),
+			isIdle: () => true,
+			onlyId: "pack-alpha",
+			readOnly: () => true,
+		});
+		cleanup.push(() => badReader.dispose());
+		await badReader.reload("startup");
+		await assert.rejects(
+			() => badReader.invoke(extensionInvocation("pack-alpha", "probe"), "read secret.txt"),
+			/not a plain directory/u,
+		);
+	});
+});
 
 describe("an installed extension's work services", () => {
 	async function installDriver(t: { after(fn: () => unknown): void }) {
@@ -351,37 +548,69 @@ describe("an installed extension's work services", () => {
 			progress.push(text),
 		);
 		assert.deepEqual(output, { text: "succeeded string", exitCode: 0 });
-		assert.deepEqual(progress, ["starting now"]);
+		// The rate limit may fold "waited" into "finished"; the last line still arrives before the answer.
+		assert.equal(progress[0], "starting now");
+		assert.equal(progress.at(-1), "finished");
+		const heard = progress.length;
 		const plain = await operator.invoke(extensionInvocation("driver", "plain"), "", [], signal, (text) =>
 			progress.push(text),
 		);
 		assert.equal(plain.text, "undefined object");
-		assert.equal(progress.length, 1);
+		assert.equal(progress.length, heard);
 	});
 
-	it("a declared verb runs its command headlessly and exits with the command's code", async (t) => {
-		await installDriver(t);
-		const written: string[] = [];
-		const write = process.stdout.write.bind(process.stdout);
-		process.stdout.write = ((chunk: string) => {
-			written.push(String(chunk));
-			return true;
-		}) as typeof process.stdout.write;
+	it("a declared verb passes its arguments as given and prints the answer verbatim", async (t) => {
+		const { cwd } = await installDriver(t);
+		const out: string[] = [];
+		const err: string[] = [];
+		const write = { out: process.stdout.write.bind(process.stdout), err: process.stderr.write.bind(process.stderr) };
+		process.stdout.write = ((chunk: string) => out.push(String(chunk)) > 0) as typeof process.stdout.write;
+		process.stderr.write = ((chunk: string) => err.push(String(chunk)) > 0) as typeof process.stderr.write;
 		try {
-			assert.equal(await runPackVerb("drive-plain", ["--json"]), 4);
-			assert.equal(await runPackVerb("drive-plain", ["--help"]), 0);
-			assert.equal(await runPackVerb("drive-plain", ["sub", "--help", "--json"]), 4);
+			assert.equal(await runPackVerb("drive-plain", ["sub", "--help", "--cwd", cwd, "--", "-x y"]), 4);
 			assert.equal(await runPackVerb("drive-plain", [], "--no-skills is not honored"), 2);
+			assert.equal(await runPackVerb("drive-plain", ["--cwd", join(cwd, "absent")]), 2);
 			assert.equal(await runPackVerb("not-a-verb", []), null);
+			assert.equal(disableExtension("driver", { cwd, scope: "user" }).extension?.enabled, false);
+			assert.equal(await runPackVerb("drive-plain", []), 2);
 		} finally {
-			process.stdout.write = write;
+			process.stdout.write = write.out;
+			process.stderr.write = write.err;
 		}
-		// The test reporter shares stdout; the verb's answers are the JSON lines and the --help banner.
-		const jsonLines = written.filter((chunk) => chunk.startsWith('{"extensionId"')).map((chunk) => JSON.parse(chunk));
-		assert.equal(jsonLines[0]?.extensionId, "driver");
-		assert.deepEqual(jsonLines[0]?.output, { text: "undefined object", exitCode: 4 });
-		assert.equal(jsonLines[1]?.output?.text, "undefined object sub --help");
-		assert.ok(written.some((chunk) => chunk.includes("pancode drive-plain [--json] [arguments]")));
+		// The test reporter shares stdout; the verb's answer is the chunk its handler wrote.
+		const argv = ["sub", "--help", "--cwd", cwd, "--", "-x y"];
+		assert.deepEqual(
+			out.filter((chunk) => chunk.startsWith("undefined object")),
+			[`undefined object ${argv.join(" ")} ${JSON.stringify(argv)}\n`],
+		);
+		assert.equal(err[0], "plain: a note\n");
+		assert.ok(err.some((line) => line.includes("--no-skills is not honored")));
+		assert.ok(
+			err.includes(
+				`pancode drive-plain: --cwd ${join(cwd, "absent")}: not a directory\nsee: pancode drive-plain --help\n`,
+			),
+			err.join(""),
+		);
+		assert.equal(
+			err.at(-1),
+			"pancode drive-plain: extension:driver is disabled; pancode extensions enable driver enables it\n",
+		);
+	});
+
+	it("a verb the bundled index lists names the pack to install when it is absent", async () => {
+		const env = await isolatePancodeEnv("pancode-ext-absent-");
+		const err: string[] = [];
+		const write = process.stderr.write.bind(process.stderr);
+		process.stderr.write = ((chunk: string) => err.push(String(chunk)) > 0) as typeof process.stderr.write;
+		try {
+			assert.equal(await runPackVerb("arena", ["list"]), 2);
+		} finally {
+			process.stderr.write = write;
+			env.restore();
+		}
+		assert.deepEqual(err, [
+			"pancode arena: extension:arena is not installed; pancode hub install extension:arena installs it\n",
+		]);
 	});
 
 	it("transient worktrees created by a command are removed before invoke resolves", async (t) => {

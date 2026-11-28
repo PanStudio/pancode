@@ -90,6 +90,25 @@ describe("extension verify service", () => {
 		}
 	});
 
+	it("resolves a check with the uncommitted files it names, and refuses one the project cannot run", async () => {
+		const { repo, verify, cleanup } = project();
+		try {
+			assert.deepEqual(await verify.resolve("sane"), {
+				ok: true,
+				kind: "catalog",
+				inputs: [".pancode/verifiers.yaml"],
+			});
+			writeFileSync(join(repo, "ref.json"), '{"score":99}\n');
+			writeFileSync(join(repo, "value.txt"), "99\n");
+			const sane = await verify.resolve("sane");
+			assert.deepEqual(sane.ok && sane.inputs, [".pancode/verifiers.yaml", "ref.json"]);
+			const unknown = await verify.resolve("nope/never");
+			assert.equal(unknown.ok, false);
+		} finally {
+			cleanup();
+		}
+	});
+
 	it("runs a check, keeps its result behind a receipt, and refuses a check the project does not declare", async () => {
 		const { verify, receipts, cleanup } = project();
 		try {

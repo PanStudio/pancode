@@ -84,7 +84,8 @@ export function buildBwrapInvocation(
 	for (const mask of spec.maskedPaths) {
 		if (mask.kind === "directory") {
 			args.push("--tmpfs", bindPath(mask.path));
-			for (const entry of mask.reveal ?? []) args.push("--ro-bind-try", entry.source, bindPath(entry.target));
+			for (const entry of mask.reveal ?? [])
+				args.push(entry.writable ? "--bind-try" : "--ro-bind-try", entry.source, bindPath(entry.target));
 		} else args.push("--ro-bind-try", "/dev/null", bindPath(mask.path));
 	}
 	for (const [key, value] of Object.entries(spec.setEnv ?? {})) args.push("--setenv", key, value);

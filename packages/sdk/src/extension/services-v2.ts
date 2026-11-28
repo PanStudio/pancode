@@ -55,6 +55,12 @@ export interface ExtensionRuns {
 	frames(id: string, options?: { cursor?: number; limit?: number; waitMs?: number }): Promise<ExtensionRunFrames>;
 	wait(id: string): Promise<ExtensionRunEnd>;
 	cancel(id: string): Promise<void>;
+	/**
+	 * Why `start` would refuse runs with these settings here before any starts, null when it would not: an autonomy
+	 * the manifest does not allow, a writable or yolo run in a read-only session, runs nested too deep, or contained
+	 * yolo this host cannot confine. A busy service or an unusable `cwd` still refuse at `start`.
+	 */
+	refusal(options?: { autonomy?: "default" | "yolo"; readOnly?: boolean }): Promise<string | null>;
 }
 
 export interface ExtensionWorktree {
@@ -132,8 +138,25 @@ export interface ExtensionCheckResult {
 	receipt: string;
 }
 
+/** What a check id names in a place, as `verify` resolves it, without running anything. */
+export type ExtensionCheckResolution =
+	| {
+			ok: true;
+			/** `catalog` for a declared check, else the derived kind (`package`, `toolchain`, `task`, `unavailable`). */
+			kind: string;
+			/**
+			 * Workspace-relative files a worktree from HEAD needs copied in (`worktrees.copy`, one call) to judge the check
+			 * as the workspace would: the verifier catalog when there is one, and for a catalog check the files it names
+			 * that are untracked or changed since HEAD. At most 256 files and 32 MiB, else `ok: false`.
+			 */
+			inputs: ReadonlyArray<string>;
+	  }
+	| { ok: false; message: string };
+
 export interface ExtensionVerify {
 	list(place?: ExtensionWorkPlace): Promise<ExtensionCheck[]>;
+	/** Resolve a check id as `check` would, catalog and derived checks alike, without running it. */
+	resolve(id: string, place?: ExtensionWorkPlace): Promise<ExtensionCheckResolution>;
 	/**
 	 * Run a check as `verify` would, under the host verification sandbox: a catalog check in this process, a derived
 	 * one (a package script, a toolchain check) through `pancode verifiers dry-run` in the place.

@@ -11,7 +11,7 @@ export const ARENA_PANEL: PanelCopy = {
 	eyebrow: eyebrow("Arena matches", "this workspace", "run and vote"),
 	title: "Arena",
 	boundary:
-		"Matches, contender streams, diffs and votes live under .pancode/arena in this workspace. PanCode records your vote and never judges a match itself.",
+		"Matches, contender streams, diffs and votes live under .pancode/data/arena in this workspace. PanCode records your vote and never judges a match itself.",
 };
 
 export const ARENA_MIN_CONTENDERS = 2;

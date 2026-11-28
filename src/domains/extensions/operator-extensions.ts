@@ -137,8 +137,9 @@ export class OperatorExtensions {
 		promptNames: ReadonlyArray<string | PromptRef> = [],
 		signal?: AbortSignal,
 		progress?: (text: string) => void,
+		options: { argv?: ReadonlyArray<string>; interrupt?: AbortSignal } = {},
 	): Promise<ExtensionOutputV2> {
-		return this.v2.invoke(invocation, args, promptNames, signal, progress);
+		return this.v2.invoke(invocation, args, promptNames, signal, progress, options);
 	}
 	observeV2(observation: ExtensionObservationV2): void {
 		this.v2.observe(observation);

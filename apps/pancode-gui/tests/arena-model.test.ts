@@ -12,6 +12,7 @@ import {
 } from "../client/pages/arena-model.js";
 import type { ArenaMatch } from "../contracts/arena.js";
 import { commandPlan } from "../server/cli-commands.js";
+import { arenaPackProblem } from "../server/services/cli-runner.js";
 import { AppProblem } from "../server/services/problem.js";
 
 const entry = (label: "A" | "B", reveal: boolean): ArenaMatch["entries"][number] => ({
@@ -178,4 +179,26 @@ test("arena: CLI commands are fixed argv, the prompt follows --, and nothing els
 		{ ...run, request: { ...run.request, readOnly: true } },
 	])
 		assert.throws(() => commandPlan(input), AppProblem);
+});
+
+test("arena: closed-set pack-absent stderr maps to an actionable unsupported problem without echoing raw stderr", () => {
+	const missing = arenaPackProblem(
+		"pancode arena: extension:arena is not installed; pancode hub install extension:arena installs it\n",
+	);
+	assert.equal(missing?.problem.code, "unsupported");
+	assert.match(missing?.problem.detail ?? "", /pancode hub install extension:arena/);
+
+	const disabled = arenaPackProblem(
+		"pancode arena: extension:arena is disabled; pancode extensions enable arena enables it\n",
+	);
+	assert.equal(disabled?.problem.code, "unsupported");
+	assert.match(disabled?.problem.detail ?? "", /pancode extensions enable arena/);
+
+	const broken = arenaPackProblem(
+		"pancode arena: extension:arena is installed but does not load; pancode extensions list shows why\n",
+	);
+	assert.equal(broken?.problem.code, "unsupported");
+	assert.match(broken?.problem.detail ?? "", /pancode extensions list/);
+
+	assert.equal(arenaPackProblem("some-private-stderr-secret"), null);
 });

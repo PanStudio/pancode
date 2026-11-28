@@ -6,14 +6,23 @@
  * kept host-side behind a receipt, so `services.claims` records only what PanCode itself judged.
  */
 import { randomUUID } from "node:crypto";
-import { posix } from "node:path";
-import type { ExtensionCheck, ExtensionCheckResult, ExtensionWorkPlace } from "@pancode/sdk/extension";
+import { lstatSync } from "node:fs";
+import { join, posix } from "node:path";
+import type {
+	ExtensionCheck,
+	ExtensionCheckResolution,
+	ExtensionCheckResult,
+	ExtensionWorkPlace,
+} from "@pancode/sdk/extension";
 import type { PancodeSettings } from "../../../core/config.js";
+import { withoutRepositoryEnv } from "../../../core/internal-git.js";
+import { gitExecFileSync } from "../../../core/internal-git-run.js";
 import { runCommandVector } from "../../../core/safe-exec.js";
 import type { ToolResult } from "../../../tools/tool-spec.js";
 import {
 	type DeclaredCheck,
 	loadProjectVerifierCatalog,
+	PROJECT_VERIFIER_CATALOG_RELATIVE_PATH,
 	resolveProjectVerifierExecutionCwd,
 } from "../../../tools/verify/catalog.js";
 import { extractNumericPayloadText, parseNumericPayload } from "../../../tools/verify/numeric.js";
@@ -22,6 +31,7 @@ import { JUDGED_CHECK_MAX_OUTPUT_BYTES, runProjectCheck } from "../../../tools/v
 import { hostVerificationSandbox } from "../../dispatch/host-verification.js";
 import { type PancodeLaunch, type RunEnvPolicy, runEnv } from "./run-env.js";
 import type { ExtensionRequestScope } from "./scope.js";
+import { MAX_COPY_BYTES, MAX_COPY_FILES } from "./worktrees.js";
 
 /** A check result the host keeps for `services.claims`. */
 export interface ExtensionCheckReceipt {
@@ -63,6 +73,7 @@ export interface ExtensionVerifyServiceDeps {
 
 export interface ExtensionVerifyService {
 	list(place?: ExtensionWorkPlace): Promise<ExtensionCheck[]>;
+	resolve(id: string, place?: ExtensionWorkPlace): Promise<ExtensionCheckResolution>;
 	check(id: string, place?: ExtensionWorkPlace, scope?: ExtensionRequestScope): Promise<ExtensionCheckResult>;
 	measure(
 		id: string,
@@ -80,7 +91,7 @@ const DRY_RUN_TIMEOUT_MS = 30 * 60 * 1000;
  * Paths a declared check names, relative to the project: each argv entry (from the check's cwd, and as written), the
  * reference and baseline files, and a reproduce check's pinned inputs. A sweep run's directory is on the argv.
  */
-export function pathsNamedByCheck(check: DeclaredCheck): string[] {
+function pathsNamedByCheck(check: DeclaredCheck): string[] {
 	const base = check.cwd === "." ? "" : check.cwd;
 	const named = new Set<string>();
 	const add = (path: string): void => {
@@ -99,6 +110,63 @@ export function pathsNamedByCheck(check: DeclaredCheck): string[] {
 	for (const pin of check.reproduce?.inputs ?? []) add(pin.path);
 	if (check.reproduce?.compare.mode === "reference") add(check.reproduce.compare.reference);
 	return [...named].sort();
+}
+
+/** One `worktrees.copy` call must carry every input. */
+const CHECK_INPUT_MAX_FILES = MAX_COPY_FILES;
+const CHECK_INPUT_MAX_BYTES = MAX_COPY_BYTES;
+
+/**
+ * What a worktree cut from HEAD needs copied in to judge a check as `cwd` would, relative to `cwd`: the verifier
+ * catalog (ignored or not), and the files under the paths a catalog check names that are untracked (not ignored) or
+ * changed since HEAD. Only regular files count; a link is never followed. Outside a Git checkout there is no HEAD to
+ * differ from, so only the catalog.
+ */
+function checkInputs(cwd: string, check: DeclaredCheck | null): string[] | { error: string } {
+	const catalogStat = lstatSync(join(cwd, PROJECT_VERIFIER_CATALOG_RELATIVE_PATH), { throwIfNoEntry: false });
+	const catalog = catalogStat?.isFile() === true ? [PROJECT_VERIFIER_CATALOG_RELATIVE_PATH] : [];
+	const named = check === null ? [] : pathsNamedByCheck(check);
+	if (named.length === 0) return catalog;
+	let listed: string;
+	try {
+		listed = gitExecFileSync(
+			[
+				"-C",
+				cwd,
+				"ls-files",
+				"-z",
+				"--others",
+				"--modified",
+				"--exclude-standard",
+				"--",
+				...named.map((path) => `:(literal)${path}`),
+			],
+			{
+				encoding: "utf8",
+				stdio: ["ignore", "pipe", "pipe"],
+				maxBuffer: 64 * 1024 * 1024,
+				timeout: 60_000,
+				env: withoutRepositoryEnv(),
+			},
+		);
+	} catch {
+		return catalog;
+	}
+	const inputs = new Set<string>();
+	let bytes = catalog.length > 0 ? (catalogStat?.size ?? 0) : 0;
+	for (const path of listed.split("\0")) {
+		if (path.length === 0 || path.startsWith("../") || path === PROJECT_VERIFIER_CATALOG_RELATIVE_PATH) continue;
+		if (inputs.has(path)) continue;
+		const stat = lstatSync(join(cwd, path), { throwIfNoEntry: false });
+		if (stat?.isFile() !== true) continue;
+		inputs.add(path);
+		bytes += stat.size;
+		if (inputs.size + catalog.length > CHECK_INPUT_MAX_FILES || bytes > CHECK_INPUT_MAX_BYTES)
+			return {
+				error: `the files it names hold more than ${CHECK_INPUT_MAX_FILES} uncommitted files or ${CHECK_INPUT_MAX_BYTES / (1024 * 1024)} MiB; commit them`,
+			};
+	}
+	return [...catalog, ...[...inputs].sort()];
 }
 
 /** The judgement `verifiers dry-run --json` reports for the check it ran. */
@@ -212,6 +280,15 @@ export function createExtensionVerifyService(deps: ExtensionVerifyServiceDeps): 
 					inputs: pathsNamedByCheck(check),
 				};
 			});
+		},
+
+		async resolve(id, place = "workspace") {
+			const name = checkId(id);
+			const { cwd } = await deps.resolvePlace(place);
+			const resolution = resolveVerifyCall(cwd, { check: name });
+			if (resolution.kind === "unresolved") return { ok: false, message: resolution.message };
+			const inputs = checkInputs(cwd, resolution.kind === "catalog" ? resolution.check : null);
+			return Array.isArray(inputs) ? { ok: true, kind: resolution.kind, inputs } : { ok: false, message: inputs.error };
 		},
 
 		async check(id, place = "workspace", scope) {

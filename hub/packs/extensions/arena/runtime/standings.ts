@@ -1,7 +1,5 @@
-// SPDX-License-Identifier: LicenseRef-PanCode-1.0
-// SPDX-FileCopyrightText: 2026 Anthony Kougkas
-import { contenderForLabel } from "./blind.js";
-import { ARENA_SCORE_MIN_VOTES, type ArenaChoice, type ArenaLabel, type ArenaMatch, type ArenaVote } from "./types.js";
+import { contenderForLabel } from "./blind.ts";
+import { ARENA_SCORE_MIN_VOTES, type ArenaChoice, type ArenaLabel, type ArenaMatch, type ArenaVote } from "./types.ts";
 
 export interface ArenaStanding {
 	identity: string;

@@ -60,6 +60,8 @@ export interface ExtensionRunService {
 	): Promise<ExtensionRunFrames>;
 	wait(id: string): Promise<ExtensionRunEnd>;
 	cancel(id: string): Promise<void>;
+	/** Why `start` would refuse runs with these settings before any starts, or null. */
+	refusal(options?: { autonomy?: "default" | "yolo"; readOnly?: boolean }): Promise<string | null>;
 	/** End every run and drop every record. */
 	dispose(): Promise<void>;
 }
@@ -251,23 +253,34 @@ export function createExtensionRunService(deps: ExtensionRunServiceDeps): Extens
 		return record;
 	};
 
+	/** The refusals that hold whatever the run's place and the live run count: `start` and `refusal` share them. */
+	const standingRefusal = (run: { autonomy: "default" | "yolo"; readOnly: boolean }): string | null => {
+		const depth = parseExtensionRunDepth(deps.sourceEnv[EXTENSION_RUN_DEPTH_ENV]);
+		if (depth === "invalid")
+			return `runs.start: invalid ${EXTENSION_RUN_DEPTH_ENV}; runs nest at most ${MAX_EXTENSION_RUN_DEPTH} deep`;
+		if (depth >= MAX_EXTENSION_RUN_DEPTH)
+			return `runs.start: this process is already ${depth} extension runs deep; runs nest at most ${MAX_EXTENSION_RUN_DEPTH} deep`;
+		if (deps.readOnly?.() === true && (!run.readOnly || run.autonomy === "yolo"))
+			return "runs.start: writable or yolo runs are refused in a read-only session";
+		return null;
+	};
+
 	return {
+		async refusal(options = {}) {
+			const autonomy = options.autonomy ?? "default";
+			if (autonomy !== "default" && autonomy !== "yolo")
+				throw new ExtensionRunError("invalid", "runs.refusal: autonomy must be default or yolo");
+			if (!deps.ceilings.autonomy.includes(autonomy))
+				return `runs.start: the manifest does not allow autonomy ${autonomy}`;
+			const standing = standingRefusal({ autonomy, readOnly: options.readOnly === true });
+			if (standing !== null) return standing;
+			return autonomy === "yolo" ? deps.yoloRefusal() : null;
+		},
 		async start(request, scope) {
 			const signal = scope?.signal;
 			const run = clampRequest(request, deps.ceilings);
-			const depth = parseExtensionRunDepth(deps.sourceEnv[EXTENSION_RUN_DEPTH_ENV]);
-			if (depth === "invalid")
-				throw new ExtensionRunError(
-					"refused",
-					`runs.start: invalid ${EXTENSION_RUN_DEPTH_ENV}; runs nest at most ${MAX_EXTENSION_RUN_DEPTH} deep`,
-				);
-			if (depth >= MAX_EXTENSION_RUN_DEPTH)
-				throw new ExtensionRunError(
-					"refused",
-					`runs.start: this process is already ${depth} extension runs deep; runs nest at most ${MAX_EXTENSION_RUN_DEPTH} deep`,
-				);
-			if (deps.readOnly?.() === true && (!run.readOnly || run.autonomy === "yolo"))
-				throw new ExtensionRunError("refused", "runs.start: writable or yolo runs are refused in a read-only session");
+			const standing = standingRefusal(run);
+			if (standing !== null) throw new ExtensionRunError("refused", standing);
 			const place = await deps.resolvePlace(request.cwd ?? "workspace");
 			if (active >= deps.ceilings.maxConcurrent)
 				throw new ExtensionRunError("busy", `runs.start: ${deps.ceilings.maxConcurrent} runs are already running`);
@@ -308,7 +321,8 @@ export function createExtensionRunService(deps: ExtensionRunServiceDeps): Extens
 			const env = {
 				...runEnv(deps.sourceEnv, deps.envPolicy, run.target),
 				...deps.launch.env,
-				[EXTENSION_RUN_DEPTH_ENV]: String(depth + 1),
+				// standingRefusal already refused an invalid or too-deep value.
+				[EXTENSION_RUN_DEPTH_ENV]: String((parseExtensionRunDepth(deps.sourceEnv[EXTENSION_RUN_DEPTH_ENV]) as number) + 1),
 			};
 			const controller = new AbortController();
 			const stop = (): void => controller.abort();

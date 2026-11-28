@@ -1,0 +1,23 @@
+id: arena
+name: Arena
+version: 0.1.0
+description: Run one prompt on 2 to 4 target/models side by side, compare their work blind, vote, and keep standings.
+license: LicenseRef-PanCode-1.0
+runtime:
+  api: 2
+  entrypoint: runtime/extension.ts
+  commands:
+    - name: arena
+      description: Blind side-by-side runs; run, show, vote, list or standings (pancode arena --help).
+      long: true
+      timeoutMs: 86400000
+  cli:
+    - verb: arena
+      command: arena
+      summary: Run one prompt on 2 to 4 contenders, compare their work blind and vote.
+  state: { project: true }
+  services:
+    runs: { maxTimeoutSeconds: 86400, maxConcurrent: 4, autonomy: [default, yolo], maxCostUsd: 1000 }
+    worktrees: true
+    verify: true
+  permissions: { fs: { read: [], write: [] }, exec: false, net: false }
