@@ -7,14 +7,8 @@ import { Value } from "typebox/value";
 import { isWorkerToolCallCapExceededReason } from "../core/guardrails.js";
 import { HEADLESS_PERMISSION_DENIED_MARKER } from "../core/headless-permission.js";
 import { recordUncontainedShell } from "../core/sandbox/launch-record.js";
-import {
-	type MainSandboxPolicy,
-	mainSandboxPolicy,
-	readOnlyMainSandboxPolicy,
-	readOnlyScratchDir,
-} from "../core/sandbox/main-session.js";
 import { invalidateWorkspaceSecretScans } from "../core/sandbox/secret-files.js";
-import type { HomeReadList, SandboxEnvPolicy, SandboxLaunchWhy, UnixSocketMode } from "../core/sandbox/types.js";
+import type { SandboxLaunchWhy } from "../core/sandbox/types.js";
 import type { ToolName } from "../core/tool-names.js";
 import { isMcpToolName, ToolNames } from "../core/tool-names.js";
 import { effectiveToolCall, toolSpecPlacement } from "../core/tool-surface.js";
@@ -53,7 +47,6 @@ import {
 	resolveToolDestination,
 } from "../domains/safety/information-flow.js";
 import { hashToolCall } from "../domains/safety/loop-detector.js";
-import type { OperatorDefaultScope, OperatorYoloScope } from "../domains/safety/policy-engine.js";
 import {
 	OPERATOR_NAMED_RULE,
 	SAFETY_JUDGE_ALLOW_REASON_CODE,
@@ -83,6 +76,8 @@ import {
 	readFanOutCapBytes,
 	readFanOutText,
 } from "./read-fan-out.js";
+import { createOperatorScopes } from "./registry/operator-scope.js";
+import type { ContainedRoots, ParkedCall, RegistryScope } from "./registry/scope.js";
 import {
 	applyRegisteredToolClassification,
 	approvalConsequencesOf,
@@ -97,7 +92,6 @@ import type {
 	AdmissionReviewEvent,
 	ApprovalCarry,
 	ExecutionProvenance,
-	HostEffectCall,
 	OneShotGrant,
 	ParkCancelOptions,
 	PermissionRequiredMeta,
@@ -216,28 +210,6 @@ function unstatedEscapeVerdict(
 	});
 }
 
-interface ParkedCall {
-	readRootApproval?: true;
-	call: ClassifierCall;
-	decision: SafetyDecision;
-	meta: PermissionRequiredMeta;
-	resolve: (verdict: RegistryVerdict) => void;
-	/**
-	 * Seals the park at the instant the operator's decision lands, before the
-	 * admitted body runs. Idempotent, so the resolve paths that never reach a
-	 * body still report exactly one park.
-	 */
-	closePark: () => void;
-	options?: ToolInvokeOptions;
-	abortCleanup?: () => void;
-	/** The hook drift a `git-hooks-changed` park showed the operator. */
-	hookDrift?: GitHookDriftReport;
-	/** Set when a before_tool hook's `request_approval` parked the call: what its hook stage decided. */
-	settledHookEffects?: ReadonlyArray<MiddlewareEffect>;
-	/** Settles an operator-only ask once the operator approves it (a contained command's egress ask). */
-	approve?: (requestedBy: string | undefined) => void;
-}
-
 /**
  * A call reaching execution without the main-session sandbox. A job command admitted only contained is refused
  * (true). Otherwise a main-session bash or run_script call journals that the session's shell ran uncontained, once per
@@ -273,21 +245,6 @@ function refusesUncontainedLaunch(
 	});
 	return false;
 }
-
-/** The operator's sandbox environment, socket, and home-read choices a contained main shell command carries. */
-function shellSandboxScope(deps: RegistryDeps): {
-	env?: SandboxEnvPolicy;
-	unixSockets?: UnixSocketMode;
-	homeReads?: HomeReadList;
-} {
-	const homeReads = deps.sandboxHomeReads?.();
-	return {
-		...(deps.sandboxEnv !== undefined ? { env: deps.sandboxEnv() } : {}),
-		...(deps.sandboxUnixSockets !== undefined ? { unixSockets: deps.sandboxUnixSockets() } : {}),
-		...(homeReads !== undefined ? { homeReads } : {}),
-	};
-}
-
 export function createRegistry(deps: RegistryDeps): ToolRegistry {
 	const tools = new Map<ToolName, ToolSpec>();
 	/**
@@ -297,148 +254,6 @@ export function createRegistry(deps: RegistryDeps): ToolRegistry {
 	 * no caller-built options object can be in it.
 	 */
 	const hookSettled = new WeakMap<ToolInvokeOptions, ReadonlyArray<MiddlewareEffect>>();
-	// The operator's own yolo exists only on the main session's registry (#419).
-	const operatorYoloScope = (level: AutonomyLevel): OperatorYoloScope | undefined =>
-		level === "yolo" && (deps.principal ?? "main") === "main" && deps.scratchRoots !== undefined
-			? {
-					scratchRoots: deps.scratchRoots(),
-					...(deps.scriptSandbox !== undefined ? { scriptSandbox: deps.scriptSandbox() } : {}),
-					...(deps.hookDrift !== undefined ? { hookDrift: deps.hookDrift } : {}),
-				}
-			: undefined;
-	// The operator's own default exists only there too, beside its containment.
-	const operatorDefaultScope = (level: AutonomyLevel): OperatorDefaultScope | undefined =>
-		level === "default" &&
-		(deps.principal ?? "main") === "main" &&
-		deps.scratchRoots !== undefined &&
-		deps.containment !== undefined
-			? { level: "default", scratchRoots: deps.scratchRoots(), ...deps.containment() }
-			: undefined;
-	// A read-only main session at either level: its shell calls run in the
-	// read-only sandbox where one exists, and never under the operator's yolo.
-	const operatorReadOnlyScope = (): OperatorDefaultScope | undefined => {
-		if ((deps.principal ?? "main") !== "main" || deps.scratchRoots === undefined || deps.containment === undefined)
-			return undefined;
-		return {
-			level: "default",
-			scratchRoots: deps.scratchRoots(),
-			sandbox: deps.containment().readOnlySandbox === true,
-			snapshots: false,
-			readOnly: true,
-		};
-	};
-	const withOperatorScope = (
-		level: AutonomyLevel,
-		readOnly = false,
-	): { operatorYolo?: OperatorYoloScope; operatorDefault?: OperatorDefaultScope } => {
-		if (readOnly) {
-			const operatorDefault = operatorReadOnlyScope();
-			return operatorDefault === undefined ? {} : { operatorDefault };
-		}
-		const yolo = operatorYoloScope(level);
-		if (yolo !== undefined) return { operatorYolo: yolo };
-		const operatorDefault = operatorDefaultScope(level);
-		return operatorDefault === undefined ? {} : { operatorDefault };
-	};
-	/**
-	 * A host effect that declares `unsandboxed: true` (a scheduled job's argv)
-	 * runs outside the sandbox: it is not a model's request to escape one. It is
-	 * judged as the uncontained call it is, as on a host without a sandbox, so it
-	 * earns no containment relief and raises no escape ask. A job whose
-	 * uncontained command would ask is judged again contained, below.
-	 */
-	const hostEffectScope = (
-		effectCall: ClassifierCall,
-		level: AutonomyLevel,
-	): { operatorYolo?: OperatorYoloScope; operatorDefault?: OperatorDefaultScope } => {
-		const scope = withOperatorScope(level);
-		if (effectCall.args?.unsandboxed !== true || scope.operatorDefault === undefined) return scope;
-		return { operatorDefault: { ...scope.operatorDefault, sandbox: false } };
-	};
-	/**
-	 * Each host effect is admitted exactly as its direct call would be, by the
-	 * same evaluator, and never under a one-shot grant for the calling tool.
-	 */
-	const admitHostEffect = (
-		effectCall: ClassifierCall,
-		level: AutonomyLevel,
-		scope: { operatorYolo?: OperatorYoloScope; operatorDefault?: OperatorDefaultScope },
-	): AdmissionDisposition => {
-		const effectSpec = tools.get(effectCall.tool as ToolName);
-		return evaluateAdmission({
-			principal: deps.principal ?? "main",
-			effects: [effectCall],
-			safety: deps.safety,
-			autonomy: level,
-			...scope,
-			...(deps.workerExecuteAutonomy !== undefined ? { workerExecuteAutonomy: deps.workerExecuteAutonomy } : {}),
-			...(effectSpec !== undefined
-				? { normalize: (raw: SafetyDecision) => applyRegisteredToolClassification(raw, effectSpec) }
-				: {}),
-			// A host check that runs a test runner owes the same session consent
-			// its direct verify call would ask for.
-			...(deps.sessionCodeConsent?.pending() === true ? { sessionCodeConsentPending: true } : {}),
-		});
-	};
-	type ContainedRoots = NonNullable<NonNullable<SafetyDecision["policy"]>["shellSandbox"]>;
-	/**
-	 * The sandbox every effect runs in when each, as the contained bash call it
-	 * would be, is admitted unasked and contained; otherwise null.
-	 */
-	const containedEffectsSandbox = (
-		effects: ReadonlyArray<HostEffectCall>,
-		level: AutonomyLevel,
-	): ContainedRoots | null => {
-		let roots: ContainedRoots | null = null;
-		for (const effect of effects) {
-			const { unsandboxed: _uncontained, ...args } = effect.call.args ?? {};
-			const admission = admitHostEffect({ ...effect.call, args }, level, withOperatorScope(level));
-			const sandbox = admission.kind === "allow" ? admission.decision.policy?.shellSandbox : undefined;
-			if (sandbox === undefined) return null;
-			roots = sandbox;
-		}
-		return roots;
-	};
-	/**
-	 * Whether a job's commands, as the exact arguments that execute, would be
-	 * refused uncontained, so they may run only in the sandbox admission put on
-	 * the decision. A session-consent ask is not counted: approving it admits the
-	 * uncontained command.
-	 */
-	const jobNeedsContainment = (spec: ToolSpec, call: ClassifierCall): boolean => {
-		if (call.tool !== ToolNames.Job) return false;
-		const level = deps.autonomy?.() ?? DEFAULT_AUTONOMY_LEVEL;
-		for (const effect of spec.hostEffectCalls?.(call.args ?? {}) ?? []) {
-			const admission = admitHostEffect(effect.call, level, hostEffectScope(effect.call, level));
-			if (admission.kind === "deny" || (admission.kind === "ask" && admission.source !== "session-consent")) return true;
-		}
-		return false;
-	};
-	const shellSandboxPolicy = (
-		roots: { workspace: string; scratchRoots: ReadonlyArray<string>; readOnly?: true },
-		options: ToolInvokeOptions | undefined,
-	): MainSandboxPolicy => {
-		const scope = { workspace: roots.workspace, scratchRoots: roots.scratchRoots, ...shellSandboxScope(deps) };
-		return shellEgress.apply(
-			roots.readOnly === true
-				? readOnlyMainSandboxPolicy({
-						...scope,
-						scratchDir: readOnlyScratchDir(options?.sessionId ?? deps.currentSessionId?.()),
-					})
-				: mainSandboxPolicy(scope),
-			options,
-		);
-	};
-	/**
-	 * True yolo for this registry's calls (#407): the operator's session at
-	 * yolo, or a worker whose permit inherited it. Admission decides the net;
-	 * this tells the information-flow gate, which runs past admission, that its
-	 * refusals do not hold either.
-	 */
-	const trueYolo = (): boolean =>
-		(deps.principal ?? "main") === "worker"
-			? deps.workerExecuteAutonomy === "yolo"
-			: operatorYoloScope(deps.autonomy?.() ?? DEFAULT_AUTONOMY_LEVEL) !== undefined;
 	const parked: ParkedCall[] = [];
 	const permissionListeners = new Set<
 		(call: ClassifierCall, decision: SafetyDecision, meta: PermissionRequiredMeta) => void
@@ -470,6 +285,53 @@ export function createRegistry(deps: RegistryDeps): ToolRegistry {
 	>();
 	let approvalRequestCounter = 0;
 	const approvalRequestToken = randomBytes(4).toString("hex");
+	const reg: RegistryScope = {
+		deps,
+		tools,
+		hookSettled,
+		parked,
+		permissionListeners,
+		askQueue,
+		shellEgress,
+		admissionReviewListeners,
+		bodyStartListeners,
+		boundaryReminderListeners,
+
+		get operatorYoloScope() {
+			return operatorYoloScope;
+		},
+		get withOperatorScope() {
+			return withOperatorScope;
+		},
+		get hostEffectScope() {
+			return hostEffectScope;
+		},
+		get admitHostEffect() {
+			return admitHostEffect;
+		},
+		get containedEffectsSandbox() {
+			return containedEffectsSandbox;
+		},
+		get jobNeedsContainment() {
+			return jobNeedsContainment;
+		},
+		get shellSandboxPolicy() {
+			return shellSandboxPolicy;
+		},
+		get trueYolo() {
+			return trueYolo;
+		},
+	};
+	const {
+		operatorYoloScope,
+		withOperatorScope,
+		hostEffectScope,
+		admitHostEffect,
+		containedEffectsSandbox,
+		jobNeedsContainment,
+		shellSandboxPolicy,
+		trueYolo,
+	} = createOperatorScopes(reg);
 
 	/** The rail that named the parked call, when the decision carried one. */
 	const approvalRailOf = (decision: SafetyDecision): string | undefined => {
