@@ -25,12 +25,7 @@ import {
 import { estimateContextTokens } from "@earendil-works/pi-ai/utils/estimate";
 import { Type } from "typebox";
 import { classifyCallFailure, trackCallFetch } from "../core/call-failure.js";
-import {
-	configureGuardrails,
-	guardrailValuesFromSettings,
-	isWorkerToolCallCapExceededReason,
-	isWorkerToolCallCapSynthesisReason,
-} from "../core/guardrails.js";
+import { isWorkerToolCallCapExceededReason, isWorkerToolCallCapSynthesisReason } from "../core/guardrails.js";
 import { createHostPolicyMessage } from "../core/host-policy-message.js";
 import { parseJsonObjectPayload } from "../core/json-payload.js";
 import { snapshotModelInfo } from "../core/model-tier.js";
@@ -38,20 +33,13 @@ import { isProviderAuthRejection } from "../core/provider-auth-error.js";
 import { EXPLORATION_TOOL_NAMES } from "../core/read-only-calls.js";
 import { type ModelRouteRefusal, modelRouteGuarded, modelRouteRefusalMessage } from "../core/response-model-id.js";
 import { isResponseSchemaRejection } from "../core/response-schema.js";
-import { workerSandboxConfinesWrites, workerSandboxReadableRoots } from "../core/sandbox/worker-process.js";
-import { readLayeredSettings } from "../core/settings-layers.js";
-import { agentSkillToolPolicy } from "../core/skill-activation.js";
 import { requestedThinking } from "../core/telemetry/call-effort.js";
 import { observedToolCallOrigin, withTelemetryContext } from "../core/telemetry/context.js";
 import { telemetryHub } from "../core/telemetry/hub.js";
 import { hasTokenUsageCounts, normalizeTokenUsage } from "../core/token-split.js";
 import { type ToolName, ToolNames } from "../core/tool-names.js";
 import { effectiveToolCall, gatewayChainReceipts } from "../core/tool-surface.js";
-import {
-	parseWorkerResultContract,
-	validateResultContract,
-	validateStructuredHelperResult,
-} from "../domains/agents/result-contract.js";
+import { validateResultContract, validateStructuredHelperResult } from "../domains/agents/result-contract.js";
 import { nonBooleanBaselineReason } from "../domains/agents/result-contract-builder-report.js";
 import { nodeResultContractFilesystem } from "../domains/agents/result-contract-filesystem.js";
 import { gateCitationViolation } from "../domains/agents/result-contract-gate.js";
@@ -62,12 +50,11 @@ import {
 	resultContractRepairUserMessage,
 	resultContractShape,
 } from "../domains/agents/result-contract-repair.js";
-import { internalHelperResultSchema, MUTATION_FAILURE_RULE } from "../domains/agents/result-contract-schema.js";
+import { MUTATION_FAILURE_RULE } from "../domains/agents/result-contract-schema.js";
 import {
 	resultContractEvidenceShortfall,
 	unobservedExplorerReportReason,
 } from "../domains/agents/result-contract-scout.js";
-import type { StructuredHelperResult } from "../domains/agents/result-contract-types.js";
 import { createWorkerContextGuard, WorkerContextExhaustedError } from "../domains/context/worker/pressure.js";
 import { createWorkerObservationStore } from "../domains/context/worker/recall.js";
 import { workerEconomicsView } from "../domains/dispatch/economics-view.js";
@@ -81,21 +68,16 @@ import { compactionBudget, resolveEffectivePricing } from "../domains/providers/
 import { PROVIDER_PROBE_TIMEOUT_MS } from "../domains/providers/contract.js";
 import { acceptsImageInput } from "../domains/providers/image-input.js";
 import {
-	applyModelCapabilityPatch,
 	probedModelOffer,
 	resolveModelRuntimeCapabilitiesForModel,
 	type ThinkingLevel,
 } from "../domains/providers/index.js";
-import { createProfileKnowledgeBase } from "../domains/providers/profile-knowledge.js";
-import type { KnowledgeBase } from "../domains/providers/types/knowledge-base.js";
 import type { ApprovalAuthority } from "../domains/safety/admission.js";
-import { setValidationWrappers } from "../domains/safety/check-prefix.js";
 import { describeBashCallConsequences } from "../domains/safety/command-consequence.js";
 import { confirmationRuleOf } from "../domains/safety/decision-events.js";
 import { grantEffectDescriptor, grantEffectDigest } from "../domains/safety/grant-effect.js";
 import {
 	EMPTY_INFORMATION_FLOW_POLICY,
-	type FlowRestrictionSet,
 	flowTransferRefusal,
 	mergeFlowRestrictions,
 	resolveModelDestination,
@@ -122,7 +104,6 @@ import {
 	type WorkerPromptMessage,
 } from "../lib/worker-wire/spec-contract.js";
 import { resolveAgentTools, type ToolTelemetry } from "../tools/agent-tools.js";
-import type { McpCapabilitySource } from "../tools/gateway/index.js";
 import { createWorkerGitContext } from "../tools/git-exec.js";
 import { runObservationPool } from "../tools/observation.js";
 import { CODE_NAV_TASK_STEERING, codeNavTaskSteering } from "../tools/profiles.js";
@@ -135,10 +116,8 @@ import {
 } from "../tools/verify/task-gates.js";
 import type { WorkerDecisionBinding } from "../worker/stdin-demux.js";
 import { createEngineAgent, type EngineAgentOptions } from "./agent.js";
-import { registerFauxFromEnv } from "./ai.js";
 import { engineStreamSimple } from "./api-registry.js";
 import { workerCacheFamilyId } from "./apis/cache-family.js";
-import { registerPancodeApiProviders, setGlobalDefaultMaxOutputTokens } from "./apis/index.js";
 import { anchorContextAtInputTokens, requestOutputReserve } from "./apis/output-budget.js";
 import { startClaudeSdkWorkerRun } from "./claude/sdk-runtime.js";
 import { normalizeContext, resolvedRequestContext } from "./context.js";
@@ -180,7 +159,6 @@ import {
 } from "./worker-assistant-reply.js";
 import { createWorkerCallTelemetry } from "./worker-call-telemetry.js";
 import {
-	type ActiveEscalation,
 	countHostRefusal,
 	denyReason,
 	denyUnboundDecision,
@@ -212,13 +190,14 @@ import {
 } from "./worker-refusals.js";
 import { boundWorkerResponse } from "./worker-response-stream.js";
 import {
-	assertResponseSchemaRuntime,
 	finishedReplyWithoutJsonResult,
 	terminalContractViolation,
 	withResultContractReminder,
 	workerContractResponseFormatFor,
 	workerResponseFormatFor,
 } from "./worker-result-contract.js";
+import type { WorkerRunScope } from "./worker-run/scope.js";
+import { decodeWorkerSpec, prepareNativeWorker, workerProviderSupportsTools } from "./worker-run/spec.js";
 import type { WorkerEventEmit, WorkerRunHandle, WorkerRunInput, WorkerRunResult } from "./worker-run-types.js";
 import {
 	exhaustedChangesDetail,
@@ -227,7 +206,9 @@ import {
 	thrashHostNote,
 } from "./worker-thrash-note.js";
 import { createThrashOutcome } from "./worker-thrash-outcome.js";
-import { createWorkerSafety, createWorkerToolRegistry, INTERNAL_HELPER_RESULT_TOOL } from "./worker-tools.js";
+import { createWorkerToolRegistry, INTERNAL_HELPER_RESULT_TOOL } from "./worker-tools.js";
+
+export { workerProviderSupportsTools };
 
 /**
  * Characters of a refused terminal result sent to the parent, well past the
@@ -246,16 +227,6 @@ const REASONING_PREFIX_APIS: ReadonlySet<string> = new Set([
 	"azure-openai-responses",
 	"copilot-sdk",
 ]);
-
-let kbSingleton: KnowledgeBase | null = null;
-
-function getKnowledgeBase(): KnowledgeBase {
-	if (kbSingleton) return kbSingleton;
-	// Stdout is the NDJSON lane, so a profile file or overlay that fails to load is left silent here;
-	// the orchestrator reports it once and the worker resolves from the live server instead.
-	kbSingleton = createProfileKnowledgeBase();
-	return kbSingleton;
-}
 
 function clampThinkingLevelForModel(model: EngineModel, requested: ThinkingLevel | undefined): ThinkingLevel {
 	const level = requested ?? "off";
@@ -310,17 +281,6 @@ function promptMessagesForWorker(input: WorkerRunInput): AgentMessage[] {
 	return [...messages, taskMessage(assignment)];
 }
 
-/**
- * Whether the resolved runtime mediates tool calls at all. Exported so the
- * worker entry attests the same tool surface this run will actually build.
- */
-export function workerProviderSupportsTools(input: WorkerRunInput): boolean {
-	const runtimeDecision = input.runtimeResolution?.capabilities.tools;
-	if (runtimeDecision !== undefined) return runtimeDecision === true;
-	if (typeof input.modelCapabilities?.tools === "boolean") return input.modelCapabilities.tools;
-	return input.runtime.defaultCapabilities.tools === true;
-}
-
 /** Return the admitted worker specification budget unchanged. */
 function resolveWorkerRuntimeBudget(input: Pick<WorkerRunInput, "budget">): WorkerBudget {
 	return input.budget;
@@ -333,117 +293,66 @@ function resolveWorkerRuntimeBudget(input: Pick<WorkerRunInput, "budget">): Work
  * function; the promise resolves when `agent.waitForIdle()` returns.
  */
 export function startWorkerRun(input: WorkerRunInput, emit: WorkerEventEmit): WorkerRunHandle {
-	assertResponseSchemaRuntime(input);
-	if (input.contextSeed && input.runtime.kind !== "http")
-		throw new Error("worker context: history seeds require a native Pi runtime");
-	// The wire carries the contract as data; the one strict parser owns its
-	// shape. The worker subprocess may not import it (it stays slim), so the
-	// check lands here, before any model call. The wire parser, not the recipe
-	// one: a dispatch request may override the seated recipe's postcondition
-	// with a kind the coordinator authors, and the recipe parser refusing those
-	// killed every council vote member with a fatal spec error.
-	if (input.resultContract !== undefined) parseWorkerResultContract(input.resultContract, "WorkerSpec.resultContract");
-	const mutationResult = input.resultContract?.kind === "mutation-report";
-	const helperSchema =
-		input.helperResult === true && input.resultContract ? internalHelperResultSchema(input.resultContract) : null;
-	if (input.helperResult === true && (helperSchema === null || input.runtime.kind !== "http")) {
-		throw new Error("helperResult requires a supported internal JSON contract and native HTTP worker");
-	}
+	const { mutationResult, helperSchema } = decodeWorkerSpec(input);
 	if (input.runtime.id === "claude-sdk") {
 		return observeExternalWorkerRun(input, emit, (observedEmit) => startClaudeSdkWorkerRun(input, observedEmit));
 	}
 	if (input.runtime.kind === "subprocess") return startExternalCliWorkerRun(input, emit);
 
-	// pi-ai is process-local. The orchestrator registers PanCode API providers in
-	// providers/extension.ts, but the worker subprocess starts a fresh process,
-	// so it must register them here before any agent.prompt() touches a local
-	// runtime (lmstudio, ollama).
-	registerPancodeApiProviders();
-	// The worker is a fresh process. Resolve its workspace's trusted settings
-	// layers so project output limits and guardrails survive dispatch. Keep the
-	// best-effort read: the parent already surfaced settings diagnostics, and
-	// untrusted or changed project settings must still fall back to lower layers.
-	const workerSettings = readLayeredSettings(input.cwd ?? process.cwd()).settings;
-	setGlobalDefaultMaxOutputTokens(workerSettings.chat.maxOutputTokens);
-	// Same mirroring for guardrail policy: the fresh process needs its settings
-	// projection installed before any registry or tool construction reads it.
-	configureGuardrails(guardrailValuesFromSettings(workerSettings));
-	// The worker's own check readings look through the same declared wrappers as the parent's (FX-44).
-	setValidationWrappers(workerSettings.safety.validationWrappers);
-	const fauxModel = registerFauxFromEnv();
-	// Workers are bounded runs against an admission-verified recipe surface.
-	// They have no operator to widen a missing tool, so the active surface is
-	// exactly the admitted set.
-	const agentSkillPolicy =
-		input.allowedTools.includes(ToolNames.Context) && input.noSkills !== true
-			? agentSkillToolPolicy(
-					input.agentSkills ?? [],
-					input.resultContract?.kind === "architect-plan" && input.allowedTools.includes(ToolNames.Artifact)
-						? [ToolNames.Artifact]
-						: [],
-				)
-			: undefined;
-	const activeWorkerTools = workerProviderSupportsTools(input) ? input.allowedTools : [];
-
-	const kb = getKnowledgeBase();
-	const kbHit = kb.lookup(input.wireModelId, input.runtime.id);
-	const synthesized = input.runtime.synthesizeModel(input.target, input.wireModelId, kbHit);
-	const model = applyModelCapabilityPatch(fauxModel ?? synthesized, input.modelCapabilities);
-
-	// Per-run safety contract: one loop-detector state per worker subprocess.
-	// The loop guard rides on the registry's middleware contract as a
-	// before_tool registration (engine/loop-guard.ts), so admission and
-	// repetition detection share one seam; there is no agent-loop hook anymore.
-	const safety = createWorkerSafety({
-		...(input.readOnly !== true &&
-		input.resultContract?.kind === "architect-plan" &&
-		input.allowedTools.includes(ToolNames.Artifact)
-			? { requiredArtifactPath: input.resultContract.path }
-			: {}),
-		...(input.flowPolicy !== undefined ? { flowPolicy: input.flowPolicy } : {}),
-		...(input.taskGit?.taskWorktree !== undefined ? { taskWorktreeRoot: input.taskGit.taskWorktree.path } : {}),
-		cwd: process.cwd(),
-		...(input.writeRoots !== undefined ? { writeRoots: input.writeRoots } : {}),
-		// The host decided once whether the run's commands are bound to its roots: an OS sandbox, or its own
-		// worktree whose merge-back takes only the roots (fleet M7). The worker does not probe it again.
-		...(input.writeRoots !== undefined && input.writeRootsCommandsBounded === true ? { writeRootsOsConfined: true } : {}),
-		// Its bash meets main bash's contained verdict for hidden content inside that sandbox (row 371).
-		...(workerSandboxConfinesWrites() ? { sandboxConfinesWrites: true } : {}),
-		readExemptRoots: workerSandboxReadableRoots(),
-		...(input.protectedArtifactState !== undefined
-			? { protectedArtifactState: { artifacts: [...input.protectedArtifactState.artifacts] } }
-			: {}),
-	});
+	const { workerSettings, agentSkillPolicy, activeWorkerTools, model, safety } = prepareNativeWorker(input);
 	// The run's phase (DESIGN 4.5): work, then handback, then sealed. Its tool
 	// lock, flipped by the loop guard's lockout callback, a handback trigger or
 	// the wall clock, is read by streamFn below to force the remaining model
 	// rounds text-only by removing the tool declarations (Anthropic, Google and
 	// Vertex keep them and send tool choice none instead; see toolsRemovedRound).
 	const phase = createRunPhase();
+	const scope: WorkerRunScope = {
+		input,
+		emit,
+		phase,
+		callTracking: null,
+		callUsageReported: false,
+		contextPressureWindow: 0,
+		contextPressureCrossed: false,
+		readStreakEscalated: 0,
+		streakNoteOpen: false,
+		lastProviderHttpStatus: null,
+		workerBoundAborted: false,
+		abortWorkerForBound: null,
+		workerStopCause: undefined,
+		workerModelRound: 0,
+		runFlow: null,
+		flowBlockReported: false,
+		workerMcp: undefined,
+		resultContractRepairsQueued: 0,
+		resultContractRepairsStarted: 0,
+		toolExecutionsStarted: 0,
+		evidenceRepairActive: false,
+		acceptedHelperResult: null,
+		helperExposedThisRound: false,
+		helperTerminalRequest: false,
+		helperTurnFailure: null,
+		observedReadRanges: new Map(),
+		observedGrepLines: new Map(),
+		runObservationWindow: undefined,
+		contractResponseFormat: undefined,
+		permissionFailure: false,
+		activeEscalation: null,
+	};
 	const workShare = (role: RunRole): number => input.limits?.context.workShare ?? HANDBACK_CONTEXT_SHARE[role];
 	const noteShare = input.limits?.context.noteShare ?? HANDBACK_NOTE_SHARE;
 	const refusalLimit = input.limits?.refusals ?? WORKER_REFUSAL_LIMIT;
 	let responseRound = 0;
-	let callTracking: ReturnType<typeof trackCallFetch> | null = null;
-	let callUsageReported = false;
 	let lockedSynthesisReprompts = 0;
 
 	// CLI-H3: recalls of this run's evictions, the window the last request was fitted to, whether a request reached
 	// the thrash share of it, and whether the one host turn has gone out.
 	let evictedRecalls = 0;
 	const pendingRecallCalls = new Set<string>();
-	let contextPressureWindow = 0;
-	let contextPressureCrossed = false;
 	let thrashNudged = false;
 	// X3: the read-only streak a writer worker reached when the read-streak rule handed it the second step, whether
 	// the streak note went out, and whether it still stands (no progress since), which holds back the other causes.
-	let readStreakEscalated = 0;
 	let streakNudged = false;
-	let streakNoteOpen = false;
-	// Last HTTP status a provider answered. Pi's error messages drop it on some
-	// APIs (openai-codex keeps only the body text), and the dispatch retry policy
-	// needs it to tell a rejected request from a transient failure.
-	let lastProviderHttpStatus: number | null = null;
 	// Status of the current round's own attempt; a stale status from an earlier
 	// round must not veto the message-based rejection check (#427).
 	let roundProviderHttpStatus: number | null = null;
@@ -464,20 +373,12 @@ export function startWorkerRun(input: WorkerRunInput, emit: WorkerEventEmit): Wo
 		lastAuthResolution = refreshed;
 		return refreshed.apiKey;
 	};
-	let workerBoundAborted = false;
-	let abortWorkerForBound: (() => void) | null = null;
-	// Who aborted the agent, so the call it cut off and the run's diagnostic name the same cause (cf1h-D3).
-	let workerStopCause: "loop_guard" | "parent_cancel" | "internal" | undefined;
 	const workerBudget = resolveWorkerRuntimeBudget(input);
 	// The reserve window ends discovery, not the run's own product. An agent that was
 	// granted mutation tools delivers by writing, so those stay admitted inside it;
 	// a read-only agent has none and ends in synthesis.
 	const deliveryTools = resolveDeliveryTools(input.allowedTools, input.product);
 	const middlewareToolChoice = createMiddlewareToolChoiceControl();
-	// Tool calls emitted by one provider response share this correlation. The
-	// loop guard counts synthesis-lock noncompliance by model round, preventing
-	// one wide parallel batch from consuming the entire denial backstop.
-	let workerModelRound = 0;
 	// The model round that may only report: the one after the refusal limit tripped.
 
 	const loopGuardRegistration = createLoopGuardRegistration({
@@ -516,23 +417,23 @@ export function startWorkerRun(input: WorkerRunInput, emit: WorkerEventEmit): Wo
 						canAsk: activeWorkerTools.includes(ToolNames.AskUser),
 					},
 					secondStep: (count) => {
-						readStreakEscalated = count;
+						scope.readStreakEscalated = count;
 					},
 					// A later step of the same call (a chain's edit) that resets the streak withdraws the second step.
 					onReset: () => {
-						readStreakEscalated = 0;
-						streakNoteOpen = false;
+						scope.readStreakEscalated = 0;
+						scope.streakNoteOpen = false;
 					},
 					// X7: a worker is never continued by an operator, so a streak past every note meets the decision gate,
 					// and its second refused round ends the run as a bound does, with its own outcome code.
 					unattended: true,
 					stall: (detail) => {
 						emit({ type: "pancode_run_outcome", payload: { outcomeCode: "exploration_stalled" } });
-						if (workerBoundAborted) return;
-						workerBoundAborted = true;
+						if (scope.workerBoundAborted) return;
+						scope.workerBoundAborted = true;
 						phase.seal(`exploration_stalled: ${detail}`);
 						process.stderr.write(`[worker] read-streak gate: ${detail}; stopped the run\n`);
-						abortWorkerForBound?.();
+						scope.abortWorkerForBound?.();
 					},
 				})
 			: null;
@@ -541,20 +442,18 @@ export function startWorkerRun(input: WorkerRunInput, emit: WorkerEventEmit): Wo
 	// lives in memory only; every growth is reported to the parent at once and
 	// sealed in the receipt, so the parent's session ledger absorbs it before
 	// any output of this run reaches its context.
-	let runFlow: FlowRestrictionSet | null = input.flowRestrictions ?? null;
-	let flowBlockReported = false;
-	let workerMcp: McpCapabilitySource | undefined;
+	scope.runFlow = input.flowRestrictions ?? null;
 	const workerFlow: NonNullable<RegistryDeps["flow"]> = {
-		mcpTransport: (tool) => workerMcp?.transportOf(tool) ?? null,
-		carried: () => runFlow,
+		mcpTransport: (tool) => scope.workerMcp?.transportOf(tool) ?? null,
+		carried: () => scope.runFlow,
 		refusal: () => null,
 		absorb: (set) => {
-			const before = runFlow?.restrictions.length ?? 0;
-			runFlow = mergeFlowRestrictions(runFlow, set);
+			const before = scope.runFlow?.restrictions.length ?? 0;
+			scope.runFlow = mergeFlowRestrictions(scope.runFlow, set);
 			// Every growth reaches the parent on the receipt-bearing lane, so the
 			// label precedes any output derived from the read.
-			if (runFlow !== null && runFlow.restrictions.length > before) {
-				emit({ type: "pancode_flow_restrictions", payload: { set: runFlow } } as PancodeWorkerEvent);
+			if (scope.runFlow !== null && scope.runFlow.restrictions.length > before) {
+				emit({ type: "pancode_flow_restrictions", payload: { set: scope.runFlow } } as PancodeWorkerEvent);
 			}
 		},
 	};
@@ -604,7 +503,7 @@ export function startWorkerRun(input: WorkerRunInput, emit: WorkerEventEmit): Wo
 			? undefined
 			: {
 					read: () => input.agentLedger?.read() ?? null,
-					post: (body) => input.agentLedger?.post(body, runFlow ?? undefined) ?? { ok: false, reason: "no-ledger" },
+					post: (body) => input.agentLedger?.post(body, scope.runFlow ?? undefined) ?? { ok: false, reason: "no-ledger" },
 				},
 		observations.recall,
 		input.taskGit !== undefined
@@ -628,7 +527,7 @@ export function startWorkerRun(input: WorkerRunInput, emit: WorkerEventEmit): Wo
 					// one gives as cwd. Without a task worktree the cwd is already the
 					// tree root admission resolved, including a compete candidate's own
 					// worktree, whose source checkout lies outside its write roots.
-					workerMcp = createSource({
+					scope.workerMcp = createSource({
 						cwd: admitted.projectRoot,
 						launchRoot: input.taskGit?.taskWorktree?.path ?? input.cwd ?? process.cwd(),
 						registry,
@@ -637,7 +536,7 @@ export function startWorkerRun(input: WorkerRunInput, emit: WorkerEventEmit): Wo
 						// A worker reads the store and writes only the tags its dispatch granted.
 						store: { writable: false, ...(input.storeGrant !== undefined ? { grant: input.storeGrant } : {}) },
 					});
-					return workerMcp;
+					return scope.workerMcp;
 				}
 			: undefined,
 		(effects, hookInput) => protectedArtifacts.absorbAwaited(hookInput, effects),
@@ -645,16 +544,12 @@ export function startWorkerRun(input: WorkerRunInput, emit: WorkerEventEmit): Wo
 		async () => workerEconomicsView(input.limits),
 	);
 	const contractCwd = input.cwd ?? process.cwd();
-	let resultContractRepairsQueued = 0;
-	let resultContractRepairsStarted = 0;
-	let toolExecutionsStarted = 0;
 	let zeroToolRepairQueued = false;
 	/** A gate verdict that cited none of its evidence packet gets one repair naming the ids (M10); a second passes through. */
 	let citationRepairQueued = false;
 	// M-31: whether the last terminal handoff arrived while work tools were still open, captured before the handoff
 	// locks them, and whether a repair reopened the read tools so the run can gather the evidence its result lacked.
 	let handoffFromOpenWork = false;
-	let evidenceRepairActive = false;
 	const readToolsAdmitted = activeWorkerTools.filter((tool) => EXPLORATION_TOOL_NAMES.has(tool));
 	/**
 	 * A rejected result the run can still ground by reading: work tools were open when it arrived, the envelope admits
@@ -667,7 +562,7 @@ export function startWorkerRun(input: WorkerRunInput, emit: WorkerEventEmit): Wo
 		!mutationResult &&
 		readToolsAdmitted.length > 0 &&
 		phase.lastRound === null &&
-		(toolExecutionsStarted === 0 || resultContractEvidenceShortfall(reason));
+		(scope.toolExecutionsStarted === 0 || resultContractEvidenceShortfall(reason));
 	const evidenceRepairInstruction = (reason: string, resubmit: string): string =>
 		`${reason} No evidence backs this result yet. First read the inputs the assignment names with the admitted read tools (${readToolsAdmitted.join(", ")}); only read-class calls run during this repair. Then ${resubmit}, citing only lines you read.`;
 	/**
@@ -679,24 +574,13 @@ export function startWorkerRun(input: WorkerRunInput, emit: WorkerEventEmit): Wo
 		readToolsAdmitted.length > 0 &&
 		phase.lastRound === null &&
 		(handoffFromOpenWork || (!phase.toolsLocked && !phase.resultForced))
-			? unobservedExplorerReportReason(input.resultContract.kind, toolExecutionsStarted)
+			? unobservedExplorerReportReason(input.resultContract.kind, scope.toolExecutionsStarted)
 			: null;
-	let acceptedHelperResult: StructuredHelperResult | null = null;
 
-	let helperExposedThisRound = false;
-	let helperTerminalRequest = false;
-	let helperTurnFailure: string | null = null;
 	/** Read tool call id -> what was asked for, pending that call's result. */
 	const pendingReadCitations = new Map<string, ReadCitationRequest>();
 	/** Grep call ids, direct or through gateway op=call, pending their results. */
 	const pendingGrepCalls = new Set<string>();
-	const observedReadRanges = new Map<string, Array<readonly [number, number]>>();
-	/**
-	 * Lines a grep result showed, keyed like the read spans. They ground a
-	 * citation but stay out of the repair anchors, which quote read spans back
-	 * to the model and would grow by one entry per match.
-	 */
-	const observedGrepLines = new Map<string, Set<number>>();
 	// The write-side equivalent: what this run changed and what it validated,
 	// so a mutation report is judged against the run instead of believed. Scratch roots read as the orchestrator's copy
 	// reads them, so a check logged under one is output in both recorders (x6-8).
@@ -716,7 +600,7 @@ export function startWorkerRun(input: WorkerRunInput, emit: WorkerEventEmit): Wo
 			contract: input.resultContract,
 			data,
 			cwd: contractCwd,
-			observedReadRanges: groundingRanges(observedReadRanges, observedGrepLines),
+			observedReadRanges: groundingRanges(scope.observedReadRanges, scope.observedGrepLines),
 			networkAllowed: true,
 			filesystem: nodeResultContractFilesystem(),
 			observedRunEffects: runEffects.snapshot(),
@@ -724,7 +608,7 @@ export function startWorkerRun(input: WorkerRunInput, emit: WorkerEventEmit): Wo
 		if (checked.structured === null) return checked.validation.reason ?? "invalid helper result";
 		const unobserved = unobservedReportReason();
 		if (unobserved !== null) return unobserved;
-		acceptedHelperResult = checked.structured;
+		scope.acceptedHelperResult = checked.structured;
 		emit({ type: "pancode_helper_result", payload: checked.structured });
 		return null;
 	};
@@ -758,9 +642,9 @@ export function startWorkerRun(input: WorkerRunInput, emit: WorkerEventEmit): Wo
 			const visibleText = chainStepVisibleText(child);
 			if (child.capability === ToolNames.Read) {
 				const request = readCitationRequest(child.args);
-				if (request !== null) recordObservedRead(contractCwd, observedReadRanges, request, child.result, visibleText);
+				if (request !== null) recordObservedRead(contractCwd, scope.observedReadRanges, request, child.result, visibleText);
 			} else if (child.capability === ToolNames.Grep || child.capability === ToolNames.Bash) {
-				recordObservedGrep(observedGrepLines, child.result.details, visibleText);
+				recordObservedGrep(scope.observedGrepLines, child.result.details, visibleText);
 			}
 		}
 	};
@@ -821,11 +705,11 @@ export function startWorkerRun(input: WorkerRunInput, emit: WorkerEventEmit): Wo
 						: "worker_tool_call_cap_exhausted",
 				},
 			});
-			if (workerBoundAborted) return;
-			workerBoundAborted = true;
+			if (scope.workerBoundAborted) return;
+			scope.workerBoundAborted = true;
 			phase.seal(reason);
 			process.stderr.write(`[worker] ${reason}\n`);
-			abortWorkerForBound?.();
+			scope.abortWorkerForBound?.();
 		}
 	};
 	const telemetry: ToolTelemetry = {
@@ -856,11 +740,11 @@ export function startWorkerRun(input: WorkerRunInput, emit: WorkerEventEmit): Wo
 						...(input.telemetryContext.turnId === undefined ? {} : { turnId: input.telemetryContext.turnId }),
 					}),
 			...(input.turnConstraints ? { turnConstraints: input.turnConstraints } : {}),
-			correlationId: `worker-model-round-${workerModelRound}`,
+			correlationId: `worker-model-round-${scope.workerModelRound}`,
 			toolResultMaxBytes: workerSettings.context.toolResultMaxBytes,
 			// DESIGN 4.5: the run's own observation pool, sized from the usable window the last round measured.
-			...(runObservationWindow !== undefined && input.telemetryContext !== undefined
-				? { observationRunPool: runObservationPool(runObservationWindow) }
+			...(scope.runObservationWindow !== undefined && input.telemetryContext !== undefined
+				? { observationRunPool: runObservationPool(scope.runObservationWindow) }
 				: {}),
 			// The worker's own model, resolved by the orchestrator, so hooks judge the worker by it.
 			...(input.runtimeResolution !== undefined ? { model: snapshotModelInfo(input.runtimeResolution) } : {}),
@@ -903,7 +787,7 @@ export function startWorkerRun(input: WorkerRunInput, emit: WorkerEventEmit): Wo
 				(mutationResult ? ` ${MUTATION_FAILURE_RULE}` : ""),
 			parameters: Type.Unsafe<Record<string, unknown>>(helperSchema),
 			async execute(id, args) {
-				if (acceptedHelperResult !== null || phase.sealedBy !== null) {
+				if (scope.acceptedHelperResult !== null || phase.sealedBy !== null) {
 					return {
 						content: [{ type: "text", text: "The terminal result is already sealed." }],
 						details: { kind: "error" },
@@ -915,9 +799,9 @@ export function startWorkerRun(input: WorkerRunInput, emit: WorkerEventEmit): Wo
 				phase.lockTools("result");
 				const submitted = submittedHelperArguments.has(id) ? submittedHelperArguments.get(id) : args;
 				submittedHelperArguments.delete(id);
-				helperTurnFailure = acceptHelperResult(args, submitted);
-				if (helperTurnFailure !== null) {
-					return { content: [{ type: "text", text: helperTurnFailure }], details: { kind: "error" }, isError: true };
+				scope.helperTurnFailure = acceptHelperResult(args, submitted);
+				if (scope.helperTurnFailure !== null) {
+					return { content: [{ type: "text", text: scope.helperTurnFailure }], details: { kind: "error" }, isError: true };
 				}
 				return { content: [{ type: "text", text: "Internal result accepted." }], details: { kind: "ok" }, terminate: true };
 			},
@@ -932,8 +816,6 @@ export function startWorkerRun(input: WorkerRunInput, emit: WorkerEventEmit): Wo
 	);
 
 	const inheritedMessages = seededWorkerMessages(input.contextSeed);
-	/** What the run's observation pool is sized from, measured each round; tools a round calls read the latest. */
-	let runObservationWindow: { usableTokens: number; workShare: number; inputTokens: number } | undefined;
 	const contextGuard = createWorkerContextGuard(observations.archive, {
 		aliasFloor: seedLineage.aliasFloor,
 		archivePath: observations.archivePath,
@@ -945,8 +827,11 @@ export function startWorkerRun(input: WorkerRunInput, emit: WorkerEventEmit): Wo
 		},
 		// Every fold decision is journaled under the run and forwarded on its receipt-bearing telemetry frame.
 		onDecision: (decision) => {
-			if (contextPressureWindow > 0 && decision.tokensBefore >= contextPressureWindow * THRASH_CONTEXT_FRACTION)
-				contextPressureCrossed = true;
+			if (
+				scope.contextPressureWindow > 0 &&
+				decision.tokensBefore >= scope.contextPressureWindow * THRASH_CONTEXT_FRACTION
+			)
+				scope.contextPressureCrossed = true;
 			if (input.telemetryContext) telemetryHub().emit("context.fold", decision, input.telemetryContext);
 			// A committed fold removed results the loop guard's read coverage counts as shown (X5).
 			if (decision.cause === "working_set_evict")
@@ -958,7 +843,7 @@ export function startWorkerRun(input: WorkerRunInput, emit: WorkerEventEmit): Wo
 	const workerResponseFormat = workerResponseFormatFor(input);
 	// Cleared for the rest of the run when the server refuses the field, so a
 	// contract round falls back to its prompt rather than failing.
-	let contractResponseFormat = workerContractResponseFormatFor(input);
+	scope.contractResponseFormat = workerContractResponseFormatFor(input);
 	// The helper protocol names its own terminal tool, so only a prose-parsed contract carries the reminder.
 	const contractReminder =
 		input.resultContract !== undefined && !helperToolAvailable ? resultContractReminder(input.resultContract) : null;
@@ -997,7 +882,7 @@ export function startWorkerRun(input: WorkerRunInput, emit: WorkerEventEmit): Wo
 			workerTelemetry?.stage("admission", "start");
 			const reason = flowTransferRefusal(
 				safety.policy?.informationFlow?.() ?? EMPTY_INFORMATION_FLOW_POLICY,
-				runFlow,
+				scope.runFlow,
 				resolveModelDestination({
 					targetId: input.target.id,
 					runtimeId: input.runtime.id,
@@ -1009,8 +894,8 @@ export function startWorkerRun(input: WorkerRunInput, emit: WorkerEventEmit): Wo
 			if (reason === null) return { block: false };
 			// A retry or failover on this target carries the same labels and meets
 			// the same refusal, so the parent must not spend another attempt on it.
-			if (!flowBlockReported) {
-				flowBlockReported = true;
+			if (!scope.flowBlockReported) {
+				scope.flowBlockReported = true;
 				emit({ type: "pancode_run_outcome", payload: { outcomeCode: "information_flow_blocked", detail: reason } });
 			}
 			return { block: true, reason };
@@ -1021,7 +906,7 @@ export function startWorkerRun(input: WorkerRunInput, emit: WorkerEventEmit): Wo
 				return { block: true, reason: WORKER_REFUSAL_REPORT_BLOCK };
 			// The evidence repair reopened reading, not the whole work surface (M-31).
 			if (
-				evidenceRepairActive &&
+				scope.evidenceRepairActive &&
 				toolCall.name !== INTERNAL_HELPER_RESULT_TOOL &&
 				!callRepeatsAsRead(toolCall.name, toolCall.arguments, () => undefined)
 			)
@@ -1030,21 +915,21 @@ export function startWorkerRun(input: WorkerRunInput, emit: WorkerEventEmit): Wo
 					reason: "Only read-class tools run during this evidence repair. Read the inputs, then submit the result.",
 				};
 			if (helperSchema === null) return undefined;
-			if (acceptedHelperResult !== null || phase.sealedBy !== null)
+			if (scope.acceptedHelperResult !== null || phase.sealedBy !== null)
 				return { block: true, reason: "The helper result is sealed.", terminate: true };
-			if (mutationResult && toolCall.name === INTERNAL_HELPER_RESULT_TOOL && !helperExposedThisRound) {
-				helperTurnFailure = "The terminal handoff is unavailable during work. Finish the work phase first.";
-				return { block: true, reason: helperTurnFailure };
+			if (mutationResult && toolCall.name === INTERNAL_HELPER_RESULT_TOOL && !scope.helperExposedThisRound) {
+				scope.helperTurnFailure = "The terminal handoff is unavailable during work. Finish the work phase first.";
+				return { block: true, reason: scope.helperTurnFailure };
 			}
 			const calls = assistantMessage.content.filter((block) => block.type === "toolCall");
 			if (calls.some((call) => call.name === INTERNAL_HELPER_RESULT_TOOL) && calls.length !== 1) {
-				helperTurnFailure =
+				scope.helperTurnFailure =
 					"Submit exactly one terminal handoff, alone; mixed or duplicate handoff batches are rejected without executing work.";
-				return { block: true, reason: helperTurnFailure };
+				return { block: true, reason: scope.helperTurnFailure };
 			}
 			if ((phase.resultForced || phase.toolsLocked) && toolCall.name !== INTERNAL_HELPER_RESULT_TOOL) {
-				helperTurnFailure = "Work tools are disabled. Submit only the internal terminal result.";
-				return { block: true, reason: helperTurnFailure };
+				scope.helperTurnFailure = "Work tools are disabled. Submit only the internal terminal result.";
+				return { block: true, reason: scope.helperTurnFailure };
 			}
 			return undefined;
 		},
@@ -1053,18 +938,18 @@ export function startWorkerRun(input: WorkerRunInput, emit: WorkerEventEmit): Wo
 		// Run from a `turn_end` subscriber, the exhausted bound arrived after the
 		// decision and cost one extra provider request.
 		finishTurn: ({ message, toolResults }) => {
-			if (phase.lastRound !== null && workerModelRound >= phase.lastRound) return { action: "end" };
+			if (phase.lastRound !== null && scope.workerModelRound >= phase.lastRound) return { action: "end" };
 			if (
 				helperSchema !== null &&
-				acceptedHelperResult === null &&
+				scope.acceptedHelperResult === null &&
 				toolResults.length > 0 &&
 				(toolResults.some((result) => result.toolName === INTERNAL_HELPER_RESULT_TOOL) ||
-					(helperTerminalRequest && helperTurnFailure !== null)) &&
+					(scope.helperTerminalRequest && scope.helperTurnFailure !== null)) &&
 				(phase.resultForced || phase.toolsLocked)
 			) {
 				const error = toolResults.find((result) => result.isError);
 				const reason =
-					helperTurnFailure ??
+					scope.helperTurnFailure ??
 					error?.content
 						.filter((block) => block.type === "text")
 						.map((block) => block.text)
@@ -1077,16 +962,16 @@ export function startWorkerRun(input: WorkerRunInput, emit: WorkerEventEmit): Wo
 				}
 				repairHelperResult(reason);
 			}
-			return helperSchema !== null && (acceptedHelperResult !== null || phase.sealedBy !== null)
+			return helperSchema !== null && (scope.acceptedHelperResult !== null || phase.sealedBy !== null)
 				? { action: "end" }
 				: undefined;
 		},
 		// Each round sends through engineStreamSimple, whose guard sees the evicted request.
 		delegateGuardsToolArguments: true,
 		streamFn: (currentModel, transcript, streamOptions) => {
-			if (resultContractRepairsQueued > resultContractRepairsStarted) {
-				resultContractRepairsStarted += 1;
-				emit({ type: "pancode_repair_rounds_started", payload: { started: resultContractRepairsStarted } });
+			if (scope.resultContractRepairsQueued > scope.resultContractRepairsStarted) {
+				scope.resultContractRepairsStarted += 1;
+				emit({ type: "pancode_repair_rounds_started", payload: { started: scope.resultContractRepairsStarted } });
 			}
 			const round = ++responseRound;
 			const resolvedContext = resolvedRequestContext(transcript);
@@ -1117,8 +1002,8 @@ export function startWorkerRun(input: WorkerRunInput, emit: WorkerEventEmit): Wo
 			// the guard, so the round is shaped again then and the crossing request carries the handoff helper or the
 			// locked-synthesis directive like any locked round (M3).
 			const shapeRound = () => {
-				helperTerminalRequest = phase.toolsLocked || phase.resultForced;
-				helperExposedThisRound =
+				scope.helperTerminalRequest = phase.toolsLocked || phase.resultForced;
+				scope.helperExposedThisRound =
 					helperToolAvailable &&
 					((!mutationResult && !codexToolChanges) || phase.toolsLocked || phase.resultForced) &&
 					(!(phase.toolsLocked || phase.resultForced) || helperForcedChoiceAvailable);
@@ -1134,12 +1019,12 @@ export function startWorkerRun(input: WorkerRunInput, emit: WorkerEventEmit): Wo
 					tools: (resolvedContext.tools ?? []).filter(
 						(tool) =>
 							tool.name !== INTERNAL_HELPER_RESULT_TOOL ||
-							helperExposedThisRound ||
+							scope.helperExposedThisRound ||
 							helperDeclaredFromStart ||
 							helperDeclaredInWork,
 					),
 				};
-				const helperOnRequest = helperExposedThisRound || helperDeclaredFromStart;
+				const helperOnRequest = scope.helperExposedThisRound || helperDeclaredFromStart;
 				const helperLockedNote =
 					!helperDeclaredFromStart && (phase.toolsLocked || phase.resultForced)
 						? "Work tools are disabled. Earlier tool-use instructions apply only to the completed work phase; only the terminal handoff remains available. Do not invent missing evidence."
@@ -1213,7 +1098,7 @@ export function startWorkerRun(input: WorkerRunInput, emit: WorkerEventEmit): Wo
 			});
 			let pressure = pressureFor(shape);
 			let messages: AgentMessage[];
-			contextPressureWindow = window;
+			scope.contextPressureWindow = window;
 			try {
 				messages = contextGuard(pressure);
 			} catch (error) {
@@ -1232,10 +1117,10 @@ export function startWorkerRun(input: WorkerRunInput, emit: WorkerEventEmit): Wo
 				throw error;
 			}
 			// A request admitted without a fold reports no decision, so the thrash share reads the admitted count too.
-			if (window > 0 && contextGuard.inputTokens >= window * THRASH_CONTEXT_FRACTION) contextPressureCrossed = true;
+			if (window > 0 && contextGuard.inputTokens >= window * THRASH_CONTEXT_FRACTION) scope.contextPressureCrossed = true;
 			let handbackSurfaceTokens = 0;
 			if (window > 0) {
-				runObservationWindow = {
+				scope.runObservationWindow = {
 					usableTokens:
 						window - requestOutputReserve(currentModel, currentModel.maxTokens, window, contextGuard.inputTokens),
 					workShare: input.role !== undefined ? workShare(input.role) : (input.limits?.context.workShare ?? 1),
@@ -1246,7 +1131,7 @@ export function startWorkerRun(input: WorkerRunInput, emit: WorkerEventEmit): Wo
 			if (window > 0 && input.role !== undefined && !phase.toolsLocked) {
 				const usable =
 					window - requestOutputReserve(currentModel, currentModel.maxTokens, window, contextGuard.inputTokens);
-				if (contextGuard.inputTokens >= usable * noteShare) contextPressureCrossed = true;
+				if (contextGuard.inputTokens >= usable * noteShare) scope.contextPressureCrossed = true;
 				if (contextGuard.inputTokens >= usable * workShare(input.role)) {
 					enterHandback("context");
 					const surfaceTokens = ({ currentContext, pricedSystemPrompt }: ReturnType<typeof shapeRound>) =>
@@ -1269,8 +1154,8 @@ export function startWorkerRun(input: WorkerRunInput, emit: WorkerEventEmit): Wo
 			// A final-only round (synthesis lock or final-only repair) ships no tools,
 			// so a contract's schema can bind it without meeting a tool grammar.
 			const contractFormat =
-				contractResponseFormat !== undefined && phase.toolsLocked && !helperToolAvailable
-					? contractResponseFormat
+				scope.contractResponseFormat !== undefined && phase.toolsLocked && !helperToolAvailable
+					? scope.contractResponseFormat
 					: undefined;
 			const optionsWith = (responseFormat: Record<string, unknown> | undefined) =>
 				sampling === undefined && responseFormat === undefined
@@ -1324,7 +1209,7 @@ export function startWorkerRun(input: WorkerRunInput, emit: WorkerEventEmit): Wo
 					const basePrompt = currentContext.systemPrompt ?? "";
 					// An evidence repair reopens the read tools by policy, never by erasing history (#423).
 					const protocol =
-						codexToolChanges && evidenceRepairActive && !helperTerminalRequest
+						codexToolChanges && scope.evidenceRepairActive && !scope.helperTerminalRequest
 							? "The host reopened the read-class tools for an evidence repair. Read the inputs the assignment names, then begin the terminal handoff again."
 							: (systemPrompt ?? "").slice(basePrompt.length);
 					// Codex can append declarations but cannot replay removals without
@@ -1414,8 +1299,8 @@ export function startWorkerRun(input: WorkerRunInput, emit: WorkerEventEmit): Wo
 						);
 						const fetchImpl = attempt.options?.fetch ?? ((url, init) => globalThis.fetch(url, init));
 						const tracking = trackCallFetch(fetchImpl);
-						callTracking = tracking;
-						callUsageReported = false;
+						scope.callTracking = tracking;
+						scope.callUsageReported = false;
 						roundProviderHttpStatus = null;
 						tracking.start(currentModel.api, attempt.options?.transport);
 						const lockedRound = phase.toolsLocked || phase.resultForced;
@@ -1446,7 +1331,7 @@ export function startWorkerRun(input: WorkerRunInput, emit: WorkerEventEmit): Wo
 									...boundedOptions,
 									fetch: async (url, init) => {
 										const response = await tracking.fetch(url, init);
-										lastProviderHttpStatus = response.status;
+										scope.lastProviderHttpStatus = response.status;
 										roundProviderHttpStatus = response.status;
 										// Pi retries a retryable status inside one attempt; the response that opens the stream is
 										// the first byte (#434).
@@ -1461,7 +1346,7 @@ export function startWorkerRun(input: WorkerRunInput, emit: WorkerEventEmit): Wo
 												if (value === null || typeof value !== "object") continue;
 												const usage = (value as Record<string, unknown>).usage;
 												if (usage === null || typeof usage !== "object") continue;
-												callUsageReported ||= hasTokenUsageCounts(usage as Record<string, unknown>);
+												scope.callUsageReported ||= hasTokenUsageCounts(usage as Record<string, unknown>);
 											}
 										}
 										await boundedOptions?.onProviderStreamEvent?.(data, eventModel);
@@ -1471,9 +1356,9 @@ export function startWorkerRun(input: WorkerRunInput, emit: WorkerEventEmit): Wo
 						return (
 							workerTelemetry?.observe(source, (message) => {
 								const aborted = input.signal?.aborted || (message as { stopReason?: unknown } | null)?.stopReason === "aborted";
-								const failure = tracking.failure(message, aborted, callUsageReported);
+								const failure = tracking.failure(message, aborted, scope.callUsageReported);
 								const harness = aborted
-									? (workerStopCause ?? (input.signal?.aborted ? "parent_cancel" : undefined))
+									? (scope.workerStopCause ?? (input.signal?.aborted ? "parent_cancel" : undefined))
 									: undefined;
 								return harness ? { ...failure, stage: "harness", errorClass: harness } : failure;
 							}) ?? source
@@ -1506,7 +1391,7 @@ export function startWorkerRun(input: WorkerRunInput, emit: WorkerEventEmit): Wo
 							authRetried,
 							(error) => isResponseSchemaRejection(error.errorMessage),
 							async () => {
-								contractResponseFormat = undefined;
+								scope.contractResponseFormat = undefined;
 								requestOptions = optionsWith(workerResponseFormat);
 								return request(messages, admitted);
 							},
@@ -1581,8 +1466,8 @@ export function startWorkerRun(input: WorkerRunInput, emit: WorkerEventEmit): Wo
 	// steers batch the same way the main agent's do: all at the next slot.
 	agent.followUpMode = "all";
 	agent.steeringMode = "all";
-	abortWorkerForBound = () => {
-		workerStopCause ??= "loop_guard";
+	scope.abortWorkerForBound = () => {
+		scope.workerStopCause ??= "loop_guard";
 		agent.abort();
 	};
 	// Qwopus 3.8 explored context init's whole 240 s ceiling one read at a time and was
@@ -1621,11 +1506,11 @@ export function startWorkerRun(input: WorkerRunInput, emit: WorkerEventEmit): Wo
 	const repairHelperResult = (reason: string): void => {
 		const workOpen = handoffFromOpenWork || (!phase.toolsLocked && !phase.resultForced);
 		handoffFromOpenWork = false;
-		if (!input.resultContract || acceptedHelperResult !== null || phase.sealedBy !== null) return;
+		if (!input.resultContract || scope.acceptedHelperResult !== null || phase.sealedBy !== null) return;
 		if (phase.lastRound !== null) return;
 		phase.forceResult("result");
 		phase.lockTools("result");
-		if (resultContractRepairsStarted >= RESULT_CONTRACT_REPAIR_LIMIT) {
+		if (scope.resultContractRepairsStarted >= RESULT_CONTRACT_REPAIR_LIMIT) {
 			phase.sealOver(`result contract failed after ${RESULT_CONTRACT_REPAIR_LIMIT} bounded repair rounds: ${reason}`);
 			emit({
 				type: "pancode_run_outcome",
@@ -1634,13 +1519,13 @@ export function startWorkerRun(input: WorkerRunInput, emit: WorkerEventEmit): Wo
 			return;
 		}
 		// #425: rejected sibling handoffs share one repair request; queuing it is not running it.
-		if (resultContractRepairsQueued > resultContractRepairsStarted) return;
-		resultContractRepairsQueued += 1;
+		if (scope.resultContractRepairsQueued > scope.resultContractRepairsStarted) return;
+		scope.resultContractRepairsQueued += 1;
 		// M-31: a result rejected for missing evidence, or before anything ran, is repaired by reading. The round keeps
 		// the work phase's declarations and request shape, so the cached prefix survives; admission narrows it to reads.
 		const readFirst = evidenceRepairFor(reason, workOpen);
 		if (readFirst) {
-			evidenceRepairActive = true;
+			scope.evidenceRepairActive = true;
 			phase.releaseResult();
 			phase.unlockTools();
 		}
@@ -1654,8 +1539,8 @@ export function startWorkerRun(input: WorkerRunInput, emit: WorkerEventEmit): Wo
 			{
 				contract: input.resultContract,
 				reason: instruction,
-				attempt: resultContractRepairsQueued,
-				anchors: observedReadAnchors(contractCwd, observedReadRanges),
+				attempt: scope.resultContractRepairsQueued,
+				anchors: observedReadAnchors(contractCwd, scope.observedReadRanges),
 				toolsAvailable: revisionToolsAvailable,
 			},
 			{ provider: model.provider, api: model.api, model: model.id },
@@ -1667,7 +1552,7 @@ export function startWorkerRun(input: WorkerRunInput, emit: WorkerEventEmit): Wo
 							content: [
 								{
 									type: "text" as const,
-									text: `${instruction}\nRequired arguments schema: ${JSON.stringify(helperSchema)}\nObserved read ranges: ${observedReadAnchors(contractCwd, observedReadRanges).join(", ") || "none"}`,
+									text: `${instruction}\nRequired arguments schema: ${JSON.stringify(helperSchema)}\nObserved read ranges: ${observedReadAnchors(contractCwd, scope.observedReadRanges).join(", ") || "none"}`,
 								},
 							],
 						}
@@ -1721,15 +1606,15 @@ export function startWorkerRun(input: WorkerRunInput, emit: WorkerEventEmit): Wo
 							: "auto",
 				// The same predicate streamFn applies to this round's request.
 				...(workerResponseFormat !== undefined ||
-				(contractResponseFormat !== undefined && phase.toolsLocked && !helperToolAvailable)
+				(scope.contractResponseFormat !== undefined && phase.toolsLocked && !helperToolAvailable)
 					? { responseFormat: "json-schema" as const }
 					: {}),
 				...requestedThinking(effectiveThinkingLevel),
 			});
-			callTracking = null;
-			callUsageReported = false;
-			workerModelRound += 1;
-			helperTurnFailure = null;
+			scope.callTracking = null;
+			scope.callUsageReported = false;
+			scope.workerModelRound += 1;
+			scope.helperTurnFailure = null;
 		}
 		if (
 			event.type === "message_end" &&
@@ -1738,10 +1623,10 @@ export function startWorkerRun(input: WorkerRunInput, emit: WorkerEventEmit): Wo
 		) {
 			const message = event.message as unknown as Record<string, unknown>;
 			const usage = event.message.usage as unknown as Record<string, unknown>;
-			const reported = callUsageReported || normalizeTokenUsage(usage).observed;
+			const reported = scope.callUsageReported || normalizeTokenUsage(usage).observed;
 			const failed = event.message.stopReason === "error" || event.message.stopReason === "aborted";
 			const failure = failed
-				? (callTracking?.failure(event.message, event.message.stopReason === "aborted", reported) ??
+				? (scope.callTracking?.failure(event.message, event.message.stopReason === "aborted", reported) ??
 					classifyCallFailure(event.message, { invoked: false }))
 				: undefined;
 			if (failure !== undefined) message.failure = failure;
@@ -1761,11 +1646,12 @@ export function startWorkerRun(input: WorkerRunInput, emit: WorkerEventEmit): Wo
 				phase.forceResult("result");
 				phase.lockTools("result");
 				if (calls.length !== 1)
-					helperTurnFailure = "Submit exactly one terminal handoff, alone; mixed or duplicate batches cannot execute work.";
+					scope.helperTurnFailure =
+						"Submit exactly one terminal handoff, alone; mixed or duplicate batches cannot execute work.";
 			}
 		}
 		if (event.type === "tool_execution_start" && event.toolName !== INTERNAL_HELPER_RESULT_TOOL) {
-			toolExecutionsStarted += 1;
+			scope.toolExecutionsStarted += 1;
 			middlewareToolChoice.toolStarted(event.toolName, event.args);
 		}
 		// Read spans this run actually observed. They ground the terminal result
@@ -1804,8 +1690,8 @@ export function startWorkerRun(input: WorkerRunInput, emit: WorkerEventEmit): Wo
 			pendingReadCitations.delete(event.toolCallId);
 			const grepped = pendingGrepCalls.delete(event.toolCallId);
 			if (event.isError !== true) {
-				if (request !== undefined) recordObservedRead(contractCwd, observedReadRanges, request, event.result);
-				if (grepped) recordObservedGrep(observedGrepLines, (event.result as { details?: unknown } | null)?.details);
+				if (request !== undefined) recordObservedRead(contractCwd, scope.observedReadRanges, request, event.result);
+				if (grepped) recordObservedGrep(scope.observedGrepLines, (event.result as { details?: unknown } | null)?.details);
 			}
 			observeChainChildren(event.toolName, event.result);
 			// Only a recall that returned an archived observation brings evicted content back.
@@ -1815,13 +1701,13 @@ export function startWorkerRun(input: WorkerRunInput, emit: WorkerEventEmit): Wo
 			const thrashCause =
 				evictedRecalls > THRASH_RECALL_LIMIT
 					? ("recall" as const)
-					: contextPressureCrossed && runEffects.snapshot().mutatedPaths.size === 0
+					: scope.contextPressureCrossed && runEffects.snapshot().mutatedPaths.size === 0
 						? ("context" as const)
 						: null;
 			const cause =
-				thrashCause !== null && !thrashNudged && !streakNoteOpen
+				thrashCause !== null && !thrashNudged && !scope.streakNoteOpen
 					? thrashCause
-					: readStreakEscalated > 0 && !streakNudged && !thrashNudged
+					: scope.readStreakEscalated > 0 && !streakNudged && !thrashNudged
 						? ("streak" as const)
 						: null;
 			if (
@@ -1833,13 +1719,13 @@ export function startWorkerRun(input: WorkerRunInput, emit: WorkerEventEmit): Wo
 			) {
 				if (cause === "streak") {
 					streakNudged = true;
-					streakNoteOpen = true;
+					scope.streakNoteOpen = true;
 				} else thrashNudged = true;
 				agent.steer({
 					role: "user",
 					content: thrashHostNote(
 						cause,
-						cause === "streak" ? readStreakEscalated : evictedRecalls,
+						cause === "streak" ? scope.readStreakEscalated : evictedRecalls,
 						workerCanWrite,
 						input.role !== undefined,
 						workerCanPlan,
@@ -1847,7 +1733,7 @@ export function startWorkerRun(input: WorkerRunInput, emit: WorkerEventEmit): Wo
 					timestamp: Date.now(),
 				});
 				process.stderr.write(
-					`[worker] thrash guard: ${cause === "recall" ? `${evictedRecalls} recalls of evicted observations` : cause === "streak" ? `${readStreakEscalated} read-only calls in a row` : "context past the thrash share with no change"}; told the worker to write now or report\n`,
+					`[worker] thrash guard: ${cause === "recall" ? `${evictedRecalls} recalls of evicted observations` : cause === "streak" ? `${scope.readStreakEscalated} read-only calls in a row` : "context past the thrash share with no change"}; told the worker to write now or report\n`,
 				);
 				if (input.telemetryContext)
 					telemetryHub().emit(
@@ -1871,7 +1757,7 @@ export function startWorkerRun(input: WorkerRunInput, emit: WorkerEventEmit): Wo
 					);
 			}
 			// The streak's second step is judged at the tool end that raised it, never carried to a later call.
-			readStreakEscalated = 0;
+			scope.readStreakEscalated = 0;
 		}
 		// Synthesis-locked run: the round ships no tool surface, so a model that
 		// calls a tool anyway lands its chat template's tool-call syntax in the
@@ -1947,7 +1833,7 @@ export function startWorkerRun(input: WorkerRunInput, emit: WorkerEventEmit): Wo
 		}
 		if (
 			(helperSchema === null || mutationResult) &&
-			acceptedHelperResult === null &&
+			scope.acceptedHelperResult === null &&
 			contract &&
 			!repromptedThisMessage &&
 			event.type === "message_end" &&
@@ -1959,7 +1845,7 @@ export function startWorkerRun(input: WorkerRunInput, emit: WorkerEventEmit): Wo
 			// zero-call edit run as obligation_unmet, so one repair round costs nothing
 			// the run had left. A second empty reply passes through to that outcome.
 			const zeroToolViolation =
-				toolExecutionsStarted === 0 &&
+				scope.toolExecutionsStarted === 0 &&
 				!zeroToolRepairQueued &&
 				contract.kind === "mutation-report" &&
 				input.readOnly !== true &&
@@ -1970,14 +1856,14 @@ export function startWorkerRun(input: WorkerRunInput, emit: WorkerEventEmit): Wo
 			// A second no-work reply belongs to obligation_unmet, even when its
 			// report is malformed. The p8/S1 recovery must not spend shape repairs.
 			const contractViolation =
-				zeroToolRepairQueued && toolExecutionsStarted === 0
+				zeroToolRepairQueued && scope.toolExecutionsStarted === 0
 					? null
 					: (zeroToolViolation ??
 						terminalContractViolation(
 							contract,
 							event.message,
 							contractCwd,
-							groundingRanges(observedReadRanges, observedGrepLines),
+							groundingRanges(scope.observedReadRanges, scope.observedGrepLines),
 							runEffects.snapshot(),
 						) ??
 						(mutationResult ? null : unobservedReportReason()));
@@ -1986,8 +1872,8 @@ export function startWorkerRun(input: WorkerRunInput, emit: WorkerEventEmit): Wo
 			const citationViolation =
 				contractViolation === null &&
 				!citationRepairQueued &&
-				!(zeroToolRepairQueued && toolExecutionsStarted === 0) &&
-				resultContractRepairsQueued < RESULT_CONTRACT_REPAIR_LIMIT
+				!(zeroToolRepairQueued && scope.toolExecutionsStarted === 0) &&
+				scope.resultContractRepairsQueued < RESULT_CONTRACT_REPAIR_LIMIT
 					? gateCitationViolation(contract, assistantMessageText(event.message))
 					: null;
 			if (citationViolation !== null) citationRepairQueued = true;
@@ -2003,7 +1889,7 @@ export function startWorkerRun(input: WorkerRunInput, emit: WorkerEventEmit): Wo
 					networkAllowed: true,
 					filesystem: nodeResultContractFilesystem(),
 				}).conformance === "fail";
-			if (helperSchema !== null && zeroToolRepairQueued && toolExecutionsStarted === 0) {
+			if (helperSchema !== null && zeroToolRepairQueued && scope.toolExecutionsStarted === 0) {
 				// An unsealed helper would otherwise hide the parent's no-work classification behind a generic failed exit.
 				// Without a helper the worker exits clean and the parent's grader seals obligation_unmet from the empty tool activity.
 				phase.sealOver("obligation change-or-declared unmet: worker executed no tools, so it did none of its assignment");
@@ -2016,23 +1902,23 @@ export function startWorkerRun(input: WorkerRunInput, emit: WorkerEventEmit): Wo
 				if (parsed.ok) {
 					const reason = acceptHelperResult(parsed.value);
 					if (reason !== null) reportRejectedHelperResult(parsed.value, reason);
-					if (reason !== null && !(zeroToolRepairQueued && toolExecutionsStarted === 0)) repairHelperResult(reason);
+					if (reason !== null && !(zeroToolRepairQueued && scope.toolExecutionsStarted === 0)) repairHelperResult(reason);
 				}
 			} else if (violation !== null && formatFailure) {
 				repairHelperResult(violation);
 			} else if (violation !== null) {
-				if (zeroToolViolation !== null || resultContractRepairsStarted < RESULT_CONTRACT_REPAIR_LIMIT) {
+				if (zeroToolViolation !== null || scope.resultContractRepairsStarted < RESULT_CONTRACT_REPAIR_LIMIT) {
 					if (zeroToolViolation !== null) zeroToolRepairQueued = true;
-					else resultContractRepairsQueued += 1;
+					else scope.resultContractRepairsQueued += 1;
 					// M-31: missing evidence is repaired by reading, so it never takes the final-only route below.
 					const readFirst = zeroToolViolation === null && evidenceRepairFor(violation, !phase.toolsLocked);
-					if (readFirst) evidenceRepairActive = true;
+					if (readFirst) scope.evidenceRepairActive = true;
 					// A finished answer in prose needs no more work, only its form. Where
 					// the runtime can bind that form, the repair round goes final-only so
 					// the schema can ride it; tools there would keep it unconstrained.
 					const constrainedRepair =
 						!readFirst &&
-						contractResponseFormat !== undefined &&
+						scope.contractResponseFormat !== undefined &&
 						zeroToolViolation === null &&
 						finishedReplyWithoutJsonResult(event.message);
 					if (constrainedRepair) phase.lockTools("result");
@@ -2049,8 +1935,8 @@ export function startWorkerRun(input: WorkerRunInput, emit: WorkerEventEmit): Wo
 					const repairInput = {
 						contract,
 						reason: readFirst ? evidenceRepairInstruction(violation, "emit the required result again") : violation,
-						attempt: zeroToolViolation !== null ? 1 : resultContractRepairsQueued,
-						anchors: observedReadAnchors(contractCwd, observedReadRanges),
+						attempt: zeroToolViolation !== null ? 1 : scope.resultContractRepairsQueued,
+						anchors: observedReadAnchors(contractCwd, scope.observedReadRanges),
 						toolsAvailable: revisionToolsAvailable,
 					};
 					const repair = revisionToolsAvailable
@@ -2100,10 +1986,8 @@ export function startWorkerRun(input: WorkerRunInput, emit: WorkerEventEmit): Wo
 	const grantBinding = escalationConfig !== null ? input.escalation?.grant : undefined;
 	const operatorUnattended = input.escalation?.operatorResponder === "none";
 	const mainRoutedPermit = input.permitAllowance?.asks === "main" && input.permitAllowance.approvalAuthority === "main";
-	let permissionFailure = false;
 	const executeRefusals: WorkerRefusal[] = [];
 
-	let activeEscalation: ActiveEscalation | null = null;
 	// Denied escalations, keyed by the exact call and permission conditions. A
 	// worker that re-issues the identical call after it was denied gets the
 	// same answer without a new card: a live coder re-asked one bash approval
@@ -2115,9 +1999,9 @@ export function startWorkerRun(input: WorkerRunInput, emit: WorkerEventEmit): Wo
 	// such a call, the call is denied rather than escalated a second time.
 	const consumedRequestIds = new Set<string>();
 	const clearActiveEscalation = (): void => {
-		if (activeEscalation) {
-			clearTimeout(activeEscalation.timer);
-			activeEscalation = null;
+		if (scope.activeEscalation) {
+			clearTimeout(scope.activeEscalation.timer);
+			scope.activeEscalation = null;
 		}
 	};
 	/**
@@ -2126,8 +2010,8 @@ export function startWorkerRun(input: WorkerRunInput, emit: WorkerEventEmit): Wo
 	 * only through its result tool, so that round is its terminal handoff, with the tool exposed and named (x2-3).
 	 */
 	const endAtRefusalLimit = (reason: string): void => {
-		permissionFailure = true;
-		phase.endAfterRound(workerModelRound + 1);
+		scope.permissionFailure = true;
+		phase.endAfterRound(scope.workerModelRound + 1);
 		if (helperForcedChoiceAvailable) phase.forceResult("refusals");
 		const directive = workerRefusalReportDirective(helperForcedChoiceAvailable ? INTERNAL_HELPER_RESULT_TOOL : null);
 		registry.cancelParkedCalls(`${reason}\n${directive}`);
@@ -2145,7 +2029,7 @@ export function startWorkerRun(input: WorkerRunInput, emit: WorkerEventEmit): Wo
 		source: "operator" | "timeout" | "main",
 		hostReason?: string,
 	): boolean => {
-		const active = activeEscalation;
+		const active = scope.activeEscalation;
 		if (!active || active.requestId !== requestId) return false;
 		clearActiveEscalation();
 		const authority = grantBinding !== undefined ? { authority: active.authority } : {};
@@ -2208,7 +2092,7 @@ export function startWorkerRun(input: WorkerRunInput, emit: WorkerEventEmit): Wo
 			},
 		} as PancodeWorkerEvent);
 		if (effectiveFail) {
-			permissionFailure = true;
+			scope.permissionFailure = true;
 			registry.cancelParkedCalls(reason);
 			agent.abort();
 			return true;
@@ -2228,7 +2112,7 @@ export function startWorkerRun(input: WorkerRunInput, emit: WorkerEventEmit): Wo
 		binding: WorkerDecisionBinding | undefined,
 		cause: "timeout" | undefined,
 	): boolean => {
-		const active = activeEscalation;
+		const active = scope.activeEscalation;
 		if (!active || active.requestId !== requestId) return false;
 		// The parent's window ran out: the same denial this worker's own timer gives,
 		// so fallback fail still ends the run.
@@ -2258,7 +2142,7 @@ export function startWorkerRun(input: WorkerRunInput, emit: WorkerEventEmit): Wo
 	};
 
 	const denyActiveEscalationOnAbort = (reason: string): void => {
-		const active = activeEscalation;
+		const active = scope.activeEscalation;
 		if (!active) return;
 		emit({
 			type: "pancode_permission_resolved",
@@ -2343,7 +2227,7 @@ export function startWorkerRun(input: WorkerRunInput, emit: WorkerEventEmit): Wo
 				else registry.cancelParkedCall(meta.requestId, reason);
 				return;
 			}
-			if (activeEscalation !== null) return;
+			if (scope.activeEscalation !== null) return;
 			const requestId = meta.requestId;
 			const authority: ApprovalAuthority = grantBinding === undefined ? "operator" : meta.approvalAuthority;
 			if (isTaskGateCall(call.tool, call.args)) {
@@ -2377,7 +2261,7 @@ export function startWorkerRun(input: WorkerRunInput, emit: WorkerEventEmit): Wo
 			const openedAt = performance.now();
 			const timerMs = escalationConfig.backstopMs ?? escalationConfig.timeoutMs;
 			const timer = setTimeout(() => resolveEscalation(requestId, "deny", "timeout"), timerMs);
-			activeEscalation = {
+			scope.activeEscalation = {
 				requestId,
 				tool: call.tool,
 				actionClass,
@@ -2509,7 +2393,7 @@ export function startWorkerRun(input: WorkerRunInput, emit: WorkerEventEmit): Wo
 			},
 		} as PancodeWorkerEvent);
 		if (onPermission === "fail") {
-			permissionFailure = true;
+			scope.permissionFailure = true;
 			registry.cancelParkedCalls(reason);
 			process.stderr.write(`[worker] ${reason}\n`);
 			agent.abort();
@@ -2545,7 +2429,7 @@ export function startWorkerRun(input: WorkerRunInput, emit: WorkerEventEmit): Wo
 			if (phase.sealedBy !== null) {
 				return { messages: agent.state.messages.slice(inheritedCount), exitCode: 1 };
 			}
-			if (permissionFailure) {
+			if (scope.permissionFailure) {
 				return { messages: agent.state.messages.slice(inheritedCount), exitCode: WORKER_EXIT_PERMISSION_REQUIRED };
 			}
 			const messages = agent.state.messages.slice(inheritedCount);
@@ -2554,8 +2438,8 @@ export function startWorkerRun(input: WorkerRunInput, emit: WorkerEventEmit): Wo
 			// read as a worker runtime fault and resent twice.
 			const errorMessage = getTerminalAgentError(messages);
 			if (errorMessage !== null) {
-				if (lastProviderHttpStatus !== null && lastProviderHttpStatus >= 400) {
-					process.stderr.write(`${WORKER_PROVIDER_HTTP_STATUS_MARKER}${lastProviderHttpStatus}\n`);
+				if (scope.lastProviderHttpStatus !== null && scope.lastProviderHttpStatus >= 400) {
+					process.stderr.write(`${WORKER_PROVIDER_HTTP_STATUS_MARKER}${scope.lastProviderHttpStatus}\n`);
 				}
 				if (errorMessage.length > 0) {
 					process.stderr.write(`[worker] agent ended with stopReason=error: ${errorMessage}\n`);
@@ -2576,13 +2460,13 @@ export function startWorkerRun(input: WorkerRunInput, emit: WorkerEventEmit): Wo
 			// (after the one re-prompt) is text, but not an answer.
 			const fallbackOnly = isLockedSynthesisFallbackOnly(messages.at(-1));
 			if (
-				acceptedHelperResult === null &&
+				scope.acceptedHelperResult === null &&
 				!hasTerminalArtifact &&
 				(fallbackOnly || !isTerminalAssistantMessage(messages.at(-1)) || !assistantMessageText(messages.at(-1)))
 			) {
 				const lastAssistant = [...messages].reverse().find(isAssistantMessage);
 				const stopped = lastAssistant?.stopReason === "aborted" || lastAssistant?.stopReason === "error";
-				const cause = stopped ? (workerStopCause ?? abortReasonCause(lastAssistant) ?? "unrecorded") : undefined;
+				const cause = stopped ? (scope.workerStopCause ?? abortReasonCause(lastAssistant) ?? "unrecorded") : undefined;
 				const why = cause ? `, cause=${cause}${lastAssistant?.errorMessage ? `: ${lastAssistant.errorMessage}` : ""}` : "";
 				const detail = fallbackOnly
 					? "worker synthesis reply held only tool-call markup after the tool-call lockout, so no final answer was delivered"
@@ -2594,7 +2478,7 @@ export function startWorkerRun(input: WorkerRunInput, emit: WorkerEventEmit): Wo
 				process.stderr.write(`[worker] ${detail}\n`);
 				return { messages, exitCode: 1 };
 			}
-			if (helperSchema !== null && acceptedHelperResult === null) {
+			if (helperSchema !== null && scope.acceptedHelperResult === null) {
 				return { messages, exitCode: 1 };
 			}
 			return { messages, exitCode: 0 };
@@ -2603,7 +2487,7 @@ export function startWorkerRun(input: WorkerRunInput, emit: WorkerEventEmit): Wo
 			if (phase.sealedBy !== null) {
 				return { messages: agent.state.messages.slice(inheritedCount), exitCode: 1 };
 			}
-			if (permissionFailure) {
+			if (scope.permissionFailure) {
 				return { messages: agent.state.messages.slice(inheritedCount), exitCode: WORKER_EXIT_PERMISSION_REQUIRED };
 			}
 			const msg = err instanceof Error ? err.message : String(err);
@@ -2619,12 +2503,12 @@ export function startWorkerRun(input: WorkerRunInput, emit: WorkerEventEmit): Wo
 			// Every server this run launched closes with it; teardown reports go to
 			// stderr inside the source, never to the NDJSON lane.
 			try {
-				await workerMcp?.close();
+				await scope.workerMcp?.close();
 			} finally {
 				workerTelemetry?.close({
 					stopReason: input.signal?.aborted ? "aborted" : "error",
 					failure:
-						(callTracking as ReturnType<typeof trackCallFetch> | null)?.failure(
+						(scope.callTracking as ReturnType<typeof trackCallFetch> | null)?.failure(
 							"worker ended without a terminal response",
 							input.signal?.aborted,
 						) ?? classifyCallFailure("worker ended before request invocation", { invoked: false }),
@@ -2647,7 +2531,7 @@ export function startWorkerRun(input: WorkerRunInput, emit: WorkerEventEmit): Wo
 				denyActiveEscalationOnAbort(reason);
 				registry.cancelParkedCalls(reason);
 			}
-			workerStopCause ??= cause === "internal" ? "internal" : "parent_cancel";
+			scope.workerStopCause ??= cause === "internal" ? "internal" : "parent_cancel";
 			agent.abort();
 		},
 		steer: (text: string) => {
@@ -2665,7 +2549,7 @@ export function startWorkerRun(input: WorkerRunInput, emit: WorkerEventEmit): Wo
 			cause?: "timeout",
 		) => resolveDecision(requestId, decision, binding, cause),
 		holdPermission: (requestId: string, holdMs: number) => {
-			const active = activeEscalation;
+			const active = scope.activeEscalation;
 			// Without a backstop the worker's own timer is the window, and no parent may stretch it.
 			if (active === null || active.requestId !== requestId || escalationConfig?.backstopMs === undefined) return false;
 			const at = performance.now();
