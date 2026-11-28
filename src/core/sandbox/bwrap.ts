@@ -102,7 +102,12 @@ export function buildBwrapInvocation(
 	const args: string[] = ["--die-with-parent", "--new-session", "--unshare-pid", "--unshare-ipc", "--unshare-uts"];
 	if (!spec.network) args.push("--unshare-net");
 	args.push("--ro-bind", "/", "/", "--dev", "/dev", "--proc", "/proc");
-	const hidden = uniquePaths(spec.readRestriction?.hidden);
+	// A directory a whole-directory mask already covers, such as /mnt/wslg/distro under WSL2's /mnt/wslg, would be
+	// buried by that mask and its read-only remount would find no mount point.
+	const blanket = spec.maskedPaths.filter((mask) => mask.kind === "directory" && (mask.reveal ?? []).length === 0);
+	const hidden = uniquePaths(spec.readRestriction?.hidden).filter(
+		(dir) => !blanket.some((mask) => isSameOrDescendant(dir, bindPath(mask.path))),
+	);
 	for (const dir of hidden) args.push("--tmpfs", dir);
 	for (const entry of uniquePaths(spec.readRestriction?.exposed)) args.push("--ro-bind-try", entry, entry);
 	for (const link of spec.readRestriction?.links ?? []) args.push("--symlink", link.target, bindPath(link.path));

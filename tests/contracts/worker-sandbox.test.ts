@@ -466,6 +466,9 @@ test("under bwrap listed home reads hide the home but for the run's roots and th
 	});
 	assert.ok(!(plan instanceof Error), String(plan));
 	assert.deepEqual(plan.restriction.links, [{ path: join(home, "linked"), target: tool }]);
+	// WSL2's /mnt/wslg/distro shape: a hidden directory inside one a whole-directory mask already covers.
+	const interop = join(scratch, "wslg");
+	mkdirSync(join(interop, "distro"), { recursive: true });
 	const invocation = buildBwrapInvocation(
 		{
 			command: {
@@ -488,8 +491,11 @@ test("under bwrap listed home reads hide the home but for the run's roots and th
 			// Under a hidden directory and outside every shown root, a bind or mask would show its path again.
 			readOnlyPaths: [join(project, ".git"), join(home, ".config")],
 			network: false,
-			maskedPaths: [{ path: join(home, ".gitconfig"), kind: "file" }],
-			readRestriction: plan.restriction,
+			maskedPaths: [
+				{ path: join(home, ".gitconfig"), kind: "file" },
+				{ path: interop, kind: "directory" },
+			],
+			readRestriction: { ...plan.restriction, hidden: [...plan.restriction.hidden, join(interop, "distro")] },
 			setEnv: { HOME: home },
 		},
 		availability.executable ?? "bwrap",

@@ -807,7 +807,7 @@ const EXTRA_HELP: Record<string, [string, string]> = {
 	],
 	"safety.homeReads.toolchains": [
 		"Home read toolchains",
-		"Toolchain installs in your home that listed home reads show back read-only, each a fixed set of paths: nvm (~/.nvm), pyenv (~/.pyenv), rustup (~/.rustup), cargo (~/.cargo), go (~/go, ~/.config/go), uv (~/.local/share/uv, ~/.config/uv, ~/.local/bin/uv and uvx). User settings only.",
+		"Toolchain installs in your home that listed home reads show back read-only, each a fixed set of paths: nvm (~/.nvm), pyenv (~/.pyenv), rustup (~/.rustup and the proxies in ~/.cargo), cargo (~/.cargo), go (~/go, ~/.config/go), uv (~/.local/share/uv, ~/.config/uv, ~/.local/bin/uv and uvx). User settings only.",
 	],
 	"interface.demo": [
 		"Demo presentation and guidance",

@@ -14,7 +14,8 @@ import type { HomeReadList, HomeReadMode, HomeReadToolchain } from "./types.js";
 export const HOME_READ_TOOLCHAIN_PATHS: Readonly<Record<HomeReadToolchain, ReadonlyArray<string>>> = {
 	nvm: [".nvm"],
 	pyenv: [".pyenv"],
-	rustup: [".rustup"],
+	// rustup installs its cargo and rustc proxies in ~/.cargo/bin.
+	rustup: [".rustup", ".cargo"],
 	cargo: [".cargo"],
 	go: ["go", ".config/go"],
 	uv: [".local/share/uv", ".config/uv", ".local/bin/uv", ".local/bin/uvx"],
