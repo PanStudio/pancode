@@ -2,9 +2,9 @@
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import { listStateDirectory, withinStateRootAsync } from "../../core/state-boundary.js";
 import type { JournalPayload, PreimageEventName } from "../../core/telemetry/events.js";
+import { telemetrySessionDirectory, telemetrySessionsDirectory } from "../../core/telemetry/paths.js";
 import { readCallJournal } from "./call-journal.js";
 import { readTelemetryObject } from "./objects.js";
-import { telemetrySessionDirectory, telemetrySessionsDirectory } from "./paths.js";
 
 const SAFE_ID = /^[a-zA-Z0-9_-]+$/u;
 

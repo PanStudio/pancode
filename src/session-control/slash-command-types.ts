@@ -643,7 +643,7 @@ interface SessionCommandContext {
 	setEditorText?: (text: string) => void;
 	/**
 	 * Run compaction for the current session. Handler resolves the target
-	 * model, reads session entries, calls session/compaction/compact, and
+	 * model, reads session entries, calls memory/compaction/compact, and
 	 * appends a compactionSummary entry. No-op when no session is open, so the
 	 * handler prints an actionable stderr line instead.
 	 */

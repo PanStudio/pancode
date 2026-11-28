@@ -18,6 +18,13 @@ import type {
 import type { SegmentHeader, TelemetryRecord } from "../../core/telemetry/envelope.js";
 import type { ScopeSealed } from "../../core/telemetry/host-schemas.js";
 import { ScopeSealedSchema, ShareProfileSchema } from "../../core/telemetry/host-schemas.js";
+import {
+	TELEMETRY_BUNDLE_FILE,
+	TELEMETRY_JOURNAL_FILE,
+	TELEMETRY_SEAL_MARKER_FILE,
+	telemetryJournalFiles,
+	telemetryObjectsDirectory,
+} from "../../core/telemetry/paths.js";
 import type { SegmentScan, TelemetryChain } from "../../core/telemetry/segment.js";
 import {
 	chainTelemetryLine,
@@ -25,13 +32,6 @@ import {
 	scanTelemetrySegment,
 	telemetryChainHead,
 } from "../../core/telemetry/segment.js";
-import {
-	TELEMETRY_BUNDLE_FILE,
-	TELEMETRY_JOURNAL_FILE,
-	TELEMETRY_SEAL_MARKER_FILE,
-	telemetryJournalFiles,
-	telemetryObjectsDirectory,
-} from "./paths.js";
 
 /**
  * Seals and sealed scope bundles (#434). Closing a scope appends a `<kind>.sealed` record over the journal's hash

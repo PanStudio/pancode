@@ -3,10 +3,10 @@
 import { bashSecretValues } from "../core/bash-exec.js";
 import { PANE_PEER_IDS, type PanePeerId } from "../core/pane-peers.js";
 import { UNTRUSTED_CONTENT_BANNER } from "../core/untrusted-content.js";
-import { maskCommandOutput } from "../domains/evidence/output-mask.js";
 import type { PanesOperations } from "../domains/mux/operations.js";
 import { PANE_INTERRUPT_KEYS, PANES_PRESET_IDS, type PaneInterruptKey } from "../domains/mux/operations.js";
 import { flowHandoffRefusal } from "../domains/safety/information-flow.js";
+import { maskCommandOutput } from "../lib/output-mask/output-mask.js";
 import { panesToolSurface } from "./panes-surface.js";
 import type { RegistryDeps } from "./registry-contract.js";
 import type { ToolResult, ToolSpec } from "./tool-spec.js";

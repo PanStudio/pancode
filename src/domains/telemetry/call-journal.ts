@@ -22,6 +22,16 @@ import type { ClockOrigin, SegmentHeader, TelemetryRecord } from "../../core/tel
 import { makeTelemetryRecord, readTelemetryRecord } from "../../core/telemetry/envelope.js";
 import type { EventPayload, JournalEventName, PreimageEventName } from "../../core/telemetry/events.js";
 import { PREIMAGE_SUBJECTS } from "../../core/telemetry/events.js";
+import {
+	TELEMETRY_JOURNAL_FILE,
+	telemetryBundlePath,
+	telemetryJournalFiles,
+	telemetryJournalPath,
+	telemetrySealMarkerPath,
+	telemetrySegmentFile,
+	telemetrySegmentSequence,
+	telemetrySessionDirectory,
+} from "../../core/telemetry/paths.js";
 import type { PendingTelemetry, TelemetrySink } from "../../core/telemetry/producer.js";
 import {
 	registerProcessJournalSink,
@@ -40,16 +50,6 @@ import {
 } from "../../core/telemetry/segment.js";
 import { createRedactionTally, redactSecretsDeep } from "../../lib/secrets/redact.js";
 import { createTelemetryPreimages, storeTelemetryObject } from "./objects.js";
-import {
-	TELEMETRY_JOURNAL_FILE,
-	telemetryBundlePath,
-	telemetryJournalFiles,
-	telemetryJournalPath,
-	telemetrySealMarkerPath,
-	telemetrySegmentFile,
-	telemetrySegmentSequence,
-	telemetrySessionDirectory,
-} from "./paths.js";
 import type { ScopeFileEntry } from "./seal.js";
 import {
 	describeSealMismatch,

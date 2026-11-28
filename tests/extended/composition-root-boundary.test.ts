@@ -13,8 +13,8 @@ describe("composition root boundary (rule15)", () => {
 	});
 
 	it("rejects a feature internal by module path or by name through a barrel", () => {
-		const byPath = checkCompositionRoot(ROOT, 'import { anything } from "../domains/session/compaction/compact.js";');
-		ok(byPath.some((line) => line.includes("src/domains/session/compaction/compact.ts")));
+		const byPath = checkCompositionRoot(ROOT, 'import { anything } from "../domains/memory/compaction/compact.js";');
+		ok(byPath.some((line) => line.includes("src/domains/memory/compaction/compact.ts")));
 		const byName = checkCompositionRoot(ROOT, 'import { openCallScope } from "../domains/telemetry/index.js";');
 		ok(byName.some((line) => line.startsWith("rule15:") && line.includes("openCallScope")));
 	});
@@ -24,8 +24,8 @@ describe("composition root boundary (rule15)", () => {
 			checkCompositionRoot(
 				ROOT,
 				[
-					'import type { CompactInput } from "../domains/session/compaction/compact.js";',
-					'import { type CompactResult } from "../domains/session/compaction/compact.js";',
+					'import type { CompactInput } from "../domains/memory/compaction/compact.js";',
+					'import { type CompactResult } from "../domains/memory/compaction/compact.js";',
 				].join("\n"),
 			),
 			[],

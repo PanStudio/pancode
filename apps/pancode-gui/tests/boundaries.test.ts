@@ -143,7 +143,7 @@ const testModules = new Set([
 	"tests/harness/telemetry-view.ts",
 	"tests/harness/telemetry-lies.ts",
 	"src/domains/telemetry/call-journal.ts",
-	"src/domains/telemetry/paths.ts",
+	"src/core/telemetry/paths.ts",
 	"src/core/xdg.ts",
 	"src/domains/telemetry/index.ts",
 	// The fixture child serves telemetry the CLI's own live model computes from records the CLI's encoder writes.

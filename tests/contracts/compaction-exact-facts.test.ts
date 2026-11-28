@@ -6,12 +6,12 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
+import { compact } from "../../src/domains/memory/compaction/compact.js";
 import {
 	buildLivePrefixUserText,
 	buildTurnPrefixUserText,
 	buildUserText,
 } from "../../src/domains/memory/compaction-prompts.js";
-import { compact } from "../../src/domains/session/compaction/compact.js";
 import type { MessageEntry, SessionEntry } from "../../src/domains/session/entries.js";
 import { registerEngineFauxProvider } from "../../src/engine/api-registry.js";
 import { syntheticCompactionSummary } from "../harness/compaction-summary.js";

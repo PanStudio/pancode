@@ -50,6 +50,13 @@ import { createRunCallUsage, runUsageFromCallRecords } from "../../src/domains/d
 
 const emptySum = sumFacts([]);
 
+import {
+	telemetryBundlePath,
+	telemetryProcessDirectory,
+	telemetryProcessesDirectory,
+	telemetryRunDirectory,
+	telemetrySessionDirectory,
+} from "../../src/core/telemetry/paths.js";
 import { defaultRunEventJournal } from "../../src/domains/dispatch/run-event-journal.js";
 import { runFeedPath } from "../../src/domains/dispatch/run-feed.js";
 import { openRunTelemetry } from "../../src/domains/dispatch/run-telemetry.js";
@@ -88,13 +95,6 @@ import {
 	telemetryCommitment,
 	telemetryPromptStructure,
 } from "../../src/domains/telemetry/objects.js";
-import {
-	telemetryBundlePath,
-	telemetryProcessDirectory,
-	telemetryProcessesDirectory,
-	telemetryRunDirectory,
-	telemetrySessionDirectory,
-} from "../../src/domains/telemetry/paths.js";
 import { createProcessJournal } from "../../src/domains/telemetry/process-journal.js";
 import {
 	applyTelemetryPrune,

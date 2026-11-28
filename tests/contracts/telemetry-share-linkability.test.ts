@@ -7,10 +7,10 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { settingsFingerprintCommitment } from "../../src/core/telemetry/host-schemas.js";
 import { newProcessId } from "../../src/core/telemetry/ids.js";
+import { telemetryProcessDirectory } from "../../src/core/telemetry/paths.js";
 import { scanTelemetrySegment } from "../../src/core/telemetry/segment.js";
 import { openCallJournal } from "../../src/domains/telemetry/call-journal.js";
 import { telemetryCommitment } from "../../src/domains/telemetry/objects.js";
-import { telemetryProcessDirectory } from "../../src/domains/telemetry/paths.js";
 import {
 	packShare,
 	planShare,

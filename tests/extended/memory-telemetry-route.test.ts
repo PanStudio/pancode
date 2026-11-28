@@ -5,6 +5,7 @@ import { test } from "node:test";
 import { DEFAULT_SETTINGS } from "../../src/core/defaults.js";
 import { validPayload } from "../../src/core/telemetry/events.js";
 import { newAttemptId, newCallId } from "../../src/core/telemetry/ids.js";
+import { telemetrySessionDirectory } from "../../src/core/telemetry/paths.js";
 import type { PendingTelemetry } from "../../src/core/telemetry/producer.js";
 import { beginCall, registerTelemetrySink } from "../../src/core/telemetry/producer.js";
 import type { SideShareFacts } from "../../src/domains/memory/background-budget.js";
@@ -21,7 +22,6 @@ import { readTaskMemorySpendSummary } from "../../src/domains/memory/task-memory
 import type { ProvidersContract } from "../../src/domains/providers/index.js";
 import { callSettlementFromMessage } from "../../src/domains/telemetry/call-facts.js";
 import { openCallJournal } from "../../src/domains/telemetry/call-journal.js";
-import { telemetrySessionDirectory } from "../../src/domains/telemetry/paths.js";
 import { createLiveTelemetryModel } from "../../src/domains/telemetry/telemetry-live.js";
 import { makeScratchHome } from "../harness/scratch-env.js";
 

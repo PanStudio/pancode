@@ -132,7 +132,7 @@ async function completeRunJournal(
 	ownerMayLive = false,
 ): Promise<void> {
 	const { openCallJournal, readCallJournal } = await import("../telemetry/call-journal.js");
-	const { telemetryBundlePath } = await import("../telemetry/paths.js");
+	const { telemetryBundlePath } = await import("../../core/telemetry/paths.js");
 	const { existsSync } = await import("node:fs");
 	const read = await readCallJournal(directory);
 	const settled = read.records.some(({ record }) => record.k === "run.settled");
