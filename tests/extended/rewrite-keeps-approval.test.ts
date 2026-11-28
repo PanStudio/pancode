@@ -206,23 +206,18 @@ describe("an approved dispatch rewritten by a before_tool hook", () => {
 		}
 	});
 
-	it("judges write roots by the intent when a top-level writeRoots: [] rides along", async () => {
-		// WX4: request.writeRoots took the legacy [] and read the confined original as unrestricted.
-		const home = process.cwd();
-		const cwd = mkdtempSync(join(tmpdir(), "rewrite-keeps-approval-"));
-		try {
-			mkdirSync(join(cwd, "src"));
-			mkdirSync(join(cwd, "lib"));
-			symlinkSync("../lib", join(cwd, "src", "vendor"));
-			process.chdir(cwd);
-			const options = { original: [task("src/"), task("lib/")], args: { writeRoots: [], writers: 1 } };
-			const emptied = { task: "Edit the module.", intent: { write_roots: [] } };
-			refusedApproval(await approvedDispatch([emptied, task("lib/")], options));
-			refusedApproval(await approvedDispatch([task("src/vendor/"), task("lib/")], options));
-		} finally {
-			process.chdir(home);
-			rmSync(cwd, { recursive: true, force: true });
-		}
+	it("refuses a top-level writeRoots before any approval, so a legacy [] never widens a confined call", async () => {
+		// WX4: request.writeRoots took the legacy [] and read the confined original as unrestricted; dispatch now
+		// refuses the field it does not declare, before the call is admitted.
+		const options = { original: [task("src/"), task("lib/")], args: { writeRoots: [], writers: 1 } };
+		const emptied = { task: "Edit the module.", intent: { write_roots: [] } };
+		const { verdict, asks, ran } = await approvedDispatch([emptied, task("lib/")], options);
+		strictEqual(asks, 0);
+		match(
+			verdict.kind === "ok" && verdict.result.kind === "error" ? verdict.result.message : "",
+			/unknown field writeRoots; nothing was dispatched/,
+		);
+		deepStrictEqual(ran, []);
 	});
 });
 
