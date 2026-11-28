@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { readPref, writePref } from "../interaction/prefs.js";
 import { clampWidth, storedWidthValue } from "./splitter-model.js";
 import "./splitter.css";
 
@@ -40,20 +41,11 @@ const KEY_STEP_LARGE = 64;
 const COLLAPSE_SLACK = 72;
 
 function storedWidth(spec: SplitterSpec): number | null {
-	try {
-		return storedWidthValue(spec, localStorage.getItem(spec.storageKey));
-	} catch {
-		return null;
-	}
+	return storedWidthValue(spec, readPref(spec.storageKey));
 }
 
 function remember(spec: SplitterSpec, width: number | null): void {
-	try {
-		if (width === null) localStorage.removeItem(spec.storageKey);
-		else localStorage.setItem(spec.storageKey, String(width));
-	} catch {
-		// The width holds for this tab.
-	}
+	writePref(spec.storageKey, width === null ? null : String(width));
 }
 
 /**
