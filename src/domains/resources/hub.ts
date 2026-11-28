@@ -32,6 +32,7 @@ import {
 	pluginLocalPath,
 	readPluginCatalog,
 } from "../plugins/catalog.js";
+import type { HubPackageEntry, HubRequirementRef } from "../plugins/hub-types.js";
 import {
 	installPlugin,
 	type PluginExpectedState,
@@ -49,7 +50,6 @@ import {
 	readHubInstallRecord,
 } from "./hub-packages.js";
 import { remoteIndexRows } from "./hub-trust.js";
-import type { HubPackageEntry, HubRequirementRef } from "./hub-types.js";
 import { type HubPackageValidationResult, validateHubPackage } from "./hub-validation.js";
 import { bareSkillRemedy, isBareSkillDirectory } from "./skills/bare-skill.js";
 

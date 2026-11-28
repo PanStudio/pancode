@@ -8,12 +8,12 @@ import { readAcpArtifact } from "../../src/acp/artifacts.js";
 import type { RunEnvelope, RunResultDraft } from "../../src/domains/dispatch/types.js";
 import type { SessionMeta } from "../../src/domains/session/contract.js";
 import type { MessageEntry } from "../../src/domains/session/entries.js";
+import { recordedRunAnswerLines } from "../../src/interactive/fleet-run-history.js";
 import {
 	DispatchArtifactProvider,
 	RunRecordArtifactProvider,
 	ScreenshotArtifactProvider,
-} from "../../src/domains/session/view-artifacts.js";
-import { recordedRunAnswerLines } from "../../src/interactive/fleet-run-history.js";
+} from "../../src/session-control/view-artifacts.js";
 import { fixtureEnvelope, fixtureReceiptDraft } from "../harness/receipt.js";
 import { isolatePancodeEnv } from "../harness/scratch-env.js";
 import { writeSettledRun } from "../harness/settled-run.js";

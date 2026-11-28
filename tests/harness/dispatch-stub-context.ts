@@ -22,6 +22,7 @@ import { createMiddlewareBundle } from "../../src/domains/middleware/module.js";
 import type { ProvidersContract, RuntimeDescriptor, TargetStatus } from "../../src/domains/providers/index.js";
 import { EMPTY_CAPABILITIES } from "../../src/domains/providers/index.js";
 import type { TargetDescriptor } from "../../src/domains/providers/types/target-descriptor.js";
+import { loadSkills } from "../../src/domains/resources/skills/loader.js";
 import type { SafetyContract } from "../../src/domains/safety/contract.js";
 import { isSubset, READONLY_SCOPE, WORKSPACE_SCOPE } from "../../src/domains/safety/scope.js";
 import type { SchedulingContract } from "../../src/domains/scheduling/contract.js";
@@ -110,7 +111,7 @@ export function dispatchStubContext(options: DispatchStubOptions = {}): DomainCo
 		isSubset,
 		decisions: {},
 	};
-	const builtinRecipes = loadRecipesFromDir({
+	const builtinRecipes = loadRecipesFromDir(loadSkills, {
 		dir: join(resolvePackageRoot(), "src", "domains", "agents", "builtins"),
 		source: "builtin",
 		cwd: process.cwd(),

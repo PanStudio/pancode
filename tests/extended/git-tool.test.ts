@@ -7,6 +7,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
 import { ToolNames } from "../../src/core/tool-names.js";
 import { discoverAgentRecipes } from "../../src/domains/agents/registry.js";
+import { loadSkills } from "../../src/domains/resources/skills/loader.js";
 import { createWorkerSafety, createWorkerToolRegistry } from "../../src/engine/worker-tools.js";
 import { createWorkerGitContext } from "../../src/tools/git-exec.js";
 import { gitCallIdentity } from "../../src/tools/git-inspect.js";
@@ -33,7 +34,7 @@ function git(cwd: string, ...args: string[]): string {
 }
 
 it("offers read-only git inspection to researcher, including the council profile", () => {
-	const researcher = discoverAgentRecipes(process.cwd()).find(
+	const researcher = discoverAgentRecipes(loadSkills, process.cwd()).find(
 		(recipe) => recipe.id === "researcher" && recipe.source === "builtin",
 	);
 	ok(researcher?.toolRequirements.optional.includes(ToolNames.Git));
