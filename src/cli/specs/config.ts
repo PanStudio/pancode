@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
-import { defineCommandSpec } from "../kit/help.js";
+import { defineCommandSpec } from "../lib/help.js";
 
 export const spec = defineCommandSpec({
 	path: ["config"],
@@ -83,9 +83,9 @@ as in: pancode config set <path> -- -1
                     and the bytes written are approved
   --json            one JSON object: version, path, scope, value, file
 
-Routing (chat.target, chat.model, fleet.*, context.memory.target,
-context.memory.model, targets) is refused: use pancode targets use, pancode
-targets profile, or pancode configure. List and structured settings are edited
+Routing (chat.connection, chat.model, fleet.*, context.memory.connection,
+context.memory.model, connections) is refused: use pancode connections use, pancode
+connections profile, or pancode configure. List and structured settings are edited
 with pancode configure --settings or in the settings file.
 
 An unknown path or an invalid value exits 2 and writes nothing.

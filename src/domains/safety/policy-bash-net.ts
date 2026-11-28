@@ -71,12 +71,23 @@ export function evaluateBashPolicy(
 		};
 	}
 
+	// A recognized read-only loop proves every value its variable and its `$(find ...)` list can take, so the
+	// hidden-content and substitution rails judge the command with those words masked: any other variable or
+	// substitution still asks.
+	const loopChain =
+		typeof input === "string" &&
+		/(?:^|[\s;&|])for\s/u.test(command) &&
+		bareInlineShellScript(command) === null &&
+		decodedAnsiCCommand(command) === null
+			? { chain: recognizeCommandChain(command, callCwd, workspaceRoot, policy, readScope) }
+			: null;
+	const railCommand = maskSpans(command, loopChain?.chain?.provenSpans ?? []);
 	if (
 		typeof input === "string" &&
 		posture !== "confirmed" &&
 		!contained &&
 		!hiddenContentContained &&
-		hidesShellContent(command, posture)
+		hidesShellContent(railCommand, posture)
 	) {
 		return {
 			kind: "ask",
@@ -144,7 +155,8 @@ export function evaluateBashPolicy(
 	const recognitionSource = bareInlineShellScript(command) ?? command;
 	const recognitionCommand = decodedAnsiCCommand(recognitionSource) ?? recognitionSource;
 	if (
-		(hasCommandSubstitution(command) || hasCommandSubstitution(recognitionCommand)) &&
+		(hasCommandSubstitution(railCommand) ||
+			(recognitionCommand !== command && hasCommandSubstitution(recognitionCommand))) &&
 		posture !== "confirmed" &&
 		posture !== "yolo" &&
 		!contained
@@ -225,7 +237,10 @@ export function evaluateBashPolicy(
 			execRecognition: "recognized",
 		};
 	}
-	const chain = recognizeCommandChain(recognitionCommand, callCwd, workspaceRoot, policy, readScope);
+	const chain =
+		loopChain !== null
+			? loopChain.chain
+			: recognizeCommandChain(recognitionCommand, callCwd, workspaceRoot, policy, readScope);
 	if (chain !== null) {
 		const chainReasons = [
 			`every step of the command is recognized: ${chain.ruleIds.join(", ")}`,
@@ -319,6 +334,14 @@ export function evaluateBashPolicy(
 		policySource: "builtin-command-allowlist",
 		execRecognition: "unrecognized",
 	};
+}
+
+/** The command with each span replaced by a plain word. */
+function maskSpans(command: string, spans: ReadonlyArray<{ start: number; end: number }>): string {
+	let masked = command;
+	for (const { start, end } of [...spans].sort((a, b) => b.start - a.start))
+		masked = `${masked.slice(0, start)}x${masked.slice(end)}`;
+	return masked;
 }
 
 /** Rule id of the ask for a command whose variables or interpreter source hide the paths it touches. */

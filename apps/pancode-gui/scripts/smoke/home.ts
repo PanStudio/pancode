@@ -106,7 +106,7 @@ export async function homeSteps(run: SmokeRun) {
 			assert.equal(await opener.evaluate((node) => document.activeElement === node), true);
 		}
 	});
-	await step("theme choice and toolchain", async () => {
+	await step("theme choice and programs", async () => {
 		// Install, the browser's connection and the theme moved from the masthead to General settings.
 		await navigate("General");
 		await page.locator("main").getByRole("heading", { name: "General", exact: true }).waitFor();
@@ -124,11 +124,11 @@ export async function homeSteps(run: SmokeRun) {
 		await page.getByRole("radio", { name: /^System/ }).check({ force: true });
 		await page.locator(":root:not([data-theme])").waitFor();
 		assert.equal(await page.evaluate(() => localStorage.getItem("pancode-gui-theme")), "system");
-		await navigate("Toolchain");
+		await navigate("Programs");
 		await page.getByRole("article", { name: "herdr", exact: true }).waitFor();
-		await check("toolchain");
+		await check("programs");
 		if (width === 1600 || width === 390)
-			await page.screenshot({ path: join(output, `toolchain-${width}.png`), fullPage: true });
+			await page.screenshot({ path: join(output, `programs-${width}.png`), fullPage: true });
 	});
 	await step("stale bundle notice", async () => {
 		// A window whose bundle was built for another version than the server's says so and offers a reload, which it

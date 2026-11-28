@@ -50,8 +50,8 @@ import {
 	posixRuntimeDirPlan,
 	renderPosixShellShim,
 } from "../../src/domains/mux/workspace/platform-posix.js";
-import { installPinnedTool, mirroredSources } from "../../src/lib/programs/install.js";
-import { findPinnedTool } from "../../src/lib/programs/registry.js";
+import { installPinnedProgram, mirroredSources } from "../../src/lib/programs/install.js";
+import { findPinnedProgram } from "../../src/lib/programs/registry.js";
 
 const SESSION = "pancode-0123456789ab";
 /** The hashed name the short fallbacks carry: the uid and PanCode's state root. */
@@ -1087,7 +1087,7 @@ describe("doctor's panes binary row", () => {
 			}
 			rmSync(scratch, { recursive: true, force: true });
 		});
-		const pin = findPinnedTool("herdr");
+		const pin = findPinnedProgram("herdr");
 		ok(pin);
 		// A PATH herdr that meets the floor, which the private host still never runs.
 		const bin = join(scratch, "bin");
@@ -1173,7 +1173,7 @@ describe("toolchain mirror", () => {
 		const alpha = fixture("alpha", "1.0.0");
 		const beta = fixture("beta", "2.0.0");
 		const install = (entry: typeof alpha.entry, mirror: string, root: string) =>
-			installPinnedTool(entry, { root, platform: "linux-x64", mirror });
+			installPinnedProgram(entry, { root, platform: "linux-x64", mirror });
 
 		const namespaced = join(scratch, "namespaced");
 		for (const tool of [alpha, beta]) {

@@ -187,7 +187,7 @@ describe("a typed triage ask on anthropic-max", () => {
 		const applied: TriageVerdict[] = [];
 		let side = 0;
 		await runTriageRound({
-			triage: { target: null, minQueued: 1, timeoutMs: 5_000 },
+			triage: { connection: null, minQueued: 1, timeoutMs: 5_000 },
 			systemOne: {
 				bound: () => true,
 				ask: (point, object, options) => runner.ask([route], point, object, options ?? {}),

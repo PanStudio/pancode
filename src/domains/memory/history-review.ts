@@ -24,6 +24,7 @@ import { safeResourceWrite } from "../../core/safe-resource-write.js";
 import { withStateFileLockSync } from "../../core/state-file-lock.js";
 import { ToolNames } from "../../core/tool-names.js";
 import { effectiveToolCall, gatewayChainReceipts } from "../../core/tool-surface.js";
+import { redactForMemoryRoute } from "../../lib/secrets/memory-route.js";
 import type { SessionEntry } from "../session/index.js";
 import type { SessionLedgerStat } from "../session/related-ledgers.js";
 import { sessionLedgersForRoots } from "../session/related-ledgers.js";
@@ -32,7 +33,6 @@ import { recordObservedRead, repositoryRelativePath } from "./lesson-evidence.js
 import { observationDigest } from "./observations.js";
 import { relatedRepositoryRoots } from "./operations.js";
 import { entriesBeforeMemoryOff, isMemoryOffEntry } from "./recording-marker.js";
-import { redactForMemoryRoute } from "./secret-text.js";
 import { shortText } from "./util.js";
 
 export interface CompletedLessonSource {
@@ -197,7 +197,7 @@ const TASK_MAX_CHARS = 300;
 const DIAGNOSTIC_MAX_CHARS = 160;
 const READ_EXCERPT_MAX_CHARS = 240;
 /** Persisted flow labels; the same custom entry type `src/entry/flow-ledger.ts` writes. */
-const FLOW_RESTRICTION_ENTRY_TYPE = "pancode_flow_restriction";
+const FLOW_RESTRICTION_ENTRY_TYPE = "pancode_flow_restrictions";
 
 /**
  * Shell inspection that teaches nothing about how this repository works on its

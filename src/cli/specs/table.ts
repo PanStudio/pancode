@@ -11,7 +11,7 @@
  * generated from the 0.8.5 root help, the `dev` listing and the handler
  * comments, so `hidden` marks exactly what the default root help leaves out.
  */
-import type { CommandSpec } from "../kit/help.js";
+import type { CommandSpec } from "../lib/help.js";
 
 interface CommandSpecModule {
 	readonly spec: CommandSpec;
@@ -22,7 +22,7 @@ export const COMMAND_SPECS = {
 	auth: () => import("./auth.js"),
 	config: () => import("./config.js"),
 	configure: () => import("./configure.js"),
-	targets: () => import("./targets.js"),
+	connections: () => import("./targets.js"),
 	models: () => import("./models.js"),
 	agents: () => import("./agents.js"),
 	evidence: () => import("./evidence.js"),
@@ -44,7 +44,7 @@ export const COMMAND_SPECS = {
 	store: () => import("./store.js"),
 	verifiers: () => import("./verifiers.js"),
 	gui: () => import("./gui.js"),
-	share: () => import("./share.js"),
+	archive: () => import("./archive.js"),
 	context: () => import("./context.js"),
 	run: () => import("./run.js"),
 	programs: () => import("./programs.js"),

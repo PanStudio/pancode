@@ -49,7 +49,7 @@ export function envelopeLines(envelope: ExtensionCapabilityEnvelope, extensionId
 		...(envelope.services?.embedding ? ["Host services: embedding requests to the configured model"] : []),
 		...(envelope.services?.model
 			? [
-					`Model completions: from the one model you assign${extensionId === undefined ? "" : ` (pancode extensions services ${extensionId} --model <target>/<model>)`}, up to ${envelope.services.model.sessionTokens} tokens a session and ${envelope.services.model.maxOutputTokens} a reply; never in fleet worker hooks`,
+					`Model completions: from the one model you assign${extensionId === undefined ? "" : ` (pancode extensions services ${extensionId} --model <connection>/<model>)`}, up to ${envelope.services.model.sessionTokens} tokens a session and ${envelope.services.model.maxOutputTokens} a reply; never in fleet worker hooks`,
 				]
 			: []),
 		...(envelope.services?.store

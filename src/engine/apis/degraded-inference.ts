@@ -205,7 +205,7 @@ export function createDegradedInferenceStream(options: WatchDegradedInferenceOpt
 			const rate = report.tokensPerSecond.toFixed(2);
 			const residentLine =
 				residents === undefined
-					? "The resident models on the target could not be listed."
+					? "The resident models on the connection could not be listed."
 					: `Resident there: ${residents}.`;
 			emitDegradedNotice({
 				kind: "degraded",

@@ -9,7 +9,13 @@ import type { TurnConstraints } from "../core/turn-constraints.js";
 import type { NotificationLevel } from "../core/views/notice-words.js";
 import type { AgentsContract } from "../domains/agents/contract.js";
 import { foldWorkingSet } from "../domains/context/working-set/fold.js";
-import type { DispatchContract, FleetRunPreview, FleetRunPreviewInput } from "../domains/dispatch/index.js";
+import { type FleetStepCounts, fleetLoopText, fleetStepCountText } from "../domains/dispatch/fleet-step-words.js";
+import type {
+	DispatchContract,
+	FleetRunOutcome,
+	FleetRunPreview,
+	FleetRunPreviewInput,
+} from "../domains/dispatch/index.js";
 import {
 	agentRoleFactsResolver,
 	compileFleetRunPreview,
@@ -34,8 +40,6 @@ import { foldRecallTelemetry } from "../domains/session/recall-telemetry.js";
 import { foldSessionArtifacts } from "../domains/session/session-artifacts.js";
 import { foldSessionTaskHistory } from "../domains/session/task-board.js";
 import { filterEntriesToActivePath } from "../domains/session/tree/active-path.js";
-import type { ArtifactProviderDeps } from "../domains/session/view-artifacts.js";
-import { createDefaultArtifactProviders } from "../domains/session/view-artifacts.js";
 import type { GitChanges } from "../domains/session/workspace/git-probe.js";
 import { probeGitChangesAsync } from "../domains/session/workspace/git-probe.js";
 import type { SystemOne } from "../domains/system-one/index.js";
@@ -52,11 +56,13 @@ import type {
 	FleetRunStartOptions,
 	UsageTab,
 } from "../session-control/slash-command-types.js";
+import type { ArtifactProviderDeps } from "../session-control/view-artifacts.js";
+import { createDefaultArtifactProviders } from "../session-control/view-artifacts.js";
 import type { OpenContextOverlayOptions } from "./context-overlay.js";
 import { openContextOverlay } from "./context-overlay.js";
 import { type createDispatchBoardView, dispatchBoardEscapeEntry, dispatchBoardHintEntries } from "./dispatch-board.js";
 import { planWithWorkerRows } from "./dispatch-board-store.js";
-import { planWarnedStepCount, renderFleetPlanCard } from "./dispatch-plan-card.js";
+import { planStepCounts, planWarnedStepCount, renderFleetPlanCard } from "./dispatch-plan-card.js";
 import type { FleetPlanRuns, FleetPlanRunView } from "./fleet-plan-runs.js";
 import { recordedRunAnswerLines } from "./fleet-run-history.js";
 import { progressNoticeKeys } from "./footer/notifications.js";
@@ -239,6 +245,39 @@ export interface OverlayGeneralOpeners {
 	startFleetRun(name: string, vars: Readonly<Record<string, string>>, options?: FleetRunStartOptions): void;
 }
 
+/**
+ * The settled notice states the card's own counts, so the two never give one run two different numbers. An unpriced
+ * run keeps the total a lower bound, never a measured $0.00 nobody put a number on, and steps whose worker finished
+ * with a warning say so, as their rows on the card do.
+ */
+function fleetSettledNotice(
+	name: string,
+	outcome: FleetRunOutcome,
+	plan: FleetPlanRunView | null | undefined,
+	warned: number,
+): { level: "info" | "success" | "warning"; text: string } {
+	const loopTotal = outcome.result?.loops?.length ?? 0;
+	const counts: FleetStepCounts = plan
+		? planStepCounts(plan)
+		: {
+				ran: outcome.ranStepCount,
+				planned: outcome.plannedStepCount,
+				succeeded: outcome.succeededStepCount,
+				required: outcome.requiredStepCount,
+				...(loopTotal > 0 ? { loops: { resolved: outcome.resolvedLoopCount, total: loopTotal } } : {}),
+			};
+	if (plan?.state === "cancelled") {
+		return { level: "info", text: `plan ${name}: canceled ${GLYPH.sep} ${fleetStepCountText(counts)} before the stop` };
+	}
+	const steps = `${fleetStepCountText(counts, warned === 0 ? "succeeded" : "finished")}${warned === 0 ? "" : `, ${warned} with warnings`}`;
+	const loops = counts.loops === undefined ? "" : `${fleetLoopText(counts.loops)}, `;
+	const cost = plan?.costText === null ? "no model calls" : `cost ${renderPricingSum(outcome.totalCost)}`;
+	return {
+		level: outcome.cleanRun && warned === 0 ? "success" : "warning",
+		text: `plan ${name}: ${steps}, ${loops}${cost}`,
+	};
+}
+
 export function createOverlayGeneralOpeners(deps: OverlayGeneralOpenersDeps): OverlayGeneralOpeners {
 	const openUsageOverlayFactory = deps.openUsageOverlay ?? openUsageOverlay;
 	const openContextOverlayFactory = deps.openContextOverlay ?? openContextOverlay;
@@ -318,7 +357,7 @@ export function createOverlayGeneralOpeners(deps: OverlayGeneralOpenersDeps): Ov
 			// The same receipt /rewind gives, so a cancelled reset is told apart from one that did nothing.
 			onCancel: () => {
 				deps.closeOverlay();
-				deps.notify("info", "context reset cancelled; no files changed", "context-reset:outcome");
+				deps.notify("info", "context reset canceled; no files changed", "context-reset:outcome");
 			},
 		});
 		deps.requestRender();
@@ -546,8 +585,8 @@ export function createOverlayGeneralOpeners(deps: OverlayGeneralOpenersDeps): Ov
 				},
 				activeRuntime: () => {
 					const settings = deps.getSettings?.();
-					const targetId = deps.getSessionMeta()?.target ?? settings?.chat.target;
-					const runtime = settings?.targets.find((target) => target.id === targetId)?.runtime;
+					const targetId = deps.getSessionMeta()?.target ?? settings?.chat.connection;
+					const runtime = settings?.connections.find((target) => target.id === targetId)?.runtime;
 					return runtime ? { kind: "runtime", key: runtime } : null;
 				},
 				activeAgent: () => null,
@@ -807,7 +846,7 @@ export function createOverlayGeneralOpeners(deps: OverlayGeneralOpenersDeps): Ov
 			},
 			onCancel: () => {
 				deps.closeOverlay();
-				deps.notify("info", `plan ${name}: cancelled; nothing was started`, "fleet-run:cancelled");
+				deps.notify("info", `plan ${name}: canceled; nothing was started`, "fleet-run:cancelled");
 			},
 		});
 		deps.requestRender();
@@ -881,21 +920,8 @@ export function createOverlayGeneralOpeners(deps: OverlayGeneralOpenersDeps): Ov
 				for (const key of [...progressNoticeKeys(fleetRootId), "fleet-run:in-flight"]) deps.dismissNotification?.(key);
 				const plan = deps.fleetPlans?.settle(fleetRootId, outcome);
 				const warned = plan ? planWarnedStepCount(appendPlanCard(plan)) : 0;
-				if (plan?.state === "cancelled") {
-					deps.notify(
-						"info",
-						`plan ${preview.name}: cancelled ${GLYPH.sep} ${outcome.succeededStepCount}/${outcome.requiredStepCount} steps succeeded before the stop`,
-						"fleet-run:settled",
-					);
-					return;
-				}
-				deps.notify(
-					outcome.cleanRun && warned === 0 ? "success" : "warning",
-					// An unpriced run keeps the total a lower bound, never a measured $0.00 nobody put a number on. Steps whose
-					// worker finished with a warning say so, as their rows on the card do.
-					`plan ${preview.name}: ${outcome.succeededStepCount}/${outcome.requiredStepCount} steps ${warned === 0 ? "succeeded" : `finished, ${warned} with warnings`}, ${plan?.loops === undefined ? "" : `${plan.loops.resolved}/${plan.loops.total} ${plan.loops.total === 1 ? "loop" : "loops"} resolved, `}${plan?.costText === null ? "no model calls" : `cost ${renderPricingSum(outcome.totalCost)}`}`,
-					"fleet-run:settled",
-				);
+				const settled = fleetSettledNotice(preview.name, outcome, plan, warned);
+				deps.notify(settled.level, settled.text, "fleet-run:settled");
 			})
 			.catch((error: unknown) => {
 				fleetInFlight = null;
@@ -905,7 +931,7 @@ export function createOverlayGeneralOpeners(deps: OverlayGeneralOpenersDeps): Ov
 				const failed = deps.fleetPlans?.fail(fleetRootId, error instanceof Error ? error.message : String(error));
 				if (failed?.state === "cancelled") {
 					appendPlanCard(failed);
-					deps.notify("info", `plan ${preview.name}: cancelled before every step settled`, "fleet-run:settled");
+					deps.notify("info", `plan ${preview.name}: canceled before every step settled`, "fleet-run:settled");
 					return;
 				}
 				if (error instanceof WriterSetBusyError) {

@@ -31,8 +31,8 @@ export function livePlanView(plan: SessionPlan): { title: string; rows: PlanRow[
 export function planCancellation(plan: SessionPlan | undefined): string | null {
 	const cancelled = plan?.cancelled ?? 0;
 	if (plan === undefined || cancelled === 0) return null;
-	if (plan.entries.length === 0) return "Plan cancelled";
-	return `${cancelled} cancelled ${cancelled === 1 ? "task" : "tasks"} not shown.`;
+	if (plan.entries.length === 0) return "Plan canceled";
+	return `${cancelled} canceled ${cancelled === 1 ? "task" : "tasks"} not shown.`;
 }
 
 export interface MemoryGuardianMark {

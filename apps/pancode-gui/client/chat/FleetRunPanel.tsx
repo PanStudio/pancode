@@ -65,7 +65,7 @@ export const FleetRunPanel = memo(function FleetRunPanel({
 				notify({
 					tone: "success",
 					title: `Fleet ${result.name} started`,
-					detail: `${result.stepCount} ${result.stepCount === 1 ? "step" : "steps"} under ${result.fleetRootId}. Their runs appear under Agents in the task pane.`,
+					detail: `${result.stepCount} ${result.stepCount === 1 ? "step" : "steps"} under ${result.fleetRootId}. Their runs appear under Agents in the session pane.`,
 				});
 				return;
 			}
@@ -88,7 +88,7 @@ export const FleetRunPanel = memo(function FleetRunPanel({
 	const view = ready ? fleetPlanView(ready) : null;
 	const content = (
 		<>
-			{!sessionOpen ? <p className="agents-note">This task is not open. Open it to run a playbook.</p> : null}
+			{!sessionOpen ? <p className="agents-note">This session is not open. Open it to run a playbook.</p> : null}
 			{sessionOpen && !supported ? <p className="agents-note">This PanCode session cannot preview playbooks.</p> : null}
 			{sessionOpen && supported ? (
 				<form

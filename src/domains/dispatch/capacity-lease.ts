@@ -908,7 +908,7 @@ export function describeEndpointCapacityHolders(holders: EndpointCapacityHolders
 export function endpointCapacityRemedy(endpointKey: string, input?: { rosterFloor?: number }): string {
 	const raise = maxConcurrentRequestsRemedy(
 		endpointKey,
-		"set this target's maxConcurrentRequests to the slot count the server was started with",
+		"set this connection's maxConcurrentRequests to the slot count the server was started with",
 	);
 	const ways = `${raise}, collect in-flight runs, or point workers at a second server`;
 	if (input?.rosterFloor === undefined) return `reduce the same-wave worker count, ${ways}`;

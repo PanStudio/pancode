@@ -123,7 +123,7 @@ export const ACP_MEMORY_META_KEY = "pancode/memory";
  * A client draws the chip from it; its actions are `remember scope <scope> <captureId>` and `remember undo <captureId>`
  * through `_pancode/commands/invoke`.
  */
-export const ACP_MEMORY_CAPTURE_META_KEY = "pancode/memory-capture";
+export const ACP_MEMORY_CAPTURE_META_KEY = "pancode/memoryCapture";
 export const ACP_TURN_META_KEY = "pancode/turn";
 /**
  * `{ durationMs }` on a terminal `tool_call_update`: the engine's own span for
@@ -134,7 +134,7 @@ export const ACP_TURN_META_KEY = "pancode/turn";
 export const ACP_TOOL_TIMING_META_KEY = "pancode/toolTiming";
 export const ACP_TRUNCATED_META_KEY = "pancode/truncated";
 export const ACP_TOOLS_META_KEY = "pancode/tools";
-export const ACP_RUN_RESULT_META_KEY = "pancode/run-result";
+export const ACP_RUN_RESULT_META_KEY = "pancode/runResult";
 export const ACP_DISPATCH_PLAN_META_KEY = "pancode/dispatchPlan";
 export const ACP_WORKSPACE_META_KEY = "pancode/workspace";
 export const ACP_PLAN_META_KEY = "pancode/plan";
@@ -483,7 +483,7 @@ export const AcpRuntimeComponent = Type.Union([Type.Literal("copilot-sdk"), Type
 /** `_meta["pancode/session"]` on a `session/new`, `session/load`, `session/resume`, fork or handoff result. */
 export interface AcpSessionResultMeta {
 	sessionId: string;
-	target: string | null;
+	connection: string | null;
 	model: string | null;
 	autonomy: string;
 	createdAt: string;
@@ -564,7 +564,7 @@ export type AcpCompactUsageMeta = Static<typeof AcpCompactUsageMetaSchema>;
 export const AcpTurnMetaSchema = Type.Object(
 	{
 		model: Type.Optional(Type.String({ maxLength: ACP_MAX_MODEL_ID_BYTES })),
-		target: Type.Optional(Type.String({ maxLength: ACP_MAX_TARGET_ID_BYTES })),
+		connection: Type.Optional(Type.String({ maxLength: ACP_MAX_TARGET_ID_BYTES })),
 		ttftMs: Type.Optional(Type.Number({ minimum: 0 })),
 		outputTokensPerSecond: Type.Optional(Type.Number({ minimum: 0 })),
 	},

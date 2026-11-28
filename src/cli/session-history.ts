@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 /**
- * `pancode session history|show|export|artifacts|rename|fork|rm|compact`: persisted sessions from the shell (SPEC L3, L3c).
+ * `pancode session history|show|export|artifacts|rename|fork|remove|compact`: persisted sessions from the shell (SPEC L3, L3c).
  * `session list` and `terminate` stay in session.ts and are untouched; session.ts answers `--help` for these leaves
  * before this module loads (C1).
  *
@@ -13,11 +13,11 @@
  * | artifacts <s> [read <id>] [--all-projects] [--json]       | nothing                 | allowed            | 0; 1 not_found/ambiguous; 2 usage      |
  * | rename <s> <name> [--json]                                | name entry and meta.json| 1 session_live     | 0; 1 not_found/ambiguous; 2 usage      |
  * | fork <s> [--at <turnId>] [--name <n>] [--json]            | a new session           | allowed            | 0; 1 not_found/ambiguous/io; 2 usage   |
- * | rm <s> [--yes] [--json]                                   | removes the session     | 1 session_live     | 0; 1 not_found/ambiguous/session_has_children/declined; 2 usage/confirmation_required |
+ * | remove <s> [--yes] [--json]                               | removes the session     | 1 session_live     | 0; 1 not_found/ambiguous/session_has_children/declined; 2 usage/confirmation_required |
  * | compact <s> [--instructions <text>] [--json]              | one compactionSummary   | 1 session_live     | 0; 1 not_found/ambiguous/io; 2 usage   |
  *
  * `<s>` is an id, unique id prefix or name (C13), resolved among this directory's sessions; `--all-projects`
- * widens reads only and is refused with exit 2 on rename, fork, rm and compact. `--yes` skips rm's question and never
+ * widens reads only and is refused with exit 2 on rename, fork, remove and compact. `--yes` skips remove's question and never
  * overrides `session_live` or `session_has_children`.
  *
  * compact (SPEC L3c) boots a headless session on `<s>` that sends no turn and runs the `/context compact` summarizer
@@ -47,14 +47,14 @@ import { readTreeBundle } from "../domains/session/tree/manager.js";
 import type { PancodeSessionOwner } from "../engine/session.js";
 import { sessionLiveOwner } from "../lib/heartbeat/live-owner.js";
 import { formatColumns } from "./argv.js";
-import { confirmAction } from "./kit/confirm.js";
-import { EXIT_CODES } from "./kit/exit-codes.js";
-import { type FlagDeclarations, parseCommandFlags } from "./kit/flags.js";
-import { jsonDocument, writeCliFailure, writeJson } from "./kit/json-out.js";
-import type { ErrorSlug } from "./kit/slugs.js";
+import { confirmAction } from "./lib/confirm.js";
+import { EXIT_CODES } from "./lib/exit-codes.js";
+import { type FlagDeclarations, parseCommandFlags } from "./lib/flags.js";
+import { jsonDocument, writeCliFailure, writeJson } from "./lib/json-out.js";
+import type { ErrorSlug } from "./lib/slugs.js";
 import { terminalColumns, truncate } from "./text-layout.js";
 
-export type SessionHistoryVerb = "history" | "show" | "export" | "artifacts" | "rename" | "fork" | "rm" | "compact";
+export type SessionHistoryVerb = "history" | "show" | "export" | "artifacts" | "rename" | "fork" | "remove" | "compact";
 type Verb = SessionHistoryVerb;
 
 const FLAGS = {
@@ -74,7 +74,7 @@ const FLAGS = {
 		name: { kind: "value" },
 		json: { kind: "boolean" },
 	},
-	rm: { "all-projects": { kind: "boolean" }, yes: { kind: "boolean", short: "y" }, json: { kind: "boolean" } },
+	remove: { "all-projects": { kind: "boolean" }, yes: { kind: "boolean", short: "y" }, json: { kind: "boolean" } },
 	compact: { "all-projects": { kind: "boolean" }, instructions: { kind: "value" }, json: { kind: "boolean" } },
 } as const satisfies Record<Verb, FlagDeclarations>;
 
@@ -85,7 +85,7 @@ const ARITY: Record<Verb, { min: number; max: number; usage: string }> = {
 	artifacts: { min: 1, max: 3, usage: "artifacts takes a session and optionally read <id>" },
 	rename: { min: 2, max: 2, usage: "rename takes a session and a name" },
 	fork: { min: 1, max: 1, usage: "fork takes one session" },
-	rm: { min: 1, max: 1, usage: "rm takes one session" },
+	remove: { min: 1, max: 1, usage: "remove takes one session" },
 	compact: { min: 1, max: 1, usage: "compact takes one session" },
 };
 
@@ -142,7 +142,7 @@ export async function runSessionHistoryCommand(verb: Verb, args: ReadonlyArray<s
 		if (arity.min > 0 && (positional[0] ?? "").trim().length === 0)
 			throw usage(`${verb} takes a session id, prefix or name; got an empty one`);
 		const allProjects = flags["all-projects"] === true;
-		if (allProjects && (verb === "rename" || verb === "fork" || verb === "rm" || verb === "compact"))
+		if (allProjects && (verb === "rename" || verb === "fork" || verb === "remove" || verb === "compact"))
 			throw usage(`--all-projects is read-only; ${verb} resolves only among this directory's sessions`);
 		const out = (document: object, text: string): number => {
 			if (flags.json === true) writeJson(process.stdout, jsonDocument(document));
@@ -162,7 +162,7 @@ export async function runSessionHistoryCommand(verb: Verb, args: ReadonlyArray<s
 				return rename(resolveSession(positional[0] as string, false), positional[1] as string, out);
 			case "fork":
 				return await fork(resolveSession(positional[0] as string, false), flags, out);
-			case "rm":
+			case "remove":
 				return await remove(resolveSession(positional[0] as string, false), flags.yes === true, out);
 			case "compact":
 				return await compact(resolveSession(positional[0] as string, false), flags, out);

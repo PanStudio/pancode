@@ -754,7 +754,7 @@ class TasksOverlayBody implements Component, RowBudgetedBody {
 		// Only the keys the selected row answers: Enter opens an artifact, and h, d and x act on operator tasks.
 		const selected = selectableRows(this.state())[this.selectedIndex];
 		if (this.armedDrop !== null && selected?.kind === "user" && selected.task.id === this.armedDrop)
-			return buildHint(confirmOnceRail("x", "drop", selected.task.title));
+			return buildHint(confirmOnceRail("x", "remove", selected.task.title));
 		return buildHint([
 			{ key: GLYPH.upDown, verb: "select" },
 			...(this.windowRows > 0 ? [{ key: "PgUp/PgDn", verb: "page" }] : []),
@@ -765,7 +765,7 @@ class TasksOverlayBody implements Component, RowBudgetedBody {
 			...(selected?.kind === "user" && selected.task.status !== "done" && selected.task.status !== "dropped"
 				? [
 						{ key: "d", verb: "done" },
-						{ key: "x", verb: "drop" },
+						{ key: "x", verb: "remove" },
 					]
 				: []),
 			{ key: "r", verb: "refresh" },

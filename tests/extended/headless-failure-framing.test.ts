@@ -37,7 +37,7 @@ test("headless budget and admission stops do not report an endpoint outage", () 
 	const admission = "IMAGE_INPUT_UNSUPPORTED: this route does not accept images";
 	strictEqual(prefixHeadlessFailure(chat, admission, true), admission);
 	const provider = prefixHeadlessFailure(chat, "HTTP 503");
-	match(provider, /target 'openai-codex' \(openai-codex\): HTTP 503/u);
+	match(provider, /connection 'openai-codex' \(openai-codex\): HTTP 503/u);
 	doesNotMatch(provider, /endpoint unavailable/u);
 });
 
@@ -233,7 +233,7 @@ test("a dispatch whose worker started and failed is not reported as never starte
 	const env = await isolatePancodeEnv("headless-dispatch-failed-");
 	try {
 		const started = await failedDispatchRun(
-			`dispatch (sequential) total=1 failed=1\nruns=1hj006g52rl9\nbatch observed_tool_calls=2 cost=not measured\n\n- 1hj006g52rl9 agent=debugger exit=1 target=litellm model=mini/qwen3.8-27b-iq4r-v4 tokens=unknown trust="sealed; no validation observed; ${"completion not applied; ".repeat(8)}" outcome=failed detail=worker process signal: SIGKILL`,
+			`dispatch (sequential) total=1 failed=1\nruns=1hj006g52rl9\nbatch observed_tool_calls=2 cost=not measured\n\n- 1hj006g52rl9 agent=debugger exit=1 connection=litellm model=mini/qwen3.8-27b-iq4r-v4 tokens=unknown trust="sealed; no validation observed; ${"completion not applied; ".repeat(8)}" outcome=failed detail=worker process signal: SIGKILL`,
 		);
 		strictEqual(started.code, 1, started.stderr);
 		match(
@@ -487,11 +487,11 @@ test("a provider error that ends the run is provider_error under v2 and unchange
 		failure: { invoked: true, stage: "harness", httpStatus: null, errorClass: "oversized_tool_result", retryAttempts: 0 },
 	};
 	const route = { snapshot: { targetId: "copilot", runtimeId: "copilot" } };
-	match((await writtenCallRun(undefined, failed, undefined, route)).stderr, /target 'copilot' \(copilot\): /u);
+	match((await writtenCallRun(undefined, failed, undefined, route)).stderr, /connection 'copilot' \(copilot\): /u);
 	const guardV1 = await writtenCallRun(undefined, guard, undefined, route);
 	strictEqual(guardV1.code, 1, guardV1.stderr);
 	match(guardV1.stderr, /This turn stopped: after compaction/u);
-	doesNotMatch(guardV1.stderr, /target 'copilot'/u);
+	doesNotMatch(guardV1.stderr, /connection 'copilot'/u);
 	const guardV2 = await writtenCallRun("json", guard);
 	strictEqual(guardV2.code, 1, guardV2.stderr);
 	const guardEnvelope = JSON.parse(guardV2.stdout.trim().split("\n").at(-1) ?? "{}") as typeof envelope;
@@ -509,7 +509,7 @@ test("a provider error that ends the run is provider_error under v2 and unchange
 	};
 	const recoveryV1 = await writtenCallRun(undefined, refused, undefined, { ...route, after: [gaveUp] });
 	strictEqual(recoveryV1.code, 1, recoveryV1.stderr);
-	match(recoveryV1.stderr, /target 'copilot'/u);
+	match(recoveryV1.stderr, /connection 'copilot'/u);
 	const recoveryV2 = await writtenCallRun("json", refused, undefined, { after: [gaveUp] });
 	strictEqual(recoveryV2.code, 1, recoveryV2.stderr);
 	const recoveryEnvelope = JSON.parse(recoveryV2.stdout.trim().split("\n").at(-1) ?? "{}") as typeof envelope;

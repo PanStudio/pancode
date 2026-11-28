@@ -22,6 +22,7 @@ import { createMiddlewareBundle } from "../../src/domains/middleware/module.js";
 import type { ProvidersContract, RuntimeDescriptor, TargetStatus } from "../../src/domains/providers/index.js";
 import { EMPTY_CAPABILITIES } from "../../src/domains/providers/index.js";
 import type { TargetDescriptor } from "../../src/domains/providers/types/target-descriptor.js";
+import { loadSkills } from "../../src/domains/resources/skills/loader.js";
 import type { SafetyContract } from "../../src/domains/safety/contract.js";
 import { isSubset, READONLY_SCOPE, WORKSPACE_SCOPE } from "../../src/domains/safety/scope.js";
 import type { SchedulingContract } from "../../src/domains/scheduling/contract.js";
@@ -38,10 +39,14 @@ export interface DispatchStubOptions {
 
 export function dispatchStubContext(options: DispatchStubOptions = {}): DomainContext {
 	const settings = options.settings ?? structuredClone(DEFAULT_SETTINGS);
-	const target: TargetDescriptor = settings.targets[0] ?? { id: "default", runtime: "openai", defaultModel: "gpt-4o" };
-	if (settings.targets.length === 0) {
-		settings.targets = [target];
-		settings.fleet.default.target = target.id;
+	const target: TargetDescriptor = settings.connections[0] ?? {
+		id: "default",
+		runtime: "openai",
+		defaultModel: "gpt-4o",
+	};
+	if (settings.connections.length === 0) {
+		settings.connections = [target];
+		settings.fleet.default.connection = target.id;
 		settings.fleet.default.model = target.defaultModel ?? "gpt-4o";
 	}
 	const runtime: RuntimeDescriptor = options.runtime ?? {
@@ -53,7 +58,7 @@ export function dispatchStubContext(options: DispatchStubOptions = {}): DomainCo
 		defaultCapabilities: { ...EMPTY_CAPABILITIES, chat: true, tools: true },
 		synthesizeModel: () => ({ id: target.defaultModel, provider: target.runtime }) as never,
 	};
-	const statuses: TargetStatus[] = settings.targets.map((configuredTarget) => ({
+	const statuses: TargetStatus[] = settings.connections.map((configuredTarget) => ({
 		target: configuredTarget,
 		runtime,
 		available: true,
@@ -67,7 +72,7 @@ export function dispatchStubContext(options: DispatchStubOptions = {}): DomainCo
 	if (!fallbackStatus) throw new Error("dispatch stub requires at least one target status");
 	const providers = {
 		list: () => statuses,
-		getTarget: (id: string) => settings.targets.find((entry) => entry.id === id) ?? null,
+		getTarget: (id: string) => settings.connections.find((entry) => entry.id === id) ?? null,
 		getRuntime: (id: string) => (id === runtime.id ? runtime : null),
 		probeAllLive: async () => {},
 		probeTarget: async (id: string) => statuses.find((entry) => entry.target.id === id) ?? fallbackStatus,
@@ -110,7 +115,7 @@ export function dispatchStubContext(options: DispatchStubOptions = {}): DomainCo
 		isSubset,
 		decisions: {},
 	};
-	const builtinRecipes = loadRecipesFromDir({
+	const builtinRecipes = loadRecipesFromDir(loadSkills, {
 		dir: join(resolvePackageRoot(), "src", "domains", "agents", "builtins"),
 		source: "builtin",
 		cwd: process.cwd(),

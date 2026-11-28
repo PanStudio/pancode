@@ -1,0 +1,117 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { Type } from "typebox";
+import { Value } from "typebox/value";
+import type { NodeMutation } from "../../../contracts/nodes.js";
+import { Node, NodeId } from "../../../contracts/nodes.js";
+import { CliRunner } from "../../services/cli-runner.js";
+import { AppProblem } from "../../services/problem.js";
+import type { NodeEndpoint } from "../../worker/protocol.js";
+
+// Fleet-node imports are not an approved root seam. The fixed CLI commands call the
+// same registry and preflight functions, in the worker's canonical project cwd.
+const runner = new CliRunner();
+export const closeNodes = () => runner.close();
+
+function object(value: unknown): Record<string, unknown> {
+	if (!value || typeof value !== "object" || Array.isArray(value))
+		throw new AppProblem("unavailable", "PanCode returned an invalid machine record.");
+	return value as Record<string, unknown>;
+}
+
+export async function readNodes(cwd: string): Promise<Node[]> {
+	const raw = object(await runner.run({ kind: "nodes.list" }, cwd));
+	if (!Array.isArray(raw.nodes) || raw.nodes.length > 10_000)
+		throw new AppProblem("unavailable", "PanCode returned an invalid machine inventory.");
+	return raw.nodes.map((entry) => {
+		const item = object(entry);
+		const node = object(item.node);
+		const record = item.record === null ? null : object(item.record);
+		const projected = Value.Clean(Node, {
+			id: node.id,
+			host: node.host,
+			user: node.user ?? null,
+			port: node.port ?? null,
+			maxWorkers: node.maxWorkers,
+			labels: node.labels ?? [],
+			enabled: null,
+			readiness: item.readiness,
+			reason: item.reason,
+			checkedAt: item.checkedAt,
+			ageMs: item.ageMs,
+			checks: record?.checks ?? null,
+			localVersion: record?.localVersion ?? null,
+			remoteVersion: record?.remoteVersion ?? null,
+			note: record?.note ?? null,
+			project: record?.project ?? null,
+		});
+		if (!Value.Check(Node, projected))
+			throw new AppProblem("unavailable", "PanCode returned an invalid machine projection.");
+		return projected;
+	});
+}
+
+const nullableText = Type.Union([Type.String(), Type.Null()]);
+const Endpoint = Type.Object(
+	{
+		id: NodeId,
+		host: Type.String({ minLength: 1 }),
+		user: nullableText,
+		port: Type.Union([Type.Integer({ minimum: 1, maximum: 65535 }), Type.Null()]),
+		identityFile: nullableText,
+		connectTimeoutSec: Type.Union([Type.Integer({ minimum: 1 }), Type.Null()]),
+		pancodeEntry: nullableText,
+	},
+	{ additionalProperties: false },
+);
+
+/** The SSH destinations of every registered node, for the attach supervisor; readiness is not read here. */
+export async function readNodeEndpoints(cwd: string): Promise<NodeEndpoint[]> {
+	const raw = object(await runner.run({ kind: "nodes.list" }, cwd));
+	if (!Array.isArray(raw.nodes) || raw.nodes.length > 10_000)
+		throw new AppProblem("unavailable", "PanCode returned an invalid machine inventory.");
+	return raw.nodes.map((entry) => {
+		const node = object(object(entry).node);
+		const endpoint = Value.Clean(Endpoint, {
+			id: node.id,
+			host: node.host,
+			user: node.user ?? null,
+			port: node.port ?? null,
+			identityFile: node.identityFile ?? null,
+			connectTimeoutSec: node.connectTimeoutSec ?? null,
+			pancodeEntry: node.pancodeEntry ?? null,
+		});
+		if (!Value.Check(Endpoint, endpoint))
+			throw new AppProblem("unavailable", "PanCode returned an invalid machine endpoint.");
+		return endpoint;
+	});
+}
+
+export async function mutateNode(cwd: string, mutation: NodeMutation) {
+	try {
+		if (mutation.action === "add") {
+			await runner.run({ kind: "nodes.add", machine: mutation.node }, cwd);
+			return { id: mutation.node.id, message: "Node registered. No SSH check was run." };
+		}
+		if (mutation.action === "remove") {
+			await runner.run({ kind: "nodes.remove", id: mutation.id }, cwd);
+			return { id: mutation.id, message: "Node removed from the registry. Remote files remain in place." };
+		}
+		const raw = object(await runner.run({ kind: "nodes.check", id: mutation.id }, cwd));
+		if (raw.nodeId !== mutation.id || typeof raw.ok !== "boolean")
+			throw new AppProblem("operation_failed", "PanCode returned an invalid readiness result. Refresh recorded checks.");
+		return {
+			id: mutation.id,
+			message: raw.ok
+				? "Check recorded. Refresh the project inventory to see current eligibility."
+				: "Check recorded: this node needs attention. Review its project evidence.",
+		};
+	} catch (error) {
+		if (mutation.action === "remove" && error instanceof AppProblem && /exit code 2/.test(error.message))
+			throw new AppProblem(
+				"operation_failed",
+				"PanCode refused removal. The node may be unknown, the standing default, or pinned by a fleet profile. Refresh the registry and clear any placement references in settings before retrying.",
+			);
+		throw error;
+	}
+}

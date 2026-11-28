@@ -9,7 +9,7 @@ import type { navigation } from "../design/navigation.js";
 import { formatKeybinding, INTERVIEW_KEYBINDING_NAMESPACE, KEYBINDING_ORDER } from "./keybindings.js";
 
 // The task screens are the rail's own and are not in the navigation table, but the reference still explains them.
-type NavPath = (typeof navigation)[number]["path"] | "/" | "/sessions" | "/machines";
+type NavPath = (typeof navigation)[number]["path"] | "/" | "/sessions" | "/nodes";
 
 export interface HelpEntry {
 	readonly term: string;
@@ -34,26 +34,26 @@ export interface HelpMatch {
 /** One sentence per route. A route added without a guide entry fails to compile. */
 export const VIEW_GUIDE: Readonly<Record<NavPath, { title: string; meaning: string }>> = {
 	"/": {
-		title: "New task",
-		meaning: "Choose a workspace and describe a task. PanCode starts when you send your first message.",
+		title: "New session",
+		meaning: "Choose a project and start a session. PanCode starts when you send your first message.",
 	},
 	"/sessions": {
 		title: "Sessions",
 		meaning:
-			"Follow the sessions held by this PanCode server across projects. Filter by activity, review requests for your input, stop a turn or continue a session.",
+			"Follow the sessions held by this PanCode server across projects. Filter by activity, review requests for your input, cancel a turn or continue a session.",
 	},
-	"/machines": {
-		title: "Machines",
+	"/nodes": {
+		title: "Nodes",
 		meaning:
-			"Register lab workstations and servers for SSH workers. Readiness is recorded separately for each project; checks run only when you request them.",
+			"A node is a machine PanCode can run workers on. Register SSH nodes; readiness is recorded separately for each project and checks run only when you request them.",
 	},
 	"/traces": {
 		title: "Traces",
 		meaning: "The detailed conversation record, including individual events, their sources and token counts.",
 	},
-	"/toolchain": {
-		title: "Toolchain",
-		meaning: "Tools available on this machine, their versions and trust status.",
+	"/programs": {
+		title: "Programs",
+		meaning: "Pinned external programs available on this machine, their versions and trust status.",
 	},
 	"/settings": {
 		title: "Settings",
@@ -94,9 +94,9 @@ const VIEW_ENTRIES: readonly HelpEntry[] = Object.values(VIEW_GUIDE).map((view) 
 
 /** Keys handled by one control rather than the binding table: the message box and the task name. */
 export const COMPOSER_NOTES: readonly { term: string; action: string; where: string }[] = [
-	{ term: "Esc, Esc", action: "Stop the running turn", where: "Message box · press twice while a turn runs" },
+	{ term: "Esc, Esc", action: "Cancel the running turn", where: "Message box · press twice while a turn runs" },
 	{ term: "Up / Down", action: "Recall sent messages", where: "Message box · Up with the caret at the start" },
-	{ term: "F2", action: "Rename the task", where: "Task name in the header focused" },
+	{ term: "F2", action: "Rename the session", where: "Session name in the header focused" },
 ];
 
 const KEYBOARD_ENTRIES: readonly HelpEntry[] = [
@@ -174,13 +174,13 @@ export const HELP_SECTIONS: readonly HelpSection[] = [
 		title: "Vocabulary",
 		lede: "Words you may see while working.",
 		entries: [
-			{ term: "Target", meaning: "A configured service or runtime that handles a turn." },
-			{ term: "Model", meaning: "The AI model a target uses for that turn." },
+			{ term: "Connection", meaning: "A configured service or runtime that handles a turn." },
+			{ term: "Model", meaning: "The AI model a connection uses for that turn." },
 			{ term: "Session", meaning: "A saved conversation you can resume. A project can have many sessions." },
 			{ term: "Turn", meaning: "One request and everything PanCode does in response." },
 			{
 				term: "Evidence",
-				meaning: "Tool activity, approvals, results and the records of what happened.",
+				meaning: "Sealed work records verified by PanCode, including tool activity, approvals and results.",
 			},
 			{
 				term: "Run record",
@@ -232,7 +232,7 @@ export const HELP_SECTIONS: readonly HelpSection[] = [
 	{
 		id: "commands",
 		title: "Commands",
-		lede: "Type / in the message box to see this task's commands. These terminal names work here too.",
+		lede: "Type / in the message box to see this session's commands. These terminal names work here too.",
 		entries: COMMAND_ENTRIES,
 	},
 	{

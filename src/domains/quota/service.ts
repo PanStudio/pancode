@@ -53,7 +53,7 @@ export function createQuotaService(options: QuotaServiceOptions = {}): QuotaServ
 		});
 	const includeLocal =
 		options.includeLocal ??
-		readSettings().targets.some((target) => getRuntimeRegistry().get(target.runtime)?.tier === "local-native");
+		readSettings().connections.some((target) => getRuntimeRegistry().get(target.runtime)?.tier === "local-native");
 
 	const withLocal = (snapshots: UsageSnapshot[]): UsageSnapshot[] => {
 		snapshots = [...withAnthropicStreamSnapshot(snapshots), ...codexStreamSnapshots()];

@@ -67,7 +67,7 @@ export function makeAnthropicCompatRuntime(spec: AnthropicCompatSpec): RuntimeDe
 		...(spec.hidden === true ? { hidden: true } : {}),
 		async probe(target: TargetDescriptor, ctx: ProbeContext): Promise<ProbeResult> {
 			const base = targetBaseUrl(target);
-			if (!base) return { ok: false, error: "target has no url" };
+			if (!base) return { ok: false, error: "connection has no url" };
 			return probeUrl(`${base}${messagesPath}`, ctx, "HEAD", headers(target, ctx));
 		},
 		async probeModels(target: TargetDescriptor, ctx: ProbeContext): Promise<string[]> {

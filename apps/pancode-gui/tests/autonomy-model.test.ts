@@ -23,8 +23,8 @@ test("the autonomy menu repeats the engine's mode descriptions verbatim", () => 
 		],
 	);
 	assert.ok(menu.confirmation.includes(YOLO));
-	assert.ok(menu.confirmation.startsWith("Switch this task to Run without approvals? "));
-	assert.ok(menu.confirmation.endsWith(" It lasts until the task closes."));
+	assert.ok(menu.confirmation.startsWith("Switch this session to YOLO? "));
+	assert.ok(menu.confirmation.endsWith(" It lasts until the session closes."));
 	assert.equal(menu.unrecognized, undefined);
 });
 

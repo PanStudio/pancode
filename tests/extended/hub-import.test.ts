@@ -38,7 +38,7 @@ import {
 	clearPluginSnapshots,
 	disablePlugin,
 	enablePlugin,
-	installHubPackage,
+	installHubPack,
 	installPlugin,
 	listInstalledPlugins,
 	PLUGIN_SCHEMA,
@@ -395,7 +395,7 @@ describe("hub import of foreign plugin packages", () => {
 		strictEqual(result.validation?.validation.resources.length, 3);
 		deepStrictEqual(result.admission, {
 			trust: "foreign",
-			gate: "integrations.projectResources.trustProjectImports",
+			gate: "integrations.hub.trustProjectImports",
 			gateEnabled: false,
 		});
 		deepStrictEqual(snapshot(root), before, "vendor source is never rewritten");
@@ -417,7 +417,7 @@ describe("hub import of foreign plugin packages", () => {
 		);
 		ok(prompt);
 		strictEqual(prompt.argumentHint, "<env>");
-		const agent = discoverAgentRecipes(cwd).find((item) => item.filepath.startsWith(installed.rootPath));
+		const agent = discoverAgentRecipes(loadSkills, cwd).find((item) => item.filepath.startsWith(installed.rootPath));
 		ok(agent, "installed agent recipe is readable by the native loader");
 	});
 
@@ -765,7 +765,7 @@ describe("hub import of foreign plugin packages", () => {
 			}),
 		);
 		writeFileSync(path.join(vendor, "native-helper", "skills", "h", "SKILL.md"), skill("h"));
-		const native = installHubPackage({
+		const native = installHubPack({
 			kind: "plugin",
 			sourcePath: path.join(vendor, "native-helper"),
 			scope: "user",
@@ -966,7 +966,7 @@ describe("hub import of foreign plugin packages", () => {
 			}),
 		);
 		writeFileSync(path.join(vendor, "replacement", "skills", "x", "SKILL.md"), skill("x"));
-		const replaced = installHubPackage({
+		const replaced = installHubPack({
 			kind: "plugin",
 			sourcePath: path.join(vendor, "replacement"),
 			scope: "user",

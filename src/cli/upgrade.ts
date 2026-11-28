@@ -40,9 +40,9 @@ import { readStateInfo } from "../domains/install/state.js";
 import { updateFingerprint } from "../domains/install/update-check.js";
 import { getVersionInfo } from "../domains/install/version.js";
 import { printError } from "./argv.js";
-import { writeCliFailure } from "./kit/json-out.js";
-import type { LifecyclePresenter } from "./lifecycle-presenter.js";
-import { createLifecyclePresenter, formatBytes, measurePath, shortenPath } from "./lifecycle-presenter.js";
+import type { InstallPresenter } from "./install-presenter.js";
+import { createInstallPresenter, formatBytes, measurePath, shortenPath } from "./install-presenter.js";
+import { writeCliFailure } from "./lib/json-out.js";
 
 const CHANNELS = ["latest", "beta"] as const;
 type Channel = (typeof CHANNELS)[number];
@@ -392,7 +392,7 @@ async function runDoctorFixAfterInstall(_installation: Installation): Promise<vo
 async function runPostInstallUpgrade(
 	opts: UpgradeOptions,
 	installation: Installation,
-	presenter: LifecyclePresenter,
+	presenter: InstallPresenter,
 ): Promise<void> {
 	const args = [installation.entry, "upgrade", "--post-install", `--channel=${opts.channel}`, "--json"];
 	const output = await runChild(nodeFor(installation), args, "pancode upgrade --post-install", {
@@ -512,13 +512,13 @@ const DEFAULT_DEPENDENCIES: UpgradeDependencies = {
 
 // The first-party packs that ship with PanCode load lazily: only a post-install
 // reaches them, and the hub modules are heavy for every other upgrade path.
-async function previewDefaultPacks(presenter: LifecyclePresenter): Promise<void> {
+async function previewDefaultPacks(presenter: InstallPresenter): Promise<void> {
 	const { pendingDefaultPacks } = await import("../domains/resources/hub-defaults.js");
 	const pending = pendingDefaultPacks();
 	if (pending.length > 0) presenter.note(`Would install the default packs ${pending.join(", ")}.`);
 }
 
-async function giveDefaultPacks(presenter: LifecyclePresenter): Promise<void> {
+async function giveDefaultPacks(presenter: InstallPresenter): Promise<void> {
 	const { applyDefaultPacks } = await import("../domains/resources/hub-defaults.js");
 	await applyDefaultPacks(presenter);
 }
@@ -531,7 +531,7 @@ async function runUpgradeRollback(
 	installation: Installation,
 	opts: UpgradeOptions,
 	deps: UpgradeDependencies,
-	presenter: LifecyclePresenter,
+	presenter: InstallPresenter,
 	before: string,
 	stateDir: string,
 ): Promise<number> {
@@ -711,7 +711,7 @@ export async function runUpgradeCommand(
 		return 2;
 	}
 
-	const presenter = createLifecyclePresenter({ json: opts.json, dryRun: opts.dryRun });
+	const presenter = createInstallPresenter({ json: opts.json, dryRun: opts.dryRun });
 	presenter.header("Upgrade", "upgrade");
 
 	const before = getVersionInfo().pancode;

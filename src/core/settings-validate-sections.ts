@@ -38,9 +38,9 @@ import { MAX_TIMER_DELAY_MS } from "./timers.js";
 import { isRecord } from "./type-guards.js";
 
 /**
- * Routing references (orchestrator/worker targets, scope, favorites) must
- * point at a configured target id. Dangling references are normalized away
- * deterministically rather than rejected: deleting a target must not brick
+ * Routing references (orchestrator/worker connections, scope, favorites) must
+ * point at a configured connection id. Dangling references are normalized away
+ * deterministically rather than rejected: deleting a connection must not brick
  * every session that still mentions it.
  */
 type FleetRoute = PancodeSettings["fleet"]["default"];
@@ -53,7 +53,7 @@ export function validateRoute(
 	path: string,
 	value: unknown,
 	defaults: FleetRoute,
-	targets: ReadonlyArray<PancodeSettings["targets"][number]>,
+	targets: ReadonlyArray<PancodeSettings["connections"][number]>,
 	options?: { nodeIds?: ReadonlySet<string> },
 ): FleetRoute {
 	const out = structuredClone(defaults);
@@ -65,13 +65,13 @@ export function validateRoute(
 	issues.unknownKeys(
 		path,
 		value,
-		allowNode ? ["target", "model", "thinkingLevel", "node"] : ["target", "model", "thinkingLevel"],
+		allowNode ? ["connection", "model", "thinkingLevel", "node"] : ["connection", "model", "thinkingLevel"],
 	);
-	if ("target" in value) {
-		if (value.target === null) out.target = null;
+	if ("connection" in value) {
+		if (value.connection === null) out.connection = null;
 		else {
-			const parsed = expectString(issues, `${path}.target`, value.target);
-			if (parsed !== undefined) out.target = targets.some((entry) => entry.id === parsed) ? parsed : null;
+			const parsed = expectString(issues, `${path}.connection`, value.connection);
+			if (parsed !== undefined) out.connection = targets.some((entry) => entry.id === parsed) ? parsed : null;
 		}
 	}
 	if ("model" in value) {
@@ -92,14 +92,14 @@ export function validateRoute(
 			if (parsed !== undefined && (parsed === "local" || options.nodeIds?.has(parsed) === true)) out.node = parsed;
 		}
 	}
-	if (!out.target) out.model = null;
-	else if (out.model === null) out.model = targets.find((entry) => entry.id === out.target)?.defaultModel ?? null;
+	if (!out.connection) out.model = null;
+	else if (out.model === null) out.model = targets.find((entry) => entry.id === out.connection)?.defaultModel ?? null;
 	return out;
 }
 
 export function normalizeModelRefs(
 	refs: ReadonlyArray<string>,
-	targets: ReadonlyArray<PancodeSettings["targets"][number]>,
+	targets: ReadonlyArray<PancodeSettings["connections"][number]>,
 ): string[] {
 	const targetIds = new Set(targets.map((target) => target.id));
 	return refs.filter((ref) => {
@@ -425,7 +425,7 @@ export function validateSystemOne(issues: Issues, raw: unknown, settings: Pancod
 		else if (Array.isArray(raw.use)) {
 			const names = raw.use.filter((name): name is string => typeof name === "string" && name.trim().length > 0);
 			if (names.length !== raw.use.length) {
-				issues.add("systemOne.use", "expected a list of route names, each an engine, a target, jev, memory or main");
+				issues.add("systemOne.use", "expected a list of route names, each an engine, a connection, jev, memory or main");
 			} else next.use = names;
 		} else {
 			const use = expectString(issues, "systemOne.use", raw.use);
@@ -446,17 +446,17 @@ export function validateSystemOne(issues: Issues, raw: unknown, settings: Pancod
 					issues.add(path, `expected a map, got ${describe(value)}`);
 					continue;
 				}
-				issues.unknownKeys(path, value, ["kind", "target", "model", "profile"]);
+				issues.unknownKeys(path, value, ["kind", "connection", "model", "profile"]);
 				const kind = expectEnum(issues, `${path}.kind`, value.kind, SYSTEM_ONE_ENGINE_KINDS);
-				const target = expectString(issues, `${path}.target`, value.target);
+				const target = expectString(issues, `${path}.connection`, value.connection);
 				if (kind === undefined || target === undefined) continue;
-				// A binding to a target nobody configured would fail at the call site,
+				// A binding to a connection nobody configured would fail at the call site,
 				// where nothing connects the failure back to this line.
-				if (!settings.targets.some((entry) => entry.id === target)) {
-					issues.add(`${path}.target`, `target '${target}' is not defined in targets`);
+				if (!settings.connections.some((entry) => entry.id === target)) {
+					issues.add(`${path}.connection`, `connection '${target}' is not defined in connections`);
 					continue;
 				}
-				const engine: PancodeSettings["systemOne"]["engines"][string] = { kind, target };
+				const engine: PancodeSettings["systemOne"]["engines"][string] = { kind, connection: target };
 				if ("model" in value) {
 					const model = expectString(issues, `${path}.model`, value.model);
 					if (model !== undefined) engine.model = model;

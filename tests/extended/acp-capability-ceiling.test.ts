@@ -28,9 +28,9 @@ test("an ACP client's session and prompt ceilings narrow the operator's limits a
 	const settings = structuredClone(DEFAULT_SETTINGS);
 	settings.chat.prewarm = false;
 	const context = dispatchStubContext({ settings });
-	const target = settings.targets[0];
+	const target = settings.connections[0];
 	assert.ok(target);
-	settings.chat.target = target.id;
+	settings.chat.connection = target.id;
 	settings.chat.model = target.defaultModel ?? "gpt-4o";
 	const cwd = process.cwd();
 	let current: SessionMeta | null = null;
@@ -451,7 +451,7 @@ test("a read-only ceiling refuses task writes, /oracle, a shell line, a memory p
 	});
 	const refusal = (command: string, argv: string[], limits: TurnConstraints) =>
 		control.ceilingRefusal?.(command, argv, limits);
-	for (const verb of ["add", "hand", "done", "drop"])
+	for (const verb of ["add", "hand", "done", "remove"])
 		assert.notEqual(refusal("tasks", [verb, "t-1"], { readOnly: true }), null, `/tasks ${verb}`);
 	assert.equal(refusal("tasks", ["add", "t-1"], { allowedTools: ["read"] }), null, "a turn-bound ceiling admits it");
 	assert.notEqual(refusal("oracle", ["is", "this", "settled"], { readOnly: true }), null);

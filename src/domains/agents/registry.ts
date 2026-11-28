@@ -11,13 +11,19 @@ import { pancodeProjectRoot } from "../../core/project-root.js";
 import { pancodeConfigDir } from "../../core/xdg.js";
 import { mcpSkillReferenceServer } from "../mcp/skills.js";
 import { enabledPluginResourceRoots, withPluginDiscoveryPass } from "../plugins/index.js";
-import { resolvePackageReferences } from "../resources/package-references.js";
-import { cachedFrontmatterParser, withFrontmatterCache } from "../resources/skills/frontmatter-cache.js";
-import { type LoadSkillsInput, loadSkills, type SkillList } from "../resources/skills/loader.js";
+import type { LoadSkillsInput, SkillList } from "../resources/skills/loader.js";
 import { parseFrontmatter } from "./frontmatter.js";
+import { cachedFrontmatterParser, withFrontmatterCache } from "./frontmatter-cache.js";
+import { resolvePackReferences } from "./pack-references.js";
 import { type AgentRecipe, type RecipeSource, recipeIdFromPath } from "./recipe.js";
 import { parseAgentRecipeSchema } from "./recipe-schema.js";
 import { assertAgentSpecPolicy, isShadowAgent, normalizeAgentSpec } from "./spec.js";
+
+/**
+ * Reads the skill catalog a recipe binds against. The resources domain owns
+ * skill discovery and sits above agents, so every caller passes its loader in.
+ */
+export type SkillCatalogLoader = (input: LoadSkillsInput) => SkillList;
 
 const RESERVED_CUSTOM_AGENT_IDS = new Set(["worker", "delegate", "auto"]);
 
@@ -53,7 +59,7 @@ function recordDiagnostic(diagnostics: AgentRecipeDiagnostic[], diagnostic: Agen
  */
 let discoveryCatalogs: Map<string, SkillList> | null = null;
 
-function boundSkillCatalog(input: LoadSkillsInput): SkillList {
+function boundSkillCatalog(loadSkills: SkillCatalogLoader, input: LoadSkillsInput): SkillList {
 	if (!discoveryCatalogs) return loadSkills(input);
 	const key = JSON.stringify(input);
 	let catalog = discoveryCatalogs.get(key);
@@ -78,7 +84,7 @@ function selfDevelopmentSkills(recipe: AgentRecipe, source: RecipeSource): strin
 	return [...(edits ? ["pancode-dev"] : []), "pancode-test"].filter((name) => !recipe.skills.includes(name));
 }
 
-function resolveBoundSkills(recipe: AgentRecipe, source: RecipeSource): AgentRecipe {
+function resolveBoundSkills(loadSkills: SkillCatalogLoader, recipe: AgentRecipe, source: RecipeSource): AgentRecipe {
 	const selfSkills = selfDevelopmentSkills(recipe, source);
 	if (recipe.skills.length === 0 && selfSkills.length === 0) return { ...recipe, boundSkillPaths: [] };
 	// Builtins may bind a package-owned skill. Custom recipes deliberately use
@@ -92,15 +98,15 @@ function resolveBoundSkills(recipe: AgentRecipe, source: RecipeSource): AgentRec
 	}
 	const skills =
 		source.source === "plugin"
-			? boundSkillCatalog({
+			? boundSkillCatalog(loadSkills, {
 					cwd: source.cwd ?? process.cwd(),
-					trustProjectCompatRoots: readSettings().integrations.projectResources.trustProjectImports,
+					trustProjectCompatRoots: readSettings().integrations.hub.trustProjectImports,
 					disableDiscovery: true,
 					explicitSkillPaths: source.skillRoot === undefined ? [] : [source.skillRoot],
 				})
-			: boundSkillCatalog({
+			: boundSkillCatalog(loadSkills, {
 					cwd: source.cwd ?? process.cwd(),
-					trustProjectCompatRoots: readSettings().integrations.projectResources.trustProjectImports,
+					trustProjectCompatRoots: readSettings().integrations.hub.trustProjectImports,
 					...(source.source === "builtin" && existsSync(packageSkills) ? { explicitSkillPaths: [packageSkills] } : {}),
 				});
 	if (source.source === "plugin" && source.skillRoot !== undefined) {
@@ -144,6 +150,7 @@ function resolveBoundSkills(recipe: AgentRecipe, source: RecipeSource): AgentRec
  * user and project defects are quarantined with a structured diagnostic.
  */
 export function loadRecipesFromDir(
+	loadSkills: SkillCatalogLoader,
 	source: RecipeSource,
 	diagnostics: AgentRecipeDiagnostic[] = [],
 ): ReadonlyArray<AgentRecipe> {
@@ -169,12 +176,12 @@ export function loadRecipesFromDir(
 				filepath,
 				cachedFrontmatterParser(filepath, { mtimeMs, size }),
 			);
-			const body = resolvePackageReferences(rawBody, {
+			const body = resolvePackReferences(rawBody, {
 				...(source.rootPath ? { rootPath: source.rootPath } : {}),
 				plugin: source.source === "plugin",
 			});
 			const parsedRecipe = parseAgentRecipeSchema({ id, source: source.source, filepath, body, frontmatter });
-			const recipe = resolveBoundSkills(parsedRecipe, source);
+			const recipe = resolveBoundSkills(loadSkills, parsedRecipe, source);
 			// Policy validation runs before a recipe enters any catalog, prompt, or
 			// dispatch lookup. The schema is intentionally not a permissive pre-pass.
 			assertAgentSpecPolicy(normalizeAgentSpec(recipe));
@@ -258,21 +265,29 @@ function mergeRecipes(
  * bindings remain constrained to the declaring plugin's skill root.
  */
 export function discoverAgentRecipes(
+	loadSkills: SkillCatalogLoader,
 	cwd = process.cwd(),
 	diagnostics: AgentRecipeDiagnostic[] = [],
 ): ReadonlyArray<AgentRecipe> {
-	if (discoveryCatalogs) return discoverAgentRecipesInPass(cwd, diagnostics);
+	if (discoveryCatalogs) return discoverAgentRecipesInPass(loadSkills, cwd, diagnostics);
 	discoveryCatalogs = new Map();
 	try {
 		// Recipe frontmatter shares the skill catalog's parse cache: every boot parsed every builtin's YAML again.
-		return withPluginDiscoveryPass(() => withFrontmatterCache(() => discoverAgentRecipesInPass(cwd, diagnostics)));
+		return withPluginDiscoveryPass(() =>
+			withFrontmatterCache(() => discoverAgentRecipesInPass(loadSkills, cwd, diagnostics)),
+		);
 	} finally {
 		discoveryCatalogs = null;
 	}
 }
 
-function discoverAgentRecipesInPass(cwd: string, diagnostics: AgentRecipeDiagnostic[]): ReadonlyArray<AgentRecipe> {
+function discoverAgentRecipesInPass(
+	loadSkills: SkillCatalogLoader,
+	cwd: string,
+	diagnostics: AgentRecipeDiagnostic[],
+): ReadonlyArray<AgentRecipe> {
 	const builtin = loadRecipesFromDir(
+		loadSkills,
 		{
 			dir: path.join(resolvePackageRoot(), "src", "domains", "agents", "builtins"),
 			source: "builtin",
@@ -286,6 +301,7 @@ function discoverAgentRecipesInPass(cwd: string, diagnostics: AgentRecipeDiagnos
 		.map((root) => {
 			const skillRoot = skillRoots.get(root.source);
 			return loadRecipesFromDir(
+				loadSkills,
 				{
 					dir: root.path,
 					source: "plugin",
@@ -297,8 +313,13 @@ function discoverAgentRecipesInPass(cwd: string, diagnostics: AgentRecipeDiagnos
 				diagnostics,
 			);
 		});
-	const user = loadRecipesFromDir({ dir: path.join(pancodeConfigDir(), "agents"), source: "user", cwd }, diagnostics);
+	const user = loadRecipesFromDir(
+		loadSkills,
+		{ dir: path.join(pancodeConfigDir(), "agents"), source: "user", cwd },
+		diagnostics,
+	);
 	const project = loadRecipesFromDir(
+		loadSkills,
 		{ dir: path.join(pancodeProjectRoot(cwd, "agents"), ".pancode", "agents"), source: "project", cwd },
 		diagnostics,
 	);

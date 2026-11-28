@@ -1,0 +1,452 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { randomBytes } from "node:crypto";
+import type { AddressInfo } from "node:net";
+import { createAdaptorServer } from "@hono/node-server";
+import type { NodeAttachment } from "../../contracts/nodes.js";
+import type { NodeAttachmentsApi, NodeRoute } from "../http/routes-nodes.js";
+import { type RemoteServerMeta, remoteServerMeta } from "../local-server.js";
+import { startSshCommand, startSshForward, stopPancodeCommand } from "../process-policy.js";
+import {
+	type BuildIdentity,
+	FORWARD_HELD_LINE,
+	parseReadyLine,
+	REMOTE_GUI_IDLE_MS,
+	reconnectDelayMs,
+	remoteGuiCommand,
+	versionGate,
+} from "../ssh-model.js";
+import type { NodeEndpoint } from "../worker/protocol.js";
+import type { EventHub } from "./event-hub.js";
+import { AppProblem } from "./problem.js";
+
+export interface NodeAttachDeps {
+	/** The registry's SSH destinations, read each time so a node added meanwhile can be opened. */
+	endpoints(): Promise<NodeEndpoint[]>;
+	/** This server's own version and build, which the node's must match. */
+	local(): BuildIdentity;
+	hub: EventHub;
+	env?: NodeJS.ProcessEnv;
+	idleMs?: number;
+	readyTimeoutMs?: number;
+	metaTimeoutMs?: number;
+}
+
+/** Both channels are owned children started by process-policy, the one module that may spawn. */
+type ChildProcess = ReturnType<typeof startSshCommand>["child"] | ReturnType<typeof startSshForward>["child"];
+type Owned = { child: ChildProcess; birthToken: string | null };
+type Live = {
+	endpoint: NodeEndpoint;
+	token: string;
+	command: Owned | null;
+	forward: Owned | null;
+	localPort: number | null;
+	remotePort: number | null;
+};
+type Entry = {
+	attachment: NodeAttachment;
+	live: Live | null;
+	timer: ReturnType<typeof setTimeout> | null;
+	/** Consecutive failed connections since the operator last opened the machine. */
+	failures: number;
+};
+
+const READY_OUTPUT_LIMIT = 64 * 1024;
+
+/** A free loopback port for the forward's local end; the only listener this app opens besides its own. */
+function freeLoopbackPort(): Promise<number> {
+	const probe = createAdaptorServer({ fetch: () => new Response(null, { status: 404 }) });
+	return new Promise((resolve, reject) => {
+		probe.once("error", reject);
+		probe.listen(0, "127.0.0.1", () => {
+			const { port } = probe.address() as AddressInfo;
+			probe.close(() => resolve(port));
+		});
+	});
+}
+
+/** The remote port from the command channel's ready line; rejects when ssh ends or stays silent first. */
+function readyPort(child: ChildProcess, timeoutMs: number): Promise<number> {
+	return new Promise((resolve, reject) => {
+		let pending = "";
+		let stderr = "";
+		const finish = (result: number | Error) => {
+			clearTimeout(timer);
+			child.stdout?.removeListener("data", onData);
+			child.removeListener("exit", onExit);
+			child.removeListener("error", onError);
+			if (result instanceof Error) reject(result);
+			else resolve(result);
+		};
+		const timer = setTimeout(
+			() => finish(new Error(`PanCode on the node did not report ready within ${Math.round(timeoutMs / 1000)} s.`)),
+			timeoutMs,
+		);
+		timer.unref();
+		const onData = (chunk: Buffer) => {
+			pending += chunk.toString("utf8");
+			if (pending.length > READY_OUTPUT_LIMIT) {
+				finish(new Error("PanCode on the node printed too much before reporting ready."));
+				return;
+			}
+			const lines = pending.split("\n");
+			pending = lines.pop() ?? "";
+			for (const line of lines) {
+				const port = parseReadyLine(line);
+				if (port !== null) {
+					finish(port);
+					return;
+				}
+			}
+		};
+		const onExit = (code: number | null, signal: NodeJS.Signals | null) => {
+			const last = stderr.trim().split("\n").at(-1) ?? "";
+			finish(
+				new Error(
+					`ssh ended (${code ?? signal ?? "unknown"}) before PanCode on the node was ready${last ? `: ${last}` : "."}`,
+				),
+			);
+		};
+		const onError = (error: Error) => finish(new Error(`ssh could not start: ${error.message}`));
+		child.stdout?.on("data", onData);
+		child.stderr?.on("data", (chunk: Buffer) => {
+			stderr = (stderr + chunk.toString("utf8")).slice(-4096);
+		});
+		child.once("exit", onExit);
+		child.once("error", onError);
+	});
+}
+
+/**
+ * Resolves once ssh says it holds the forward's local port. Until then whatever answers on that port
+ * may be another account's listener, which must never see this app's proof or the node's credential.
+ */
+function forwardHeld(child: ChildProcess, timeoutMs: number): Promise<void> {
+	return new Promise((resolve, reject) => {
+		let stdout = "";
+		let stderr = "";
+		const finish = (error?: Error) => {
+			clearTimeout(timer);
+			child.stdout?.removeListener("data", onData);
+			child.removeListener("exit", onExit);
+			child.removeListener("error", onError);
+			if (error) reject(error);
+			else resolve();
+		};
+		const timer = setTimeout(
+			() => finish(new Error(`The SSH forward did not take its local port within ${Math.round(timeoutMs / 1000)} s.`)),
+			timeoutMs,
+		);
+		timer.unref();
+		const onData = (chunk: Buffer) => {
+			stdout = (stdout + chunk.toString("utf8")).slice(-4096);
+			if (stdout.split(/\r?\n/).includes(FORWARD_HELD_LINE)) finish();
+		};
+		const onExit = (code: number | null, signal: NodeJS.Signals | null) => {
+			const last = stderr.trim().split("\n").at(-1) ?? "";
+			finish(
+				new Error(
+					`The SSH forward ended (${code ?? signal ?? "unknown"}) before it held its local port${last ? `: ${last}` : "."}`,
+				),
+			);
+		};
+		const onError = (error: Error) => finish(new Error(`ssh could not start: ${error.message}`));
+		child.stdout?.on("data", onData);
+		child.stderr?.on("data", (chunk: Buffer) => {
+			stderr = (stderr + chunk.toString("utf8")).slice(-4096);
+		});
+		child.once("exit", onExit);
+		child.once("error", onError);
+	});
+}
+
+const running = (child: ChildProcess) => child.exitCode === null && child.signalCode === null;
+
+function exited(child: ChildProcess): Promise<void> {
+	if (child.exitCode !== null || child.signalCode !== null) return Promise.resolve();
+	return new Promise((resolve) => child.once("exit", () => resolve()));
+}
+
+async function sleep(ms: number) {
+	await new Promise<void>((resolve) => setTimeout(resolve, ms).unref());
+}
+
+/**
+ * One attachment per registered node: this app starts the node's own GUI over SSH on demand, forwards
+ * a local port to it and proxies the browser there. The node's GUI stops itself when idle; this app
+ * stops every channel when it stops.
+ */
+export class NodeAttachments implements NodeAttachmentsApi {
+	private readonly entries = new Map<string, Entry>();
+	private readonly startedAt = new Date().toISOString();
+	private stopped = false;
+	constructor(private readonly deps: NodeAttachDeps) {}
+
+	async list(): Promise<NodeAttachment[]> {
+		const endpoints = await this.registry();
+		return endpoints.map((endpoint) => this.entries.get(endpoint.id)?.attachment ?? this.detached(endpoint));
+	}
+
+	async attach(id: string): Promise<NodeAttachment> {
+		if (this.stopped) throw new AppProblem("unavailable", "PanCode is stopping.");
+		const endpoint = (await this.registry()).find((candidate) => candidate.id === id);
+		if (this.stopped) throw new AppProblem("unavailable", "PanCode is stopping.");
+		if (!endpoint) throw new AppProblem("not_found", `No fleet node is registered as ${id}.`);
+		const current = this.entries.get(id);
+		if (current && (current.attachment.state === "ready" || current.attachment.state === "connecting"))
+			return current.attachment;
+		// An explicit open starts over, whatever the earlier run ended in, and resets the backoff.
+		return this.start(endpoint, 0).attachment;
+	}
+
+	/**
+	 * Stop and drop the attachment of a node that left the registry, so the proxy refuses it from now
+	 * on. The GUI's own remove calls this at once; a removal made elsewhere lands at the next read.
+	 */
+	forget(id: string): void {
+		const entry = this.entries.get(id);
+		if (!entry) return;
+		if (entry.timer) clearTimeout(entry.timer);
+		entry.timer = null;
+		this.teardown(entry);
+		this.entries.delete(id);
+		entry.attachment = {
+			...entry.attachment,
+			state: "detached",
+			since: new Date().toISOString(),
+			detail: null,
+			attempt: 0,
+			retryAt: null,
+			remote: null,
+		};
+		this.publish(entry);
+	}
+
+	route(id: string): NodeRoute | null {
+		const entry = this.entries.get(id);
+		if (!entry) return null;
+		const state = entry.attachment.state;
+		if (state !== "ready") return { kind: "pending", state };
+		return entry.live?.localPort && entry.live.remotePort
+			? { kind: "ready", port: entry.live.localPort, remotePort: entry.live.remotePort, token: entry.live.token }
+			: { kind: "pending", state: "connecting" };
+	}
+
+	async stopAll(): Promise<void> {
+		this.stopped = true;
+		const children: ChildProcess[] = [];
+		for (const entry of this.entries.values()) {
+			if (entry.timer) clearTimeout(entry.timer);
+			entry.timer = null;
+			children.push(...this.teardown(entry));
+		}
+		await Promise.race([Promise.all(children.map(exited)), sleep(2_000)]);
+		for (const child of children) if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
+	}
+
+	/** The registry as it stands now; an attachment whose node is no longer in it ends here. */
+	private async registry(): Promise<NodeEndpoint[]> {
+		const endpoints = await this.deps.endpoints();
+		const registered = new Set(endpoints.map((endpoint) => endpoint.id));
+		for (const id of [...this.entries.keys()]) if (!registered.has(id)) this.forget(id);
+		return endpoints;
+	}
+
+	private detached(endpoint: NodeEndpoint): NodeAttachment {
+		return {
+			id: endpoint.id,
+			host: endpoint.host,
+			state: "detached",
+			since: this.startedAt,
+			detail: null,
+			attempt: 0,
+			retryAt: null,
+			remote: null,
+		};
+	}
+
+	private start(endpoint: NodeEndpoint, failures: number): Entry {
+		const previous = this.entries.get(endpoint.id);
+		if (previous?.timer) clearTimeout(previous.timer);
+		const entry: Entry = {
+			attachment: {
+				...this.detached(endpoint),
+				state: "connecting",
+				since: new Date().toISOString(),
+				attempt: failures,
+			},
+			live: {
+				endpoint,
+				// Fresh per attachment, delivered on stdin and kept only here; it never reaches a log or the browser.
+				token: randomBytes(32).toString("base64url"),
+				command: null,
+				forward: null,
+				localPort: null,
+				remotePort: null,
+			},
+			timer: null,
+			failures,
+		};
+		this.entries.set(endpoint.id, entry);
+		this.publish(entry);
+		void this.connect(entry).catch((error: unknown) => {
+			if (this.current(entry)) this.fail(entry, error instanceof Error ? error.message : String(error));
+		});
+		return entry;
+	}
+
+	private current(entry: Entry) {
+		return !this.stopped && this.entries.get(entry.attachment.id) === entry;
+	}
+
+	private async connect(entry: Entry): Promise<void> {
+		const live = entry.live;
+		if (!live) return;
+		const env = this.deps.env ?? process.env;
+		const command = startSshCommand(
+			live.endpoint,
+			remoteGuiCommand(live.endpoint.pancodeEntry, this.deps.idleMs ?? REMOTE_GUI_IDLE_MS),
+			env,
+		);
+		live.command = command;
+		// A channel that dies before reading its token raises EPIPE here; the exit itself is what gets reported.
+		command.child.stdin?.on("error", () => {});
+		command.child.stdin?.write(`${live.token}\n`);
+		const remotePort = await readyPort(command.child, this.deps.readyTimeoutMs ?? 30_000);
+		if (!this.current(entry)) return;
+		live.remotePort = remotePort;
+		// Keep the channel's pipes draining so the remote never blocks on a full pipe.
+		command.child.stdout?.on("data", () => {});
+		command.child.stderr?.on("data", () => {});
+		command.child.once("exit", (code) => this.channelExited(entry, "command", code));
+		const localPort = await freeLoopbackPort();
+		if (!this.current(entry)) return;
+		live.localPort = localPort;
+		const forward = startSshForward(live.endpoint, localPort, remotePort, env);
+		live.forward = forward;
+		const held = forwardHeld(forward.child, this.deps.readyTimeoutMs ?? 30_000);
+		forward.child.stdout?.on("data", () => {});
+		forward.child.stderr?.on("data", () => {});
+		forward.child.once("exit", (code) => this.channelExited(entry, "forward", code));
+		await held;
+		if (!this.current(entry)) return;
+		const remote = await this.waitForMeta(entry, localPort, remotePort, live.token, forward.child);
+		if (!this.current(entry)) return;
+		// A forward gone meanwhile left the port to whoever takes it, so no answer there counts.
+		if (!running(forward.child)) throw new Error("The SSH forward ended before PanCode on the node answered through it.");
+		if (!remote) throw new Error("PanCode on the node did not answer through the SSH forward.");
+		const gate = versionGate(entry.attachment.id, this.deps.local(), remote);
+		if (!gate.ok) {
+			this.teardown(entry);
+			entry.attachment = {
+				...entry.attachment,
+				state: "version-mismatch",
+				since: new Date().toISOString(),
+				detail: gate.detail,
+				retryAt: null,
+				remote,
+			};
+			this.publish(entry);
+			return;
+		}
+		// A successful open leaves nothing of an earlier failure or idle exit behind.
+		entry.failures = 0;
+		entry.attachment = {
+			...entry.attachment,
+			state: "ready",
+			since: new Date().toISOString(),
+			detail: null,
+			attempt: 0,
+			retryAt: null,
+			remote,
+		};
+		this.publish(entry);
+	}
+
+	private async waitForMeta(
+		entry: Entry,
+		port: number,
+		listenerPort: number,
+		token: string,
+		forward: ChildProcess,
+	): Promise<RemoteServerMeta | null> {
+		const deadline = performance.now() + (this.deps.metaTimeoutMs ?? 10_000);
+		while (performance.now() < deadline && this.current(entry) && running(forward)) {
+			const meta = await remoteServerMeta(port, listenerPort, token);
+			if (meta) return meta;
+			await sleep(200);
+		}
+		return null;
+	}
+
+	private channelExited(entry: Entry, channel: "command" | "forward", code: number | null) {
+		if (!this.current(entry) || entry.attachment.state !== "ready") return;
+		// The node's GUI stopping itself after idling is the normal end; the next open starts it again.
+		if (channel === "command" && code === 0) {
+			this.teardown(entry);
+			entry.attachment = {
+				...entry.attachment,
+				state: "detached",
+				since: new Date().toISOString(),
+				detail: null,
+				retryAt: null,
+				remote: null,
+			};
+			this.publish(entry);
+			return;
+		}
+		this.fail(entry, `The SSH ${channel} channel to ${entry.attachment.host} ended (${code ?? "signal"}).`);
+	}
+
+	private fail(entry: Entry, detail: string) {
+		this.teardown(entry);
+		const failures = entry.failures + 1;
+		entry.failures = failures;
+		const delay = reconnectDelayMs(failures);
+		entry.attachment = {
+			...entry.attachment,
+			state: "failed",
+			since: new Date().toISOString(),
+			detail: delay === null ? `${detail} Reconnecting stopped; open the node again to retry.` : detail,
+			attempt: failures,
+			retryAt: delay === null ? null : new Date(Date.now() + delay).toISOString(),
+			remote: null,
+		};
+		this.publish(entry);
+		if (delay === null) return;
+		const endpoint = entry.live?.endpoint;
+		if (!endpoint) return;
+		entry.timer = setTimeout(() => {
+			entry.timer = null;
+			if (this.current(entry)) this.start(endpoint, failures);
+		}, delay);
+		entry.timer.unref();
+	}
+
+	/** Stop both channels; stdin's end tells the node's GUI its parent is gone before any signal lands. */
+	private teardown(entry: Entry): ChildProcess[] {
+		const live = entry.live;
+		if (!live) return [];
+		const children: ChildProcess[] = [];
+		for (const owned of [live.command, live.forward]) {
+			if (!owned) continue;
+			children.push(owned.child);
+			owned.child.stdin?.end();
+			stopPancodeCommand(owned.child, owned.birthToken, "SIGTERM");
+			const child = owned.child,
+				birthToken = owned.birthToken;
+			setTimeout(() => {
+				if (child.exitCode === null && child.signalCode === null) stopPancodeCommand(child, birthToken, "SIGKILL");
+			}, 1_000).unref();
+		}
+		live.command = null;
+		live.forward = null;
+		live.localPort = null;
+		live.remotePort = null;
+		return children;
+	}
+
+	private publish(entry: Entry) {
+		this.deps.hub.publish({ type: "node.attach", payload: entry.attachment });
+	}
+}

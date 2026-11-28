@@ -10,6 +10,7 @@ import { targetsQuery, useOperation } from "../api/queries.js";
 import { Boundary, PanelEmpty, PanelHeading } from "../design/panel.js";
 import { emptyState } from "../design/panel-model.js";
 import { InspectionError } from "../design/run-inspection.js";
+import { operationUnsettled } from "./programs-model.js";
 import {
 	aaLine,
 	bestCurve,
@@ -29,7 +30,6 @@ import {
 	summaryMeta,
 	summaryObjective,
 } from "./research-model.js";
-import { operationUnsettled } from "./toolchain-model.js";
 import { useWorkspaceSelection, WorkspacePicker } from "./workspace-selection.js";
 import "./research.css";
 
@@ -267,10 +267,15 @@ function LiveLog({ client, live }: { client: Client; live: Live }) {
 			{live.running && (
 				<p className="panel-note">
 					Stopping archives the current iteration as interrupted, journals the stop and removes the worktrees, the same as
-					Ctrl-C in the terminal.
+					Ctrl-C in the terminal. Resume later with <code>pancode research resume</code>.
 				</p>
 			)}
-			{live.status === "cancelled" && <p role="status">The campaign was stopped; its journal stays readable here.</p>}
+			{live.status === "cancelled" && (
+				<p role="status">
+					The campaign was stopped; its journal stays readable here and can be resumed with{" "}
+					<code>pancode research resume</code>.
+				</p>
+			)}
 			{live.problem && (
 				<p className="research-error" role="alert">
 					{live.problem.detail || live.problem.title}
@@ -590,10 +595,10 @@ function NewCampaign({
 			</fieldset>
 			<fieldset disabled={running}>
 				<legend>Agent</legend>
-				{targets.error && <p className="research-error">Targets could not be read: {problemText(targets.error)}</p>}
+				{targets.error && <p className="research-error">Connections could not be read: {problemText(targets.error)}</p>}
 				<div className="research-new__row">
 					<label>
-						Target
+						Connection
 						<select
 							value={draft.target}
 							onChange={(event) => {
@@ -601,7 +606,7 @@ function NewCampaign({
 								set({ target: event.target.value, model: next?.defaultModel ?? next?.models[0] ?? "" });
 							}}
 						>
-							<option value="">Workspace default</option>
+							<option value="">Project default</option>
 							{targets.data?.targets.map((item) => (
 								<option key={item.id} value={item.id}>
 									{item.id}

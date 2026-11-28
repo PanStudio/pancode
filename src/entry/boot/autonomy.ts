@@ -62,7 +62,7 @@ import {
 } from "../../lib/autonomy/autonomy.js";
 import type { ChatLoop } from "../../session-control/chat-loop.js";
 import { effectiveToolNames } from "../../tools/agent-tools.js";
-import type { ToolRegistry } from "../../tools/registry-contract.js";
+import type { ToolRegistry } from "../../tools/registry/contract.js";
 import type { BootOptions } from "../boot-options.js";
 import type { createFlowLedger } from "../flow-ledger.js";
 import { createJudgeScreen, createSafetyJudgeCompletion, createSafetyJudgeHost } from "../safety-judge-host.js";
@@ -182,7 +182,7 @@ export function buildBootAutonomy(input: BootAutonomyInput) {
 			cwd,
 			prompts.inputEpoch(),
 			skillDiscoveryEnabled,
-			config?.get().integrations.projectResources.trustProjectImports === true,
+			config?.get().integrations.hub.trustProjectImports === true,
 			options.skillPaths ?? options.headless?.skillPaths ?? [],
 		]);
 		if (readySkillSnapshot?.key === key) return readySkillSnapshot.count;

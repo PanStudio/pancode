@@ -11,10 +11,10 @@
  * from its verb. Such an entry says `"source": "usage"`; a curated entry says `"source": "spec"`.
  */
 import { spawnSync } from "node:child_process";
-import { EXIT_CODES } from "./kit/exit-codes.js";
-import { type FlagSpec, helpRequested, type LeafFlagsSpec } from "./kit/help.js";
-import { jsonDocument, writeCliFailure, writeJson } from "./kit/json-out.js";
-import { ERROR_SLUGS } from "./kit/slugs.js";
+import { EXIT_CODES } from "./lib/exit-codes.js";
+import { type FlagSpec, helpRequested, type LeafFlagsSpec } from "./lib/help.js";
+import { jsonDocument, writeCliFailure, writeJson } from "./lib/json-out.js";
+import { ERROR_SLUGS } from "./lib/slugs.js";
 import { type ManifestFlag, type ManifestValue, NESTED_LEAVES, RUN_FLAGS, TOP_LEVEL_USAGE } from "./specs/manifest.js";
 import { SCHEMA_NAMES } from "./specs/schema.js";
 import { COMMAND_SPECS } from "./specs/table.js";
@@ -80,7 +80,7 @@ interface ManifestLeaf {
 /** C2: groups that run a read when bare. */
 const DEFAULT_ACTION_GROUPS = new Set([
 	"context",
-	"targets",
+	"connections",
 	"agents",
 	"tasks",
 	"claims",
@@ -109,7 +109,7 @@ const READ_VERBS = new Set([
 	"view",
 	"search",
 	"stat",
-	"ls",
+
 	"tags",
 	"history",
 	"where",
@@ -147,17 +147,7 @@ const READ_VERBS = new Set([
 	"help",
 	"schema",
 ]);
-const DESTRUCTIVE_VERBS = new Set([
-	"remove",
-	"rm",
-	"rm-tag",
-	"reset",
-	"uninstall",
-	"forget",
-	"prune",
-	"terminate",
-	"drop",
-]);
+const DESTRUCTIVE_VERBS = new Set(["remove", "remove-tag", "reset", "uninstall", "forget", "prune", "terminate"]);
 const NETWORK_VERBS = new Set([
 	"send",
 	"sweep",
@@ -167,7 +157,7 @@ const NETWORK_VERBS = new Set([
 	"sync",
 	"push",
 	"upgrade",
-	"share",
+	"archive",
 	"test",
 ]);
 
@@ -217,6 +207,7 @@ function exitFor(key: string): ManifestLeaf["exit"] {
 		case "fleet run":
 		case "fleet wait":
 			return { codes: [0, 1, 2, 4, 124, 129, 130, 141, 143] };
+		case "fleet stop":
 		case "fleet cancel":
 			return { codes: [0, 1, 2, 75] };
 		default:

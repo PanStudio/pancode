@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import {
-	AcpHandoffCancelledSchema,
+	AcpHandoffCanceledSchema,
 	AcpHandoffCommittedSchema,
 	AcpHandoffDraftSchema,
 	AcpHandoffCapability as HandoffCapability,
@@ -39,4 +39,4 @@ export const HandoffCommitted = AcpHandoffCommittedSchema;
 export type HandoffCommitted = Static<typeof HandoffCommitted>;
 
 export const HandoffCancelRequest = Type.Object({ handoffId: HandoffId }, closed);
-export const HandoffCancelled = AcpHandoffCancelledSchema;
+export const HandoffCanceled = AcpHandoffCanceledSchema;

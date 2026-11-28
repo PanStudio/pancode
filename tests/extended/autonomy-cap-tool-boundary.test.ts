@@ -28,8 +28,8 @@ import { openAICompletionsApiProvider } from "../../src/engine/apis/openai-compl
 import type { Model } from "../../src/engine/types.js";
 import { type ChatLoop, type ChatLoopEvent, createChatLoop } from "../../src/session-control/chat-loop.js";
 import { finalizeObservation, observationBudgetExhausted, reserveObservation } from "../../src/tools/observation.js";
+import type { ToolInvokeOptions } from "../../src/tools/registry/contract.js";
 import { createRegistry } from "../../src/tools/registry.js";
-import type { ToolInvokeOptions } from "../../src/tools/registry-contract.js";
 import { dispatchStubContext } from "../harness/dispatch-stub-context.js";
 import { type IsolatedPancodeEnv, isolatePancodeEnv } from "../harness/scratch-env.js";
 
@@ -120,10 +120,10 @@ function fixture(
 ) {
 	const settings = structuredClone(DEFAULT_SETTINGS);
 	settings.chat.prewarm = false;
-	settings.chat.target = target.id;
+	settings.chat.connection = target.id;
 	settings.chat.model = model.id;
 	settings.chat.thinkingLevel = "off";
-	settings.targets = [{ ...target, defaultModel: model.id }];
+	settings.connections = [{ ...target, defaultModel: model.id }];
 	const runtime: RuntimeDescriptor = {
 		...litellm,
 		auth: "none",

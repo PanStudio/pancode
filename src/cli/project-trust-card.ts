@@ -53,7 +53,7 @@ function settingsSummary(snapshot: ProjectSurfaceSnapshot): string[] {
 		if (blob === null || typeof blob !== "object" || Array.isArray(blob)) continue;
 		for (const [key, value] of Object.entries(blob)) {
 			areas.add(clean(key));
-			if (key !== "targets" || !Array.isArray(value)) continue;
+			if (key !== "connections" || !Array.isArray(value)) continue;
 			for (const target of value) {
 				if (target === null || typeof target !== "object") continue;
 				const { id, url, auth } = target as { id?: unknown; url?: unknown; auth?: unknown };
@@ -81,7 +81,7 @@ function settingsSummary(snapshot: ProjectSurfaceSnapshot): string[] {
 export function projectConnectionNeeds(cwd: string, settings: Readonly<PancodeSettings>): string[] {
 	const ids = new Set<string>();
 	for (const blob of parsedFiles(captureProjectSurface(cwd, "settings"))) {
-		const targets = (blob as { targets?: unknown } | null)?.targets;
+		const targets = (blob as { connections?: unknown } | null)?.connections;
 		if (!Array.isArray(targets)) continue;
 		for (const target of targets) {
 			const id = (target as { id?: unknown } | null)?.id;
@@ -89,7 +89,7 @@ export function projectConnectionNeeds(cwd: string, settings: Readonly<PancodeSe
 		}
 	}
 	return [...ids].flatMap((id) => {
-		const missing = settings.targets.some((entry) => entry.id === id) ? credentialMissing(settings, id) : null;
+		const missing = settings.connections.some((entry) => entry.id === id) ? credentialMissing(settings, id) : null;
 		return missing === null ? [] : [clean(describeMissing(missing, { inSession: true }).sentence)];
 	});
 }

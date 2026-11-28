@@ -16,7 +16,7 @@ test("editing a selected target refreshes the next request and retains portable 
 	const first = await startGatewayThinkingFixture();
 	const second = await startGatewayThinkingFixture();
 	const settings = structuredClone(DEFAULT_SETTINGS);
-	settings.chat.target = "gateway";
+	settings.chat.connection = "gateway";
 	settings.chat.model = first.modelId;
 	settings.chat.thinkingLevel = "off";
 	settings.chat.prewarm = false;

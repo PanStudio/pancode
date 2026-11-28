@@ -10,9 +10,9 @@ import {
 } from "../domains/telemetry/consent.js";
 import { applyTelemetryPrune, DEFAULT_PRUNE_POLICY, planTelemetryPrune } from "../domains/telemetry/retention.js";
 import { printError } from "./argv.js";
-import { formatBytes } from "./lifecycle-presenter.js";
+import { formatBytes } from "./install-presenter.js";
 
-const HELP = `pancode telemetry consent [--workspace <dir>] [--revoke | --list]
+const HELP = `pancode telemetry consent [--project <dir>] [--revoke | --list]
 pancode telemetry prune [--apply] [--days N] [--max-gib N] [--research-days N] [--research-max-gib N]
 pancode telemetry verify <session | scope-dir | archive> [--imported <install-id>] [--json]
 pancode telemetry verify --run <run-id> [--imported <install-id>] [--json]
@@ -22,9 +22,9 @@ pancode telemetry health [--json]
 pancode telemetry runs <session> | --session <session> [--json]
 
 consent records, for this operator, that research content capture may run in a
-workspace (default: the current directory) and everything under it. Capture also
+project (default: the current directory) and everything under it. Capture also
 needs telemetry.mode: research and telemetry.research.content: true. The record
-lives in PanCode's state directory, never in the workspace. --revoke deletes
+lives in PanCode's state directory, never in the project. --revoke deletes
 it; content captured before that stays in the sessions that recorded it. --list
 shows every consent.
 
@@ -122,28 +122,28 @@ async function runPrune(argv: ReadonlyArray<string>): Promise<number> {
 }
 
 function runConsent(argv: ReadonlyArray<string>): number {
-	let workspaceArg: string | undefined;
+	let projectArg: string | undefined;
 	let revoke = false;
 	let list = false;
 	for (let index = 0; index < argv.length; index += 1) {
 		const arg = argv[index];
 		if (arg === "--revoke") revoke = true;
 		else if (arg === "--list") list = true;
-		else if (arg === "--workspace" && workspaceArg === undefined && argv[index + 1]?.startsWith("--") === false) {
-			workspaceArg = argv[index + 1];
+		else if (arg === "--project" && projectArg === undefined && argv[index + 1]?.startsWith("--") === false) {
+			projectArg = argv[index + 1];
 			index += 1;
 		} else {
 			printError(
-				arg === "--workspace"
-					? "telemetry consent: --workspace needs one directory"
+				arg === "--project"
+					? "telemetry consent: --project needs one directory"
 					: `telemetry consent: unexpected argument: ${arg}`,
 			);
 			process.stderr.write(HELP);
 			return 2;
 		}
 	}
-	if (list && (revoke || workspaceArg !== undefined)) {
-		printError("telemetry consent: --list cannot be combined with --revoke or --workspace");
+	if (list && (revoke || projectArg !== undefined)) {
+		printError("telemetry consent: --list cannot be combined with --revoke or --project");
 		process.stderr.write(HELP);
 		return 2;
 	}
@@ -154,21 +154,21 @@ function runConsent(argv: ReadonlyArray<string>): number {
 			printError(`telemetry consent store is unreadable: ${read.error}`);
 			return 1;
 		}
-		if (read.entries.length === 0) process.stdout.write("no workspace has research content consent\n");
+		if (read.entries.length === 0) process.stdout.write("no project has research content consent\n");
 		for (const entry of read.entries)
 			process.stdout.write(
 				`${entry.workspace}  granted ${entry.grantedAt} by ${entry.grantedBy.user}@${entry.grantedBy.host}\n`,
 			);
 		return 0;
 	}
-	const requested = workspaceArg ?? process.cwd();
+	const requested = projectArg ?? process.cwd();
 	let workspace: string;
 	try {
 		workspace = resolveConsentWorkspace(requested);
 	} catch (error) {
-		// A workspace that no longer exists can still be revoked by the path it was granted under.
+		// A project that no longer exists can still be revoked by the path it was granted under.
 		if (!revoke) {
-			printError(`cannot resolve workspace ${requested}: ${error instanceof Error ? error.message : String(error)}`);
+			printError(`cannot resolve project ${requested}: ${error instanceof Error ? error.message : String(error)}`);
 			return 1;
 		}
 		workspace = resolve(requested);

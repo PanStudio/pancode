@@ -1,0 +1,53 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import type { SessionOverviewItem } from "../../contracts/session-overview.js";
+import type { SessionSummary } from "../../contracts/sessions.js";
+import { matchesText } from "../design/text-match.js";
+import type { TaskRow } from "../shell/shell-model.js";
+
+export const PROJECT_SESSION_FILTERS = ["all", "open", "attention", "saved"] as const;
+export type ProjectSessionFilter = (typeof PROJECT_SESSION_FILTERS)[number];
+export const PROJECT_SESSION_SORTS = ["recent", "oldest", "name"] as const;
+export type ProjectSessionSort = (typeof PROJECT_SESSION_SORTS)[number];
+const needsAttention = (row: TaskRow) =>
+	row.state === "approval" || row.state === "question" || row.state === "unknown" || row.state === "failed";
+
+export function projectSessionInventory(
+	rows: readonly TaskRow[],
+	history: readonly SessionSummary[],
+	sessions: readonly SessionOverviewItem[],
+	query: string,
+	filter: ProjectSessionFilter,
+	sort: ProjectSessionSort,
+) {
+	const saved = new Map(history.map((row) => [row.id, row]));
+	const held = new Map(sessions.map((row) => [row.id, row]));
+	const counts = { all: rows.length, open: 0, attention: 0, saved: 0 };
+	for (const row of rows) {
+		if (row.open) counts.open++;
+		else counts.saved++;
+		if (needsAttention(row)) counts.attention++;
+	}
+	const shown = rows.filter((row) => {
+		if (filter === "open" && !row.open) return false;
+		if (filter === "saved" && row.open) return false;
+		if (filter === "attention" && !needsAttention(row)) return false;
+		const summary = saved.get(row.id);
+		const session = held.get(row.id);
+		return matchesText(query, [
+			row.title,
+			row.id,
+			summary?.model,
+			summary?.target,
+			summary?.firstMessagePreview,
+			session?.model,
+			session?.target,
+		]);
+	});
+	shown.sort((a, b) => {
+		if (sort === "name") return a.title.localeCompare(b.title) || a.id.localeCompare(b.id);
+		const difference = (Date.parse(b.at ?? "") || 0) - (Date.parse(a.at ?? "") || 0);
+		return (sort === "oldest" ? -difference : difference) || a.id.localeCompare(b.id);
+	});
+	return { counts, shown };
+}

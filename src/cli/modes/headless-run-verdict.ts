@@ -106,7 +106,7 @@ export function dispatchFailureReason(event: ChatLoopEvent): { reason: string; c
 		.filter((part) => part.length > 0);
 	const runLines = lines[0]?.startsWith("dispatch (") ? lines.filter((part) => /^- .*\boutcome=/u.test(part)) : [];
 	const failedRun = runLines.find((part) => !/\boutcome=canceled\b/u.test(part)) ?? runLines[0];
-	const line = failedRun?.slice(2).replace(/ target=.*?(?= outcome=)/u, "") ?? lines[0] ?? "";
+	const line = failedRun?.slice(2).replace(/ connection=.*?(?= outcome=)/u, "") ?? lines[0] ?? "";
 	// A run line ends in its worker cause, so a long one loses its middle, not its end.
 	return {
 		reason: line.length > 200 ? `${line.slice(0, 99)}…${line.slice(-100)}` : line,
@@ -165,6 +165,6 @@ export function prefixHeadlessFailure(
 	if (!snapshot) return message;
 	const route = [snapshot.runtimeId, snapshot.targetUrl].filter(Boolean).join(" ");
 	return redactUrlCredentials(
-		`target '${snapshot.targetId}' (${route}): ${headlessRouteFailureText(message) ?? message}`,
+		`connection '${snapshot.targetId}' (${route}): ${headlessRouteFailureText(message) ?? message}`,
 	);
 }

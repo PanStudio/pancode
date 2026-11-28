@@ -146,7 +146,7 @@ function Run({ client, runId }: { client: Client; runId: string }) {
 					entries={[
 						["Agent", trace.identity?.agentId],
 						["Model", trace.identity?.model],
-						["Target", trace.identity?.targetId],
+						["Connection", trace.identity?.targetId],
 						["Node", trace.identity?.node],
 						["Session", trace.identity?.sessionId ?? trace.telemetry.sessionId],
 						["Started", formatTime(trace.identity?.startedAt ?? trace.telemetry.firstAt)],

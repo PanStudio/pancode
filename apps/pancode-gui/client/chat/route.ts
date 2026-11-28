@@ -53,13 +53,13 @@ export function routeFacts(
 	const provider = health.providers.find((row) => row.key === target);
 	const tone = provider?.tone ?? "unverified";
 	const healthText = provider
-		? `Target ${provider.key}: ${sentenceEnd(provider.detail ?? provider.label)}`
-		: "No target health reported by PanCode.";
+		? `Connection ${provider.key}: ${sentenceEnd(provider.detail ?? provider.label)}`
+		: "No connection health reported by PanCode.";
 	if (settings === undefined) {
 		return {
 			tone,
 			text: "Model not reported",
-			title: `PanCode has not reported this task's model. ${healthText}`,
+			title: `PanCode has not reported this session's model. ${healthText}`,
 			spoken: `Model not reported. ${healthText}`,
 		};
 	}
@@ -73,7 +73,7 @@ export function routeFacts(
 				"Default model")
 			: "Model not reported",
 		...(settings.thinking === "not reported" ? {} : { thinking: settings.thinking }),
-		title: `Target: ${settings.target ?? "automatic"}. Model: ${modelReported ? (settings.model ?? "configured default") : "not reported"}. Thinking: ${settings.thinking}. ${healthText}`,
+		title: `Connection: ${settings.target ?? "automatic"}. Model: ${modelReported ? (settings.model ?? "configured default") : "not reported"}. Thinking: ${settings.thinking}. ${healthText}`,
 		spoken: `Thinking ${settings.thinking}. ${healthText}`,
 	};
 }

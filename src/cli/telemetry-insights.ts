@@ -11,6 +11,7 @@ import { pancodeStateDir } from "../core/xdg.js";
 import {
 	countVerifiedOutcomes,
 	runHostVerified,
+	sessionGateDecisions,
 	type VerifiedOutcomeCount,
 } from "../domains/evidence/verified-outcomes.js";
 import { readRunRecord } from "../domains/telemetry/index.js";
@@ -93,14 +94,15 @@ function verifiedOutcomes(
 		if (projected !== null) entries.push(projected);
 	}
 	const verified = new Set<string>();
-	for (const runId of runIds) {
+	const ids = [...runIds];
+	for (const runId of ids) {
 		try {
 			if (runHostVerified(readRunRecord(stateDir, runId))) verified.add(runId);
 		} catch {
 			// An unreadable run is not a verified one.
 		}
 	}
-	return countVerifiedOutcomes(expandChainMessages(entries), verified, forkTurnId);
+	return countVerifiedOutcomes(expandChainMessages(entries), verified, forkTurnId, sessionGateDecisions(stateDir, ids));
 }
 
 function projectCwd(stateDir: string, bucketDir: string, sessionIds: readonly string[]): string | null {

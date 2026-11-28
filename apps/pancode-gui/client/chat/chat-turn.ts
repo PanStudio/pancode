@@ -26,7 +26,7 @@ export const EMPTY_PROMPT = "(empty prompt)";
 
 /** Verbatim. The wording the page carried before read like data loss, which it is not. */
 export const TRUNCATION_NOTE =
-	"This view shows the most recent part of a long task. Earlier turns stay in the saved session.";
+	"This view shows the most recent part of a long session. Earlier turns stay in the saved session.";
 
 export { STARTER_PROMPTS } from "./starter-prompts.js";
 

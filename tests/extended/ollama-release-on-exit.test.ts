@@ -105,8 +105,8 @@ async function ollamaFixture(options: { stallChat?: string; hangRelease?: boolea
 
 function seedOllamaOrchestrator(configDir: string, url: string): void {
 	editSettingsFile(join(configDir, "settings.yaml"), (settings) => {
-		settings.targets = [{ id: "local-ollama", runtime: "ollama", url, defaultModel: MODEL }];
-		Object.assign(section(settings, "chat"), { target: "local-ollama", model: MODEL });
+		settings.connections = [{ id: "local-ollama", runtime: "ollama", url, defaultModel: MODEL }];
+		Object.assign(section(settings, "chat"), { connection: "local-ollama", model: MODEL });
 	});
 }
 

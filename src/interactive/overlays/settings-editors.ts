@@ -121,7 +121,7 @@ export function selectTargetSubmenu(providers: ProvidersContract): SettingSubmen
 	return (currentValue: string, done: (val?: string) => void) => {
 		const statuses = providers.list();
 		if (statuses.length === 0) {
-			return textInputSubmenu("Type target id")(currentValue, done);
+			return textInputSubmenu("Type connection id")(currentValue, done);
 		}
 		const items = statuses.map((status) => ({
 			value: status.target.id,
@@ -305,7 +305,7 @@ function scopedModelCapabilityDetail(caps: CapabilityFlags, thinking?: string): 
 
 function scopedModelEntryDetail(providers: ProvidersContract, status: TargetStatus, model: string | null): string {
 	if (!model) {
-		return `${scopedModelCapabilityDetail(status.capabilities)} ${GLYPH.sep} target-level scope uses this target's default model when switching targets`;
+		return `${scopedModelCapabilityDetail(status.capabilities)} ${GLYPH.sep} connection-level scope uses this connection's default model when switching connections`;
 	}
 	const resolved = resolveModelRuntimeCapabilitiesForProviders(providers, status.target.id, model);
 	return resolved
@@ -322,7 +322,7 @@ function buildScopedModelChecklistRows(
 	if (providers) {
 		for (const status of providers.list()) {
 			const targetRef = status.target.id;
-			rows.push({ kind: "group", label: `Target ${GLYPH.sep} ${targetRef}` });
+			rows.push({ kind: "group", label: `Connection ${GLYPH.sep} ${targetRef}` });
 			availableRefs.add(targetRef);
 			rows.push({
 				kind: "entry",
@@ -362,7 +362,7 @@ function buildScopedModelChecklistRows(
 			});
 		}
 	}
-	if (rows.length === 0) rows.push({ kind: "group", label: "No configured targets or scoped references" });
+	if (rows.length === 0) rows.push({ kind: "group", label: "No configured connections or scoped references" });
 	return { rows, availableRefs };
 }
 
@@ -496,7 +496,7 @@ export function scopedModelsSubmenu(
 				{ key: "Space", verb: "toggle" },
 				{ key: "Enter", verb: "continue" },
 			],
-			"Target entries cycle by target, using its default model when switching targets. Model entries pin one exact target/model reference.",
+			"Connection entries cycle by connection, using its default model when switching connections. Model entries pin one exact connection/model reference.",
 		);
 }
 
@@ -529,7 +529,7 @@ export function profileTargetChoices(
 	providers: ProvidersContract | undefined,
 ): Array<{ value: string; label: string }> {
 	if (!providers)
-		return live().targets.map((target) => ({
+		return live().connections.map((target) => ({
 			value: target.id,
 			label: target.id,
 		}));
@@ -560,7 +560,7 @@ export function targetActionsSubmenu(
 	const connectTarget = options?.connectTarget;
 	return (currentValue: string, done: (val?: string) => void) => {
 		const status = providers?.list().find((entry) => entry.target.id === targetId);
-		const target = status?.target ?? options?.getSettings?.().targets.find((entry) => entry.id === targetId);
+		const target = status?.target ?? options?.getSettings?.().connections.find((entry) => entry.id === targetId);
 		const runtime = status?.runtime ?? null;
 		const chatEligible = !providers || (runtime !== null && isOrchestratorEligibleRuntime(runtime));
 		// A key PanCode stored can always be replaced from this menu. Once the target refused it, Connect itself asks for the new one.
@@ -617,7 +617,7 @@ export function targetActionsSubmenu(
 				: []),
 			{
 				value: "remove",
-				label: "Remove target",
+				label: "Remove connection",
 				presentationKind: "destructive-action" as const,
 			},
 		];
@@ -627,7 +627,7 @@ export function targetActionsSubmenu(
 		})()}`;
 		const note = chatEligible ? details : `Not chat-eligible: its runtime is not HTTP/native. ${GLYPH.sep} ${details}`;
 		return selectListSubmenu(
-			`Target ${targetId}`,
+			`Connection ${targetId}`,
 			items,
 			note,
 		)(currentValue, (value) => {

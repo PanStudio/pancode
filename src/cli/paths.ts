@@ -13,7 +13,7 @@ import {
 } from "../domains/install/install-method.js";
 import { describeTracking } from "../domains/install/install-plan.js";
 import { nativeAutoUpdatePolicy } from "../domains/install/native-update.js";
-import { writeCliFailure } from "./kit/json-out.js";
+import { writeCliFailure } from "./lib/json-out.js";
 
 const HELP = `pancode paths [--json]
 

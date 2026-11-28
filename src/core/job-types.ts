@@ -108,7 +108,7 @@ export function turnContinuationDelayMs(attempt: number, retryAfterMs?: number):
 	// A stated wait is never cut short, or the continuation would go back to the provider before the time it named.
 	return Math.max(TURN_CONTINUATION_FAILURE_DELAYS_MS[index] ?? 0, retryAfterMs ?? 0);
 }
-type JobEndReason = "count" | "condition" | "stopped" | "canceled" | "deadline" | "failure";
+type JobEndReason = "count" | "condition" | "canceled" | "deadline" | "failure";
 export const JOB_OUTCOMES = ["succeeded", "failed", "noop", "canceled", "timed_out", "interrupted"] as const;
 export const JOB_DELIVERY_STATES = ["pending", "running", "delivered", "dropped", "failed"] as const;
 export interface JobEvidence {

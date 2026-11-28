@@ -284,7 +284,7 @@ for (const width of widths) {
 		];
 		const rows = renderCompactDashboard(snapshot, width);
 		bounded(rows, width);
-		if (width >= 60) assert.match(plain(rows), /2 workers/u);
+		if (width >= 60) assert.match(plain(rows), /● 2 running/u);
 		if (width > 60) assert.match(plain(rows), /tree/u);
 		else assert.equal(rows.length, width < 44 ? 1 : 2);
 	});

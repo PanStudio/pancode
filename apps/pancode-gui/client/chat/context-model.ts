@@ -11,7 +11,7 @@ const SOURCE_WORDS: Readonly<Record<string, string>> = {
 	loaded: "read from the loaded model",
 	probe: "measured by a probe",
 	catalog: "from the model catalog",
-	"target-override": "set on this target",
+	"target-override": "set on this connection",
 	"model-hint": "from a model hint",
 	"descriptor-default": "the runtime's default",
 	unknown: "of unknown origin",
@@ -58,7 +58,7 @@ export interface ContextFact {
 
 export function contextWorkspaceFacts(workspace: SessionWorkspace): ContextFact[] {
 	return [
-		{ label: "Workspace", value: null, note: workspace.cwd },
+		{ label: "Project", value: null, note: workspace.cwd },
 		{
 			label: "Repository",
 			value: null,

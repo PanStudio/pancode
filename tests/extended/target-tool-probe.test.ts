@@ -177,8 +177,8 @@ describe("targets --probe --tools", () => {
 			PANCODE_REQUIRE_HOME_PREFIX: "1",
 		};
 		mkdirSync(join(root, "config"), { recursive: true });
-		writeFileSync(join(root, "config", "settings.yaml"), JSON.stringify({ targets: [target] }));
-		const { stdout } = await execFileAsync(process.execPath, [CLI, "targets", ...args], {
+		writeFileSync(join(root, "config", "settings.yaml"), JSON.stringify({ connections: [target] }));
+		const { stdout } = await execFileAsync(process.execPath, [CLI, "connections", ...args], {
 			cwd: ROOT,
 			env,
 		});
@@ -346,7 +346,7 @@ describe("targets --probe --tools", () => {
 describe("runtime resolution with a tool probe result", () => {
 	function providersWithProbe(toolProbe: ToolCallVerification): ProvidersContract {
 		const settings = structuredClone(DEFAULT_SETTINGS);
-		settings.targets = [{ id: "local", runtime: "openai-compat", url: "http://127.0.0.1:1", defaultModel: MODEL }];
+		settings.connections = [{ id: "local", runtime: "openai-compat", url: "http://127.0.0.1:1", defaultModel: MODEL }];
 		const stub = dispatchStubContext({ settings, runtime: openAICompatRuntime });
 		const providers = stub.getContract("providers");
 		if (!providers) throw new Error("stub has no providers contract");

@@ -90,7 +90,7 @@ describe("production compaction controls", () => {
 	});
 	function fixture(literalUsage = false, withHistory = true, journaled = false) {
 		const settings = structuredClone(DEFAULT_SETTINGS);
-		settings.chat.target = "chat-target";
+		settings.chat.connection = "chat-target";
 		settings.chat.model = "chat";
 		const capabilities = {
 			chat: true,
@@ -167,7 +167,7 @@ describe("production compaction controls", () => {
 				},
 			},
 		} as unknown as ProvidersContract;
-		const state = startSession({ cwd: scratch.dir, target: settings.chat.target, model: settings.chat.model });
+		const state = startSession({ cwd: scratch.dir, target: settings.chat.connection, model: settings.chat.model });
 		let leaf: string | null = null;
 		function addHistory(label = "history") {
 			for (let i = 0; i < 6; i++)
@@ -2198,7 +2198,7 @@ describe("production compaction controls", () => {
 		await f.run();
 		strictEqual(f.calls[0]?.model, "chat");
 		strictEqual(f.calls[0]?.systemPrompt, COMPACTION_SYSTEM_PROMPT);
-		f.settings.chat.target = "summary-target";
+		f.settings.chat.connection = "summary-target";
 		f.settings.chat.model = "summary";
 		f.addHistory();
 		const count = f.calls.length;

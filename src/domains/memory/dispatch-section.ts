@@ -26,16 +26,16 @@ export interface DispatchMemoryRoute {
  * target runtime the request also names.
  */
 function dispatchMemoryRuntimeId(
-	settings: Pick<PancodeSettings, "targets" | "fleet">,
+	settings: Pick<PancodeSettings, "connections" | "fleet">,
 	route: DispatchMemoryRoute,
 ): string | undefined {
 	const boundProfileName = route.workerProfile ?? settings.fleet.agentProfiles[route.agentId];
 	const boundProfile = boundProfileName ? settings.fleet.profiles[boundProfileName] : undefined;
 	const configuredRuntime = (targetId: string | null | undefined): string | undefined =>
-		settings.targets.find((target) => target.id === targetId)?.runtime;
+		settings.connections.find((target) => target.id === targetId)?.runtime;
 	if (route.target !== undefined) return configuredRuntime(route.target);
 	if (boundProfileName === undefined) return route.workerRuntime;
-	const profileRuntimeId = configuredRuntime(boundProfile?.target);
+	const profileRuntimeId = configuredRuntime(boundProfile?.connection);
 	return route.workerRuntime === profileRuntimeId ? profileRuntimeId : undefined;
 }
 
@@ -53,7 +53,7 @@ export function buildDispatchMemorySection(input: {
 	cwd: string;
 	/** The request's own `cwd`, when it names one. */
 	workerCwd?: string;
-	settings: Pick<PancodeSettings, "targets" | "fleet" | "context">;
+	settings: Pick<PancodeSettings, "connections" | "fleet" | "context">;
 	route: DispatchMemoryRoute;
 }): string {
 	if (!input.settings.context.memory.enabled) return "";

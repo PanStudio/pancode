@@ -23,6 +23,7 @@ import {
 	operandStaysInWorkspace,
 	readOnlyInspectionRule,
 } from "./policy-read-only-inspectors.js";
+import { READ_ONLY_LOOP_RULE_ID, readOnlyLoop } from "./policy-read-only-loop.js";
 import type { LoadedProjectSafetyPolicy } from "./project-policy.js";
 import type { ShellToken } from "./shell-scan.js";
 import { scanShellLike } from "./shell-scan.js";
@@ -109,6 +110,7 @@ export function recognizeCommandChain(
 					requiresAutonomyApproval: false,
 					runsTestRunner: false,
 					scriptPreviews: [],
+					provenSpans: [],
 				};
 	}
 	const ruleIds: string[] = [];
@@ -122,8 +124,22 @@ export function recognizeCommandChain(
 	// run in.
 	let cwds = [callCwd];
 	const scriptPreviews: string[] = [];
-	for (const [index, segment] of segments.entries()) {
+	const provenSpans: Array<{ start: number; end: number }> = [];
+	for (let index = 0; index < segments.length; index += 1) {
+		const segment = segments[index] ?? [];
 		if (segment.length === 0) return null;
+		const [first] = segment;
+		if (first !== undefined && command.slice(first.start, first.end) === "for") {
+			const loop = readOnlyLoop(segments, joins, index, command, cwds, workspaceRoot, readScope);
+			if (loop === null) {
+				if (readScope.notes.length === 0) readScope.notes.push("the `for` loop is not a recognized read-only loop");
+				return null;
+			}
+			ruleIds.push(READ_ONLY_LOOP_RULE_ID);
+			provenSpans.push(...loop.provenSpans);
+			index += loop.segments - 1;
+			continue;
+		}
 		if (segment[0]?.value === "cd") {
 			// A cd inside a pipeline runs in a subshell and moves nothing.
 			if (joins[index] === "|" || joins[index + 1] === "|") return null;
@@ -205,7 +221,7 @@ export function recognizeCommandChain(
 		if (readScope.notes.length === 0) readScope.notes.push(`${quotedStep(rendered)} is not a recognized read-only step`);
 		return null;
 	}
-	return { ruleIds, requiresConfirmation, requiresAutonomyApproval, runsTestRunner, scriptPreviews };
+	return { ruleIds, requiresConfirmation, requiresAutonomyApproval, runsTestRunner, scriptPreviews, provenSpans };
 }
 
 export const GIT_INSPECT_RULE_ID = "builtin:git-inspect";

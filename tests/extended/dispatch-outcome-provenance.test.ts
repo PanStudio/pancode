@@ -38,10 +38,10 @@ describe("resolveEffectivePricing", () => {
 	it("prices every unpriced model on a free-declared proxy target as free", () => {
 		const { settings, issues } = validateSettings({
 			version: 2,
-			targets: [{ id: "proxy", runtime: "litellm", pricing: "free" }],
+			connections: [{ id: "proxy", runtime: "litellm", pricing: "free" }],
 		});
 		deepStrictEqual(issues, []);
-		const target = settings.targets[0];
+		const target = settings.connections[0];
 		ok(target);
 		strictEqual(target.pricing, "free");
 		for (const modelId of ["dynamo/qwopus3.8-27b-flash@q5_k_m", "another-model"]) {

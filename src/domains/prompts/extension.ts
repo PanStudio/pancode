@@ -10,7 +10,9 @@ import { resolvePackageRoot } from "../../core/package-root.js";
 import { detectPancodeRepo } from "../../core/pancode-repo.js";
 import { PANE_PEER_IDS } from "../../core/pane-peers.js";
 import { relativePathEscapes } from "../../core/path-containment.js";
+import { detectRunIdentity } from "../../core/run-identity.js";
 import { isAutonomyLevel } from "../../lib/autonomy/autonomy.js";
+import { redactForMemoryRoute } from "../../lib/secrets/memory-route.js";
 import { headForRedaction } from "../../lib/secrets/redact.js";
 import type { AgentsContract } from "../agents/contract.js";
 import { listPlaybooks } from "../agents/playbook.js";
@@ -26,11 +28,9 @@ import {
 	renderOperatorProfile,
 	selectActiveRules,
 } from "../context/index.js";
-import { detectRunIdentity } from "../dispatch/run-identity.js";
 import { interopAgentKind, peerModeCapabilities } from "../interop/index.js";
 import type { InteropAgentRecord } from "../interop/types.js";
 import { loadMcpServerConfig } from "../mcp/config.js";
-import { redactForMemoryRoute } from "../memory/secret-text.js";
 import type { ResourcesContract } from "../resources/contract.js";
 import { suggestableSkills } from "../resources/skills/loader.js";
 import { parseRigorOverride, rigorResolution } from "../safety/rigor.js";
@@ -162,7 +162,7 @@ export function createPromptsBundle(
 				record,
 				configuredAcp: configured.has(record.kind),
 			}));
-			snapshot.peerTargets = (config()?.get().targets ?? []).map(({ id, runtime }) => ({ id, runtime }));
+			snapshot.peerTargets = (config()?.get().connections ?? []).map(({ id, runtime }) => ({ id, runtime }));
 		} catch {
 			// An unreadable report lists no peers; /interop shows the agents and why.
 		}
@@ -708,7 +708,7 @@ function readyPeerLines(catalogs: CatalogSnapshot, inputs: SessionPromptInputs):
 		const target = modes.find((mode) => mode.mode === "headless" && mode.status !== "unavailable")?.targetIds?.[0];
 		const reach = [
 			`panes(action="handoff", peer="${kind.id}")`,
-			...(target !== undefined && names.has("dispatch") ? [`dispatch with target="${target}"`] : []),
+			...(target !== undefined && names.has("dispatch") ? [`dispatch with connection="${target}"`] : []),
 		];
 		return [`- ${kind.id}: ${reach.join(", or ")}`];
 	});

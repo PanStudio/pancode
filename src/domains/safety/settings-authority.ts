@@ -68,7 +68,7 @@ function mutatesSettings(args: ReadonlyArray<string>): boolean {
 			const rest = args.slice(args.indexOf(command) + 1);
 			return rest.length === 0 || !rest.every((arg) => ["--json", "--list", "--all"].includes(arg));
 		}
-		case "targets":
+		case "connections":
 			if (sub === "profile") return third !== undefined && third !== "list" && third !== "bindings";
 			return sub !== undefined && ["add", "use", "convert", "remove", "rename"].includes(sub);
 		case "auth":
@@ -162,7 +162,7 @@ function singleCommand(command: string): boolean {
 
 /**
  * True when a shell command runs PanCode's own CLI in a form that changes its
- * settings, credentials or trust. Read forms (`configure --json`, `targets`,
+ * settings, credentials or trust. Read forms (`configure --json`, `connections`,
  * `auth status`, `config inspect`, any `--help`) stay allowed. The launcher is
  * found by name, package spec or source path, behind env assignments, wrappers,
  * substitutions and `sh -c` scripts, so autotools `./configure` never matches.

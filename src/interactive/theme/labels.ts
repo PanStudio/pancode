@@ -211,7 +211,7 @@ export function formatTargetLabel(
 		return fitModelTokenSuffix(leaf, width);
 	}
 	const shown = options.abbreviate === false ? model : abbreviateModelId(model);
-	if (target.length === 0) return fit(`no target ${GLYPH.dot} ${shown}`);
+	if (target.length === 0) return fit(`no connection ${GLYPH.dot} ${shown}`);
 	if (model.length === 0) return fit(`${target} ${GLYPH.dot} no model`);
 	return `${target}${options.separator ?? ` ${GLYPH.dot} `}${shown}`;
 }

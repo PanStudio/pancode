@@ -6,7 +6,7 @@ import {
 	executionPlanIsolationText,
 	executionPlanStepScope,
 } from "../domains/dispatch/execution-plan.js";
-import { writeCliFailure } from "./kit/json-out.js";
+import { writeCliFailure } from "./lib/json-out.js";
 import { inspectPlaybook } from "./playbook-preflight.js";
 import { parsePlaybookVars, playbookVarsOrUndefined } from "./playbook-vars.js";
 
@@ -64,7 +64,13 @@ export function runPlaybookGraph(args: ReadonlyArray<string>): number {
 		return 2;
 	}
 	try {
-		const { plan } = inspectPlaybook(name, playbookVarsOrUndefined(vars));
+		const { plan, playbook } = inspectPlaybook(name, playbookVarsOrUndefined(vars));
+		const instructionsOf = (loopId: string): { checkInstructions?: string } => {
+			const step = playbook.steps.find((candidate) => candidate.id === loopId);
+			return step?.kind === "loop" && step.check.kind === "agent" && step.check.instructions !== undefined
+				? { checkInstructions: step.check.instructions }
+				: {};
+		};
 		const byId = new Map(plan.steps.map((step) => [step.id, step]));
 		const waves = plan.waves.map((ids, index) => ({
 			wave: index + 1,
@@ -77,6 +83,7 @@ export function runPlaybookGraph(args: ReadonlyArray<string>): number {
 			id: loop.id,
 			check: loop.checkStepIds.map((id) => projectedStep(byId.get(id) as ExecutionPlanStep, plan)),
 			repair: loop.repairStepIds.map((id) => projectedStep(byId.get(id) as ExecutionPlanStep, plan)),
+			...instructionsOf(loop.id),
 		}));
 		const isolation = plan.isolation === "worktree" ? { isolation: "worktree" as const } : {};
 		if (json) {
@@ -100,7 +107,7 @@ export function runPlaybookGraph(args: ReadonlyArray<string>): number {
 							: "";
 				const route =
 					step.target !== undefined
-						? ` target=${step.target}`
+						? ` connection=${step.target}`
 						: step.profile !== undefined
 							? ` profile=${step.profile}`
 							: "";
@@ -110,7 +117,7 @@ export function runPlaybookGraph(args: ReadonlyArray<string>): number {
 			}
 		}
 		for (const loop of loops) {
-			process.stdout.write(`loop ${loop.id}\n`);
+			process.stdout.write(`loop ${loop.id}${loop.checkInstructions !== undefined ? " +instructions" : ""}\n`);
 			for (const step of loop.check)
 				process.stdout.write(
 					`  check ${step.id} kind=${step.kind} scope=${step.scope} writes=${JSON.stringify(step.writes)}\n`,

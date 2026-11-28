@@ -1341,7 +1341,7 @@ export function loadPluginMcpFile(plugin: {
 
 function trustProjectImports(): boolean {
 	try {
-		return readSettings().integrations.projectResources.trustProjectImports;
+		return readSettings().integrations.hub.trustProjectImports;
 	} catch {
 		// Unreadable settings leave foreign packages untrusted, as every other resource loader does.
 		return false;
@@ -1349,7 +1349,7 @@ function trustProjectImports(): boolean {
 }
 
 function foreignPluginMessage(id: string): string {
-	return `foreign package ${id} declares no MCP servers until integrations.projectResources.trustProjectImports is on`;
+	return `foreign package ${id} declares no MCP servers until integrations.hub.trustProjectImports is on`;
 }
 
 /**

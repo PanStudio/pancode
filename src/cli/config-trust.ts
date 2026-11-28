@@ -13,9 +13,9 @@ import {
 	revokeProjectSurfaceTrust,
 } from "../core/workspace-trust.js";
 import { forgetApprovedFlowPolicy } from "../domains/safety/flow-policy-snapshot.js";
-import { parseCommandFlags } from "./kit/flags.js";
-import { writeCliFailure } from "./kit/json-out.js";
-import type { ErrorSlug } from "./kit/slugs.js";
+import { parseCommandFlags } from "./lib/flags.js";
+import { writeCliFailure } from "./lib/json-out.js";
+import type { ErrorSlug } from "./lib/slugs.js";
 
 const TRUST_PATH = ["config", "trust"] as const;
 

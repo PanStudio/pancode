@@ -227,7 +227,7 @@ describe("frozen session prompt across mid-session changes", { concurrency: fals
 			getDetectedReasoning: () => false,
 		} as unknown as ProvidersContract;
 		const settings = structuredClone(DEFAULT_SETTINGS);
-		settings.chat.target = target.id;
+		settings.chat.connection = target.id;
 		settings.chat.model = "chat";
 		settings.chat.thinkingLevel = "off";
 		settings.chat.prewarm = false;

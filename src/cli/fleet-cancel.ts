@@ -1,19 +1,21 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 /**
- * `pancode fleet cancel <runId>`: operator-side cancellation of one run from
- * any terminal.
+ * `pancode fleet cancel <runId>` and `pancode fleet stop <fleetRootId>`:
  *
- * A live run's abort handle lives in the process that dispatched it. When that
- * owner is alive this command leaves a cancel request that the owner's
- * reconciler tick turns into its own abort, so the run seals `canceled` with a
- * full receipt, and then waits for the ledger row to settle. When the owner is
- * gone the worker is an orphan nobody will finalize, so this command stops the
- * worker's process group itself and settles the row.
+ * - `fleet cancel <runId>` cancels one worker run from any terminal. When its
+ *   owning process is alive this command leaves a cancel request that the
+ *   owner's reconciler tick turns into an abort so the run seals `canceled`.
+ *   When the owner is gone it terminates the orphaned worker's process group
+ *   and settles the ledger row itself.
+ * - `fleet stop <fleetRootId>` stops a fleet root so no further step starts
+ *   and its running steps are canceled, leaving the root resumable with
+ *   `fleet run --resume`.
  *
- * Exit codes (C19): 0 when the cancel applied or the run or root had already sealed, 75 while the cancel is accepted
- * but the target is still settling, 1 when the cancel failed or its target was not found, 2 usage. The report's
- * `state` says the same: `sealed` exits 0, `pending` exits 75; a failure prints the C6 error document instead.
+ * Exit codes (C19): 0 when the action applied or the target had already sealed,
+ * 75 while accepted and still settling, 1 when it failed or nothing matched,
+ * 2 usage (including passing a fleet root id to `fleet cancel` or a worker run
+ * id to `fleet stop`).
  */
 
 import { hostname } from "node:os";
@@ -43,12 +45,14 @@ import { runStatusForOutcome } from "../domains/dispatch/outcome.js";
 import { type Ledger, openLedger } from "../domains/dispatch/state.js";
 import type { RunEnvelope } from "../domains/dispatch/types.js";
 import { ensurePancodeState } from "../domains/install/index.js";
-import { EXIT_CODES } from "./kit/exit-codes.js";
-import { jsonDocument, writeCliFailure, writeJson } from "./kit/json-out.js";
-import type { ErrorSlug } from "./kit/slugs.js";
+import { EXIT_CODES } from "./lib/exit-codes.js";
+import { jsonDocument, writeCliFailure, writeJson } from "./lib/json-out.js";
+import type { ErrorSlug } from "./lib/slugs.js";
 
-const USAGE = "usage: pancode fleet cancel <runId|fleetRootId> [--json] [--reason <text>]";
+const CANCEL_USAGE = "usage: pancode fleet cancel <runId> [--json] [--reason <text>]";
+const STOP_USAGE = "usage: pancode fleet stop <fleetRootId> [--json] [--reason <text>]";
 const CANCEL_PATH = ["fleet", "cancel"] as const;
+const STOP_PATH = ["fleet", "stop"] as const;
 /** Owner ticks run about once a second; this covers a slow finalizer and receipt write. */
 const OWNER_SETTLE_WAIT_MS = 15_000;
 const POLL_MS = 250;
@@ -76,7 +80,7 @@ interface ParsedArgs {
 	reason: string | null;
 }
 
-function parseArgs(args: ReadonlyArray<string>): ParsedArgs | string {
+function parseArgs(args: ReadonlyArray<string>, targetLabel: "<runId>" | "<fleetRootId>"): ParsedArgs | string {
 	let runId: string | undefined;
 	let json = false;
 	let reason: string | null = null;
@@ -93,13 +97,18 @@ function parseArgs(args: ReadonlyArray<string>): ParsedArgs | string {
 		else if (runId === undefined && arg !== undefined) runId = arg;
 		else return `unexpected argument: ${arg}`;
 	}
-	if (runId === undefined) return "missing <runId>";
+	if (runId === undefined) return `missing ${targetLabel}`;
 	return { runId, json, reason };
 }
 
-/** A cancel that cannot produce its report: the C3 line, and under --json the C6 failure document. Exits 1. */
-function refuse(message: string, json: boolean, slug: ErrorSlug = "admission_refused"): number {
-	writeCliFailure({ path: CANCEL_PATH, slug, message, json });
+/** A command that cannot produce its report: the C3 line, and under --json the C6 failure document. Exits 1. */
+function refuse(
+	path: readonly string[],
+	message: string,
+	json: boolean,
+	slug: ErrorSlug = "admission_refused",
+): number {
+	writeCliFailure({ path, slug, message, json });
 	return EXIT_CODES.failed;
 }
 
@@ -258,7 +267,7 @@ function render(report: CancelReport, json: boolean): void {
 
 export async function runFleetCancel(args: ReadonlyArray<string>, options: FleetCancelOptions = {}): Promise<number> {
 	const settleWaitMs = options.settleWaitMs ?? OWNER_SETTLE_WAIT_MS;
-	const parsed = parseArgs(args);
+	const parsed = parseArgs(args, "<runId>");
 	if (typeof parsed === "string") {
 		const json = args.includes("--json");
 		writeCliFailure({
@@ -267,12 +276,20 @@ export async function runFleetCancel(args: ReadonlyArray<string>, options: Fleet
 			message: parsed,
 			json,
 		});
-		if (!json) process.stderr.write(`${USAGE}\n`);
+		if (!json) process.stderr.write(`${CANCEL_USAGE}\n`);
 		return EXIT_CODES.notStarted;
 	}
 	const { runId, json, reason } = parsed;
-	// Ids starting `fleet-` name fleet roots; everything else names a run.
-	if (runId.startsWith(FLEET_ROOT_PREFIX)) return cancelRoot(runId, json, reason, settleWaitMs);
+	if (runId.startsWith(FLEET_ROOT_PREFIX)) {
+		writeCliFailure({
+			path: CANCEL_PATH,
+			slug: "usage",
+			message: `'${runId}' is a fleet root; use 'pancode fleet stop ${runId}' to stop a fleet root`,
+			json,
+		});
+		if (!json) process.stderr.write(`${CANCEL_USAGE}\n`);
+		return EXIT_CODES.notStarted;
+	}
 	if (!isCancelableRunId(runId)) {
 		// A malformed id is a usage error like any other bad argument: nothing was looked up or requested.
 		writeCliFailure({ path: CANCEL_PATH, slug: "usage", message: `invalid run id '${runId}'`, json });
@@ -281,17 +298,7 @@ export async function runFleetCancel(args: ReadonlyArray<string>, options: Fleet
 	ensurePancodeState();
 	const ledger = openLedger();
 	const row = ledger.get(runId);
-	// A token short of `fleet-` can name a run and also prefix fleet roots: neither is chosen for the caller.
-	if (row !== null && FLEET_ROOT_PREFIX.startsWith(runId) && matchFleetRootIds(runId).length > 0) {
-		writeCliFailure({
-			path: CANCEL_PATH,
-			slug: "ambiguous",
-			message: `'${runId}' names a run and prefixes fleet roots; give the full id`,
-			json,
-		});
-		return 1;
-	}
-	if (row === null) return refuse(`unknown run '${runId}'`, json, "not_found");
+	if (row === null) return refuse(CANCEL_PATH, `unknown run '${runId}'`, json, "not_found");
 	// Idempotent, as a sealed root is: the run is already where a cancel would take it, so nothing is requested.
 	if (!isOpenRunRow(row)) {
 		render(
@@ -310,18 +317,18 @@ export async function runFleetCancel(args: ReadonlyArray<string>, options: Fleet
 	}
 	// Pids and birth tokens only mean something on the host that recorded them.
 	if (row.identity !== undefined && row.identity.host !== hostname()) {
-		return refuse(`run ${runId} belongs to host ${row.identity.host}; run fleet cancel there`, json);
+		return refuse(CANCEL_PATH, `run ${runId} belongs to host ${row.identity.host}; run fleet cancel there`, json);
 	}
 	const record = assignmentFor(row);
 	const owner = ownerState(record);
 	if (owner === "gone") {
 		try {
 			const result = await cancelOrphan(ledger, row, record, reason);
-			if (typeof result === "string") return refuse(result, json);
+			if (typeof result === "string") return refuse(CANCEL_PATH, result, json);
 			render(result, json);
 			return exitForState(result.state);
 		} catch (error) {
-			return refuse(error instanceof Error ? error.message : String(error), json, "io");
+			return refuse(CANCEL_PATH, error instanceof Error ? error.message : String(error), json, "io");
 		}
 	}
 	// An unknown owner may still be alive, so it gets a request and never a kill.
@@ -346,7 +353,35 @@ export async function runFleetCancel(args: ReadonlyArray<string>, options: Fleet
 	return exitForState(report.state);
 }
 
-interface RootCancelReport {
+export async function runFleetStop(args: ReadonlyArray<string>, options: FleetCancelOptions = {}): Promise<number> {
+	const settleWaitMs = options.settleWaitMs ?? OWNER_SETTLE_WAIT_MS;
+	const parsed = parseArgs(args, "<fleetRootId>");
+	if (typeof parsed === "string") {
+		const json = args.includes("--json");
+		writeCliFailure({
+			path: STOP_PATH,
+			slug: parsed.startsWith("unknown flag") ? "unknown_flag" : "usage",
+			message: parsed,
+			json,
+		});
+		if (!json) process.stderr.write(`${STOP_USAGE}\n`);
+		return EXIT_CODES.notStarted;
+	}
+	const { runId, json, reason } = parsed;
+	if (!runId.startsWith(FLEET_ROOT_PREFIX)) {
+		writeCliFailure({
+			path: STOP_PATH,
+			slug: "usage",
+			message: `'${runId}' is not a fleet root id (expected '${FLEET_ROOT_PREFIX}...'); use 'pancode fleet cancel ${runId}' to cancel a worker run`,
+			json,
+		});
+		if (!json) process.stderr.write(`${STOP_USAGE}\n`);
+		return EXIT_CODES.notStarted;
+	}
+	return stopRoot(runId, json, reason, settleWaitMs);
+}
+
+interface RootStopReport {
 	rootId: string;
 	action: "requested" | "already_sealed";
 	state: "sealed" | "pending";
@@ -359,10 +394,10 @@ interface RootCancelReport {
 
 function rootReport(
 	rootId: string,
-	action: RootCancelReport["action"],
+	action: RootStopReport["action"],
 	ownerPid: number | null,
 	result: Record<string, unknown> | null,
-): RootCancelReport {
+): RootStopReport {
 	const completion = result?.completion as { state?: unknown; stopReason?: unknown } | undefined;
 	return {
 		rootId,
@@ -375,14 +410,14 @@ function rootReport(
 	};
 }
 
-function renderRoot(report: RootCancelReport, json: boolean): void {
+function renderRoot(report: RootStopReport, json: boolean): void {
 	if (json) {
 		writeJson(process.stdout, jsonDocument(report));
 		return;
 	}
 	if (report.state === "pending") {
 		process.stdout.write(
-			`cancel requested for fleet root ${report.rootId}; owner pid ${report.ownerPid ?? "unknown"} has not sealed it yet. No further step starts; the request stays until the root seals.\n`,
+			`stop requested for fleet root ${report.rootId}; owner pid ${report.ownerPid ?? "unknown"} has not sealed it yet. No further step starts; the request stays until the root seals.\n`,
 		);
 		return;
 	}
@@ -392,15 +427,16 @@ function renderRoot(report: RootCancelReport, json: boolean): void {
 }
 
 /**
- * Cancel a fleet root: a durable request its owner checks before every step admission and between waves, and fans out
- * to the steps it is running. Idempotent: a root that already sealed exits 0 with its recorded outcome.
+ * Stop a fleet root: a durable request its owner checks before every step admission and between waves, and fans out
+ * to the steps it is running so the root stays resumable with `fleet run --resume`. Idempotent: a root that already
+ * sealed exits 0 with its recorded outcome.
  */
-async function cancelRoot(token: string, json: boolean, reason: string | null, settleWaitMs: number): Promise<number> {
+async function stopRoot(token: string, json: boolean, reason: string | null, settleWaitMs: number): Promise<number> {
 	ensurePancodeState();
 	const matches = matchFleetRootIds(token);
 	if (matches.length > 1) {
 		writeCliFailure({
-			path: CANCEL_PATH,
+			path: STOP_PATH,
 			slug: "ambiguous",
 			message: `'${token}' matches ${matches.length} fleet roots: ${matches.slice(0, 5).join(", ")}`,
 			json,
@@ -409,7 +445,7 @@ async function cancelRoot(token: string, json: boolean, reason: string | null, s
 	}
 	const rootId = matches[0];
 	if (rootId === undefined) {
-		writeCliFailure({ path: CANCEL_PATH, slug: "not_found", message: `no fleet root matches '${token}'`, json });
+		writeCliFailure({ path: STOP_PATH, slug: "not_found", message: `no fleet root matches '${token}'`, json });
 		return 1;
 	}
 	const prior = readFleetResult(rootId);
@@ -420,18 +456,19 @@ async function cancelRoot(token: string, json: boolean, reason: string | null, s
 	}
 	if (record === null) {
 		writeCliFailure({
-			path: CANCEL_PATH,
+			path: STOP_PATH,
 			slug: "not_found",
-			message: `fleet root ${rootId} has no readable root record to cancel`,
+			message: `fleet root ${rootId} has no readable root record to stop`,
 			json,
 		});
 		return 1;
 	}
 	if (record.host !== hostname()) {
-		return refuse(`fleet root ${rootId} belongs to host ${record.host}; run fleet cancel there`, json);
+		return refuse(STOP_PATH, `fleet root ${rootId} belongs to host ${record.host}; run fleet stop there`, json);
 	}
 	if (fleetRootState(record, false) === "orphaned") {
 		return refuse(
+			STOP_PATH,
 			`fleet root ${rootId}'s owner (pid ${record.pid}) is gone and the root never sealed (owner_gone); cancel its runs by run id`,
 			json,
 		);
@@ -444,8 +481,9 @@ async function cancelRoot(token: string, json: boolean, reason: string | null, s
 		if (result !== null || Date.now() >= deadline) break;
 		const current = readFleetRootRecord(rootId);
 		if (current !== null && fleetRootState(current, false) === "orphaned") {
-			// The owner died after the request and before sealing: nothing will apply it, so the cancel failed.
+			// The owner died after the request and before sealing: nothing will apply it, so the stop failed.
 			return refuse(
+				STOP_PATH,
 				`fleet root ${rootId}'s owner (pid ${record.pid}) exited before it sealed (owner_gone); cancel its runs by run id`,
 				json,
 			);

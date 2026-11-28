@@ -12,9 +12,9 @@ export function modelSelectionRefusal(value: unknown): ModelSelectionRefusal | u
 }
 
 const UNROUTED =
-	"PanCode did not start this turn because its selected target is not configured or available. Check the conversation route and connection settings before retrying.";
+	"PanCode did not start this turn because its selected connection is not configured or available. Check the conversation route and connection settings before retrying.";
 const UNSERVED =
-	"PanCode did not start this turn because its selected runtime cannot serve this conversation. Check the connection runtime and choose a supported target before retrying.";
+	"PanCode did not start this turn because its selected runtime cannot serve this conversation. Check the connection runtime and choose a supported connection before retrying.";
 const UNADMITTED =
 	"PanCode did not start this turn. Check the conversation route and session trace before retrying. (prompt_not_admitted)";
 /** Keyed by the engine's reasons, so a reason src adds fails to compile here until it is worded. */

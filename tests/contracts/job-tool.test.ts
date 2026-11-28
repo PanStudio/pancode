@@ -249,7 +249,7 @@ describe("job ownership, scheduling and execution settlement", () => {
 		host.tick();
 		await settle();
 		let settled = false;
-		const cancel = host.control(created.id, "cancel", owner).then(() => {
+		const cancel = host.control(created.id, "cancel", owner, { now: true }).then(() => {
 			settled = true;
 		});
 		await settle();
@@ -262,6 +262,38 @@ describe("job ownership, scheduling and execution settlement", () => {
 		await settle();
 		strictEqual(jobIsComplete(present(host.get(created.id, owner))), true);
 		strictEqual(present(host.get(created.id, owner)).reason, "canceled");
+	});
+	it("lets an in-flight run finish on cancel without now, and starts no further runs", async () => {
+		let finish: (() => void) | undefined;
+		let signal: AbortSignal | undefined;
+		let runs = 0;
+		const host = make({
+			run: async (context) => {
+				strictEqual(context.start(), true);
+				runs++;
+				signal = context.signal;
+				await new Promise<void>((resolve) => {
+					finish = resolve;
+					releaseOnCleanup.push(resolve);
+				});
+				return { outcome: "succeeded" };
+			},
+		});
+		const created = await host.create({ ...input(), count: 3 }, owner);
+		clock += 1000;
+		host.tick();
+		await settle();
+		await host.control(created.id, "cancel", owner);
+		strictEqual(present(signal).aborted, false);
+		strictEqual(present(host.get(created.id, owner)).cancelRequested, false);
+		strictEqual(present(host.get(created.id, owner)).reason, "canceled");
+		present(finish)();
+		await settle();
+		clock += 10_000;
+		host.tick();
+		await settle();
+		strictEqual(runs, 1);
+		strictEqual(jobIsComplete(present(host.get(created.id, owner))), true);
 	});
 	it("does not execute when intent cannot be persisted", async () => {
 		let effects = 0;
@@ -358,7 +390,8 @@ describe("job ownership, scheduling and execution settlement", () => {
 			host.tick();
 			await settle();
 			fail = true;
-			if (action === "cancel") await rejects(host.control(created.id, "cancel", owner), /control write failed/);
+			if (action === "cancel")
+				await rejects(host.control(created.id, "cancel", owner, { now: true }), /control write failed/);
 			else {
 				clock += 1000;
 				host.tick();

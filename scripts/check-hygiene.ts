@@ -381,7 +381,7 @@ async function checkSiteDocsSnapshot(): Promise<void> {
 // ---------------------------------------------------------------------------
 const OPAQUE_SETTINGS_PATHS = new Set([
 	"targets",
-	"integrations.runtimePlugins",
+	"integrations.providerPackages",
 	"integrations.externalAgents.entries",
 	"fleet.nodes",
 	"chat.modelPicker.cycleSet",

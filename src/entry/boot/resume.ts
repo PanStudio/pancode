@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 
 import { noteMainRunV2 } from "../../cli/run-failure.js";
-import { flushPackageActivities } from "../../core/package-activity.js";
+import { flushPackActivities } from "../../core/pack-activity.js";
 import { consumeRestartIntent } from "../../core/restart-intent.js";
 import type { TelemetryHub } from "../../core/telemetry/hub.js";
 import type { getTerminationCoordinator } from "../../core/termination.js";
@@ -10,7 +10,7 @@ import { pancodeStateDir } from "../../core/xdg.js";
 import type { SessionContract } from "../../domains/session/contract.js";
 import { SessionLiveError } from "../../domains/session/index.js";
 import type { BootOptions } from "../boot-options.js";
-import { bindSessionPackageActivity } from "../package-activity.js";
+import { bindSessionPackActivity } from "../pack-activity.js";
 
 /** What resolveBootResume reads from the names bootOrchestrator built before it. */
 export interface BootResumeInput {
@@ -29,9 +29,9 @@ export interface BootResumeInput {
 export function resolveBootResume(input: BootResumeInput) {
 	const { bootStderr, bus, interactive, options, session, termination } = input;
 	if (session) {
-		const unbindActivity = bindSessionPackageActivity(session);
+		const unbindActivity = bindSessionPackActivity(session);
 		termination.onDrain(unbindActivity);
-		termination.onDrain(bus.subscribe("session.reattached", () => flushPackageActivities()));
+		termination.onDrain(bus.subscribe("session.reattached", () => flushPackActivities()));
 	}
 	// A headless `--resume`/`--continue`, or the interactive `--resume <id>`/`--continue`, resolves here, where the
 	// session domain exists. Headless it is a hard requirement: a caller that asked to continue a conversation must not

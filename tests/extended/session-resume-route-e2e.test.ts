@@ -27,9 +27,9 @@ describe("resuming a session keeps the route it ran on", { timeout: 180_000 }, (
 	let chat: OpenAICompatFixture;
 
 	const settingsPath = (): string => join(scratch.configDir, "settings.yaml");
-	const readChatRoute = (): { target: unknown; model: unknown } => {
-		const saved = parseYaml(readFileSync(settingsPath(), "utf8")) as { chat: { target: unknown; model: unknown } };
-		return { target: saved.chat.target, model: saved.chat.model };
+	const readChatRoute = (): { connection: unknown; model: unknown } => {
+		const saved = parseYaml(readFileSync(settingsPath(), "utf8")) as { chat: { connection: unknown; model: unknown } };
+		return { connection: saved.chat.connection, model: saved.chat.model };
 	};
 	const saveChatModel = (model: string): void => {
 		const saved = parseYaml(readFileSync(settingsPath(), "utf8")) as { chat: { model: string } };
@@ -72,7 +72,7 @@ describe("resuming a session keeps the route it ran on", { timeout: 180_000 }, (
 		saveChatModel("other-model");
 		strictEqual(await turn(["--continue", "what was the number?"]), "mock-model");
 		// Restoring the session's route is session-local; the saved default stands.
-		deepStrictEqual(readChatRoute(), { target: "mock-chat", model: "other-model" });
+		deepStrictEqual(readChatRoute(), { connection: "mock-chat", model: "other-model" });
 		// A fresh session starts from the saved default, as before.
 		strictEqual(await turn(["a new question"]), "other-model");
 	});
@@ -97,10 +97,10 @@ describe("resuming a session keeps the route it ran on", { timeout: 180_000 }, (
 		);
 		// The stream-json session frame names the route the run is on, not the one the session stored (B-52).
 		strictEqual(JSON.parse(lastStdout.split("\n")[0] ?? "").model, "other-model");
-		deepStrictEqual(readChatRoute(), { target: "mock-chat", model: "mock-model" });
+		deepStrictEqual(readChatRoute(), { connection: "mock-chat", model: "mock-model" });
 		// The flag moved the session, so the session's newest route is the flag's.
 		strictEqual(await turn(["--continue", "and one more"]), "other-model");
-		deepStrictEqual(readChatRoute(), { target: "mock-chat", model: "mock-model" });
+		deepStrictEqual(readChatRoute(), { connection: "mock-chat", model: "mock-model" });
 	});
 
 	it("restores the route when an ACP client loads the session", async () => {
@@ -149,6 +149,6 @@ describe("resuming a session keeps the route it ran on", { timeout: 180_000 }, (
 			client.close();
 			if (!(await client.waitForExit(30_000))) await client.forceTerminate();
 		}
-		deepStrictEqual(readChatRoute(), { target: "mock-chat", model: "mock-model" });
+		deepStrictEqual(readChatRoute(), { connection: "mock-chat", model: "mock-model" });
 	});
 });

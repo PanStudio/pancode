@@ -259,7 +259,7 @@ const entries = {
 	"sdk/tool": "packages/sdk/src/tool/index.ts",
 	"sdk/mcp-server": "packages/sdk/src/mcp-server/index.ts",
 	// `pancode extensions test` sends `pancode/sdk/testing` here: the SDK host with the harness's own loader.
-	"extensions/test-kit": "src/domains/extensions/authoring/test-kit.ts",
+	"extensions/test-harness": "src/domains/extensions/authoring/test-harness.ts",
 	"gui/server": "apps/pancode-gui/server/main.ts",
 	"gui/reads-worker": "apps/pancode-gui/server/worker/reads-main.ts",
 	"gui/ops-worker": "apps/pancode-gui/server/worker/ops-main.ts",
@@ -298,7 +298,7 @@ export default defineConfig({
 	// declarations, so a scaffolded extension type-checks against the install
 	// without the loose src/ graph or PanCode's bundled devDependencies. The
 	// scaffold's tsconfig paths name these files and test-register.mjs sends
-	// the testing import to dist/extensions/test-kit.js. tsup injects `baseUrl`, which
+	// the testing import to dist/extensions/test-harness.js. tsup injects `baseUrl`, which
 	// TypeScript 6 rejects as deprecated. The entries live under packages/, so
 	// the root's `rootDir: ./src` widens to the checkout.
 	dts: {

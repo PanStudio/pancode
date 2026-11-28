@@ -86,7 +86,7 @@ export const ContextPanel = memo(function ContextPanel({
 					key={operationView.id}
 					view={operationView}
 					cancelling={stop.stopping === operationView.id}
-					cancelLabel={running ? "Stop task and context work" : "Stop context work"}
+					cancelLabel={running ? "Stop session and context work" : "Stop context work"}
 					{...(operationView.live ? { onCancel: () => stop.stop(operationView.id) } : {})}
 				/>
 			) : null}
@@ -118,9 +118,9 @@ export const ContextPanel = memo(function ContextPanel({
 					}}
 				/>
 			) : null}
-			{!sessionOpen ? <p className="pane-empty">This task is not open. Open it to read its context window.</p> : null}
+			{!sessionOpen ? <p className="pane-empty">This session is not open. Open it to read its context window.</p> : null}
 			{sessionOpen && !supported ? (
-				<p className="pane-empty">PanCode does not report a context window for this task.</p>
+				<p className="pane-empty">PanCode does not report a context window for this session.</p>
 			) : null}
 			{ledger.isPending && sessionOpen && supported ? <p className="pane-empty">Reading the context window…</p> : null}
 			{ledger.error ? (

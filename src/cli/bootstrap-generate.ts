@@ -5,7 +5,7 @@ import type { PancodeSettings } from "../core/config.js";
 import { loadDomains } from "../core/domain-loader.js";
 import { isResponseSchemaRejection, UnsupportedResponseSchemaError } from "../core/response-schema.js";
 import { isRecord } from "../core/type-guards.js";
-import { AgentsDomainModule } from "../domains/agents/module.js";
+import { createAgentsDomainModule } from "../domains/agents/module.js";
 import type { ConfigContract } from "../domains/config/contract.js";
 import { ConfigDomainModule } from "../domains/config/module.js";
 import { BOOTSTRAP_DEPTH_POLICY } from "../domains/context/bootstrap-evidence.js";
@@ -37,6 +37,7 @@ import { createPromptsDomainModule } from "../domains/prompts/module.js";
 import type { ThinkingLevel } from "../domains/providers/index.js";
 import { ProvidersDomainModule } from "../domains/providers/module.js";
 import { ResourcesDomainModule } from "../domains/resources/module.js";
+import { loadSkills } from "../domains/resources/skills/loader.js";
 import { SafetyDomainModule } from "../domains/safety/module.js";
 import { SchedulingDomainModule } from "../domains/scheduling/module.js";
 import { SessionDomainModule } from "../domains/session/module.js";
@@ -93,25 +94,26 @@ export function resolveBootstrapRoute(settings: Readonly<PancodeSettings>): Boot
 		if (!profileName) continue;
 		const profile = settings.fleet.profiles[profileName];
 		if (!profile) throw new Error(`bootstrap profile '${profileName}' is not configured (bound to '${agentId}')`);
-		if (!profile.target) throw new Error(`bootstrap profile '${profileName}' has no target (bound to '${agentId}')`);
+		if (!profile.connection)
+			throw new Error(`bootstrap profile '${profileName}' has no connection (bound to '${agentId}')`);
 		return {
-			target: profile.target,
+			target: profile.connection,
 			...(profile.model ? { model: profile.model } : {}),
 			...(profile.thinkingLevel ? { thinkingLevel: profile.thinkingLevel } : {}),
 		};
 	}
 	for (const fallback of [settings.chat, settings.fleet.default]) {
-		if (!fallback?.target) continue;
+		if (!fallback?.connection) continue;
 		return {
-			target: fallback.target,
+			target: fallback.connection,
 			...(fallback.model ? { model: fallback.model } : {}),
 			...(fallback.thinkingLevel ? { thinkingLevel: fallback.thinkingLevel } : {}),
 		};
 	}
 	throw new Error(
-		`bootstrap has no route: fleet.agentProfiles.${CONTEXT_BOOTSTRAP_AGENT_ID} is unbound, chat has no target and ` +
-			`fleet.default has no target; bind a profile with ` +
-			`'pancode targets profile bind ${CONTEXT_BOOTSTRAP_AGENT_ID} <profile>' or set fleet.default.target or chat.target`,
+		`bootstrap has no route: fleet.agentProfiles.${CONTEXT_BOOTSTRAP_AGENT_ID} is unbound, chat has no connection and ` +
+			`fleet.default has no connection; bind a profile with ` +
+			`'pancode connections profile bind ${CONTEXT_BOOTSTRAP_AGENT_ID} <profile>' or set fleet.default.connection or chat.connection`,
 	);
 }
 
@@ -439,7 +441,7 @@ async function generateBootstrapWithModel(
 		phase: "generate",
 		status: "running",
 		message: "dispatching internal context-bootstrap agent",
-		detail: `${route?.target ?? "configured target"}/${route?.model ?? "configured model"}; ${input.depth ?? "standard"}; ${policy.toolCalls} exploration calls; ${input.evidence?.files.length ?? 0} evidence files`,
+		detail: `${route?.target ?? "configured connection"}/${route?.model ?? "configured model"}; ${input.depth ?? "standard"}; ${policy.toolCalls} exploration calls; ${input.evidence?.files.length ?? 0} evidence files`,
 	});
 	// Schema refusal happens before a worker starts, so parser fallback can reuse the same root identity.
 	let runIdHint = newRunId();
@@ -589,7 +591,7 @@ async function loadBootstrapDispatch(): Promise<{
 		ProvidersDomainModule,
 		SafetyDomainModule,
 		createPromptsDomainModule({ noContextFiles: true }),
-		AgentsDomainModule,
+		createAgentsDomainModule({ loadSkills }),
 		workerHooks.middlewareModule,
 		SessionDomainModule,
 		createTelemetryDomainModule({ retention: retentionPruners }),

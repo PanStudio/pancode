@@ -39,24 +39,24 @@ test("table adapter parses path, numeric and boolean queries; typed client uses 
 	const client = createClient(
 		{ ticket: "ticket" },
 		credentialFetch(async (url, options) => {
-			assert.equal(url, "/api/toolchain/tools/herdr/install");
+			assert.equal(url, "/api/programs/herdr/install");
 			assert.equal(options?.method, "POST");
 			assert.equal(options.body, '{"force":true}');
 			return new Response('{"operationId":"test-op"}', { status: 202 });
 		}),
 	);
 	assert.deepEqual(
-		await client.call(runtimeRoutes.install, { params: { toolId: "herdr" }, query: {}, body: { force: true } }),
+		await client.call(runtimeRoutes.install, { params: { programId: "herdr" }, query: {}, body: { force: true } }),
 		{ operationId: "test-op" },
 	);
 	client.credentials.dispose();
 	function compileTimeChecks() {
 		// @ts-expect-error The route's body does not accept a string force flag.
-		void client.call(runtimeRoutes.install, { params: { toolId: "herdr" }, query: {}, body: { force: "yes" } });
+		void client.call(runtimeRoutes.install, { params: { programId: "herdr" }, query: {}, body: { force: "yes" } });
 		// @ts-expect-error Handler output must satisfy the route response.
 		register(app, new EventHub(), routes.tools, () => ({ wrong: true }));
 		// @ts-expect-error Path parameter names come from the route table.
-		void client.call(runtimeRoutes.operation, { params: { toolId: "herdr" }, query: {}, body: {} });
+		void client.call(runtimeRoutes.operation, { params: { programId: "herdr" }, query: {}, body: {} });
 	}
 	void compileTimeChecks;
 });

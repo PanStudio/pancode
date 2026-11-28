@@ -18,9 +18,9 @@ import { settleUnfinishedRun } from "../../src/domains/dispatch/run-settlement.j
 import { openRunTelemetry } from "../../src/domains/dispatch/run-telemetry.js";
 import { openLedger } from "../../src/domains/dispatch/state.js";
 import type { SpawnedWorker, SpawnedWorkerResult, WorkerSpec } from "../../src/domains/dispatch/worker-spawn.js";
-import { verifyRunRecordReport } from "../../src/domains/session/view-artifacts.js";
 import { callSettlementFromMessage } from "../../src/domains/telemetry/call-facts.js";
 import { readSettledRun, readVerifiedRun, telemetryRunDirectory } from "../../src/domains/telemetry/index.js";
+import { verifyRunRecordReport } from "../../src/session-control/view-artifacts.js";
 import {
 	isolateDispatchState,
 	makeDispatchBundle,

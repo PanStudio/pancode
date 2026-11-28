@@ -279,7 +279,7 @@ describe("contracts/acp pushes live readouts and judge admission to a client tha
 		strictEqual(window?.halted, false);
 		const halted = agent.frames().at(-1)?.readouts.autonomy?.window;
 		strictEqual(halted?.halted, true);
-		ok(halted?.haltDetail?.startsWith("yolo paused:"), halted?.haltDetail);
+		ok(halted?.haltDetail?.startsWith("YOLO paused:"), halted?.haltDetail);
 		assertWellFormed(agent.frames());
 		await agent.stop();
 	});

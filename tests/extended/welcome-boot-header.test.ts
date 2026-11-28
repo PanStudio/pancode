@@ -112,7 +112,7 @@ function banner(options: BannerOptions = {}) {
 			({
 				interface: { ...DEFAULT_SETTINGS.interface, outputDetail: "detailed" },
 				chat: {
-					target: "target" in options ? options.target : "dynamo",
+					connection: "target" in options ? options.target : "dynamo",
 					model: "model" in options ? options.model : "qwen3.8-27b",
 					thinkingLevel: "off",
 				},
@@ -504,7 +504,7 @@ test("a failure never renews the trust window, and a stale value stops being ass
 	let fail = false;
 	const component = createWelcomeDashboard({
 		providers: { list: () => [status()] as never },
-		getSettings: () => ({ chat: { target: "dynamo", model: "qwen3.8-27b", thinkingLevel: "off" } }) as never,
+		getSettings: () => ({ chat: { connection: "dynamo", model: "qwen3.8-27b", thinkingLevel: "off" } }) as never,
 		getWorkspaceSnapshot: () => workspace() as never,
 		getContextState: () => {
 			if (fail) throw new Error("read failed");
@@ -542,7 +542,7 @@ test("a reading is never served for a different directory", () => {
 	const seen: string[] = [];
 	const component = createWelcomeDashboard({
 		providers: { list: () => [status()] as never },
-		getSettings: () => ({ chat: { target: "dynamo", model: "qwen3.8-27b", thinkingLevel: "off" } }) as never,
+		getSettings: () => ({ chat: { connection: "dynamo", model: "qwen3.8-27b", thinkingLevel: "off" } }) as never,
 		getWorkspaceSnapshot: () => workspace({ cwd }) as never,
 		getContextState: (requested) => {
 			seen.push(requested);
@@ -651,7 +651,7 @@ function presentation(
 		},
 		getSettings: () => ({
 			...DEFAULT_SETTINGS,
-			chat: { ...DEFAULT_SETTINGS.chat, target: "dynamo", model: "qwen3.8-27b", thinkingLevel: "off" },
+			chat: { ...DEFAULT_SETTINGS.chat, connection: "dynamo", model: "qwen3.8-27b", thinkingLevel: "off" },
 			interface: { ...DEFAULT_SETTINGS.interface, mode: "regular", outputDetail: "standard", smoothStreaming: "off" },
 		}),
 		getContextState: () => ({ pancodeMd: "ok", memoryCount: 0 }),
@@ -1017,7 +1017,7 @@ for (const width of [40, 44, 60, 92, 120]) {
 				terminal,
 				getSettings: () => ({
 					...settings,
-					chat: { ...settings.chat, target: "blade-gateway", model, thinkingLevel: "low" },
+					chat: { ...settings.chat, connection: "blade-gateway", model, thinkingLevel: "low" },
 					interface: { ...settings.interface, mode: "regular", outputDetail: "standard", smoothStreaming: "off" },
 				}),
 			},
@@ -1074,7 +1074,7 @@ test("the composer rail and session header stay clean while the footer retains t
 			terminal: { columns: 60 },
 			getSettings: () => ({
 				...settings,
-				chat: { ...settings.chat, target: "blade", model, thinkingLevel: "low" },
+				chat: { ...settings.chat, connection: "blade", model, thinkingLevel: "low" },
 				interface: { ...settings.interface, mode: "regular", outputDetail: "standard" },
 			}),
 		},
@@ -1114,9 +1114,9 @@ test("the welcome keeps a calm non-duplicated launchpad and minimal session head
 
 test("the instant shell uses the finished welcome footprint without hydration copy or false readiness", () => {
 	const settings = structuredClone(DEFAULT_SETTINGS);
-	settings.chat.target = "local";
+	settings.chat.connection = "local";
 	settings.chat.model = "model";
-	settings.targets = [{ id: "local", runtime: "llamacpp" }];
+	settings.connections = [{ id: "local", runtime: "llamacpp" }];
 	settings.safety.autonomy = "yolo";
 	const boot = createBootWelcome(settings, "Ctrl+S");
 	for (const width of WIDTHS) {
@@ -1264,7 +1264,7 @@ test("source dev version identifies itself without bundle provenance", () => {
 
 test("an on/off route's thinking reads one word on the toast, the rail and the picker", async () => {
 	const settings = structuredClone(DEFAULT_SETTINGS);
-	settings.chat = { ...settings.chat, target: "dynamo", model: "qwen3.8-27b", thinkingLevel: "off" };
+	settings.chat = { ...settings.chat, connection: "dynamo", model: "qwen3.8-27b", thinkingLevel: "off" };
 	const onOff = status({
 		probeModelCapabilities: { "qwen3.8-27b": { reasoning: true, reasoningLevels: ["off", "low"] } },
 		probeModelId: "qwen3.8-27b",

@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
-import { defineCommandSpec, type LeafFlagsSpec } from "../kit/help.js";
+import { defineCommandSpec, type LeafFlagsSpec } from "../lib/help.js";
 
 export const spec = defineCommandSpec({
 	path: ["auth"],
-	summary: "list, check, log in to or log out of target and runtime credentials",
+	summary: "list, check, sign in to or sign out of connection and runtime credentials",
 	hidden: false,
 });
 

@@ -102,7 +102,7 @@ function fixture(
 ) {
 	const settings = structuredClone(DEFAULT_SETTINGS);
 	settings.chat.prewarm = false;
-	settings.chat.target = target.id;
+	settings.chat.connection = target.id;
 	settings.chat.model = model.id;
 	settings.chat.thinkingLevel = "off";
 	settings.chat.retry = {
@@ -115,7 +115,7 @@ function fixture(
 	// The budget cases run on a generic route, whose retry ladder reads provider
 	// error text the way the openai-codex route in #423 did; LiteLLM's is narrower.
 	const runtimeId = budget ? "openai-compat" : litellm.id;
-	settings.targets = [
+	settings.connections = [
 		{
 			...target,
 			runtime: runtimeId,

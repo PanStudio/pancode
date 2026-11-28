@@ -10,6 +10,7 @@
  */
 
 import { setTimeout as sleep } from "node:timers/promises";
+import { parseDuration } from "../core/duration.js";
 import {
 	type FleetRootRecord,
 	fleetRootState,
@@ -19,9 +20,8 @@ import {
 } from "../domains/dispatch/fleet-root-record.js";
 import { readFleetRun } from "../domains/dispatch/state.js";
 import { ensurePancodeState } from "../domains/install/index.js";
-import { parseDuration } from "./kit/duration.js";
-import { EXIT_CODES } from "./kit/exit-codes.js";
-import { writeCliFailure } from "./kit/json-out.js";
+import { EXIT_CODES } from "./lib/exit-codes.js";
+import { writeCliFailure } from "./lib/json-out.js";
 
 const USAGE = "usage: pancode fleet wait <fleetRootId> [--timeout <duration>] [--json]";
 const POLL_MS = 250;

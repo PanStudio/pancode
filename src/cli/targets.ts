@@ -15,6 +15,7 @@ import {
 } from "../core/config.js";
 import { THINKING_LEVELS, type ThinkingLevel } from "../core/defaults.js";
 import { loadDomains } from "../core/domain-loader.js";
+import { parseDuration } from "../core/duration.js";
 import { readLayeredSettings, settingsSourceFor } from "../core/settings-layers.js";
 import { ConfigDomainModule } from "../domains/config/module.js";
 import { ensurePancodeState } from "../domains/install/index.js";
@@ -39,31 +40,31 @@ import { column, terminalColumns, truncate, wrapPlain } from "./text-layout.js";
 
 type ProviderOutputTier = RuntimeTier | "unknown";
 
-const HELP = `pancode targets
+const HELP = `pancode connections
 
-List and manage configured model targets.
---probe checks targets live. --reasoning and --tools add qualification probes
+List and manage configured model connections.
+--probe checks connections live. --reasoning and --tools add qualification probes
 that send generation requests and can load models.
 
 Usage:
-  pancode targets [--json] [--probe [--reasoning] [--tools [--tools-timeout <seconds>]]] [--target <id>]
-  pancode targets use <id> [--model <id>] [--orchestrator-model <id>] [--background-model <id>]
-                       [--fleet-target <id>] [--fleet-model <id>]
-  pancode targets profile list [--json]
-  pancode targets profile set <name> <id> [--model <id>] [--thinking <level>]
-  pancode targets profile <name> <id> [--model <id>] [--thinking <level>]
-  pancode targets profile remove <name> [--force]
-  pancode targets profile rename <old> <new>
-  pancode targets profile bind <agentId> <profileName>
-  pancode targets profile unbind <agentId>
-  pancode targets profile bindings [--json]
-  pancode targets convert <id> --runtime <runtimeId>
-  pancode targets remove <id>
-  pancode targets rename <old> <new>
+  pancode connections [--json] [--probe [--reasoning] [--tools [--tools-timeout <duration>]]] [--connection <id>]
+  pancode connections use <id> [--model <id>] [--orchestrator-model <id>] [--background-model <id>]
+                           [--fleet-connection <id>] [--fleet-model <id>]
+  pancode connections profile list [--json]
+  pancode connections profile set <name> <id> [--model <id>] [--thinking <level>]
+  pancode connections profile <name> <id> [--model <id>] [--thinking <level>]
+  pancode connections profile remove <name> [--force]
+  pancode connections profile rename <old> <new>
+  pancode connections profile bind <agentId> <profileName>
+  pancode connections profile unbind <agentId>
+  pancode connections profile bindings [--json]
+  pancode connections convert <id> --runtime <runtimeId>
+  pancode connections remove <id>
+  pancode connections rename <old> <new>
 `;
 
 const USE_USAGE =
-	"pancode targets use <id> [--model <id>] [--orchestrator-model <id>] [--background-model <id>] [--fleet-target <id>] [--fleet-model <id>]";
+	"pancode connections use <id> [--model <id>] [--orchestrator-model <id>] [--background-model <id>] [--fleet-connection <id>] [--fleet-model <id>]";
 
 /**
  * `--help` anywhere on a targets subcommand is a question, not an argument.
@@ -155,22 +156,22 @@ function parseListArgs(args: ReadonlyArray<string>): ListArgs {
 		}
 		if (arg === "--tools-timeout") {
 			const value = args[i + 1];
-			const seconds = value === undefined ? Number.NaN : Number(value);
-			if (!Number.isFinite(seconds) || seconds <= 0)
-				throw new Error("--tools-timeout requires a positive number of seconds");
-			parsed.toolsTimeoutMs = Math.round(seconds * 1000);
+			if (value === undefined) throw new Error("--tools-timeout requires a duration");
+			const duration = parseDuration(value, { bareUnit: "s" });
+			if (!duration.ok) throw new Error(`--tools-timeout: ${duration.message}`);
+			parsed.toolsTimeoutMs = duration.ms;
 			i += 1;
 			continue;
 		}
-		if (arg === "--target") {
+		if (arg === "--connection") {
 			const value = args[i + 1];
-			if (!value) throw new Error("--target requires a value");
+			if (!value) throw new Error("--connection requires a value");
 			parsed.target = value;
 			i += 1;
 			continue;
 		}
 		if (arg?.startsWith("-")) throw new Error(`unknown flag: ${arg}`);
-		throw new Error(`unknown targets argument: ${arg}`);
+		throw new Error(`unknown connections argument: ${arg}`);
 	}
 	if (parsed.reasoning && !parsed.probe) throw new Error("--reasoning requires --probe");
 	if (parsed.tools && !parsed.probe) throw new Error("--tools requires --probe");
@@ -207,7 +208,7 @@ export async function runTargetsCommand(args: ReadonlyArray<string>): Promise<nu
 	const loaded = await loadDomains([ConfigDomainModule, ProvidersDomainModule]);
 	const providers = loaded.getContract("providers");
 	if (!providers) {
-		process.stderr.write("targets: provider domain not loaded\n");
+		process.stderr.write("connections: provider domain not loaded\n");
 		await loaded.stop();
 		return 1;
 	}
@@ -224,13 +225,13 @@ export async function runTargetsCommand(args: ReadonlyArray<string>): Promise<nu
 			if (parsed.target !== undefined) await providers.probeTarget(parsed.target, probeOptions);
 			else await providers.probeAllLive(probeOptions);
 		} catch (err) {
-			process.stderr.write(`targets: live probe failed: ${err instanceof Error ? err.message : String(err)}\n`);
+			process.stderr.write(`connections: live probe failed: ${err instanceof Error ? err.message : String(err)}\n`);
 		}
 	}
 	const entries = providers.list();
 	if (parsed.target !== undefined && !entries.some((e) => e.target.id === parsed.target)) {
 		printError(
-			`no target with id ${parsed.target}. ${entries.length} target${entries.length === 1 ? "" : "s"} configured.`,
+			`no connection with id ${parsed.target}. ${entries.length} connection${entries.length === 1 ? "" : "s"} configured.`,
 		);
 		await loaded.stop();
 		return 2;
@@ -240,7 +241,7 @@ export async function runTargetsCommand(args: ReadonlyArray<string>): Promise<nu
 	if (parsed.json) {
 		const settings = readSettings();
 		const candidateFor = (status: TargetStatus): string | null => {
-			const orchestratorModel = settings.chat?.target === status.target.id ? (settings.chat?.model ?? null) : null;
+			const orchestratorModel = settings.chat?.connection === status.target.id ? (settings.chat?.model ?? null) : null;
 			return orchestratorModel ?? status.target.defaultModel ?? null;
 		};
 		const rows = filtered.map((status) => {
@@ -250,7 +251,7 @@ export async function runTargetsCommand(args: ReadonlyArray<string>): Promise<nu
 		});
 		process.stdout.write(`${JSON.stringify({ targets: rows }, null, 2)}\n`);
 	} else if (filtered.length === 0) {
-		process.stdout.write("no targets configured; run `pancode configure` to add one.\n");
+		process.stdout.write("no connections configured; run `pancode configure` to add one.\n");
 	} else {
 		renderTable(providers, filtered);
 	}
@@ -286,12 +287,12 @@ function parseUseArgs(args: ReadonlyArray<string>): UseArgs | null {
 			parsed.workerModel = need();
 			continue;
 		}
-		if (arg === "--fleet-target") {
+		if (arg === "--fleet-connection") {
 			parsed.workerTarget = need();
 			continue;
 		}
 		if (arg?.startsWith("-")) throw new Error(`unknown flag: ${arg}`);
-		throw new Error(`unknown targets use argument: ${arg}`);
+		throw new Error(`unknown connections use argument: ${arg}`);
 	}
 	return parsed;
 }
@@ -323,9 +324,9 @@ async function runUse(args: ReadonlyArray<string>): Promise<number> {
 	}
 	ensurePancodeState();
 	const settings = readSettings();
-	const target = settings.targets.find((entry) => entry.id === parsed.id);
+	const target = settings.connections.find((entry) => entry.id === parsed.id);
 	if (!target) {
-		printError(`no target with id ${parsed.id}`);
+		printError(`no connection with id ${parsed.id}`);
 		return 1;
 	}
 	const registry = getRuntimeRegistry();
@@ -333,7 +334,7 @@ async function runUse(args: ReadonlyArray<string>): Promise<number> {
 	const candidate = structuredClone(settings);
 	const selection = useTargetInSettings(candidate, target.id, options);
 	if (!selection) {
-		printError(`no target with id ${parsed.workerTarget}`);
+		printError(`no connection with id ${parsed.workerTarget}`);
 		return 1;
 	}
 	const labels: Record<TargetSelectionRole, string> = {
@@ -348,18 +349,18 @@ async function runUse(args: ReadonlyArray<string>): Promise<number> {
 	const notedTargets = new Set<string>();
 	for (const role of selection.roles) {
 		const route = routes[role];
-		const selectedTarget = candidate.targets.find((entry) => entry.id === route.target);
-		if (!selectedTarget) throw new Error("selected target disappeared");
+		const selectedTarget = candidate.connections.find((entry) => entry.id === route.connection);
+		if (!selectedTarget) throw new Error("selected connection disappeared");
 		const runtime = registry.get(selectedTarget.runtime);
 		if (!runtime) {
 			printError(
-				`cannot use target '${selectedTarget.id}' for ${labels[role]}: ${runtimeNotRegistered(selectedTarget.runtime)}`,
+				`cannot use connection '${selectedTarget.id}' for ${labels[role]}: ${runtimeNotRegistered(selectedTarget.runtime)}`,
 			);
 			return 1;
 		}
 		if (!(role === "fleet" ? isTargetEligibleRuntime(runtime) : isOrchestratorEligibleRuntime(runtime))) {
 			printError(
-				`cannot use target '${selectedTarget.id}' for ${labels[role]}: runtime '${selectedTarget.runtime}' is not eligible`,
+				`cannot use connection '${selectedTarget.id}' for ${labels[role]}: runtime '${selectedTarget.runtime}' is not eligible`,
 			);
 			return 1;
 		}
@@ -372,7 +373,7 @@ async function runUse(args: ReadonlyArray<string>): Promise<number> {
 		}
 		if (inventory.models.length > 0 && !inventory.models.includes(route.model)) {
 			printError(
-				`target '${selectedTarget.id}' does not list model '${route.model}' for ${labels[role]} (${inventory.source} inventory). Use an exact listed model id: ${inventory.models.slice(0, 10).join(", ")}`,
+				`connection '${selectedTarget.id}' does not list model '${route.model}' for ${labels[role]} (${inventory.source} inventory). Use an exact listed model id: ${inventory.models.slice(0, 10).join(", ")}`,
 			);
 			return 1;
 		}
@@ -380,7 +381,7 @@ async function runUse(args: ReadonlyArray<string>): Promise<number> {
 		if (inventory.models.length === 0) {
 			// Keep offline selection possible, but never imply that an unknown id was verified.
 			process.stderr.write(
-				`warning: could not verify model '${route.model}' for ${labels[role]}: target '${selectedTarget.id}' returned no model list; saving the id as written\n`,
+				`warning: could not verify model '${route.model}' for ${labels[role]}: connection '${selectedTarget.id}' returned no model list; saving the id as written\n`,
 			);
 		} else if (
 			note !== null &&
@@ -389,7 +390,7 @@ async function runUse(args: ReadonlyArray<string>): Promise<number> {
 		) {
 			// A catalog is the whole answer for a runtime that cannot list live; anywhere else it is a fallback.
 			notedTargets.add(selectedTarget.id);
-			process.stderr.write(`warning: model list for target '${selectedTarget.id}' is the ${note}\n`);
+			process.stderr.write(`warning: model list for connection '${selectedTarget.id}' is the ${note}\n`);
 		}
 	}
 	// Re-read under the settings lock. A changed endpoint/default invalidates the
@@ -398,12 +399,12 @@ async function runUse(args: ReadonlyArray<string>): Promise<number> {
 	try {
 		updateSettings((fresh) => {
 			for (const [id, descriptor] of checkedTargets) {
-				if (JSON.stringify(fresh.targets.find((entry) => entry.id === id)) !== descriptor) {
-					throw new Error(`target '${id}' changed while checking models; retry targets use`);
+				if (JSON.stringify(fresh.connections.find((entry) => entry.id === id)) !== descriptor) {
+					throw new Error(`connection '${id}' changed while checking models; retry connections use`);
 				}
 			}
 			const applied = useTargetInSettings(fresh, target.id, options);
-			if (!applied) throw new Error("target changed while checking models; retry targets use");
+			if (!applied) throw new Error("connection changed while checking models; retry connections use");
 			changedRoles = applied.changedRoles;
 		});
 	} catch (error) {
@@ -412,7 +413,7 @@ async function runUse(args: ReadonlyArray<string>): Promise<number> {
 	}
 	const changedByTarget = new Map<string, string[]>();
 	for (const role of changedRoles) {
-		const id = routes[role].target as string;
+		const id = routes[role].connection as string;
 		const names = changedByTarget.get(id) ?? [];
 		names.push(labels[role]);
 		changedByTarget.set(id, names);
@@ -420,7 +421,7 @@ async function runUse(args: ReadonlyArray<string>): Promise<number> {
 	printOk(
 		changedRoles.length === 0
 			? "no role settings changed"
-			: `using ${[...changedByTarget].map(([id, names]) => `target ${id} for ${names.join(" and ")}`).join("; ")}`,
+			: `using ${[...changedByTarget].map(([id, names]) => `connection ${id} for ${names.join(" and ")}`).join("; ")}`,
 	);
 	return 0;
 }
@@ -451,7 +452,7 @@ function parseWorkerArgs(args: ReadonlyArray<string>): WorkerProfileArgs | null 
 			continue;
 		}
 		if (arg?.startsWith("-")) throw new Error(`unknown flag: ${arg}`);
-		throw new Error(`unknown targets profile argument: ${arg}`);
+		throw new Error(`unknown connections profile argument: ${arg}`);
 	}
 	return parsed;
 }
@@ -474,7 +475,7 @@ function parseProfileRemoveArgs(args: ReadonlyArray<string>): ProfileRemoveArgs 
 			continue;
 		}
 		if (arg?.startsWith("-")) throw new Error(`unknown flag: ${arg}`);
-		throw new Error(`unknown targets profile remove argument: ${arg}`);
+		throw new Error(`unknown connections profile remove argument: ${arg}`);
 	}
 	return parsed;
 }
@@ -497,23 +498,23 @@ function parseProfileBindArgs(args: ReadonlyArray<string>): ProfileBindArgs | nu
 function resolveDispatchProfileTarget(
 	settings: PancodeSettings,
 	targetId: string,
-	role = "fleet profile target",
-): { target: PancodeSettings["targets"][number] } | { exitCode: number } {
-	const target = settings.targets.find((entry) => entry.id === targetId);
+	role = "fleet profile connection",
+): { target: PancodeSettings["connections"][number] } | { exitCode: number } {
+	const target = settings.connections.find((entry) => entry.id === targetId);
 	if (!target) {
-		printError(`no target with id ${targetId}`);
+		printError(`no connection with id ${targetId}`);
 		return { exitCode: 2 };
 	}
 	const registry = getRuntimeRegistry();
 	if (registry.list().length === 0) registerBuiltinRuntimes(registry);
 	const runtime = registry.get(target.runtime);
 	if (!runtime) {
-		printError(`cannot use target '${target.id}' as ${role} because ${runtimeNotRegistered(target.runtime)}`);
+		printError(`cannot use connection '${target.id}' as ${role} because ${runtimeNotRegistered(target.runtime)}`);
 		return { exitCode: 1 };
 	}
 	if (!isTargetEligibleRuntime(runtime)) {
 		printError(
-			`cannot use target '${target.id}' as ${role} because runtime '${runtime.id}' is not a fleet-dispatch target`,
+			`cannot use connection '${target.id}' as ${role} because runtime '${runtime.id}' is not a fleet-dispatch connection`,
 		);
 		return { exitCode: 1 };
 	}
@@ -522,7 +523,7 @@ function resolveDispatchProfileTarget(
 
 function runProfileSet(
 	args: ReadonlyArray<string>,
-	usage = "pancode targets profile <name> <id> [--model <id>] [--thinking <level>]",
+	usage = "pancode connections profile <name> <id> [--model <id>] [--thinking <level>]",
 ): number {
 	if (wantsHelp(args)) return printUsage(usage);
 	let parsed: WorkerProfileArgs | null;
@@ -552,7 +553,7 @@ function runProfileSet(
 }
 
 function runProfileRemove(args: ReadonlyArray<string>): number {
-	if (wantsHelp(args)) return printUsage("pancode targets profile remove <name> [--force]");
+	if (wantsHelp(args)) return printUsage("pancode connections profile remove <name> [--force]");
 	let parsed: ProfileRemoveArgs | null;
 	try {
 		parsed = parseProfileRemoveArgs(args);
@@ -561,7 +562,7 @@ function runProfileRemove(args: ReadonlyArray<string>): number {
 		return 2;
 	}
 	if (!parsed) {
-		printError("usage: pancode targets profile remove <name> [--force]");
+		printError("usage: pancode connections profile remove <name> [--force]");
 		return 2;
 	}
 	ensurePancodeState();
@@ -591,7 +592,7 @@ function runProfileRemove(args: ReadonlyArray<string>): number {
 }
 
 function runProfileRename(args: ReadonlyArray<string>): number {
-	if (wantsHelp(args)) return printUsage("pancode targets profile rename <old> <new>");
+	if (wantsHelp(args)) return printUsage("pancode connections profile rename <old> <new>");
 	let parsed: ProfileRenameArgs | null;
 	try {
 		parsed = parseProfileRenameArgs(args);
@@ -600,7 +601,7 @@ function runProfileRename(args: ReadonlyArray<string>): number {
 		return 2;
 	}
 	if (!parsed) {
-		printError("usage: pancode targets profile rename <old> <new>");
+		printError("usage: pancode connections profile rename <old> <new>");
 		return 2;
 	}
 	if (parsed.oldName === parsed.newName) {
@@ -636,7 +637,7 @@ function runProfileRename(args: ReadonlyArray<string>): number {
 }
 
 function runProfileBind(args: ReadonlyArray<string>): number {
-	if (wantsHelp(args)) return printUsage("pancode targets profile bind <agentId> <profileName>");
+	if (wantsHelp(args)) return printUsage("pancode connections profile bind <agentId> <profileName>");
 	let parsed: ProfileBindArgs | null;
 	try {
 		parsed = parseProfileBindArgs(args);
@@ -645,14 +646,14 @@ function runProfileBind(args: ReadonlyArray<string>): number {
 		return 2;
 	}
 	if (!parsed) {
-		printError("usage: pancode targets profile bind <agentId> <profileName>");
+		printError("usage: pancode connections profile bind <agentId> <profileName>");
 		return 2;
 	}
 	ensurePancodeState();
 	const settings = readSettings();
 	if (settings.integrations.externalAgents.entries.some((agent) => agent.id === parsed.agentId)) {
 		printError(
-			`cannot bind ACP delegation agent '${parsed.agentId}' to a fleet profile; ACP agents use their own runner and ignore native target routing`,
+			`cannot bind ACP delegation agent '${parsed.agentId}' to a fleet profile; ACP agents use their own runner and ignore native connection routing`,
 		);
 		return 1;
 	}
@@ -669,10 +670,10 @@ function runProfileBind(args: ReadonlyArray<string>): number {
 }
 
 function runProfileUnbind(args: ReadonlyArray<string>): number {
-	if (wantsHelp(args)) return printUsage("pancode targets profile unbind <agentId>");
+	if (wantsHelp(args)) return printUsage("pancode connections profile unbind <agentId>");
 	let parsed: string;
 	try {
-		if (args.length !== 1) throw new Error("usage: pancode targets profile unbind <agentId>");
+		if (args.length !== 1) throw new Error("usage: pancode connections profile unbind <agentId>");
 		parsed = requireTrimmed(args[0], "agent id");
 	} catch (error) {
 		printError(error instanceof Error ? error.message : String(error));
@@ -699,10 +700,10 @@ function runProfileBindings(args: ReadonlyArray<string>): number {
 			continue;
 		}
 		if (arg === "--help" || arg === "-h") {
-			process.stdout.write("usage: pancode targets profile bindings [--json]\n");
+			process.stdout.write("usage: pancode connections profile bindings [--json]\n");
 			return 0;
 		}
-		printError(`unknown targets profile bindings argument: ${arg}`);
+		printError(`unknown connections profile bindings argument: ${arg}`);
 		return 2;
 	}
 	ensurePancodeState();
@@ -717,7 +718,7 @@ function runProfileBindings(args: ReadonlyArray<string>): number {
 			return {
 				agentId,
 				profile: profileName,
-				target: profile?.target ?? null,
+				target: profile?.connection ?? null,
 				model: profile?.model ?? null,
 				source: settingsSourceFor(sources, `fleet.agentProfiles.${agentId}`),
 				warning: profile ? null : "missing profile",
@@ -729,12 +730,12 @@ function runProfileBindings(args: ReadonlyArray<string>): number {
 	}
 	if (rows.length === 0) {
 		process.stdout.write(
-			"no agent profile bindings configured. run `pancode targets profile bind <agentId> <profile>` to add one.\n",
+			"no agent profile bindings configured. run `pancode connections profile bind <agentId> <profile>` to add one.\n",
 		);
 		return 0;
 	}
 	process.stdout.write(
-		`${column("agent", 18)}${column("profile", 20)}${column("target", 16)}${column("model", 30)}${column("source", 15)}warning\n`,
+		`${column("agent", 18)}${column("profile", 20)}${column("connection", 16)}${column("model", 30)}${column("source", 15)}warning\n`,
 	);
 	for (const row of rows) {
 		process.stdout.write(
@@ -747,13 +748,16 @@ function runProfileBindings(args: ReadonlyArray<string>): number {
 function runProfile(args: ReadonlyArray<string>): number {
 	const subcommand = args[0];
 	// Ambiguity: a profile literally named like a subcommand must use
-	// `pancode targets profile set <name> ...`.
+	// `pancode connections profile set <name> ...`.
 	if (subcommand && PROFILE_SUBCOMMANDS.has(subcommand)) {
 		switch (subcommand) {
 			case "list":
-				return runFleet(args.slice(1), "pancode targets profile list [--json]");
+				return runFleet(args.slice(1), "pancode connections profile list [--json]");
 			case "set":
-				return runProfileSet(args.slice(1), "pancode targets profile set <name> <id> [--model <id>] [--thinking <level>]");
+				return runProfileSet(
+					args.slice(1),
+					"pancode connections profile set <name> <id> [--model <id>] [--thinking <level>]",
+				);
 			case "remove":
 				return runProfileRemove(args.slice(1));
 			case "rename":
@@ -769,7 +773,7 @@ function runProfile(args: ReadonlyArray<string>): number {
 	return runProfileSet(args);
 }
 
-function runFleet(args: ReadonlyArray<string>, usage = "pancode targets fleet [--json]"): number {
+function runFleet(args: ReadonlyArray<string>, usage = "pancode connections fleet [--json]"): number {
 	let json = false;
 	for (const arg of args) {
 		if (arg === "--json") {
@@ -780,29 +784,29 @@ function runFleet(args: ReadonlyArray<string>, usage = "pancode targets fleet [-
 			process.stdout.write(`usage: ${usage}\n`);
 			return 0;
 		}
-		printError(`unknown targets fleet argument: ${arg}`);
+		printError(`unknown connections fleet argument: ${arg}`);
 		return 2;
 	}
 	ensurePancodeState();
 	// Same merged trusted view dispatch resolves profiles from; see runProfileBindings.
 	const { settings, sources } = readLayeredSettings(process.cwd());
-	const byId = new Map(settings.targets.map((target) => [target.id, target] as const));
+	const byId = new Map(settings.connections.map((target) => [target.id, target] as const));
 	const fleetDefault = settings.fleet.default;
-	const defaultTarget = fleetDefault.target ? byId.get(fleetDefault.target) : undefined;
-	const defaultRow = fleetDefault.target
+	const defaultTarget = fleetDefault.connection ? byId.get(fleetDefault.connection) : undefined;
+	const defaultRow = fleetDefault.connection
 		? {
-				target: fleetDefault.target,
+				target: fleetDefault.connection,
 				runtime: defaultTarget?.runtime ?? null,
 				model: fleetDefault.model,
 				thinkingLevel: fleetDefault.thinkingLevel,
-				source: settingsSourceFor(sources, "fleet.default.target"),
+				source: settingsSourceFor(sources, "fleet.default.connection"),
 			}
 		: null;
 	const rows = Object.entries(settings.fleet.profiles).map(([name, profile]) => {
-		const target = profile.target ? byId.get(profile.target) : undefined;
+		const target = profile.connection ? byId.get(profile.connection) : undefined;
 		return {
 			name,
-			target: profile.target,
+			target: profile.connection,
 			runtime: target?.runtime ?? null,
 			model: profile.model,
 			thinkingLevel: profile.thinkingLevel,
@@ -814,19 +818,19 @@ function runFleet(args: ReadonlyArray<string>, usage = "pancode targets fleet [-
 		return 0;
 	}
 	if (defaultRow) {
-		const model = defaultRow.model ?? "the target's default";
+		const model = defaultRow.model ?? "the connection's default";
 		process.stdout.write(
-			`fleet default: target ${defaultRow.target} (${defaultRow.runtime ?? "unknown runtime"}), model ${model}, thinking ${defaultRow.thinkingLevel}, from ${defaultRow.source}\n`,
+			`fleet default: connection ${defaultRow.target} (${defaultRow.runtime ?? "unknown runtime"}), model ${model}, thinking ${defaultRow.thinkingLevel}, from ${defaultRow.source}\n`,
 		);
 	} else {
-		process.stdout.write("fleet default: not set. run `pancode targets use <id> --fleet-model <model>` to set it.\n");
+		process.stdout.write("fleet default: not set. run `pancode connections use <id> --fleet-model <model>` to set it.\n");
 	}
 	if (rows.length === 0) {
-		process.stdout.write("no fleet profiles configured. run `pancode targets profile <name> <id>` to add one.\n");
+		process.stdout.write("no fleet profiles configured. run `pancode connections profile <name> <id>` to add one.\n");
 		return 0;
 	}
 	process.stdout.write(
-		`${column("profile", 18)}${column("target", 16)}${column("runtime", 20)}${column("model", 30)}${column("thinking", 10)}source\n`,
+		`${column("profile", 18)}${column("connection", 16)}${column("runtime", 20)}${column("model", 30)}${column("thinking", 10)}source\n`,
 	);
 	for (const row of rows) {
 		process.stdout.write(
@@ -837,9 +841,9 @@ function runFleet(args: ReadonlyArray<string>, usage = "pancode targets fleet [-
 }
 
 function runRemove(args: ReadonlyArray<string>): number {
-	if (wantsHelp(args)) return printUsage("pancode targets remove <id>");
+	if (wantsHelp(args)) return printUsage("pancode connections remove <id>");
 	if (args.length !== 1 || !args[0]) {
-		printError("usage: pancode targets remove <id>");
+		printError("usage: pancode connections remove <id>");
 		return 2;
 	}
 	ensurePancodeState();
@@ -847,16 +851,16 @@ function runRemove(args: ReadonlyArray<string>): number {
 }
 
 function runRename(args: ReadonlyArray<string>): number {
-	if (wantsHelp(args)) return printUsage("pancode targets rename <old> <new>");
+	if (wantsHelp(args)) return printUsage("pancode connections rename <old> <new>");
 	if (args.length !== 2 || !args[0] || !args[1]) {
-		printError("usage: pancode targets rename <old> <new>");
+		printError("usage: pancode connections rename <old> <new>");
 		return 2;
 	}
 	ensurePancodeState();
 	return runTargetRename(args[0], args[1]);
 }
 
-const CONVERT_USAGE = "pancode targets convert <id> --runtime <runtimeId>";
+const CONVERT_USAGE = "pancode connections convert <id> --runtime <runtimeId>";
 
 function runConvert(args: ReadonlyArray<string>): number {
 	if (wantsHelp(args)) return printUsage(CONVERT_USAGE);
@@ -899,25 +903,25 @@ function runConvert(args: ReadonlyArray<string>): number {
 	// A plugin runtime may declare aliases; the target always stores the canonical id.
 	runtimeId = runtime.id;
 	const settings = readSettings();
-	const target = settings.targets.find((entry) => entry.id === id);
+	const target = settings.connections.find((entry) => entry.id === id);
 	if (!target) {
-		printError(`no target with id ${id}`);
+		printError(`no connection with id ${id}`);
 		return 1;
 	}
 	if (target.runtime === runtimeId) {
-		printOk(`target ${id} already uses runtime ${runtimeId}`);
+		printOk(`connection ${id} already uses runtime ${runtimeId}`);
 		return 0;
 	}
-	if (settings.chat.target === id && !isOrchestratorEligibleRuntime(runtime)) {
-		printError(`cannot convert orchestrator target '${id}' to non-HTTP/native runtime '${runtime.id}'`);
+	if (settings.chat.connection === id && !isOrchestratorEligibleRuntime(runtime)) {
+		printError(`cannot convert orchestrator connection '${id}' to non-HTTP/native runtime '${runtime.id}'`);
 		return 1;
 	}
 	const previousRuntime = target.runtime;
 	updateSettings((fresh) => {
-		const entry = fresh.targets.find((candidate) => candidate.id === id);
+		const entry = fresh.connections.find((candidate) => candidate.id === id);
 		if (entry) entry.runtime = runtimeId;
 	});
-	printOk(`converted target ${id}: ${previousRuntime} -> ${runtimeId}`);
+	printOk(`converted connection ${id}: ${previousRuntime} -> ${runtimeId}`);
 	return 0;
 }
 
@@ -944,7 +948,7 @@ const TABLE_GAP = 1;
  * The order the columns give room back in, each down to the floor beside it.
  *
  * `id` and `caps` are absent on purpose. A cut id is not an id: it cannot be
- * passed back to `pancode targets use`, so shortening it turns the column into
+ * passed back to `pancode connections use`, so shortening it turns the column into
  * something that reads like an identifier and is not one. The badges are one
  * letter per capability and mean nothing partially printed.
  */

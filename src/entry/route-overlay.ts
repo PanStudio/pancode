@@ -5,7 +5,7 @@ import type { PancodeSettings } from "../core/config.js";
 import type { BootOptions } from "./boot-options.js";
 
 /**
- * Settings as a session started with `--target`/`--model` (and `run`'s
+ * Settings as a session started with `--connection`/`--model` (and `run`'s
  * `--thinking`/`--autonomy`) sees them. The caller's copy is untouched, so
  * settings.yaml never learns the session's route.
  */
@@ -15,11 +15,11 @@ export function applyRouteOverlay(
 ): PancodeSettings {
 	const next = structuredClone(settings);
 	if (!overrides) return next;
-	const previousTarget = next.chat.target;
+	const previousTarget = next.chat.connection;
 	if (overrides.target !== undefined) {
-		next.chat.target = overrides.target;
+		next.chat.connection = overrides.target;
 		if (overrides.model === undefined && (previousTarget !== overrides.target || !next.chat.model)) {
-			const target = next.targets.find((entry) => entry.id === overrides.target);
+			const target = next.connections.find((entry) => entry.id === overrides.target);
 			if (target) next.chat.model = target.defaultModel ?? null;
 		}
 	}

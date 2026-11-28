@@ -6,6 +6,7 @@ import { resolve } from "node:path";
 import { DEFAULT_SETTINGS, type MemoryLessonsMode } from "../../../core/defaults.js";
 import { effectiveToolCall, gatewayChainReceipts } from "../../../core/tool-surface.js";
 import { isRecord } from "../../../core/type-guards.js";
+import { redactForMemoryRoute } from "../../../lib/secrets/memory-route.js";
 import { headForRedaction } from "../../../lib/secrets/redact.js";
 import { isRefusalToolResultError } from "../../../tools/result-disposition.js";
 import type { MiddlewareHookInput } from "../../middleware/types.js";
@@ -20,7 +21,6 @@ import {
 } from "../command-evidence.js";
 import { commandSubject, readInsideRoot, repositoryRelativePath } from "../lesson-evidence.js";
 import { exercisesWork, fixPairOf, type MemoryNoteEvidence } from "../notes.js";
-import { redactForMemoryRoute } from "../secret-text.js";
 import { collapseWhitespace, type InterventionScope, setBounded } from "./scope.js";
 import { WORKSPACE_CHANGING_CLASSES } from "./tool-step.js";
 import type { MemoryInterventionRegistration } from "./types.js";

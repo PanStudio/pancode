@@ -31,7 +31,7 @@ function environment(root: string): NodeJS.ProcessEnv {
 
 function seedTarget(root: string, url: string): void {
 	editSettingsFile(join(root, "config", "settings.yaml"), (settings) => {
-		settings.targets = [
+		settings.connections = [
 			{
 				id: "lifecycle-local",
 				runtime: "openai-compat",
@@ -42,7 +42,7 @@ function seedTarget(root: string, url: string): void {
 				capabilities: { chat: true, tools: true, toolCallFormat: "openai", contextWindow: 32768, maxTokens: 4096 },
 			},
 		];
-		Object.assign(section(settings, "chat"), { target: "lifecycle-local", model: "mock-model" });
+		Object.assign(section(settings, "chat"), { connection: "lifecycle-local", model: "mock-model" });
 		section(settings, "safety").autonomy = "yolo";
 	});
 }

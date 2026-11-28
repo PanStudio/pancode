@@ -126,7 +126,7 @@ it("a main call journals its stages in Pi's order and its cache physics, a budge
 		throw new Error("fixture journal unavailable");
 	});
 	const settings = structuredClone(DEFAULT_SETTINGS);
-	settings.chat.target = target.id;
+	settings.chat.connection = target.id;
 	settings.chat.model = "chat";
 	settings.chat.thinkingLevel = "off";
 	settings.chat.prewarm = false;
@@ -559,7 +559,7 @@ it("a main call journals the model change and the Codex transport resets the hos
 		throw new Error("fixture journal unavailable");
 	});
 	const settings = structuredClone(DEFAULT_SETTINGS);
-	settings.chat.target = target.id;
+	settings.chat.connection = target.id;
 	settings.chat.model = "chat";
 	settings.chat.thinkingLevel = "off";
 	settings.chat.prewarm = false;
@@ -692,7 +692,7 @@ it("a turn after a tool call holds no request until its own goes out, so nothing
 		throw new Error("fixture journal unavailable");
 	});
 	const settings = structuredClone(DEFAULT_SETTINGS);
-	settings.chat.target = target.id;
+	settings.chat.connection = target.id;
 	settings.chat.model = "chat";
 	settings.chat.thinkingLevel = "off";
 	settings.chat.prewarm = false;
@@ -824,7 +824,7 @@ it("admission sizes each main request on one history walk, as one publication do
 		throw new Error("fixture journal unavailable");
 	});
 	const settings = structuredClone(DEFAULT_SETTINGS);
-	settings.chat.target = target.id;
+	settings.chat.connection = target.id;
 	settings.chat.model = "chat";
 	settings.chat.thinkingLevel = "off";
 	settings.chat.prewarm = false;

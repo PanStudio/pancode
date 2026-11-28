@@ -262,7 +262,7 @@ export interface SandboxEnvPolicy {
 	maskSettings?: true;
 	/**
 	 * Main session only: credential files its contained commands may read, the login files of the targets
-	 * `safety.liveCheckTargets` names. Their masks are left off, so they show read-only; every other mask stays.
+	 * `safety.liveCheckConnections` names. Their masks are left off, so they show read-only; every other mask stays.
 	 */
 	revealFiles?: ReadonlyArray<string>;
 }

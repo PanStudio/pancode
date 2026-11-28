@@ -39,7 +39,7 @@ export function renderFleetInventory(
 		);
 		for (const target of (record?.targets ?? []).slice(0, 2))
 			rows.push(
-				`  target=${short(target.targetId)}: network=${target.reachable}; listing access=${target.authentication ?? "unknown"}; catalog model=${target.modelAvailable}; runtime=${target.runtimeCompatible}; observed=${short(target.probedAt)}.`,
+				`  connection=${short(target.targetId)}: network=${target.reachable}; listing access=${target.authentication ?? "unknown"}; catalog model=${target.modelAvailable}; runtime=${target.runtimeCompatible}; observed=${short(target.probedAt)}.`,
 			);
 	}
 	if (nodes.length > 8) rows.push(`${nodes.length - 8} more nodes omitted; fleet nodes list shows all.`);

@@ -24,7 +24,7 @@
 			"type": ["object", "null"],
 			"additionalProperties": false,
 			"properties": {
-				"target": { "type": ["string", "null"], "description": "--target" },
+				"connection": { "type": ["string", "null"], "description": "--connection" },
 				"model": { "type": ["string", "null"], "description": "--model" },
 				"thinking": { "type": ["string", "null"], "description": "--thinking" },
 				"sampling": {

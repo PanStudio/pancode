@@ -15,7 +15,7 @@ export interface ConfigContract {
 	/** Reload through the same validation and change events as a file watcher. */
 	reload?(): void;
 	/** Defer setup's watcher events, retaining detected session-only targets in memory. */
-	holdReloads?(sessionTargets?: ReadonlyArray<PancodeSettings["targets"][number]>): void;
+	holdReloads?(sessionTargets?: ReadonlyArray<PancodeSettings["connections"][number]>): void;
 	/** Layer that set each saved leaf of `get()`; a missing path is a built-in default. */
 	sources?(): Readonly<Record<string, SettingsOrigin>>;
 	/**

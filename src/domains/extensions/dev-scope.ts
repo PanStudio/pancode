@@ -7,7 +7,7 @@ import type { ExtensionCapabilityEnvelope, ExtensionDiagnostic } from "@pancode/
 import { capabilityEnvelope, envelopeDigest, envelopeGrowth } from "@pancode/sdk/pack";
 import { registerDevRoot, releaseDevRoots } from "../../core/dev-roots.js";
 import { sha256Hex } from "../../core/hash.js";
-import { recordPackageActivity } from "../../core/package-activity.js";
+import { recordPackActivity } from "../../core/pack-activity.js";
 import { projectPackagesTrusted } from "../../core/workspace-trust.js";
 import { extensionIdentity } from "./activity.js";
 import { evaluatePancodeCompatibility } from "./compatibility.js";
@@ -432,7 +432,7 @@ export class ExtensionDevScope implements ExtensionSessionOverlay {
 			const entry =
 				[...this.copies.values()].find((copy) => copy.record.entry.id === id)?.record.entry ??
 				listInstalledExtensions(this.cwd(), { all: true }).find((entry) => entry.id === id);
-			if (entry) recordPackageActivity({ kind, owner: extensionIdentity(entry), outcome: "operator" });
+			if (entry) recordPackActivity({ kind, owner: extensionIdentity(entry), outcome: "operator" });
 		} catch {
 			// Activity cannot change the operator's session-only consent or mute decision.
 		}

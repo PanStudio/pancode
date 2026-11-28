@@ -123,9 +123,9 @@ function expectedRefusal(item: { method: string; path: string; status: number })
 		// The harness PanCode does not expose session history, so the read refuses. The same path also
 		// creates a session, and a refused create must still fail the run.
 		(item.method === "GET" && item.status === 409 && /^\/api\/workspaces\/[^/]+\/sessions$/.test(item.path)) ||
-		// The harness wires no machine management, so the Machines page's list read refuses; the width step
+		// The harness wires no node management, so the Nodes page's list read refuses; the width step
 		// still lays the page out.
-		(item.method === "GET" && item.status === 409 && /^\/api\/workspaces\/[^/]+\/machines$/.test(item.path)) ||
+		(item.method === "GET" && item.status === 409 && /^\/api\/workspaces\/[^/]+\/nodes$/.test(item.path)) ||
 		(item.status === 401 && firstReads.includes(item.path))
 	);
 }
@@ -339,7 +339,7 @@ try {
 		// Flows share these locators and helpers; a locator resolves only when it is used.
 		let noticeSessionUrl = "";
 		let workspaceUrl = "";
-		const openDialog = page.getByRole("dialog", { name: "Open workspace", exact: true });
+		const openDialog = page.getByRole("dialog", { name: "Open project", exact: true });
 		const setting = (path: string) =>
 			page.locator("main .setting-control", { has: page.locator("code", { hasText: path }) });
 		const findSetting = page.locator("main").getByLabel("Find a setting", { exact: true });
@@ -372,10 +372,10 @@ try {
 		async function closePane() {
 			if (!(await pane.count())) return;
 			// Docked or as a slide-over, one control closes the task details.
-			await pane.getByRole("button", { name: "Close task details", exact: true }).click();
+			await pane.getByRole("button", { name: "Close session details", exact: true }).click();
 			await pane.waitFor({ state: "detached" });
 		}
-		const taskMenu = page.locator('.conversation .wb-bar .wb-menu:has(> summary[aria-label="Task actions"])');
+		const taskMenu = page.locator('.conversation .wb-bar .wb-menu:has(> summary[aria-label="Session actions"])');
 		const slashList = page.getByRole("listbox", { name: "Slash commands", exact: true });
 		async function slashPane(name: string) {
 			await composerField.fill(`/${name}`);
@@ -396,7 +396,7 @@ try {
 		// A settled turn leaves no working chip in the top bar and no Stop in the composer.
 		const settled = async () => {
 			await page.locator('.wb-chip--status[data-tone="working"]').waitFor({ state: "detached" });
-			await page.getByRole("button", { name: "Stop turn", exact: true }).waitFor({ state: "detached" });
+			await page.getByRole("button", { name: "Cancel turn", exact: true }).waitFor({ state: "detached" });
 		};
 		// Session actions open from the slash palette as a dialog over the conversation. The option carries
 		// the engine's title; the dialog opens under the app's own heading.

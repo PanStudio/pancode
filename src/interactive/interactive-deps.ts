@@ -39,7 +39,7 @@ import type {
 } from "../session-control/slash-command-types.js";
 import type { AskUserHandler } from "../tools/ask-user.js";
 import type { JobOperations } from "../tools/job-types.js";
-import type { ToolRegistry } from "../tools/registry-contract.js";
+import type { ToolRegistry } from "../tools/registry/contract.js";
 import type { createMuxBridge } from "./mux-bridge.js";
 import type { createPeerInbox } from "./peer-inbox.js";
 import type { BootInteractivity, TerminalLease } from "./terminal-lease.js";

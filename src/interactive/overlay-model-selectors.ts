@@ -249,7 +249,7 @@ export function createOverlayModelSelectors(deps: OverlayModelSelectorsDeps): Ov
 			? modelResidencySentence(modelResidencyWord(status, ref.model), ref.model, ref.target)
 			: null;
 		const live = deps.getSettings?.()?.chat;
-		const liveTarget = live?.target?.trim() ?? "";
+		const liveTarget = live?.connection?.trim() ?? "";
 		const liveModel = live?.model?.trim() ?? "";
 		const current =
 			liveTarget.length === 0 ? null : liveModel.length === 0 ? liveTarget : `${liveTarget} ${GLYPH.sep} ${liveModel}`;

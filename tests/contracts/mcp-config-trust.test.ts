@@ -51,8 +51,8 @@ import {
 import { createWorkerSafety } from "../../src/engine/worker-tools.js";
 import { createMcpCapabilitySource } from "../../src/tools/gateway/mcp-capabilities.js";
 import { saveMcpDownloads, transferMcpUploads } from "../../src/tools/gateway/mcp-file-transfer.js";
+import { applyRegisteredToolClassification } from "../../src/tools/registry/call-prep.js";
 import { createRegistry } from "../../src/tools/registry.js";
-import { applyRegisteredToolClassification } from "../../src/tools/registry-call-prep.js";
 import type { ToolSpec } from "../../src/tools/tool-spec.js";
 import { trustProjectPackages } from "../harness/project-trust.js";
 import { type IsolatedPancodeEnv, isolatePancodeEnv } from "../harness/scratch-env.js";
@@ -950,7 +950,7 @@ describe("plugin mcp.json declarations", () => {
 		strictEqual(foreign(pluginWithServer(env.dir, "zulip-kit", "zulipchat"))?.trust, "foreign");
 		deepStrictEqual(
 			resolveMcpServers({ cwd: project }).diagnostics.map((entry) => entry.message),
-			["foreign package zulip-kit declares no MCP servers until integrations.projectResources.trustProjectImports is on"],
+			["foreign package zulip-kit declares no MCP servers until integrations.hub.trustProjectImports is on"],
 		);
 	});
 

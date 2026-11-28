@@ -121,7 +121,7 @@ async function stepDrive(route: Drive): Promise<Run> {
 	const scratch = await isolatePancodeEnv("pancode-step-compact-");
 	const settings = structuredClone(DEFAULT_SETTINGS);
 	settings.chat.prewarm = false;
-	settings.targets = [
+	settings.connections = [
 		{
 			id: `route-${route.model}`,
 			runtime: "openai",
@@ -130,7 +130,7 @@ async function stepDrive(route: Drive): Promise<Run> {
 		},
 	];
 	const context = dispatchStubContext({ settings });
-	settings.chat.target = `route-${route.model}`;
+	settings.chat.connection = `route-${route.model}`;
 	settings.chat.model = route.model;
 	const providers = {
 		...(context.getContract("providers") as ProvidersContract),

@@ -10,7 +10,6 @@ import {
 	createBackgroundMemoryRouting,
 } from "../../src/domains/memory/background-route.js";
 import { createMemoryInterventionRegistration } from "../../src/domains/memory/intervention.js";
-import type { MemoryRouteText } from "../../src/domains/memory/secret-text.js";
 import { TaskMemoryBank } from "../../src/domains/memory/task-bank.js";
 import {
 	runTaskMemoryPolicy,
@@ -23,6 +22,7 @@ import litellm from "../../src/domains/providers/runtimes/protocol/litellm.js";
 import type { SessionContract } from "../../src/domains/session/contract.js";
 import { appendEntry, appendTurn, readCurrentEntries, startSession } from "../../src/domains/session/manager.js";
 import { createProductionAutoCompact } from "../../src/entry/orchestrator.js";
+import type { MemoryRouteText } from "../../src/lib/secrets/memory-route.js";
 import { syntheticCompactionSummary } from "../harness/compaction-summary.js";
 import { dispatchStubContext } from "../harness/dispatch-stub-context.js";
 import { startGatewayThinkingFixture } from "../harness/gateway-thinking-fixture.js";
@@ -32,17 +32,18 @@ async function setup(runtime = "lm-studio", beforeMetadata?: () => Promise<void>
 	const env = await isolatePancodeEnv("pancode-background-thinking-");
 	const fixture = await startGatewayThinkingFixture(runtime, "local/gemma-4-26b-a4b-it", beforeMetadata, responseText);
 	const settings = structuredClone(DEFAULT_SETTINGS);
-	settings.targets = [
+	settings.connections = [
 		{ id: "memory", runtime: "litellm", url: fixture.url, defaultModel: fixture.modelId },
 		{ id: "chat", runtime: "litellm", url: fixture.url, defaultModel: "dynamo/qwen3.8-27b" },
 	];
-	settings.context.memory.target = "memory";
+	settings.context.memory.connection = "memory";
 	settings.context.memory.model = fixture.modelId;
 	settings.context.compaction.model = `memory/${fixture.modelId}`;
-	settings.chat.target = "chat";
+	settings.chat.connection = "chat";
 	settings.chat.model = "dynamo/qwen3.8-27b";
 	const bundle = createProvidersBundle(dispatchStubContext({ settings }));
-	for (const target of settings.targets) bundle.contract.auth.setRuntimeOverrideForTarget(target, litellm, "fixture");
+	for (const target of settings.connections)
+		bundle.contract.auth.setRuntimeOverrideForTarget(target, litellm, "fixture");
 	await bundle.extension.start();
 	return {
 		env,
@@ -298,7 +299,7 @@ test("memory refuses an endpoint changed while metadata was pending", async () =
 			signal: new AbortController().signal,
 		});
 		await started;
-		const target = f.settings.targets[0];
+		const target = f.settings.connections[0];
 		ok(target);
 		target.url = "http://changed.invalid:4000";
 		release();
@@ -308,7 +309,7 @@ test("memory refuses an endpoint changed while metadata was pending", async () =
 		} catch (caught) {
 			error = caught;
 		}
-		ok(error instanceof Error && error.message.includes("target changed during preparation"));
+		ok(error instanceof Error && error.message.includes("connection changed during preparation"));
 		strictEqual(f.fixture.requests.length, 0);
 	} finally {
 		release();
@@ -335,7 +336,7 @@ for (const stage of ["metadata", "auth"] as const) {
 				await gate;
 			};
 			const f = await setup("lm-studio", stage === "metadata" ? delay : undefined);
-			const target = f.settings.targets[0];
+			const target = f.settings.connections[0];
 			ok(target);
 			if (capacity !== undefined) target.maxConcurrentRequests = capacity;
 			if (stage === "auth") {

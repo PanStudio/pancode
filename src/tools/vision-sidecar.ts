@@ -70,9 +70,9 @@ const RESPONSE_SCHEMA = {
 
 function completionUrl(raw: string): string {
 	const url = new URL(raw);
-	if (url.protocol !== "http:" && url.protocol !== "https:") throw new Error("vision target needs an HTTP URL");
+	if (url.protocol !== "http:" && url.protocol !== "https:") throw new Error("vision connection needs an HTTP URL");
 	if (url.username || url.password || url.search || url.hash) {
-		throw new Error("vision target URL must not contain credentials, query, or fragment");
+		throw new Error("vision connection URL must not contain credentials, query, or fragment");
 	}
 	const root = `${url.origin}${url.pathname.replace(/\/+$/u, "")}`;
 	return `${root.endsWith("/v1") ? root : `${root}/v1`}/chat/completions`;
@@ -259,21 +259,21 @@ export function createVisionSidecar(input: {
 }): VisionSidecar {
 	const profile = () => input.getSettings().fleet.profiles[VISION_PROFILE];
 	return {
-		configured: () => Boolean(profile()?.target),
+		configured: () => Boolean(profile()?.connection),
 		label: () => {
 			const selected = profile();
-			if (!selected?.target) return null;
-			return selected.model ?? input.providers.getTarget(selected.target)?.defaultModel ?? selected.target;
+			if (!selected?.connection) return null;
+			return selected.model ?? input.providers.getTarget(selected.connection)?.defaultModel ?? selected.connection;
 		},
 		async analyze(images, question, signal) {
 			const selected = profile();
-			if (!selected?.target) throw new Error("fleet.profiles.vision is not configured");
+			if (!selected?.connection) throw new Error("fleet.profiles.vision is not configured");
 			// Only the interactive app warms worker targets, after its first paint. A headless run
 			// would otherwise resolve the sidecar from runtime defaults, which carry no image input.
-			const status = input.providers.list().find((entry) => entry.target.id === selected.target);
+			const status = input.providers.list().find((entry) => entry.target.id === selected.connection);
 			if (status && status.health.lastCheckAt === null) {
 				try {
-					await input.providers.probeTarget(selected.target, {
+					await input.providers.probeTarget(selected.connection, {
 						reasoning: false,
 						tools: false,
 						...(signal ? { signal } : {}),
@@ -283,7 +283,7 @@ export function createVisionSidecar(input: {
 				}
 			}
 			const resolved = resolveRuntimeTarget(input.providers, {
-				targetId: selected.target,
+				targetId: selected.connection,
 				wireModelId: selected.model,
 				requestedThinkingLevel: "off",
 				requiredCapabilities: ["vision"],
@@ -293,17 +293,18 @@ export function createVisionSidecar(input: {
 			});
 			if (!resolved.ok) {
 				throw new Error(
-					resolved.diagnostics.find((entry) => entry.severity === "error")?.message ?? "vision target cannot resolve",
+					resolved.diagnostics.find((entry) => entry.severity === "error")?.message ?? "vision connection cannot resolve",
 				);
 			}
 			const route = resolved.target;
-			if (route.runtimeId !== "llamacpp") throw new Error("vision sidecar currently requires a llama.cpp target");
-			if (!route.capabilityDecisions.vision) throw new Error("vision target does not advertise image input");
-			if (!route.target.url) throw new Error("vision target has no URL");
+			if (route.runtimeId !== "llamacpp") throw new Error("vision sidecar currently requires a llama.cpp connection");
+			if (!route.capabilityDecisions.vision) throw new Error("vision connection does not advertise image input");
+			if (!route.target.url) throw new Error("vision connection has no URL");
 			const credential = targetRequiresAuth(route.target, route.runtime)
 				? await input.providers.auth.resolveForTarget(route.target, route.runtime, signal ? { signal } : undefined)
 				: null;
-			if (credential?.refused) throw new Error(credential.detail ?? `credential refused for target '${route.targetId}'`);
+			if (credential?.refused)
+				throw new Error(credential.detail ?? `credential refused for connection '${route.targetId}'`);
 			const binding: VisionBinding = {
 				targetId: route.targetId,
 				model: route.wireModelId,

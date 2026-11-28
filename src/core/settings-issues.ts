@@ -18,7 +18,7 @@ import { resolvePancodeDirs } from "./xdg.js";
 type SettingsIssueKind = "unreadable" | "syntax" | "schema";
 
 export interface SettingsIssue {
-	/** Dotted key path, e.g. `chat.target` or `targets[2].runtime`. */
+	/** Dotted key path, e.g. `chat.connection` or `connections[2].runtime`. */
 	path: string;
 	message: string;
 	kind?: SettingsIssueKind;

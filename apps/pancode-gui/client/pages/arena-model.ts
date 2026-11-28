@@ -138,7 +138,7 @@ export function arenaRequest(draft: ArenaDraft): { request: ArenaStartRequest } 
 	if (contenders.length < ARENA_MIN_CONTENDERS) return { problem: "Pick at least two contenders." };
 	if (contenders.length > ARENA_MAX_CONTENDERS) return { problem: "A match takes at most four contenders." };
 	for (const [index, contender] of contenders.entries()) {
-		if (!ID.test(contender.target)) return { problem: `Contender ${index + 1} needs a target.` };
+		if (!ID.test(contender.target)) return { problem: `Contender ${index + 1} needs a connection.` };
 		if (!MODEL.test(contender.model)) return { problem: `Contender ${index + 1} needs a model id.` };
 	}
 	const timeoutSeconds = Number(draft.timeoutSeconds);

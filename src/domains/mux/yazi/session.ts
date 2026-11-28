@@ -8,8 +8,8 @@ import { join } from "node:path";
 import { processBirthToken, processIdentityAlive } from "../../../core/process-identity.js";
 import { safeResourceWrite } from "../../../core/safe-resource-write.js";
 import { pancodeCacheDir } from "../../../core/xdg.js";
-import { findPinnedTool } from "../../../lib/programs/registry.js";
-import { describeResolution, resolveToolBinary, toolStatus } from "../../../lib/programs/resolve.js";
+import { findPinnedProgram } from "../../../lib/programs/registry.js";
+import { describeResolution, programStatus, resolveProgramBinary } from "../../../lib/programs/resolve.js";
 import type { MuxContract } from "../contract.js";
 import type { MuxPaneRef } from "../types.js";
 import { isPancodeHostSocket } from "../workspace/platform.js";
@@ -95,11 +95,11 @@ export interface YaziSessionOptions {
 }
 
 export function resolveYaziBinaries(): YaziResolvedBinaries {
-	const entry = findPinnedTool("yazi");
-	const status = entry ? toolStatus(entry) : null;
+	const entry = findPinnedProgram("yazi");
+	const status = entry ? programStatus(entry) : null;
 	return {
 		yaziPath: status?.resolution.binaryPath ?? null,
-		yaPath: resolveToolBinary("ya").binaryPath,
+		yaPath: resolveProgramBinary("ya").binaryPath,
 		missingYaziDetail: status ? describeResolution(status) : "yazi is not in the pinned tool registry",
 	};
 }

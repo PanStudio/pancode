@@ -21,7 +21,7 @@ export interface SettingsRepairResult {
 }
 
 /**
- * Walk a validator path (`fleet.profiles.fast.thinkingLevel`, `targets[0].x`) down
+ * Walk a validator path (`fleet.profiles.fast.thinkingLevel`, `connections[0].x`) down
  * the parsed document. Keys may themselves contain dots, so every key that
  * prefixes the rest of the path is tried before giving up.
  */

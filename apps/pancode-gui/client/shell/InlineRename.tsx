@@ -45,7 +45,7 @@ export function InlineRename({
 			value={draft}
 			maxLength={256}
 			aria-label={label}
-			placeholder="Name this task"
+			placeholder="Name this session"
 			spellCheck={false}
 			autoComplete="off"
 			onChange={(event) => setDraft(event.target.value)}

@@ -56,8 +56,8 @@ import {
 	sweepReportBundles,
 	updateOutbox,
 } from "../domains/report/index.js";
-import { parseCommandFlags } from "./kit/flags.js";
-import { jsonDocument, writeCliFailure } from "./kit/json-out.js";
+import { parseCommandFlags } from "./lib/flags.js";
+import { jsonDocument, writeCliFailure } from "./lib/json-out.js";
 import { canSelect, promptSelect } from "./select.js";
 
 const REPORT_HELP = `pancode report [bug|feature|question] [--title <t>] [--body-file <f> | -] [--session <id> | --last]
@@ -372,8 +372,8 @@ function offlineTransport(io: Io, findGh: () => string | null): ReportPlanTransp
 
 async function loadFindGh(deps: ReportCliDeps): Promise<() => string | null> {
 	if (deps.findGh !== undefined) return deps.findGh;
-	const { resolveToolBinary } = await import("../lib/programs/index.js");
-	return () => resolveToolBinary("gh").binaryPath;
+	const { resolveProgramBinary } = await import("../lib/programs/index.js");
+	return () => resolveProgramBinary("gh").binaryPath;
 }
 
 async function identityFor(io: Io): Promise<LocalIdentity> {
@@ -381,7 +381,7 @@ async function identityFor(io: Io): Promise<LocalIdentity> {
 	if (settings === undefined) {
 		try {
 			const { readSettings } = await import("../core/config.js");
-			settings = { targets: readSettings().targets };
+			settings = { connections: readSettings().connections };
 		} catch {
 			// Unreadable settings mask no target names; every other identity value still applies.
 			settings = {};

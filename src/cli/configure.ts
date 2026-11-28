@@ -31,7 +31,7 @@ import {
 	runNonInteractive,
 	runTargetSetupInteractive,
 } from "./configure-target-setup.js";
-import { createLifecyclePresenter, type LifecyclePresenter, shortenPath } from "./lifecycle-presenter.js";
+import { createInstallPresenter, type InstallPresenter, shortenPath } from "./install-presenter.js";
 import { canSelect, promptSelect } from "./select.js";
 import { terminalColumns, wrapPlain } from "./text-layout.js";
 
@@ -159,8 +159,8 @@ async function pickEntry(
 }
 
 /** Header, source file, and current values for one screen. */
-function renderSection(spec: SectionSpec, out: NodeJS.WritableStream): LifecyclePresenter {
-	const presenter = createLifecyclePresenter({ stream: out });
+function renderSection(spec: SectionSpec, out: NodeJS.WritableStream): InstallPresenter {
+	const presenter = createInstallPresenter({ stream: out });
 	presenter.header(spec.title, "configure");
 	presenter.note(spec.summary);
 	presenter.note(`Source: ${shortenPath(settingsPath())} · saves globally`);
@@ -224,7 +224,7 @@ async function runConfigSectionsMenu(
 	let selected = 0;
 	for (;;) {
 		rl.clearScreen();
-		const presenter = createLifecyclePresenter({ stream: streams.out });
+		const presenter = createInstallPresenter({ stream: streams.out });
 		presenter.header("PanCode Settings", "configure");
 		presenter.note(`Source: ${shortenPath(settingsPath())}`);
 		presenter.note("Changes here become your saved defaults.");
@@ -246,11 +246,11 @@ async function runConfigSectionsMenu(
 }
 
 async function runConfigLauncher(rl: ConfigurePrompts, streams: ConfigureStreams, verify = true): Promise<number> {
-	let selected = readSettings().targets.length === 0 ? 0 : 2;
-	const exitCode = () => (readSettings().chat.target ? 0 : 130);
+	let selected = readSettings().connections.length === 0 ? 0 : 2;
+	const exitCode = () => (readSettings().chat.connection ? 0 : 130);
 	for (;;) {
 		rl.clearScreen();
-		const presenter = createLifecyclePresenter({ stream: streams.out });
+		const presenter = createInstallPresenter({ stream: streams.out });
 		presenter.header("PanCode", "configure");
 		presenter.note("Start with what you recognize. PanCode explains and checks the technical details.");
 		presenter.blank();
@@ -269,7 +269,7 @@ async function runConfigLauncher(rl: ConfigurePrompts, streams: ConfigureStreams
 		if (choice.kind !== "index") return exitCode();
 		selected = choice.index;
 		if (selected === 0) {
-			const first = readSettings().targets.length === 0;
+			const first = readSettings().connections.length === 0;
 			// Every other launcher entry opens on a clean screen. Without this the
 			// launcher's banner stayed stacked above the wizard's own header.
 			rl.clearScreen();
@@ -303,7 +303,7 @@ const SECTION_IDS: ReadonlyArray<string> = SECTIONS.map((section) => section.id)
  * such as the bare `pancode` launch that nothing was configured.
  */
 function firstRunCancelled(): number {
-	printNote("configuration cancelled; no target saved. Run `pancode configure` when you are ready.");
+	printNote("configuration canceled; no connection saved. Run `pancode configure` when you are ready.");
 	return 130;
 }
 
@@ -328,7 +328,7 @@ async function runInteractive(
 	if (preselectedRuntime) {
 		if (canRunOnboarding(streams))
 			return runOnboardingWizard(streams, {
-				mode: readSettings().targets.length === 0 ? "first" : "add",
+				mode: readSettings().connections.length === 0 ? "first" : "add",
 				runtime: preselectedRuntime,
 				verify: defaults.verify !== false,
 			});
@@ -354,11 +354,11 @@ async function runInteractive(
 	}
 	// A first run that the bare `pancode` start sent here has one thing to do. The launcher would put
 	// a second welcome above the wizard's own and offer three entries that lead nowhere with no target.
-	if (canRunOnboarding(streams) && startsChat && readSettings().targets.length === 0)
+	if (canRunOnboarding(streams) && startsChat && readSettings().connections.length === 0)
 		return runOnboardingWizard(streams, { mode: "first", startsChat, verify: defaults.verify !== false });
 	if (canRunOnboarding(streams)) return runConfigLauncher(rl, streams, defaults.verify !== false);
 
-	if (readSettings().targets.length === 0) {
+	if (readSettings().connections.length === 0) {
 		// Dumb terminals retain the numbered setup path.
 		const runtime = await pickRuntimeViaCategory(rl);
 		if (!runtime) return firstRunCancelled();
@@ -497,7 +497,7 @@ export async function runConfigureCommand(
 	if ((runtimeId !== undefined || hasTargetSetupFlag) && !(inStream as { isTTY?: boolean }).isTTY) {
 		printError(
 			runtime === null
-				? "--runtime is required when configuring a target non-interactively"
+				? "--runtime is required when configuring a connection non-interactively"
 				: "--id is required when passing flags non-interactively",
 		);
 		return 2;
@@ -508,7 +508,7 @@ export async function runConfigureCommand(
 		return await runInteractive(rl, runtime, args, { in: inStream, out: outStream }, startsChat);
 	} catch (err) {
 		if (err instanceof ConfigureNavigation) {
-			if (readSettings().targets.length > 0) return 0;
+			if (readSettings().connections.length > 0) return 0;
 			return firstRunCancelled();
 		}
 		printError(err instanceof Error ? err.message : String(err));

@@ -161,9 +161,11 @@ export const SessionBoardPanel = memo(function SessionBoardPanel({
 	const act = (id: string, action: OperatorTaskAction) => change.mutate([action, id]);
 	return (
 		<div ref={panel} className="pane-drill drill board-panel">
-			{!sessionOpen ? <p className="pane-empty">This task is not open. Open it to read its tasks and decisions.</p> : null}
+			{!sessionOpen ? (
+				<p className="pane-empty">This session is not open. Open it to read its tasks and decisions.</p>
+			) : null}
 			{sessionOpen && !supported ? (
-				<p className="pane-empty">PanCode does not report a task list or decisions for this task.</p>
+				<p className="pane-empty">PanCode does not report a task list or decisions for this session.</p>
 			) : null}
 			{board.isPending && sessionOpen && supported ? <p className="pane-empty">Reading the board…</p> : null}
 			{board.error ? (
@@ -200,9 +202,9 @@ export const SessionBoardPanel = memo(function SessionBoardPanel({
 															change.isPending || (action === "hand" && (running || capabilities?.commands?.promptTurns !== true))
 														}
 														onClick={() => act(task.id, action)}
-														aria-label={`${action === "hand" ? "Hand to PanCode" : action === "done" ? "Mark done" : "Drop"}: ${task.title}`}
+														aria-label={`${action === "hand" ? "Hand to PanCode" : action === "done" ? "Mark done" : "Remove"}: ${task.title}`}
 													>
-														{action === "hand" ? "Hand" : action === "done" ? "Done" : "Drop"}
+														{action === "hand" ? "Hand" : action === "done" ? "Done" : "Remove"}
 													</button>
 												))}
 											</span>
@@ -250,7 +252,7 @@ export const SessionBoardPanel = memo(function SessionBoardPanel({
 					<section className="drill__section" aria-labelledby={`${titleId}-plan`}>
 						<h3 id={`${titleId}-plan`}>PanCode's plan</h3>
 						{view.plan === null ? (
-							<p className="pane-empty">No plan has been made in this task.</p>
+							<p className="pane-empty">No plan has been made in this session.</p>
 						) : (
 							<>
 								<p className="board-panel__plan-title">{view.plan.title}</p>
@@ -410,7 +412,7 @@ export const SessionBoardPanel = memo(function SessionBoardPanel({
 					</section>
 					<section className="drill__section" aria-labelledby={`${titleId}-bank`}>
 						<h3 id={`${titleId}-bank`} data-board-section="memory" tabIndex={-1}>
-							{view.bank.length > 0 ? "What PanCode learned this session" : "Memory"}
+							{view.bank.length > 0 ? "Memory from this session" : "Memory"}
 						</h3>
 						<p className="drill__note">{view.memory}</p>
 						{view.bank.length > 0 ? (

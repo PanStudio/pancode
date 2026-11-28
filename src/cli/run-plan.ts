@@ -55,7 +55,7 @@ export function buildRunPlan(
 	const answers = parsed.answersFile !== undefined;
 	return {
 		route: {
-			target: parsed.target ?? settings.chat.target ?? null,
+			target: parsed.target ?? settings.chat.connection ?? null,
 			model: parsed.model ?? (parsed.target === undefined ? (settings.chat.model ?? null) : null),
 			thinking: parsed.thinking ?? settings.chat.thinkingLevel,
 		},
@@ -111,7 +111,7 @@ export async function dryRunPricingRefusal(
 		if (unpriced.length === 0) return undefined;
 		return {
 			slug: "not_configured",
-			message: `pancode run: --require-priced: routes this run can reach have no known pricing: ${unpriced.join(", ")}; declare targets[].pricing for them${delegating ? " or add --no-delegate if only worker routes are listed" : ""}\n`,
+			message: `pancode run: --require-priced: routes this run can reach have no known pricing: ${unpriced.join(", ")}; declare connections[].pricing for them${delegating ? " or add --no-delegate if only worker routes are listed" : ""}\n`,
 		};
 	} finally {
 		await loaded.stop();

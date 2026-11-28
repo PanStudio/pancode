@@ -829,7 +829,7 @@ describe("W10 (F10 -> CF-10): the council peer briefing", () => {
 				tool.run(
 					{
 						mode: "council",
-						members: labels.map((label) => ({ label, target: "mini" })),
+						members: labels.map((label) => ({ label, connection: "mini" })),
 						rounds: 2,
 						synthesis: "judge",
 						briefing: `Background: ${"context ".repeat(1_400)}`.slice(0, 11_500),
@@ -969,7 +969,7 @@ describe("W10 (F10 -> CF-10): the council peer briefing", () => {
 		const seated: DispatchRequest[] = [];
 		try {
 			const parentRoute = resolveRuntimeTarget(parent.context.getContract("providers") as ProvidersContract, {
-				targetId: parent.settings.chat.target,
+				targetId: parent.settings.chat.connection,
 			});
 			ok(parentRoute.ok, "the parent's route resolves");
 			strictEqual(

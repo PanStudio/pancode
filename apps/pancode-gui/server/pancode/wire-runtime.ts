@@ -8,10 +8,10 @@ export { ACP_MAX_JOBS } from "../../../../src/acp/runtime.js";
 export const ACP_TARGET_MODEL_LIMIT = 64;
 
 export const MODEL_TARGET_PATHS: Readonly<Record<string, string>> = {
-	"chat.model": "chat.target",
-	"fleet.default.model": "fleet.default.target",
-	"context.memory.model": "context.memory.target",
-	"context.compaction.model": "chat.target",
+	"chat.model": "chat.connection",
+	"fleet.default.model": "fleet.default.connection",
+	"context.memory.model": "context.memory.connection",
+	"context.compaction.model": "chat.connection",
 };
 
 export const MAX_SERVED_ARTIFACT_IDS = 64;

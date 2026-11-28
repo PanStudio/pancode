@@ -20,7 +20,7 @@ export interface DeepToolProbeOptions {
 function toolProbeFinding(status: TargetStatus): DoctorFinding {
 	const name = `tools ${status.target.id}`;
 	if (status.runtime?.defaultCapabilities.decisions && !status.runtime.defaultCapabilities.chat) {
-		return { ok: true, name, level: "info", detail: "not applicable: decision-engine targets do not call tools" };
+		return { ok: true, name, level: "info", detail: "not applicable: decision-engine connections do not call tools" };
 	}
 	const probe = status.toolProbe;
 	if (!probe) {
@@ -32,7 +32,7 @@ function toolProbeFinding(status: TargetStatus): DoctorFinding {
 				detail: `runtime has no live probe; credential source: ${status.reason || "unknown"}`,
 			};
 		}
-		const reason = status.health.lastError || status.reason || "the target did not answer";
+		const reason = status.health.lastError || status.reason || "the connection did not answer";
 		return { ok: true, name, level: "warn", detail: `not probed: ${reason}` };
 	}
 	const model = probe.modelId ?? "no model";

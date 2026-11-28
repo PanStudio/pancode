@@ -3,7 +3,7 @@
 export type ResourceScope = "package" | "user" | "project" | "cli";
 
 export interface ResourceSourceInfo {
-	owner?: import("../../core/package-identity.js").PackageIdentity;
+	owner?: import("../../core/pack-identity.js").PackIdentity;
 	path: string;
 	scope: ResourceScope;
 	source?: string;

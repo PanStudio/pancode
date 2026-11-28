@@ -9,7 +9,7 @@ import {
 	cancelledAskUserResult,
 	unavailableAskUserResult,
 } from "../tools/ask-user.js";
-import type { HarnessHold } from "../tools/registry-contract.js";
+import type { HarnessHold } from "../tools/registry/contract.js";
 import type { OverlayState } from "./overlay-key-routing.js";
 import { type AskUserOverlaySession, openAskUserOverlay } from "./overlays/ask-user.js";
 import type { UnattendedTimers } from "./unattended-countdown.js";

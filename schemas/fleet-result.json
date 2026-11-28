@@ -21,7 +21,7 @@
 					"properties": {
 						"state": { "enum": ["completed", "stopped", "refused"] },
 						"stopReason": {
-							"description": "signal, deadline, max_cost_usd, canceled, or step_failed when a failed step left later steps unrun.",
+							"description": "signal, deadline, max_cost_usd, stopped, or step_failed when a failed step left later steps unrun.",
 							"type": ["string", "null"]
 						}
 					}

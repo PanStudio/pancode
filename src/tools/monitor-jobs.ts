@@ -4,7 +4,7 @@ import type { JobRecord } from "../core/job-types.js";
 import { jobIsComplete } from "../domains/scheduling/index.js";
 import type { JobOperations } from "./job-types.js";
 import { monitorToolSurface } from "./monitor-surface.js";
-import type { ToolInvokeOptions } from "./registry-contract.js";
+import type { ToolInvokeOptions } from "./registry/contract.js";
 import type { ToolResult, ToolSpec } from "./tool-spec.js";
 
 function jobLine(job: JobRecord): string {

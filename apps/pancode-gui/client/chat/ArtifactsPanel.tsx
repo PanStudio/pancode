@@ -59,9 +59,9 @@ export function ArtifactsPanel({
 	return (
 		<div className="pane-drill artifacts">
 			{!open ? (
-				<p className="pane-empty">Open this task to read its artifacts.</p>
+				<p className="pane-empty">Open this session to read its artifacts.</p>
 			) : !supported ? (
-				<p className="pane-empty">PanCode does not report artifacts for this task.</p>
+				<p className="pane-empty">PanCode does not report artifacts for this session.</p>
 			) : selected ? (
 				<>
 					<button
@@ -198,7 +198,7 @@ export function ArtifactsPanel({
 						<p className="pane-empty">
 							{query || filter
 								? "No saved artifact matches these filters."
-								: "No saved artifacts have been reported for this task."}
+								: "No saved artifacts have been reported for this session."}
 						</p>
 					) : null}
 					<ul className="artifacts__list">

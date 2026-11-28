@@ -48,7 +48,7 @@ export function renderRunView(model: RunViewModel, width: number = DEFAULT_WIDTH
 	lines.push(truncatePlain(`run ${model.runId}  ${model.agentId}`, columns));
 	lines.push(
 		truncatePlain(
-			`model ${model.model}  target ${model.target}  node ${model.node}  phase ${model.phase}  elapsed ${model.telemetry?.activity.elapsed.display ?? "not available"}`,
+			`model ${model.model}  connection ${model.target}  node ${model.node}  phase ${model.phase}  elapsed ${model.telemetry?.activity.elapsed.display ?? "not available"}`,
 			columns,
 		),
 	);

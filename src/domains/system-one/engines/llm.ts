@@ -59,12 +59,12 @@ export function llmEngineProblem(input: {
 		return `runtime '${runtime.id}' has no chat wire`;
 	}
 	if (hasChatWire(runtime.id)) {
-		if (chatBaseUrl(runtime.id, target) === null) return `target '${target.id}' has no url`;
+		if (chatBaseUrl(runtime.id, target) === null) return `connection '${target.id}' has no url`;
 	} else if (!input.oneShot) {
 		return `runtime '${runtime.id}' has no HTTP chat wire and no one-shot port is available`;
 	}
 	if ((input.model ?? target.defaultModel) === undefined) {
-		return `no model: name one on the engine or give target '${target.id}' a default model`;
+		return `no model: name one on the engine or give connection '${target.id}' a default model`;
 	}
 	return null;
 }

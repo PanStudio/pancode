@@ -44,7 +44,7 @@ export async function resolveClaudeLaunchCredential(
 	if (storage.damageReason())
 		throw new Error("PanCode's credentials could not be read. Repair the credential store before starting Claude.");
 	if (!credential) {
-		if (explicit) throw new Error(`Claude credential '${profile}' is missing. Log in before starting this run.`);
+		if (explicit) throw new Error(`Claude credential '${profile}' is missing. Sign in before starting this run.`);
 		return null;
 	}
 	if (!explicit && credential.type !== "oauth") {

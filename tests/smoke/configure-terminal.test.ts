@@ -92,7 +92,7 @@ function seed(home: ReturnType<typeof makeScratchHome>, url: string): string {
 		file,
 		stringify({
 			version: 2,
-			targets: [
+			connections: [
 				{
 					id: "existing",
 					runtime: "openai-compat",
@@ -102,8 +102,13 @@ function seed(home: ReturnType<typeof makeScratchHome>, url: string): string {
 					capabilities: { contextWindow: 32768, maxTokens: 4096, reasoning: false },
 				},
 			],
-			chat: { target: "existing", model: "alpha", thinkingLevel: "low", modelPicker: { favorites: ["existing/alpha"] } },
-			fleet: { default: { target: "existing", model: "alpha" } },
+			chat: {
+				connection: "existing",
+				model: "alpha",
+				thinkingLevel: "low",
+				modelPicker: { favorites: ["existing/alpha"] },
+			},
+			fleet: { default: { connection: "existing", model: "alpha" } },
 		}),
 	);
 	return file;
@@ -146,19 +151,19 @@ describe("smoke/configure on a real terminal", { skip: process.platform === "win
 			const file = validateSettings(parse(readFileSync(join(home.dir, "config/settings.yaml"), "utf8")));
 			deepStrictEqual(file.issues, []);
 			const saved = file.settings;
-			strictEqual(saved.targets.length, 1);
-			strictEqual(saved.targets[0]?.runtime, "ollama");
+			strictEqual(saved.connections.length, 1);
+			strictEqual(saved.connections[0]?.runtime, "ollama");
 			strictEqual(saved.chat.model, "solo");
 			deepStrictEqual(
-				{ target: saved.fleet.default.target, model: saved.fleet.default.model },
-				{ target: saved.chat.target, model: "solo" },
+				{ target: saved.fleet.default.connection, model: saved.fleet.default.model },
+				{ target: saved.chat.connection, model: "solo" },
 			);
 			strictEqual(saved.fleet.concurrency, "auto");
 			strictEqual(saved.safety.autonomy, "default");
 			strictEqual(saved.safety.limits.sessionCostUsd, 5);
 			strictEqual(saved.chat.prewarm, false);
 			strictEqual(saved.chat.maxOutputTokens, 0);
-			strictEqual(saved.context.memory.target, null);
+			strictEqual(saved.context.memory.connection, null);
 			deepStrictEqual(saved.integrations.externalAgents.entries, []);
 		} finally {
 			tty.close();
@@ -239,11 +244,11 @@ describe("smoke/configure on a real terminal", { skip: process.platform === "win
 			tty.send(ENTER);
 			await tty.finish();
 			const saved = parse(readFileSync(join(home.dir, "config/settings.yaml"), "utf8")) as PancodeSettings;
-			strictEqual(saved.targets[0]?.runtime, "litellm");
+			strictEqual(saved.connections[0]?.runtime, "litellm");
 			strictEqual(saved.chat.model, "beta");
 			ok(!seen.has("Bearer unrelated-key"));
 			const credentials = parse(readFileSync(credentialsFile, "utf8"));
-			strictEqual(credentials.entries[saved.targets[0]?.auth?.apiKeyRef ?? ""].key, "quick-key");
+			strictEqual(credentials.entries[saved.connections[0]?.auth?.apiKeyRef ?? ""].key, "quick-key");
 			strictEqual(credentials.entries["openai-compat"].key, "unrelated-key");
 		} finally {
 			tty.close();
@@ -275,9 +280,9 @@ describe("smoke/configure on a real terminal", { skip: process.platform === "win
 			tty.send(ENTER);
 			await tty.finish();
 			const saved = parse(readFileSync(join(home.dir, "config/settings.yaml"), "utf8")) as PancodeSettings;
-			strictEqual(saved.targets[0]?.runtime, "openai-compat");
+			strictEqual(saved.connections[0]?.runtime, "openai-compat");
 			const credentials = parse(readFileSync(join(home.dir, "config/credentials.yaml"), "utf8"));
-			strictEqual(credentials.entries[saved.targets[0]?.auth?.apiKeyRef ?? ""].key, "chat-key");
+			strictEqual(credentials.entries[saved.connections[0]?.auth?.apiKeyRef ?? ""].key, "chat-key");
 		} finally {
 			tty.close();
 			server.closeAllConnections();
@@ -304,7 +309,7 @@ describe("smoke/configure on a real terminal", { skip: process.platform === "win
 		await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
 		const file = seed(home, `http://127.0.0.1:${(server.address() as AddressInfo).port}`);
 		const before = parse(readFileSync(file, "utf8"));
-		before.targets[0].auth = { apiKeyRef: "existing" };
+		before.connections[0].auth = { apiKeyRef: "existing" };
 		before.safety = { autonomy: "yolo" };
 		before.fleet.concurrency = 4;
 		before.chat.prewarm = true;
@@ -396,7 +401,7 @@ describe("smoke/configure on a real terminal", { skip: process.platform === "win
 		const tty = terminal(home, ["--section", "models"]);
 		try {
 			const controls = orderedAreaControls("models").filter(
-				({ control }) => !["chat.target", "chat.model"].includes(control.path),
+				({ control }) => !["chat.connection", "chat.model"].includes(control.path),
 			);
 			// Four connection actions and "Choose the chat model" lead the Models menu.
 			const index = 5 + controls.findIndex(({ control }) => control.path === "chat.maxOutputTokens");
@@ -447,7 +452,7 @@ describe("smoke/configure on a real terminal", { skip: process.platform === "win
 		const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
 		const file = seed(home, url);
 		const before = parse(readFileSync(file, "utf8")) as PancodeSettings;
-		const existingTarget = before.targets[0];
+		const existingTarget = before.connections[0];
 		ok(existingTarget);
 		// This target used to be named second. Reusing that name must not overwrite its key.
 		existingTarget.auth = { apiKeyRef: "target:second", headers: { "X-Custom": "keep-me" } };
@@ -512,15 +517,15 @@ describe("smoke/configure on a real terminal", { skip: process.platform === "win
 			tty.send(ENTER);
 			await tty.expect("Review what PanCode could verify");
 			tty.send(ENTER);
-			await tty.expect("target openai-compat saved");
-			await tty.expect("Edit a target");
+			await tty.expect("connection openai-compat saved");
+			await tty.expect("Edit a connection");
 			const added = parse(readFileSync(file, "utf8")) as PancodeSettings;
 			deepStrictEqual(added.chat, before.chat);
 			deepStrictEqual(added.fleet, before.fleet);
-			strictEqual(added.targets[1]?.id, "openai-compat");
-			strictEqual(added.targets[1]?.defaultModel, "beta");
+			strictEqual(added.connections[1]?.id, "openai-compat");
+			strictEqual(added.connections[1]?.defaultModel, "beta");
 			tty.send(DOWN + ENTER);
-			await tty.expect("Target to edit");
+			await tty.expect("Connection to edit");
 			tty.send(ENTER);
 			await tty.expect("Which provider or app do you use?");
 			tty.send(ENTER);
@@ -534,20 +539,20 @@ describe("smoke/configure on a real terminal", { skip: process.platform === "win
 			tty.send(ENTER);
 			await tty.expect("Review what PanCode could verify");
 			tty.send(ENTER);
-			await tty.expect("Edit a target");
+			await tty.expect("Edit a connection");
 			await tty.quit();
 			const saved = parse(readFileSync(file, "utf8")) as PancodeSettings;
 			deepStrictEqual(saved.chat, before.chat);
 			deepStrictEqual(saved.fleet, before.fleet);
-			strictEqual(saved.targets[0]?.gateway, true);
-			deepStrictEqual(saved.targets[0]?.capabilities, before.targets[0]?.capabilities);
-			strictEqual(saved.targets[0]?.defaultModel, "beta");
-			deepStrictEqual(saved.targets[0]?.auth, existingTarget.auth);
+			strictEqual(saved.connections[0]?.gateway, true);
+			deepStrictEqual(saved.connections[0]?.capabilities, before.connections[0]?.capabilities);
+			strictEqual(saved.connections[0]?.defaultModel, "beta");
+			deepStrictEqual(saved.connections[0]?.auth, existingTarget.auth);
 			const { entries: credentials } = parse(readFileSync(credentialsFile, "utf8")) as {
 				entries: Record<string, { key: string }>;
 			};
 			strictEqual(credentials["target:second"]?.key, "legacy-test-key");
-			strictEqual(credentials[saved.targets[1]?.auth?.apiKeyRef ?? ""]?.key, "second-test-key");
+			strictEqual(credentials[saved.connections[1]?.auth?.apiKeyRef ?? ""]?.key, "second-test-key");
 			ok(observedAuth.has("Bearer second-test-key"), "probes use the draft credential before Save");
 			ok(observedAuth.has("Bearer legacy-test-key"), "editing resolves the target's existing credential");
 		} finally {

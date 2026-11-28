@@ -61,7 +61,7 @@ import type { AskUserHandler } from "../../tools/ask-user.js";
 import type { ToolBootstrapHandle } from "../../tools/bootstrap.js";
 import type { DispatchBackgroundRegistry } from "../../tools/dispatch-background.js";
 import { mcpSubmitReader } from "../../tools/gateway/mcp-submit-reader.js";
-import type { ToolRegistry } from "../../tools/registry-contract.js";
+import type { ToolRegistry } from "../../tools/registry/contract.js";
 import type { VisionSidecar } from "../../tools/vision-sidecar.js";
 import type { BootOptions } from "../boot-options.js";
 import type { ExtensionReloadCoordinator } from "../extension-reload.js";
@@ -355,7 +355,7 @@ export function startBootChat(input: BootChatInput) {
 			const meta = session?.current();
 			if (!meta) throw new Error("task memory handoff requires an active session");
 			const settings = getCurrentSettings();
-			const targetId = meta.target ?? settings.chat?.target;
+			const targetId = meta.target ?? settings.chat?.connection;
 			const runtimeId = targetId ? providers.getTarget(targetId)?.runtime : undefined;
 			return renderTaskMemoryHandoffSource(taskMemoryBank.snapshot(), {
 				sessionId: meta.id,
@@ -598,7 +598,7 @@ export function startBootChat(input: BootChatInput) {
 			bus,
 			chat,
 			sessionId: () => session?.current()?.id ?? null,
-			targetId: () => options.headless?.target ?? getCurrentSettings().chat.target ?? "",
+			targetId: () => options.headless?.target ?? getCurrentSettings().chat.connection ?? "",
 			frozenTools: toolRegistry.listAll().flatMap((tool) => tool.sourceInfo?.extension || []),
 			services: { providers, telemetry, session },
 			sandboxUnixSockets: () => getCurrentSettings().safety.sandboxUnixSockets,

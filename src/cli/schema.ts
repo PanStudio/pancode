@@ -7,9 +7,9 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { resolvePackageRoot } from "../core/package-root.js";
-import { EXIT_CODES } from "./kit/exit-codes.js";
-import { helpRequested } from "./kit/help.js";
-import { writeCliFailure } from "./kit/json-out.js";
+import { EXIT_CODES } from "./lib/exit-codes.js";
+import { helpRequested } from "./lib/help.js";
+import { writeCliFailure } from "./lib/json-out.js";
 import { SCHEMA_NAMES } from "./specs/schema.js";
 
 const SCHEMA_PATH = ["schema"] as const;

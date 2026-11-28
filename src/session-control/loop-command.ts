@@ -54,8 +54,8 @@ type LoopCreateArgs = {
 	until_stopped?: boolean;
 };
 
-/** Control words a typed `/loop` line accepts; `cancel` is what `stop <id> --now` sends and is never typed. */
-const LOOP_CONTROL_VERBS: ReadonlyArray<string> = ["pause", "resume", "stop"];
+/** Control words a typed `/loop` line accepts. */
+const LOOP_CONTROL_VERBS: ReadonlyArray<string> = ["pause", "resume", "cancel"];
 /** First words that read or control existing jobs and never create one. */
 export const LOOP_OBSERVE_VERBS: ReadonlyArray<string> = ["status", ...LOOP_CONTROL_VERBS];
 
@@ -63,7 +63,7 @@ export type LoopCommand =
 	| { kind: "create"; args: LoopCreateArgs }
 	| { kind: "list" }
 	| { kind: "status"; id: string | undefined }
-	| { kind: "control"; action: JobControlAction; id: string | undefined };
+	| { kind: "control"; action: JobControlAction; id: string | undefined; now?: boolean };
 
 type LoopParseResult = { ok: true; command: LoopCommand } | { ok: false; reason: string };
 
@@ -72,7 +72,7 @@ export const LOOP_SUBCOMMAND_DESCRIPTIONS: Readonly<Record<string, string>> = {
 	status: "Show one job, or every job",
 	pause: "Hold a job; resume restarts its schedule",
 	resume: "Resume a paused job",
-	stop: "Stop new runs and let the current run finish; --now aborts it",
+	cancel: "Cancel a loop and let the current run finish; --now aborts it",
 };
 
 const MAX_TOKEN_BYTES = 4096;
@@ -303,7 +303,7 @@ function parseCreate(tokens: ReadonlyArray<string>): LoopParseResult {
 	}
 	if (every === null) return fail('Give the interval, for example /loop 5m "check the build"');
 	if (args.until_stopped === true && (args.count !== undefined || args.for_ms !== undefined))
-		return fail(`${UNTIL_STOPPED_FLAG} runs until /loop stop, so it takes no --count or --for`);
+		return fail(`${UNTIL_STOPPED_FLAG} runs until /loop cancel, so it takes no --count or --for`);
 	args.every_ms = every;
 	if (command !== undefined) {
 		if (task !== undefined) return fail("Give either a task or --command, not both");
@@ -366,13 +366,16 @@ export function parseLoopArgv(argv: ReadonlyArray<string>): LoopParseResult {
 		return "error" in parsed ? fail(parsed.error) : { ok: true, command: { kind: "status", id: parsed.id } };
 	}
 	if (LOOP_CONTROL_VERBS.includes(verb)) {
-		// `stop <id> --now` aborts the current run, and bare `stop --now` picks the one active loop.
-		const now = verb === "stop" && tokens.includes("--now");
+		// `cancel <id> --now` aborts the current run, and bare `cancel --now` picks the one active loop.
+		const now = verb === "cancel" && tokens.includes("--now");
 		if (now) tokens = [verb, ...tokens.slice(1).filter((token) => token !== "--now")];
-		if (now && tokens.length === 1) return { ok: true, command: { kind: "control", action: "cancel", id: undefined } };
+		if (now && tokens.length === 1)
+			return { ok: true, command: { kind: "control", action: "cancel", id: undefined, now: true } };
 		const parsed = parseId(verb, tokens);
-		const action: JobControlAction = now ? "cancel" : (verb as JobControlAction);
-		return "error" in parsed ? fail(parsed.error) : { ok: true, command: { kind: "control", action, id: parsed.id } };
+		const action = verb as JobControlAction;
+		return "error" in parsed
+			? fail(parsed.error)
+			: { ok: true, command: { kind: "control", action, id: parsed.id, ...(now ? { now: true } : {}) } };
 	}
 	return parseCreate(tokens);
 }
@@ -634,7 +637,7 @@ function loopCreatedLines(job: JobRecord, args: LoopCreateArgs, now: number): st
 		);
 	}
 	lines.push(
-		`/loop status ${job.id} · /loop stop ${job.id} finishes the current run · /loop stop ${job.id} --now aborts it`,
+		`/loop status ${job.id} · /loop cancel ${job.id} finishes the current run · /loop cancel ${job.id} --now aborts it`,
 	);
 	return lines;
 }
@@ -672,13 +675,13 @@ function jobFromResult(result: ToolResult): JobRecord | null {
 	return isJobRecord(job) ? job : null;
 }
 
-function controlVerbText(action: JobControlAction, job: JobRecord): string {
+function controlVerbText(action: JobControlAction, job: JobRecord, now?: boolean): string {
 	if (action === "pause") return `loop ${loopLabel(job)} paused`;
 	if (action === "resume") return `loop ${loopLabel(job)} resumed`;
-	if (jobIsComplete(job)) return `loop ${loopLabel(job)} ${action === "stop" ? "stopped" : "cancelled"}`;
-	return action === "stop"
-		? `loop ${loopLabel(job)} stopping: the current run finishes and no new run starts`
-		: `loop ${loopLabel(job)} cancel requested: waiting for the current run to settle`;
+	if (jobIsComplete(job)) return `loop ${loopLabel(job)} canceled`;
+	return now
+		? `loop ${loopLabel(job)} cancel requested: waiting for the current run to settle`
+		: `loop ${loopLabel(job)} canceling: the current run finishes and no new run starts`;
 }
 
 /**
@@ -732,14 +735,16 @@ export async function runLoopCommand(command: LoopCommand, host: LoopHost): Prom
 					"error",
 					active.length === 0
 						? "No active loop to cancel. Run /loop to see the jobs"
-						: "/loop stop --now needs a job id when several loops are active. Run /loop to see them",
+						: "/loop cancel --now needs a job id when several loops are active. Run /loop to see them",
 				);
 				return;
 			}
 			jobId = active[0]?.id;
 		}
 		const args: Record<string, unknown> =
-			command.kind === "create" ? command.args : { action: command.action, job_id: jobId };
+			command.kind === "create"
+				? command.args
+				: { action: command.action, job_id: jobId, ...(command.now ? { now: true } : {}) };
 		const result = await jobs.invoke(args);
 		if (result.kind === "error") {
 			host.notice("error", result.message);
@@ -754,7 +759,7 @@ export async function runLoopCommand(command: LoopCommand, host: LoopHost): Prom
 		if (command.kind === "create") {
 			report(host, loopJobLevel(job, after) === "warn" ? "warn" : "success", loopCreatedLines(job, command.args, after));
 		} else {
-			host.notice("success", controlVerbText(command.action, job));
+			host.notice("success", controlVerbText(command.action, job, command.now));
 		}
 	} catch (error) {
 		host.notice("error", `loop failed: ${error instanceof Error ? error.message : String(error)}`);
@@ -829,9 +834,9 @@ function endedNotice(job: JobRecord): LoopNotice {
 			};
 		}
 		case "canceled":
-			return { level: "info", text: `loop ${loopLabel(job)} cancelled after ${runs}` };
+			return { level: "info", text: `loop ${loopLabel(job)} canceled after ${runs}` };
 		default:
-			return { level: "info", text: `loop ${loopLabel(job)} stopped after ${runs}` };
+			return { level: "info", text: `loop ${loopLabel(job)} ended after ${runs}` };
 	}
 }
 

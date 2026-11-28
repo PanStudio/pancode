@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 /**
- * `/poll [--options a|b|c] [--models <target[/model]>,...] [--rationale] <n> <question>`:
+ * `/poll [--options a|b|c] [--models <connection[/model]>,...] [--rationale] <n> <question>`:
  * an opinion poll of n independent participants.
  *
  * A poll is a one-round council with vote synthesis and explicit members, so
@@ -102,12 +102,13 @@ export function buildPollDispatchArgs(options: PollCommandOptions, chat: Partial
 		seats = [];
 		for (const entry of options.models) {
 			const seat = parsePollSeat(entry);
-			if (seat === undefined) return { ok: false, reason: `--models entry "${entry}" is not target or target/model` };
+			if (seat === undefined)
+				return { ok: false, reason: `--models entry "${entry}" is not connection or connection/model` };
 			seats.push(seat);
 		}
 	} else {
 		if (chat.target === undefined || chat.target.length === 0) {
-			return { ok: false, reason: "no chat target is set; name participants with --models <target[/model]>" };
+			return { ok: false, reason: "no chat connection is set; name participants with --models <connection[/model]>" };
 		}
 		seats = [
 			{ target: chat.target, ...(chat.model !== undefined && chat.model.length > 0 ? { model: chat.model } : {}) },
@@ -115,7 +116,11 @@ export function buildPollDispatchArgs(options: PollCommandOptions, chat: Partial
 	}
 	const members = Array.from({ length: n }, (_, index) => {
 		const seat = seats[index % seats.length] as PollSeat;
-		return { label: `p${index + 1}`, target: seat.target, ...(seat.model !== undefined ? { model: seat.model } : {}) };
+		return {
+			label: `p${index + 1}`,
+			connection: seat.target,
+			...(seat.model !== undefined ? { model: seat.model } : {}),
+		};
 	});
 	return {
 		ok: true,

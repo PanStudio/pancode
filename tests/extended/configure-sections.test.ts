@@ -42,20 +42,20 @@ function isolatedEnv(): {
 
 	const settingsFile = join(configDir, "settings.yaml");
 	const initialSettings = `version: 2
-targets:
+connections:
   - id: test-target
     runtime: openai-compat
     defaultModel: mock-model
     url: http://127.0.0.1:8000/v1
 chat:
-  target: test-target
+  connection: test-target
   model: mock-model
   thinkingLevel: low
   maxOutputTokens: 0
   prewarm: true
 fleet:
   default:
-    target: test-target
+    connection: test-target
     model: mock-model
     thinkingLevel: off
   concurrency: auto
@@ -80,15 +80,14 @@ interface:
   panes:
     layout: off
 integrations:
-  projectResources:
-    trustProjectImports: false
   git:
     commitAttribution: true
   externalAgents:
     entries: []
-  runtimePlugins: []
+  providerPackages: []
   hub:
     sync: false
+    trustProjectImports: false
 `;
 	writeFileSync(settingsFile, initialSettings, "utf8");
 
@@ -499,7 +498,7 @@ describe("contracts/configure-onboarding", () => {
 				"What do you have?",
 				"↑↓ move",
 				"reachable, 2 models",
-				"target openai-compat saved",
+				"connection openai-compat saved",
 				"chat runs on openai-compat",
 				"fleet default is openai-compat",
 				"settings written to",
@@ -521,7 +520,7 @@ describe("contracts/configure-onboarding", () => {
 			match(settings, /id: openai-compat/u);
 			match(settings, /runtime: openai-compat/u);
 			match(settings, /defaultModel: beta-2/u, "the model the arrow keys landed on is the one saved");
-			match(settings, /target: openai-compat/u);
+			match(settings, /connection: openai-compat/u);
 			const saved = parse(settings);
 			strictEqual(saved.chat.thinkingLevel ?? "low", "low");
 			strictEqual(saved.fleet.default.thinkingLevel ?? "off", "off");
@@ -883,7 +882,7 @@ describe("contracts/configure-onboarding", () => {
 			ok(screen.slice(reopened).includes(server.url), `step 2 reopened without its answer:\n${screen.slice(reopened)}`);
 			ok(screen.slice(0, reopened).includes("A model server or gateway"), `step 1's answer was lost:\n${screen}`);
 			ok(/❯ A model server or gateway/u.test(screen.slice(reopened)), `step 1 reopened off its answer:\n${screen}`);
-			ok(screen.includes("Cancelled; nothing was saved"), `no closing line:\n${screen}`);
+			ok(screen.includes("Canceled; nothing was saved"), `no closing line:\n${screen}`);
 			strictEqual(existsSync(testEnv.settingsFile), false, "a cancelled wizard creates no settings file");
 		} finally {
 			await server.close();
@@ -897,7 +896,7 @@ describe("contracts/configure-onboarding", () => {
 			const file = join(testEnv.root, "lab.yaml");
 			writeFileSync(
 				file,
-				"targets:\n  - id: lab\n    runtime: litellm\n    url: https://llm.lab.example.edu\n    defaultModel: qwen3-coder\n    auth:\n      apiKeyEnvVar: LAB_API_KEY\nchat:\n  target: lab\n",
+				"connections:\n  - id: lab\n    runtime: litellm\n    url: https://llm.lab.example.edu\n    defaultModel: qwen3-coder\n    auth:\n      apiKeyEnvVar: LAB_API_KEY\nchat:\n  connection: lab\n",
 			);
 			const result = await runWizard({ ...testEnv.env, LAB_API_KEY: "" }, [
 				{ waitFor: "What do you have?", keys: [DOWN, DOWN, DOWN, ENTER] },
@@ -908,8 +907,8 @@ describe("contracts/configure-onboarding", () => {
 			strictEqual(result.code, 0, screen);
 			ok(screen.includes("LAB_API_KEY"), `the missing key is not named:\n${screen}`);
 			const saved = parse(readFileSync(testEnv.settingsFile, "utf8"));
-			strictEqual(saved.chat.target, "lab");
-			strictEqual(saved.targets[0].url, "https://llm.lab.example.edu");
+			strictEqual(saved.chat.connection, "lab");
+			strictEqual(saved.connections[0].url, "https://llm.lab.example.edu");
 		} finally {
 			testEnv.cleanup();
 		}
@@ -922,7 +921,7 @@ describe("contracts/configure-onboarding", () => {
 			strictEqual(result.code, 130);
 			// A user cancel is said once, on the rail, and is not an error.
 			strictEqual(result.stderr, "");
-			ok(plainText(result.transcript()).includes("Cancelled; nothing was saved"));
+			ok(plainText(result.transcript()).includes("Canceled; nothing was saved"));
 			strictEqual(existsSync(testEnv.settingsFile), false);
 		} finally {
 			testEnv.cleanup();
@@ -1042,7 +1041,7 @@ describe("contracts/configure-onboarding", () => {
 			// replaced is still the only way to answer, so it must still be there.
 			const res = await captureConfigure([], testEnv.env, ["q\n"]);
 			strictEqual(res.code, 130, res.stderr);
-			match(res.stderr, /configuration cancelled/u);
+			match(res.stderr, /configuration canceled/u);
 			match(res.stdout, /Selection \[1\]/u);
 			ok(!res.stdout.includes("Welcome to PanCode"), "the arrow-key wizard must not open on a pipe");
 		} finally {
@@ -1272,7 +1271,7 @@ describe("contracts/configure-sections", () => {
 			const settings = readFileSync(testEnv.settingsFile, "utf8");
 			match(settings, /world-knowledge-external:/u);
 			match(settings, /world-knowledge: world-knowledge-external/u);
-			match(settings, /target: external-research/u);
+			match(settings, /connection: external-research/u);
 			match(settings, /model: alpha-1/u);
 
 			const refused = await captureConfigure(
@@ -1306,12 +1305,12 @@ describe("contracts/configure-sections", () => {
 			strictEqual(res.code, 0, res.stderr);
 			const parsed = JSON.parse(res.stdout) as {
 				version: number;
-				targets: Array<{ id: string }>;
-				chat: { target: string };
+				connections: Array<{ id: string }>;
+				chat: { connection: string };
 			};
 			strictEqual(parsed.version, 2);
-			strictEqual(parsed.targets[0]?.id, "test-target");
-			strictEqual(parsed.chat.target, "test-target");
+			strictEqual(parsed.connections[0]?.id, "test-target");
+			strictEqual(parsed.chat.connection, "test-target");
 			strictEqual(readFileSync(testEnv.settingsFile, "utf8"), before, "--json is a read");
 		} finally {
 			testEnv.cleanup();

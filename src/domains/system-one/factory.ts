@@ -115,8 +115,9 @@ export function createSystemOne(deps: SystemOneDeps): SystemOneInstance {
 		if (resolved.kind !== "engine") return { problem: `'${name}' is not a route` };
 		const cfg = resolved.engine;
 		const effective = effectiveSystemOne(settings, [name]);
-		const target = deps.providers.getTarget(cfg.target) ?? effective.targets.find((entry) => entry.id === cfg.target);
-		if (!target) return { problem: `target '${cfg.target}' is not configured`, cfg };
+		const target =
+			deps.providers.getTarget(cfg.connection) ?? effective.connections.find((entry) => entry.id === cfg.connection);
+		if (!target) return { problem: `connection '${cfg.connection}' is not configured`, cfg };
 		const runtime = deps.providers.getRuntime(target.runtime);
 		if (!runtime) return { problem: `runtime '${target.runtime}' is not registered`, cfg };
 		const problem = ENGINE_KINDS[cfg.kind].problem(
@@ -203,7 +204,7 @@ export function createSystemOne(deps: SystemOneDeps): SystemOneInstance {
 							name,
 							problem: route.problem,
 							...(route.cfg !== undefined
-								? { kind: route.cfg.kind, target: route.cfg.target, model: route.cfg.model ?? null }
+								? { kind: route.cfg.kind, target: route.cfg.connection, model: route.cfg.model ?? null }
 								: {}),
 						};
 					}
@@ -212,7 +213,7 @@ export function createSystemOne(deps: SystemOneDeps): SystemOneInstance {
 						name,
 						kind: engine.kind,
 						profile: engine.profile,
-						target: route.usable.cfg.target,
+						target: route.usable.cfg.connection,
 						model: route.usable.cfg.model ?? null,
 						windowTokens: engine.capabilities.windowTokens,
 						windowCounts: engine.capabilities.windowCounts,

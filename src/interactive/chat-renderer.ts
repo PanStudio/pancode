@@ -18,9 +18,9 @@
 import { existsSync } from "node:fs";
 import { outputLimitCutOffToolCallIds } from "../core/assistant-output.js";
 import { CONTEXT_OPERATION_CUSTOM_TYPE, readContextOperation } from "../core/context-operation.js";
-import type { PackageActivity } from "../core/package-activity.js";
-import { EXTENSION_ACTIVITY, PLUGIN_RESOURCE_USE, packageActivityText } from "../core/package-activity.js";
-import { isPackageIdentity } from "../core/package-identity.js";
+import type { PackActivity } from "../core/pack-activity.js";
+import { EXTENSION_ACTIVITY, PLUGIN_RESOURCE_USE, packageActivityText } from "../core/pack-activity.js";
+import { isPackIdentity } from "../core/pack-identity.js";
 import { isSkillSurfaceChange, SKILL_SURFACE_ENTRY } from "../core/skill-activation.js";
 import { foldWorkingSet } from "../domains/context/working-set/fold.js";
 import type {
@@ -637,8 +637,8 @@ function renderCustomEntry(
 		return operation ? renderContextOperationResult(operation, width) : [];
 	}
 	if (entry.customType === EXTENSION_ACTIVITY || entry.customType === PLUGIN_RESOURCE_USE) {
-		const activity = entry.data as PackageActivity | null;
-		return activity && isPackageIdentity(activity.owner) && typeof activity.kind === "string"
+		const activity = entry.data as PackActivity | null;
+		return activity && isPackIdentity(activity.owner) && typeof activity.kind === "string"
 			? renderNoticeRow(packageActivityText(activity), "info", width)
 			: [];
 	}

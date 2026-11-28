@@ -12,7 +12,7 @@ export const HELP_VIEWS = [
 export type HelpView = (typeof HELP_VIEWS)[number]["id"];
 
 const GROUP_TITLES = {
-	workspace: "Tasks & workspace",
+	workspace: "Sessions & workspace",
 	conversation: "Conversation",
 	decisions: "Approvals & interviews",
 	navigation: "Moving around",

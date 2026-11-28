@@ -8,11 +8,11 @@
  * The browser, the lifecycle plan and the CLI all read the same answer.
  */
 
+import type { HubRequirementRef } from "../plugins/hub-types.js";
 import type { PluginScope } from "../plugins/types.js";
 import { discoverHub, type HubEntry } from "./hub.js";
 import { type HubCopyState, hubCopyState } from "./hub-inventory.js";
-import { type HubInstalledPackage, listInstalledHubPackages } from "./hub-packages.js";
-import type { HubRequirementRef } from "./hub-types.js";
+import { type HubInstalledPack, listInstalledHubPacks } from "./hub-packs.js";
 
 /** The other half of a pair, seen from one side. */
 export interface HubPair {
@@ -29,7 +29,7 @@ export interface HubPair {
 
 export type HubPairs = ReadonlyMap<HubRequirementRef, HubPair[]>;
 
-function copiesOf(installed: ReadonlyArray<HubInstalledPackage>, kind: "plugin" | "extension", name: string) {
+function copiesOf(installed: ReadonlyArray<HubInstalledPack>, kind: "plugin" | "extension", name: string) {
 	return installed
 		.filter((item) => (item.kind ?? "plugin") === kind && item.id === name)
 		.map((item) => ({ scope: item.scope, state: hubCopyState(item) }));
@@ -41,7 +41,7 @@ function copiesOf(installed: ReadonlyArray<HubInstalledPackage>, kind: "plugin" 
  */
 function hubPairsFrom(
 	catalog: ReadonlyArray<Pick<HubEntry, "kind" | "name" | "plugin">>,
-	installed: ReadonlyArray<HubInstalledPackage>,
+	installed: ReadonlyArray<HubInstalledPack>,
 ): HubPairs {
 	const serving = new Map<string, Set<string>>();
 	const link = (extension: string, plugin: string | undefined): void => {
@@ -87,7 +87,7 @@ function hubPairsFrom(
 export function readHubPairs(options: { cwd?: string; catalog?: string } = {}): HubPairs {
 	const cwd = options.cwd ?? process.cwd();
 	const discovery = discoverHub({ cwd, ...(options.catalog ? { catalog: options.catalog } : {}) });
-	return hubPairsFrom(discovery.entries, listInstalledHubPackages(cwd, { all: true }));
+	return hubPairsFrom(discovery.entries, listInstalledHubPacks(cwd, { all: true }));
 }
 
 function where(pair: HubPair): string {

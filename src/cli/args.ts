@@ -1,14 +1,14 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import { THINKING_LEVELS, type ThinkingLevel } from "../core/defaults.js";
+import { parseDuration } from "../core/duration.js";
 import { MAX_TIMER_DELAY_MS } from "../core/timers.js";
 import { parseToolLimitList, toolLimitConflict, toolLimitConstraints } from "../core/tool-limit-flags.js";
 import type { TurnConstraints } from "../core/turn-constraints.js";
 import { type AutonomyLevel, autonomyFromUserInput } from "../lib/autonomy/autonomy.js";
 import { globalFlagPositionHint, parseMaxContextTokens } from "./argv.js";
-import { didYouMean } from "./kit/did-you-mean.js";
-import { parseDuration } from "./kit/duration.js";
-import type { ErrorSlug } from "./kit/slugs.js";
+import { didYouMean } from "./lib/did-you-mean.js";
+import type { ErrorSlug } from "./lib/slugs.js";
 import type { RunLimitsV2 } from "./modes/run-json-schema-v2.js";
 import { RUN_FLAGS } from "./specs/manifest.js";
 
@@ -381,7 +381,7 @@ export function parseRunCliArgs(argv: ReadonlyArray<string>): RunCliArgs {
 			parsed.trustTaskFile = true;
 			continue;
 		}
-		if (arg === "--target") {
+		if (arg === "--connection") {
 			const value = need(arg);
 			if (value !== null) parsed.target = value;
 			continue;

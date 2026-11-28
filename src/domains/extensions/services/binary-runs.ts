@@ -6,8 +6,8 @@
  * never in a read-only turn.
  */
 import type { ExtensionBinaryDeclaration } from "@pancode/sdk/pack";
-import { recordPackageActivity } from "../../../core/package-activity.js";
-import type { PackageIdentity } from "../../../core/package-identity.js";
+import { recordPackActivity } from "../../../core/pack-activity.js";
+import type { PackIdentity } from "../../../core/pack-identity.js";
 import { runCommandVector } from "../../../core/safe-exec.js";
 import { type HostLaunchLabel, notConfinedLabel } from "../../../core/sandbox/host-launch.js";
 import { seamLaunchLabel, seamOrHostLaunch, settleHostLaunch } from "../../../core/sandbox/host-launch-record.js";
@@ -112,7 +112,7 @@ export function confinedPaneArgv(
 
 /** Who asks for a program, read when the call arrives: the request it serves and whether this turn is read-only. */
 export interface PackBinaryCaller {
-	owner: PackageIdentity;
+	owner: PackIdentity;
 	sessionId: string | null;
 	/** The kind of runtime request the call belongs to. */
 	parent: string;
@@ -196,7 +196,7 @@ function recordPackBinaryRun(
 	} catch {
 		// The journal has no authority over the run.
 	}
-	recordPackageActivity({
+	recordPackActivity({
 		owner,
 		kind: via === "pane" ? "binary:pane" : "binary:run",
 		outcome: result.outcome,

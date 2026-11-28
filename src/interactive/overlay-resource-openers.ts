@@ -12,7 +12,7 @@ import { openExtensionViewPanel } from "./overlays/extension-view-panel.js";
 import { openExtensionsOverlay } from "./overlays/extensions.js";
 import { openHelpOverlay } from "./overlays/help-reference.js";
 import { openHubOverlay } from "./overlays/hub.js";
-import { createHubLifecycle, type HubSessionReload, hubRefreshHost } from "./overlays/hub-lifecycle.js";
+import { createHubActions, type HubSessionReload, hubRefreshHost } from "./overlays/hub-actions.js";
 import { openInteropOverlay } from "./overlays/interop.js";
 import { openProjectTrustOverlay } from "./overlays/project-trust.js";
 import type { PancodeEditor } from "./pancode-editor.js";
@@ -125,7 +125,7 @@ export function createOverlayResourceOpeners(deps: OverlayResourceOpenersDeps): 
 			// plugin resources always, extensions when one changed. It is reported
 			// separately from the write and can be retried on its own, so a refresh
 			// failure never restates a successful install.
-			lifecycle: createHubLifecycle(hubRefreshHost(sessionReload(ctx)), (failure) =>
+			lifecycle: createHubActions(hubRefreshHost(sessionReload(ctx)), (failure) =>
 				ctx.notice("warn", `hub: a pinned program did not download: ${failure}`),
 			),
 			// A fleet's `use` is its approval preview, which is a surface of its own.

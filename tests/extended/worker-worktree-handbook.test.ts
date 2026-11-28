@@ -159,10 +159,10 @@ async function capturedWorkerContext(repo: string, peer: boolean, worktree = fal
 	const settings = structuredClone(DEFAULT_SETTINGS);
 	settings.fleet.retry.maxRetries = 0;
 	if (peer) {
-		settings.targets = [
+		settings.connections = [
 			{ id: "codex-test", runtime: "codex-cli", defaultModel: "codex-cli-default", trustedUnmediated: true },
 		];
-		settings.fleet.default.target = "codex-test";
+		settings.fleet.default.connection = "codex-test";
 		settings.fleet.default.model = "codex-cli-default";
 	}
 	const base = dispatchStubContext({ settings, ...(peer ? { runtime: codexCliRuntime } : {}) });

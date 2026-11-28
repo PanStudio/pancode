@@ -91,7 +91,7 @@ export function createRouteSelection(rt: DispatchRuntime) {
 			endpointIdentityHash: resolution.endpointIdentityHash,
 		};
 		const targets = configuredJointTargets(
-			fixedDelegation ? [] : (settings?.targets ?? []),
+			fixedDelegation ? [] : (settings?.connections ?? []),
 			fallbackTarget,
 			endpointIdentityHash,
 		);

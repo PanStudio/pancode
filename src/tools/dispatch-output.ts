@@ -19,7 +19,7 @@ import { type FlowRestrictionSet, mergeFlowRestrictions } from "../domains/safet
 import type { DispatchEventSummary } from "./dispatch-run-events.js";
 import { scoutTransitionDetail } from "./dispatch-scout.js";
 import type { DispatchResultForm, DispatchToolDeps } from "./dispatch-types.js";
-import { FLOW_RESTRICTIONS_DETAIL } from "./registry-verdicts.js";
+import { FLOW_RESTRICTIONS_DETAIL } from "./registry/verdicts.js";
 import type { ToolResultDetails } from "./tool-spec.js";
 import { truncateUtf8 } from "./truncate-utf8.js";
 import {
@@ -463,7 +463,7 @@ export function formatDispatchOutput(
 			outcome,
 			answered: answerText.length > 0,
 			lines: [
-				`- ${stepLabel}${receipt.runId} agent=${receipt.agentId} exit=${receipt.exitCode} target=${receipt.targetId} model=${receipt.wireModelId} tokens=${renderFactField(receipt.spend.totalTokens)}${evidenceSuffix}${outcomeSuffix}${noteSuffix}${failure}${provenance}${routingSuffix}${placementSuffix}${uncommittedSuffix}${run.recording ? ` recording_manifest=${JSON.stringify(run.recording.manifestPath)}` : ""}`,
+				`- ${stepLabel}${receipt.runId} agent=${receipt.agentId} exit=${receipt.exitCode} connection=${receipt.targetId} model=${receipt.wireModelId} tokens=${renderFactField(receipt.spend.totalTokens)}${evidenceSuffix}${outcomeSuffix}${noteSuffix}${failure}${provenance}${routingSuffix}${placementSuffix}${uncommittedSuffix}${run.recording ? ` recording_manifest=${JSON.stringify(run.recording.manifestPath)}` : ""}`,
 				`  ${workerTextLabel(trustStatus, view)}`,
 				...output.split("\n").map((line) => `  ${line}`),
 				...workerTextNonEvidenceNotices(view, trustStatus, answerText).map((notice) => `  ${notice}`),

@@ -9,8 +9,8 @@
  * model text here.
  */
 import { randomBytes } from "node:crypto";
+import { redactForMemoryRoute } from "../../lib/secrets/memory-route.js";
 import { canonicalMemoryRepositoryIdentity, cloneMemoryRecord } from "./operations.js";
-import { redactForMemoryRoute } from "./secret-text.js";
 import { mutateMemoryRecords } from "./store.js";
 import type { TaskMemoryModelClient } from "./task-memory-policy.js";
 import { type MemoryRecord, OPERATOR_STATED_KINDS, type OperatorStatedKind } from "./types.js";
@@ -190,7 +190,7 @@ export function operatorStatementHoldsSecret(text: string): boolean {
 }
 
 export const OPERATOR_SECRET_REFUSAL =
-	"Not remembered: that looks like a secret, and memory is plain text read into every later prompt. Keep a provider key in PanCode's credential storage (`pancode auth login <target>`) and any other secret in an environment variable or your OS keychain, then tell Panos the variable's name instead.";
+	"Not remembered: that looks like a secret, and memory is plain text read into every later prompt. Keep a provider key in PanCode's credential storage (`pancode auth login <connection>`) and any other secret in an environment variable or your OS keychain, then tell Panos the variable's name instead.";
 
 function normalizeOperatorStatement(text: string): string {
 	return text

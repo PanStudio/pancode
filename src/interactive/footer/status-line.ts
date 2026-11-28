@@ -46,6 +46,7 @@ import { skinEpoch } from "../theme/tokens.js";
 import { type ContextOccupancyFacts, contextRailUnit, thinkingRailUnit } from "./context-rail.js";
 import type { FooterDashboardRenderState } from "./dashboard.js";
 import { extensionFactLine, extensionFactsKey } from "./extension-facts.js";
+import { liveRunCounts } from "./fleet-band.js";
 import { footerKeyHint } from "./key-hints.js";
 import { phaseElapsedMs } from "./live-work.js";
 import { type Notification, notificationGlyph, notificationToken, topNotification } from "./notifications.js";
@@ -217,12 +218,17 @@ export function renderPhaseSegment(
 				: `${theme.fg("activity", GLYPH.running)} ${theme.fg("activity", clean(bg.purpose))}`;
 			return truncateToWidth(text, Math.max(1, room), GLYPH.ellipsis, false);
 		}
-		const liveWorkers =
-			state.fleetBandVisible === true || state.fleetBoardOpen === true
-				? 0
-				: workerRowsOf(state.dispatchRows).filter((row) => ACTIVE_DISPATCH_STATUSES.has(row.status)).length;
-		if (liveWorkers > 0) {
-			const countText = `${GLYPH.workerAgent} ${liveWorkers} ${liveWorkers === 1 ? "worker" : "workers"}`;
+		// The same live runs the Fleet band counts, a plan as one run, whether or not the band shows: hiding the count
+		// beside a visible band left the footer reading `✓ ready` alone while a plan ran.
+		const live = liveRunCounts(state.dispatchRows, now);
+		const running = live.running + live.unverified + live.failed + live.cancelled + live.ok;
+		const counts = [
+			...(live.waiting > 0 ? [`${GLYPH.phaseBlocked} ${live.waiting} waiting`] : []),
+			...(running > 0 ? [`${GLYPH.running} ${running} running`] : []),
+			...(live.queued > 0 ? [`${GLYPH.queued} ${live.queued} queued`] : []),
+		];
+		if (counts.length > 0) {
+			const countText = counts.join(` ${GLYPH.sep} `);
 			const withReady = `${theme.fg("success", `${GLYPH.ok} ready`)}${sep}${theme.fg("activity", countText)}`;
 			if (visibleWidth(withReady) <= room) return withReady;
 			return truncateToWidth(theme.fg("activity", countText), Math.max(1, room), GLYPH.ellipsis, false);
@@ -252,7 +258,7 @@ export function renderPhaseSegment(
 		case "tool_blocked":
 			return `${theme.fg("warning", GLYPH.phaseBlocked)} ${theme.fg("warning", width >= 96 ? "needs approval" : "approval")}`;
 		case "cancelling":
-			return withClock(theme.fg("counter", GLYPH.cancelled), "stopping", { token: "counter" });
+			return withClock(theme.fg("counter", GLYPH.cancelled), "canceling", { token: "counter" });
 		case "retrying": {
 			const count = retryCountLabel(status.retry);
 			const left = status.retry?.dueAt !== undefined ? formatWaitClock(Math.max(0, status.retry.dueAt - now)) : clock;
@@ -852,8 +858,8 @@ function renderCompactBusyRow(theme: PancodeTheme, state: FooterDashboardRenderS
 
 	const stopping = state.status.phase === "cancelling" || state.keyContext === "stopping";
 	const esc = stopping
-		? theme.fg("annotation", width >= 80 ? "Stop sent, waiting for exit" : `Stopping${GLYPH.ellipsis}`)
-		: theme.style("keyboardHint", "Esc stops", { bold: true });
+		? theme.fg("annotation", width >= 80 ? "Cancel sent, waiting for exit" : `Canceling${GLYPH.ellipsis}`)
+		: theme.style("keyboardHint", "Esc cancels", { bold: true });
 	const escTail = `${sep}${esc}`;
 	const leftBudget = right ? Math.max(12, innerWidth - rightWidth - 2) : innerWidth;
 	const phaseRoom = Math.max(8, leftBudget - visibleWidth(escTail));
@@ -968,7 +974,7 @@ function renderKeyWhisperRow(
 		const momentRoom = innerWidth >= deckWidth + 18 ? innerWidth - deckWidth - 2 : innerWidth;
 		const momentText = theme.fg("annotation", fitNoticeWords(clean(state.contextualMoment), momentRoom));
 		if (busy) {
-			const esc = theme.style("keyboardHint", "Esc stops", { bold: true });
+			const esc = theme.style("keyboardHint", "Esc cancels", { bold: true });
 			const combinedLeft = `${esc}${sep}${momentText}`;
 			if (visibleWidth(combinedLeft) + 2 + deckWidth <= innerWidth) return composeAnchored(combinedLeft);
 		}
@@ -987,17 +993,17 @@ function renderKeyWhisperRow(
 		const isShell = keyContext === "shell";
 		const isHold = keyContext === "hold" || keyContext === "hold-empty";
 		const items: string[] = stopping
-			? [theme.fg("annotation", width >= 80 ? "Stop sent, waiting for exit" : `Stopping${GLYPH.ellipsis}`)]
+			? [theme.fg("annotation", width >= 80 ? "Cancel sent, waiting for exit" : `Canceling${GLYPH.ellipsis}`)]
 			: isShell
-				? [theme.style("keyboardHint", width >= 80 ? "Esc stops command" : "Esc stops", { bold: true })]
+				? [theme.style("keyboardHint", width >= 80 ? "Esc cancels command" : "Esc cancels", { bold: true })]
 				: isHold
 					? [
 							...(width >= 80 ? [theme.fg("keyboardHint", width >= 96 ? "Enter holds message" : "Enter holds")] : []),
-							theme.style("keyboardHint", "Esc stops", { bold: true }),
+							theme.style("keyboardHint", "Esc cancels", { bold: true }),
 						]
 					: [
 							theme.fg("keyboardHint", "Enter steers"),
-							theme.style("keyboardHint", "Esc stops", { bold: true }),
+							theme.style("keyboardHint", "Esc cancels", { bold: true }),
 							// Top rail owns `<queueKey> review` from 60 cols; Fleet band owns `<fleetKey> detail` while visible.
 							...(queued > 0 && queueKey && width < FOOTER_NARROW_CELLS
 								? [theme.fg("keyboardHint", `${queueKey} queue`)]

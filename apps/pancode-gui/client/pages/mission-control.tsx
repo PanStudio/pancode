@@ -16,9 +16,9 @@ import { setPageTitle } from "../interaction/announcer.js";
 import { InventoryMore } from "../interaction/InventoryMore.js";
 import { useInventoryWindow } from "../interaction/use-inventory-window.js";
 import { useSessionCommands } from "../shell/SessionControls.js";
+import { useSessionActions, useSessionOverview } from "../shell/sessions.js";
 import { useShell } from "../shell/shell-context.js";
 import { TopBar } from "../shell/TopBar.js";
-import { useSessionOverview, useTaskActions } from "../shell/tasks.js";
 import { liveSearchWith, searchWith, useSearchDraft } from "../shell/use-search-draft.js";
 import { useSessionIntent } from "../shell/use-session-intent.js";
 import type { SessionFilter } from "./mission-control-model.js";
@@ -51,7 +51,7 @@ export function MissionControl({ client }: { client: Client }) {
 	const [search, setSearch] = useSearchParams();
 	const connection = useOutletContext<ConnectionState>();
 	const shell = useShell();
-	const actions = useTaskActions(client);
+	const actions = useSessionActions(client);
 	const startTask = () => actions.newTask(project || shell?.activeWorkspaceId || undefined);
 	const selection = search.get("status");
 	const filter = SESSION_FILTERS.find((value) => value === selection) ?? "all";
@@ -94,9 +94,9 @@ export function MissionControl({ client }: { client: Client }) {
 					<Icon name="evidence" />
 					<span>Evidence</span>
 				</Link>
-				<Link className="wb-icon wb-icon--text" to="/machines" aria-label="Machines">
+				<Link className="wb-icon wb-icon--text" to="/nodes" aria-label="Nodes">
 					<Icon name="system" />
-					<span>Machines</span>
+					<span>Nodes</span>
 				</Link>
 				<button
 					type="button"
@@ -173,7 +173,7 @@ export function MissionControl({ client }: { client: Client }) {
 								value={searchBox.value}
 								maxLength={256}
 								onChange={searchBox.onChange}
-								placeholder="Find a session, project, model or machine…"
+								placeholder="Find a session, project, model or node…"
 							/>
 						</label>
 						<label>
@@ -248,13 +248,13 @@ export function MissionControl({ client }: { client: Client }) {
 						>
 							{items.length
 								? "Try another project, search, or activity filter."
-								: "Saved tasks stay in each project's task list and in the sidebar, where you can resume them. A task you start or resume appears here with its progress and agents."}
+								: "Saved sessions stay in each project's session list and in the sidebar, where you can resume them. A session you start or resume appears here with its progress and agents."}
 						</InventoryEmpty>
 					) : null}
 					{/* Below the cards only once they are read, so their arrival pushes nothing that was already painted. */}
 					{items || overview.error ? (
 						<footer className="mission__scope">
-							Sessions held by this PanCode server. Saved project history stays in each project's task list. SSH worker
+							Sessions held by this PanCode server. Saved project history stays in each project's session list. SSH worker
 							activity appears within its owning session.
 						</footer>
 					) : null}
@@ -348,7 +348,7 @@ const SessionCard = memo(function SessionCard({
 							onClick={() => controls.start(item, "stop")}
 						>
 							<Icon name="stop" />
-							{control?.stage === "sending" && control.action === "stop" ? "Stopping…" : "Stop"}
+							{control?.stage === "sending" && control.action === "stop" ? "Canceling…" : "Cancel"}
 						</button>
 					) : null}
 					{held ? (

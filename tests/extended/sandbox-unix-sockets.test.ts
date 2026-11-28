@@ -392,7 +392,7 @@ test("the extension runtime launch masks PanCode's config directory, or its sett
 		mkdirSync(directory, { recursive: true });
 	mkdirSync(join(home.dir, "config"), { recursive: true });
 	const settingsFiles = ["settings.yaml", "settings.yaml.bak"].map((name) => join(home.dir, "config", name));
-	for (const file of settingsFiles) writeFileSync(file, "targets:\n  - auth: { headers: { x-api-key: secret } }\n");
+	for (const file of settingsFiles) writeFileSync(file, "connections:\n  - auth: { headers: { x-api-key: secret } }\n");
 	const plan = (launchRoots: typeof roots) =>
 		planExtensionLaunch({
 			declaration: {

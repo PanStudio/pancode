@@ -29,7 +29,7 @@ export function flagValuePlaceholder(flag: SlashFlagShape): string {
 	return flag.name.replace(/^--/, "");
 }
 
-/** The grammar after a name in usage notation: `[--target <target>] <agent> [task]`. */
+/** The grammar after a name in usage notation: `[--connection <target>] <agent> [task]`. */
 export function renderArgsSpec(spec: SlashArgsShape): string {
 	const parts: string[] = [];
 	for (const flag of spec.flags ?? [])

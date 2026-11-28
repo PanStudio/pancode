@@ -696,7 +696,6 @@ const COMPOSITION_ROOT_FUNCTIONS: ReadonlySet<string> = new Set([
 	"bannerConfigurationLine",
 	"buildBanner",
 	"printJsonSessionHeader",
-	"applyHeadlessSettingsOverlay",
 	"createSystemOneOneShot",
 	"createProductionAutoCompact",
 	"replayCompactionHistory",
@@ -706,8 +705,8 @@ const COMPOSITION_ROOT_FUNCTIONS: ReadonlySet<string> = new Set([
 	"bindAcpHandoff",
 ]);
 
-/** The composition root's size after the 0.7.0 refactor, with room for wiring only; the license header does not count. */
-export const COMPOSITION_ROOT_LINE_CEILING = 4800;
+/** The composition root's size after the boot-stage split, with room for wiring only; the license header does not count. */
+export const COMPOSITION_ROOT_LINE_CEILING = 1350;
 
 /** The stage and surface modules bootOrchestrator is split into: part of the composition root, so held to its imports. */
 const COMPOSITION_ROOT_STAGES = "src/entry/boot";
@@ -797,13 +796,13 @@ const FUNCTION_LINE_EXEMPTIONS: ReadonlyMap<string, number> = new Map([
 	["src/cli/modes/print.ts#runHeadlessMainAgent", 851],
 	["src/domains/dispatch/admission.ts#createCapacityAdmissionController", 547],
 	["src/domains/dispatch/execution-scheduler.ts#executePlan", 662],
-	["src/domains/dispatch/fleet-run.ts#runFleetHoldingWorkspace", 1043],
+	["src/domains/dispatch/fleet-run.ts#runFleetHoldingWorkspace", 1041],
 	["src/domains/dispatch/worker-spawn.ts#attachWorkerChannel", 738],
 	["src/domains/mcp/http-transport.ts#createMcpHttpTransport", 642],
 	["src/domains/mux/contract.ts#createMuxRuntime", 734],
 	["src/domains/mux/socket-client.ts#createMuxClient", 553],
 	["src/domains/providers/extension.ts#createProvidersBundle", 625],
-	["src/domains/resources/hub-validation.ts#validateHubPackage", 567],
+	["src/domains/resources/hub-validation.ts#validateHubPack", 564],
 	["src/domains/safety/policy-engine.ts#createSafetyPolicyEngine", 1709],
 	["src/domains/scheduling/job-controller.ts#createJobController", 979],
 	["src/domains/memory/compaction/compact.ts#compactWithCalls", 738],
@@ -815,37 +814,26 @@ const FUNCTION_LINE_EXEMPTIONS: ReadonlyMap<string, number> = new Map([
 	["src/acp/adapter.ts#startAcpDelegationRun", 721],
 	["src/engine/loop-guard.ts#createLoopGuardRegistration", 1422],
 	["src/entry/orchestrator.ts#bootOrchestrator", 953],
-	["src/interactive/chat-panel.ts#createChatPanel", 2064],
-	["src/interactive/chat-panel.ts#createChatPanel.applyEvent", 534],
 	["src/interactive/editor-submit.ts#createEditorSubmitController", 668],
-	["src/interactive/interactive-application.ts#createInteractiveApplication", 2192],
+	["src/interactive/interactive-application.ts#createInteractiveApplication", 1706],
 	["src/interactive/interactive-presentation.ts#createInteractivePresentation", 1072],
 	["src/interactive/interactive-slash-runtime.ts#createInteractiveSlashRuntime", 793],
-	["src/interactive/overlay-general-openers.ts#createOverlayGeneralOpeners", 730],
+	["src/interactive/overlay-general-openers.ts#createOverlayGeneralOpeners", 717],
 	["src/interactive/overlay-lifecycle.ts#createOverlayLifecycle", 577],
 	["src/interactive/overlay-permission-lifecycle.ts#createOverlayPermissionLifecycle", 671],
 	["src/interactive/overlays/hub.ts#openHubOverlay", 603],
-	["src/interactive/overlays/settings-items.ts#buildSettingItems", 523],
+	["src/interactive/overlays/settings-items.ts#buildSettingItems", 519],
 	["src/interactive/panes-runtime.ts#createPanesRuntime", 582],
 	["src/session-control/chat-loop-composition.ts#createChatLoopComposition", 662],
-	["src/session-control/chat-loop-submit.ts#createChatLoopSubmit", 1483],
-	["src/session-control/chat-loop-submit.ts#createChatLoopSubmit.submit", 1439],
-	["src/session-control/chat-loop.ts#createChatLoop", 1570],
-	["src/session-control/turn-context-compaction.ts#createTurnContextCompaction", 1033],
-	["src/session-control/turn-context-compaction.ts#createTurnContextCompaction.performAutoCompact", 737],
-	["src/session-control/turn-context-prompt.ts#createTurnContextPrompt", 588],
-	["src/session-control/turn-context.ts#createTurnContext", 2787],
+	["src/session-control/turn-context/compaction.ts#createTurnContextCompaction", 1033],
+	["src/session-control/turn-context/compaction.ts#createTurnContextCompaction.performAutoCompact", 737],
 	["src/session-control/turn-middleware.ts#createTurnMiddleware", 823],
 	["src/session-control/turn-recovery.ts#createTurnRecovery", 578],
-	["src/session-control/turn-runtime.ts#createTurnRuntime", 2222],
-	["src/session-control/turn-runtime.ts#createTurnRuntime.ensureRuntime", 1812],
-	["src/session-control/turn-runtime.ts#createTurnRuntime.ensureRuntime.onAgentEvent", 530],
-	["src/tools/dispatch-admission.ts#createDispatchAdmissionController", 878],
+	["src/tools/dispatch-admission.ts#createDispatchAdmissionController", 877],
 	["src/tools/dispatch-compete.ts#runCompete", 543],
 	["src/tools/dispatch-runner.ts#runDispatchTool", 550],
 	["src/tools/gateway/index.ts#createGatewayTool", 875],
 	["src/tools/gateway/mcp-capabilities.ts#createMcpCapabilitySource", 1673],
-	["src/tools/registry.ts#createRegistry", 2338],
 ]);
 
 function memberNameText(name: ts.PropertyName | ts.BindingName, tree: ts.SourceFile): string {
@@ -1073,7 +1061,11 @@ function resolveCandidate(candidate: string): string {
  */
 function isChatLoopTurnModule(filePath: string): boolean {
 	const base = path.basename(filePath);
-	return (base.startsWith("chat-loop") || base.startsWith("turn-")) && base.endsWith(".ts");
+	return (
+		[base, path.basename(path.dirname(filePath))].some(
+			(name) => name.startsWith("chat-loop") || name.startsWith("turn-"),
+		) && base.endsWith(".ts")
+	);
 }
 
 /**
@@ -1118,7 +1110,6 @@ const STAGE0_SEAMS: ReadonlyArray<Stage0Seam> = [
 		module: "src/session-control/index.ts",
 		reason:
 			"the composition root and transports share permission, restore and model decisions through one render-free in-process contract.",
-		allowStage0OverlapFrom: [ORCHESTRATOR],
 	},
 	{
 		module: "src/session-control/turn-outcome-collector.ts",
@@ -1148,7 +1139,6 @@ const STAGE0_SEAMS: ReadonlyArray<Stage0Seam> = [
 	{
 		module: "src/session-control/chat-loop.ts",
 		reason: "the Stage 1 composition root creates the chat loop; CLI event-shape imports are type-only and erase.",
-		allowStage0OverlapFrom: [ORCHESTRATOR],
 	},
 	{
 		module: "src/session-control/chat-loop-messages.ts",
@@ -1193,11 +1183,11 @@ const STAGE0_SEAMS: ReadonlyArray<Stage0Seam> = [
 	{
 		module: "src/engine/session.ts",
 		reason:
-			"the canonical session path, atomic-write, and JSONL persistence substrate shared by lifecycle, dispatch, session domains, the CLI, and the Stage 1 composition root; its closure stays off terminal rendering.",
+			"the canonical session path, atomic-write, and JSONL persistence substrate shared by install, dispatch, session domains, the CLI, and the Stage 1 composition root; its closure stays off terminal rendering.",
 	},
 	{
 		module: "src/engine/pi-mono-names.ts",
-		reason: "the dependency-name table package-root and lifecycle version reporting inspect; a constant-only leaf.",
+		reason: "the dependency-name table package-root and install version reporting inspect; a constant-only leaf.",
 	},
 	{
 		module: "src/engine/truncate.ts",
@@ -1224,26 +1214,16 @@ const STAGE0_SEAMS: ReadonlyArray<Stage0Seam> = [
 	{
 		module: "src/acp/commands.ts",
 		reason:
-			"the Stage 1 composition root binds the operator-command control the ACP server takes by structure. The projection value-imports the slash registry, which the root already reaches directly, so it enters the Stage 0 overlap through the same door it already owns rather than through the ACP server seam.",
-		allowStage0OverlapFrom: [ORCHESTRATOR],
+			"the Stage 1 composition root binds the operator-command control the ACP server takes by structure; its closure stays off Stage 0.",
 	},
 	{
 		module: "src/acp/host-members.ts",
 		reason:
-			"the ACP host's members for /share, /oracle and /council: the worker-run fold and the oracle briefing the terminal also uses, and the host-made dispatch call. Only the Stage 1 composition root reaches it, the same root that already overlaps Stage 0 through the chat loop.",
-		allowStage0OverlapFrom: [ORCHESTRATOR],
+			"the ACP host's members for /share, /oracle and /council: the worker-run fold and the oracle briefing the terminal also uses, and the host-made dispatch call; its closure stays off Stage 0.",
 	},
 	{
 		module: "src/acp/transport.ts",
 		reason: "the Stage 1 composition root owns ACP stdio transport construction.",
-	},
-	{
-		module: "src/engine/antigravity/subprocess-runtime.ts",
-		reason: "dispatch maps autonomy policy into the engine-owned Antigravity subprocess runtime.",
-	},
-	{
-		module: "src/engine/claude/subprocess-runtime.ts",
-		reason: "dispatch maps autonomy policy into the engine-owned Claude subprocess runtime.",
 	},
 	{
 		module: "src/engine/claude/tool-safety.ts",
@@ -1311,7 +1291,6 @@ const STAGE0_SEAMS: ReadonlyArray<Stage0Seam> = [
 	{
 		module: "src/session-control/model-session-replay.ts",
 		reason: "the Stage 1 composition root projects persisted turns back into interactive model messages.",
-		allowStage0OverlapFrom: [ORCHESTRATOR],
 	},
 	{
 		module: "src/interactive/panes-runtime.ts",
@@ -1339,7 +1318,6 @@ const STAGE0_SEAMS: ReadonlyArray<Stage0Seam> = [
 	{
 		module: "src/session-control/watchdog-run.ts",
 		reason: "the Stage 1 composition root wires watchdog review into the complete interactive application.",
-		allowStage0OverlapFrom: [ORCHESTRATOR],
 	},
 ];
 

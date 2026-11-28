@@ -22,11 +22,7 @@ import { stringify } from "yaml";
 import { runHubCommand } from "../../src/cli/hub.js";
 import { readSettings } from "../../src/core/config.js";
 import { revokedHubDigests } from "../../src/core/hub-revocations.js";
-import {
-	bindPackageActivitySink,
-	flushPackageActivities,
-	type PackageActivity,
-} from "../../src/core/package-activity.js";
+import { bindPackActivitySink, flushPackActivities, type PackActivity } from "../../src/core/pack-activity.js";
 import { pancodeStateDir } from "../../src/core/xdg.js";
 import { validateExtensionPackage } from "../../src/domains/extensions/authoring/validate.js";
 import { parseExtensionManifest } from "../../src/domains/extensions/discovery.js";
@@ -34,6 +30,7 @@ import { OperatorExtensions } from "../../src/domains/extensions/operator-extens
 import { installExtension, listInstalledExtensions } from "../../src/domains/extensions/state.js";
 import { loadMcpServerConfig } from "../../src/domains/mcp/index.js";
 import { bundledHubIndexPath, fetchPluginCommit, parseHubIndexRows } from "../../src/domains/plugins/catalog.js";
+import type { HubTier } from "../../src/domains/plugins/hub-types.js";
 import {
 	clearPluginSnapshots,
 	installPlugin,
@@ -69,7 +66,6 @@ import {
 	refreshRemoteIndex,
 	remoteIndexRows,
 } from "../../src/domains/resources/hub-trust.js";
-import type { HubTier } from "../../src/domains/resources/hub-types.js";
 import { isolatePancodeEnv } from "../harness/scratch-env.js";
 
 const SAMPLE_KIT = path.resolve(import.meta.dirname, "../fixtures/plugins/sample-kit");
@@ -610,8 +606,8 @@ test("a revoked running extension is retired with installation-revoked on the ne
 		isIdle: () => true,
 		stateDir: () => path.join(env.dir, "state"),
 	});
-	const activity: PackageActivity[] = [];
-	const unbind = bindPackageActivitySink((row) => {
+	const activity: PackActivity[] = [];
+	const unbind = bindPackActivitySink((row) => {
 		activity.push(row);
 		return true;
 	});
@@ -629,7 +625,7 @@ test("a revoked running extension is retired with installation-revoked on the ne
 		JSON.stringify({ revoked: [{ sha256: digest, reason: "synthetic revocation", date: "2019-05-01" }] }),
 	);
 	runtime.maintenance();
-	flushPackageActivities();
+	flushPackActivities();
 	ok(
 		activity.some(
 			(row) => row.kind === "runtime_retire" && row.owner.id === "lab_status.v1" && row.outcome === "installation-revoked",

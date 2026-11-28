@@ -37,10 +37,10 @@ export function modelCatalogView(input: {
 }): ModelCatalogView {
 	const { targetId, inventory, check } = input;
 	if (targetId === "")
-		return noCatalog(`${input.targetLabel} is automatic, so type an exact model id or choose a target first.`);
+		return noCatalog(`${input.targetLabel} is automatic, so type an exact model id or choose a connection first.`);
 	if (inventory.pending) return noCatalog(`Reading ${targetId}'s models…`);
 	if (!inventory.targets)
-		return noCatalog(`The target list could not be read${inventory.error !== null ? `: ${inventory.error}` : "."}`);
+		return noCatalog(`The connection list could not be read${inventory.error !== null ? `: ${inventory.error}` : "."}`);
 	const target = inventory.targets.find((row) => row.id === targetId);
 	// The setting saved a connection the running engine does not list; that is what fails, not the choice itself.
 	if (!target)

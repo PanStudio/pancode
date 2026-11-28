@@ -20,7 +20,7 @@ function quoted(tasks: readonly ScopeTask[]) {
 }
 
 function tasksWord(count: number) {
-	return count === 1 ? "task" : "tasks";
+	return count === 1 ? "session" : "sessions";
 }
 
 /**
@@ -36,7 +36,7 @@ export function metricsScopeNote(input: {
 	readonly session?: string;
 }): string | null {
 	if (input.session !== undefined)
-		return input.recorded.includes(input.session) ? null : "PanCode has no usage record for this task yet.";
+		return input.recorded.includes(input.session) ? null : "PanCode has no usage record for this session yet.";
 	const { tasks } = input;
 	if (!tasks.length) return null;
 	const recorded = new Set(input.recorded);
@@ -47,7 +47,7 @@ export function metricsScopeNote(input: {
 	const unlisted =
 		input.recorded.length === input.recordedCount ? input.recorded.filter((id) => !listed.has(id)).length : 0;
 	const beyond = unlisted
-		? ` ${unlisted} more recorded ${unlisted === 1 ? "session is" : "sessions are"} not in the task list, so ${unlisted === 1 ? "it is" : "they are"} named by id.`
+		? ` ${unlisted} more recorded ${unlisted === 1 ? "session is" : "sessions are"} not in the session list, so ${unlisted === 1 ? "it is" : "they are"} named by id.`
 		: "";
 	if (!missing.length) return `Covers all of ${whole} ${tasksWord(tasks.length)}.${beyond}`;
 	if (input.recorded.length < input.recordedCount)

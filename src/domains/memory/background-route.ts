@@ -266,13 +266,13 @@ export function createBackgroundMemoryModelClient(
 			timeoutMs,
 			bus,
 			"chat-default",
-			settings.targets,
+			settings.connections,
 			admitModelFlow,
 			budget,
 			thinkingLevel,
 		);
 	}
-	const chatTarget = settings.chat.target?.trim();
+	const chatTarget = settings.chat.connection?.trim();
 	const chatModel = settings.chat.model?.trim();
 	const sameRoute = configuredTarget === chatTarget && configuredModel === chatModel;
 	if (fallbackOnly && sameRoute) return null;
@@ -286,7 +286,7 @@ export function createBackgroundMemoryModelClient(
 				timeoutMs,
 				bus,
 				"dedicated",
-				settings.targets,
+				settings.connections,
 				admitModelFlow,
 				budget,
 				thinkingLevel,
@@ -308,7 +308,7 @@ export function createBackgroundMemoryModelClient(
 				timeoutMs,
 				bus,
 				"chat-fallback",
-				settings.targets,
+				settings.connections,
 				admitModelFlow,
 				budget,
 				thinkingLevel,
@@ -329,7 +329,7 @@ export function prepareBackgroundMemoryModel(
 ) {
 	const status = providers.list().find((entry) => entry.target.id === targetId);
 	if (status) {
-		if (!status.available) throw new Error(status.reason || "configured target unavailable");
+		if (!status.available) throw new Error(status.reason || "configured connection unavailable");
 		if (status.health.status === "down") throw new Error(status.health.lastError || "endpoint unreachable");
 		if (hasLiveModelCatalog(status) && !status.discoveredModels.includes(wireModelId)) {
 			throw new Error(`unknown model: ${wireModelId}`);
@@ -350,7 +350,7 @@ export function prepareBackgroundMemoryModel(
 		requireOutputBudget: true,
 	});
 	if (!resolved.ok) {
-		const detail = firstRuntimeResolutionError(resolved.diagnostics) ?? "background target resolution failed";
+		const detail = firstRuntimeResolutionError(resolved.diagnostics) ?? "background connection resolution failed";
 		throw new Error(detail);
 	}
 	const kbHit = providers.knowledgeBase?.lookup(resolved.target.wireModelId, resolved.target.runtime.id) ?? null;
@@ -546,7 +546,7 @@ function prepareBackgroundMemoryRoute(
 					await prepareBackgroundModelMetadata(providers, targetId, request.signal);
 					const { model, refined } = prepareBackgroundMemoryModel(providers, targetId, wireModelId, thinkingLevel);
 					if (refined.runtimeId !== initial.refined.runtimeId || canonicalEndpointKey(refined.target) !== gatewayKey) {
-						throw new Error("background memory target changed during preparation");
+						throw new Error("background memory connection changed during preparation");
 					}
 					if (WINDOW_CHECKED_PURPOSES.has(request.purpose)) {
 						const inputTokens = estimateAgentContextTokens({
@@ -721,7 +721,7 @@ export function createMemoryFlowAdmission(
 				{
 					kind: "memory-flow-blocked",
 					level: "info",
-					message: `Memory skipped target ${destination.targetId}: ${refusal}`,
+					message: `Memory skipped connection ${destination.targetId}: ${refusal}`,
 					targetId: destination.targetId,
 					runtimeId: destination.runtimeId,
 					model: destination.wireModelId,
@@ -932,7 +932,7 @@ export function createBackgroundMemoryRouting(
 		getModelMaxTokens: (configured: number): number => route?.modelMaxTokens(configured) ?? configured,
 		backgroundEndpointBusy: (): boolean => {
 			if (route?.endpointKey == null || snapshot === undefined) return false;
-			return backgroundMemoryEndpointBusy(providers, route.endpointKey, snapshot.targets);
+			return backgroundMemoryEndpointBusy(providers, route.endpointKey, snapshot.connections);
 		},
 	};
 }

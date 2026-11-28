@@ -51,7 +51,7 @@ export interface PlanSummary {
 
 const HEAD = /^dispatch plan: topology=(\S+) tasks=(\d+)/u;
 const TASK =
-	/^\s+\d+\.(?: role=(\S+))? agent=(\S+)(?: target=(\S+))?(?: model=(\S+))?.*? task_preview=("(?:[^"\\]|\\.)*")/u;
+	/^\s+\d+\.(?: role=(\S+))? agent=(\S+)(?: connection=(\S+))?(?: model=(\S+))?.*? task_preview=("(?:[^"\\]|\\.)*")/u;
 const COUNCIL = /^\s+council label=(\S+)/u;
 const LIMITS = /^\s+limits: (.+)$/u;
 const FORECAST = /^\s+forecast: (.+)$/u;
@@ -305,7 +305,7 @@ export function planDetailText(text: string): string {
  * model than the session's without saying so read as a silent switch (F17).
  */
 function routeWords(route: string): string {
-	return route === "target named in the call"
+	return route === "connection named in the call"
 		? route
 		: `${route}; workers follow fleet routing, not the session's /model (set it in /settings)`;
 }

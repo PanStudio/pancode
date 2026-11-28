@@ -491,17 +491,17 @@ export function autonomyHaltNotice(
 	if (surface === "headless") {
 		const what =
 			halt.kind === "judge"
-				? `${JUDGE_STREAK_REASON}: the safety judge blocked too many calls (${halt.detail}), so yolo ended the run`
+				? `${JUDGE_STREAK_REASON}: the safety judge blocked too many calls (${halt.detail}), so YOLO ended the run`
 				: halt.kind === "exploration"
-					? `${EXPLORATION_STALLED_REASON}: ${halt.detail}, so yolo ended the run`
-					: `${AUTONOMOUS_CAP_REASON}: yolo paused at the ${halt.detail}`;
+					? `${EXPLORATION_STALLED_REASON}: ${halt.detail}, so YOLO ended the run`
+					: `${AUTONOMOUS_CAP_REASON}: YOLO paused at the ${halt.detail}`;
 		return `${what} after ${spent}; review it, then \`pancode run --continue "<prompt>"\` resumes with a fresh window${left === "" ? "" : `.${left}`}`;
 	}
 	if (halt.kind === "judge") {
-		return `yolo paused: the safety judge blocked too many calls (${halt.detail}). Enter on an empty prompt continues and turns review back on; a new message also continues.${left}`;
+		return `YOLO paused: the safety judge blocked too many calls (${halt.detail}). Enter on an empty prompt continues and turns review back on; a new message also continues.${left}`;
 	}
 	if (halt.kind === "exploration") {
-		return `yolo paused: ${halt.detail} (${spent}). Send the decision or the next step; Enter on an empty prompt continues with a fresh streak.${left}`;
+		return `YOLO paused: ${halt.detail} (${spent}). Send the decision or the next step; Enter on an empty prompt continues with a fresh streak.${left}`;
 	}
 	const again =
 		halt.kind === "calls"
@@ -509,7 +509,7 @@ export function autonomyHaltNotice(
 			: halt.kind === "tokens"
 				? `another ${formatCount(halt.limit ?? 0)} cap tokens`
 				: `another ${halt.limit} minutes`;
-	return `yolo paused: ${halt.detail} (${spent}). Enter on an empty prompt continues for ${again}; a new message also continues.${left}`;
+	return `YOLO paused: ${halt.detail} (${spent}). Enter on an empty prompt continues for ${again}; a new message also continues.${left}`;
 }
 
 /**

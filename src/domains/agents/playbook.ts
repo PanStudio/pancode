@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import { enabledPluginResourceRoots } from "../plugins/index.js";
-import { resolvePackagePathReference, resolvePackageReferences } from "../resources/package-references.js";
+import { resolvePackPathReference, resolvePackReferences } from "./pack-references.js";
 /**
  * Repo-owned playbooks (Symphony P5: work policy lives in the repo, versioned
  * and strictly validated). A playbook is what the fleet runs.
@@ -147,8 +147,13 @@ export type PlaybookLoopCheck =
 			writes?: ReadonlyArray<string>;
 			target?: string;
 			profile?: string;
+			/** What this check judges beyond the request; it never sees the playbook body. */
+			instructions?: string;
 	  }
 	| { kind: "gate"; gate: string };
+
+/** Bound on an agent check's `instructions`, which reach every attempt of the check verbatim. */
+export const PLAYBOOK_CHECK_INSTRUCTIONS_MAX_CHARS = 4000;
 
 /** The repair half. Always an agent: a deterministic repair is just a check. */
 export interface PlaybookLoopRepair {
@@ -355,6 +360,7 @@ function loopStepSchema(version: PlaybookVersion) {
 						scope: PlaybookScopeSchema,
 						...writesSchema(version),
 						...routeSchema(version),
+						instructions: Type.Optional(Type.String({ minLength: 1, maxLength: PLAYBOOK_CHECK_INSTRUCTIONS_MAX_CHARS })),
 					},
 					{ additionalProperties: false },
 				),
@@ -447,6 +453,7 @@ type RawStep = {
 		writes?: string[];
 		target?: string;
 		profile?: string;
+		instructions?: string;
 	};
 	repair?: {
 		kind?: "agent";
@@ -526,6 +533,7 @@ function normalizeStep(step: RawStep): PlaybookStep {
 								scope: check.scope,
 								...normalizedWrites(check.writes),
 								...route(check),
+								...(check.instructions !== undefined ? { instructions: check.instructions.trim() } : {}),
 							},
 			repair: {
 				kind: "agent",
@@ -825,7 +833,24 @@ export function parsePlaybook(raw: string, sourcePath: string): Playbook {
 	validateWorktreeScope(playbook);
 	validateWriteBoundaries(playbook);
 	validateV5Declarations(playbook);
+	validateCheckInstructions(playbook);
 	return playbook;
+}
+
+/**
+ * Check instructions are literal: placeholder discovery, the task positional and unresolved-variable errors read only
+ * the body, so a `{{name}}` here would reach the checker unrendered.
+ */
+function validateCheckInstructions(playbook: Pick<Playbook, "steps" | "path">): void {
+	for (const step of playbook.steps) {
+		if (step.kind !== "loop" || step.check.kind !== "agent" || step.check.instructions === undefined) continue;
+		if (step.check.instructions.length === 0) {
+			throw new Error(`playbook ${playbook.path}: loop '${step.id}' check instructions are empty`);
+		}
+		if (step.check.instructions.includes("{{")) {
+			throw new Error(`playbook ${playbook.path}: loop '${step.id}' check instructions take no {{placeholders}}`);
+		}
+	}
 }
 
 /** The scope each declared position asked for, gate steps included (a gate's scope is optional). */
@@ -865,7 +890,7 @@ function validateV5Declarations(playbook: Playbook): void {
 	if (playbook.version < PLAYBOOK_DYNAMIC_STEP_VERSION) return;
 	const route = (id: string, value: { target?: string; profile?: string }): void => {
 		if (value.target !== undefined && value.profile !== undefined) {
-			throw new Error(`playbook ${playbook.path}: step '${id}' may declare target or profile, never both`);
+			throw new Error(`playbook ${playbook.path}: step '${id}' may declare connection or profile, never both`);
 		}
 	};
 	for (const step of playbook.steps) {
@@ -1064,14 +1089,14 @@ export function resolvePlaybookReferences(
 	// Authored text is resolved after schema parsing; paths cannot inject YAML keys.
 	return {
 		...playbook,
-		body: resolvePackageReferences(playbook.body, context),
+		body: resolvePackReferences(playbook.body, context),
 		steps: playbook.steps.map((step) => {
 			if (step.kind === "code" && step.args)
-				return { ...step, args: step.args.map((arg) => resolvePackagePathReference(arg, context)) };
+				return { ...step, args: step.args.map((arg) => resolvePackPathReference(arg, context)) };
 			if (step.kind === "loop" && step.check.kind === "code" && step.check.args)
 				return {
 					...step,
-					check: { ...step.check, args: step.check.args.map((arg) => resolvePackagePathReference(arg, context)) },
+					check: { ...step.check, args: step.check.args.map((arg) => resolvePackPathReference(arg, context)) },
 				};
 			return step;
 		}),

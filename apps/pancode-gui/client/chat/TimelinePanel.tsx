@@ -64,7 +64,7 @@ export const TimelinePanel = memo(function TimelinePanel({
 				</p>
 			) : null}
 			{timeline.data && rows.length === 0 ? (
-				<p className="pane-empty">Nothing has been journaled for this task yet.</p>
+				<p className="pane-empty">Nothing has been journaled for this session yet.</p>
 			) : null}
 			{rows.length > 0 ? (
 				<section className="drill__section" aria-labelledby={`${id}-entries`}>

@@ -92,8 +92,8 @@ export interface SetupTargetFacts {
 }
 
 export interface SetupFacts<TargetDraft = unknown> {
-	chat: { target?: string | null; model?: string | null };
-	/** Facts for the target `chat.target` names; absent when it names none. */
+	chat: { connection?: string | null; model?: string | null };
+	/** Facts for the target `chat.connection` names; absent when it names none. */
 	target?: SetupTargetFacts;
 	candidates?: ReadonlyArray<Candidate<TargetDraft>>;
 }
@@ -104,7 +104,7 @@ export interface SetupFacts<TargetDraft = unknown> {
  * the credential, the address and finally the first answer.
  */
 export function setupStatus<TargetDraft = unknown>(facts: SetupFacts<TargetDraft>): SetupStatus<TargetDraft> {
-	const chosen = facts.chat.target?.trim();
+	const chosen = facts.chat.connection?.trim();
 	const target = facts.target;
 	if (!chosen || target === undefined || target.id !== chosen) {
 		return { stage: "choose", candidates: [...(facts.candidates ?? [])] };
@@ -175,7 +175,7 @@ export function describeMissing(
 						sentence: `${missing.target}'s runtime sends no credential, and its endpoint asks for one. ${
 							options.inSession
 								? "Switch to a route that sends one with /model."
-								: "Run: pancode configure to choose a target that sends one"
+								: "Run: pancode configure to choose a connection that sends one"
 						}`,
 						...(options.inSession ? {} : { command: "pancode configure" }),
 					};
@@ -205,11 +205,13 @@ export function describeMissing(
 		case "model": {
 			if (missing.model !== undefined)
 				return { sentence: `${missing.model} is not available on ${missing.target}. Pick another with /model.` };
-			const command = `pancode targets use ${missing.target} --model <model>`;
-			return { sentence: `Target '${missing.target}' has no chat model. Run: ${command}`, command };
+			const command = `pancode connections use ${missing.target} --model <model>`;
+			return { sentence: `Connection '${missing.target}' has no chat model. Run: ${command}`, command };
 		}
 		case "runtime":
-			return { sentence: `Target '${missing.target}' runs on '${missing.runtime}', which cannot drive the main agent.` };
+			return {
+				sentence: `Connection '${missing.target}' runs on '${missing.runtime}', which cannot drive the main agent.`,
+			};
 		case "untested":
 			return { sentence: `${missing.target} has not answered a request yet.` };
 	}

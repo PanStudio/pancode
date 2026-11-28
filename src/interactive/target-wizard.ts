@@ -343,7 +343,7 @@ export class TargetWizardSurface implements Component, RowBudgetedBody, Configur
 			rows.push(
 				theme.fg(
 					"annotation",
-					this.complete ? "Enter returns to Settings" : (this.waitLabel ?? `Reading target details${GLYPH.ellipsis}`),
+					this.complete ? "Enter returns to Settings" : (this.waitLabel ?? `Reading connection details${GLYPH.ellipsis}`),
 				),
 			);
 			return fitRows(rows, width, this.bodyRows);
@@ -568,10 +568,10 @@ export function openTargetWizard(tui: TUI, options: TargetWizardOptions, onClose
 			const step = body.stepNumber();
 			const name =
 				options.mode === "edit"
-					? `Edit target: ${options.target.id}`
+					? `Edit connection: ${options.target.id}`
 					: options.mode === "url"
 						? "Connect by URL"
-						: "Add target";
+						: "Add connection";
 			return step === null ? name : `${name} ${GLYPH.sep} step ${step}`;
 		},
 		markerId: "target-wizard",

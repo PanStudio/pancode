@@ -13,7 +13,7 @@ import { isSemanticVersion } from "../extensions/compatibility.js";
 import {
 	HUB_PROVIDES_LIMITS,
 	HUB_TIERS,
-	type HubPackageEntry,
+	type HubPackEntry,
 	type HubProvidedResource,
 	type HubRequirementRef,
 	type HubRowSource,
@@ -21,10 +21,10 @@ import {
 	isHubAuditState,
 	isHubComponentKind,
 	isHubKind,
-} from "../resources/hub-types.js";
+} from "./hub-types.js";
 import { pluginContentDigest } from "./integrity.js";
 
-export type PluginCatalogEntry = HubPackageEntry;
+export type PluginCatalogEntry = HubPackEntry;
 
 export interface PluginSource {
 	root: string;
@@ -330,7 +330,7 @@ export function parseHubIndexRows(
 	file: string,
 	diagnostics: string[],
 	options: HubCatalogReadOptions = {},
-): HubPackageEntry[] {
+): HubPackEntry[] {
 	const mode = options.mode ?? "operator";
 	const base = options.packsRoot ?? path.dirname(file);
 	const rows: unknown[] | undefined = Array.isArray(parsed)
@@ -340,7 +340,7 @@ export function parseHubIndexRows(
 			: undefined;
 	if (!rows) throw new Error("The hub index must be a list or contain an entries list");
 	const seen = new Set<string>();
-	return rows.flatMap((row): HubPackageEntry[] => {
+	return rows.flatMap((row): HubPackEntry[] => {
 		if (!row || typeof row !== "object") {
 			diagnostics.push(`The hub index entry malformed: ${file}`);
 			return [];
@@ -445,7 +445,7 @@ export function readPluginCatalog(
 	file: string,
 	diagnostics: string[],
 	options: HubCatalogReadOptions = {},
-): HubPackageEntry[] {
+): HubPackEntry[] {
 	if (!existsSync(file)) return [];
 	try {
 		return parseHubIndexRows(parseYaml(readFileSync(file, "utf8")), file, diagnostics, options);
@@ -460,7 +460,7 @@ export function bundledHubIndexPath(): string {
 	return path.join(resolvePackageRoot(), "hub", "index.yaml");
 }
 
-export function bundledPluginCatalog(diagnostics: string[]): HubPackageEntry[] {
+export function bundledPluginCatalog(diagnostics: string[]): HubPackEntry[] {
 	try {
 		return readPluginCatalog(bundledHubIndexPath(), diagnostics, { mode: "bundled" });
 	} catch (error) {

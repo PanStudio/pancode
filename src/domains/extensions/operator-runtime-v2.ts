@@ -20,7 +20,7 @@ import type {
 } from "@pancode/sdk/extension";
 import type { ExtensionKeyValueHost, OutputOrigin } from "@pancode/sdk/pack";
 import { RUNTIME_LIMITS, RUNTIME_V2_LIMITS } from "@pancode/sdk/pack";
-import { recordPackageActivity } from "../../core/package-activity.js";
+import { recordPackActivity } from "../../core/pack-activity.js";
 import type { SandboxMode, UnixSocketMode } from "../../core/sandbox/types.js";
 import { layeredConfineList, layeredSandboxMode } from "../../core/settings-layers.js";
 import { pancodeStateDir } from "../../core/xdg.js";
@@ -291,7 +291,7 @@ interface ObservationQueue {
  */
 export class OperatorExtensionRuntimeV2 {
 	private activity(entry: InstalledExtension, kind: string, outcome?: string, details?: Record<string, unknown>): void {
-		recordPackageActivity({
+		recordPackActivity({
 			owner: extensionIdentity(entry),
 			kind,
 			...(outcome ? { outcome } : {}),

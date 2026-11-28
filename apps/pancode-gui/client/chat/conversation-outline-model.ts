@@ -39,7 +39,7 @@ function conversationEntry(turn: ChatTurn, row: Turn | undefined, index: number)
 				: "Empty request"
 			: conversationExcerpt(request.text, "", 140),
 		status: row
-			? { running: "In progress", succeeded: "Done", failed: "Failed", cancelled: "Stopped" }[row.status]
+			? { running: "In progress", succeeded: "Done", failed: "Failed", cancelled: "Canceled" }[row.status]
 			: turn.origin === "replay"
 				? "Earlier record"
 				: "Outcome unreported",

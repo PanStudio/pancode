@@ -30,7 +30,7 @@ import {
 import { resolveReadPath } from "./path-utils.js";
 import type { DocumentKind } from "./read-documents/index.js";
 import { MALFORMED_READ_PATHS, READ_PATHS_MAX, readPathsShapeError } from "./read-fan-out.js";
-import type { ToolInvokeOptions } from "./registry-contract.js";
+import type { ToolInvokeOptions } from "./registry/contract.js";
 import { toolResultContextText } from "./result-disposition.js";
 import { isSessionOffloadPath } from "./result-shaping.js";
 import { hookLandingRefusal } from "./tool-landing.js";
@@ -92,7 +92,7 @@ async function bundledDocIndex(
 	};
 	try {
 		for await (const line of lines) {
-			if (signal?.aborted) throw new ReadCancelled(stream.bytesRead);
+			if (signal?.aborted) throw new ReadCanceled(stream.bytesRead);
 			lineNumber++;
 			const found = docsHeading(line, state);
 			if (found) {
@@ -219,7 +219,7 @@ function numberedPrefixBytes(totalLines: number): number {
 	return bytes;
 }
 
-class ReadCancelled extends Error {
+class ReadCanceled extends Error {
 	constructor(readonly position: number) {
 		super("read cancelled");
 	}
@@ -228,7 +228,7 @@ class ReadCancelled extends Error {
 /** Every scan calls this once per chunk: the seam sees the position, then an aborted signal stops the scan. */
 function chunkBoundary(signal: AbortSignal | undefined, position: number): void {
 	readTestSeams.beforeChunk?.(position);
-	if (signal?.aborted) throw new ReadCancelled(position);
+	if (signal?.aborted) throw new ReadCanceled(position);
 }
 
 /** Fill `buffer[0, length)` from `position`; the view is shorter only at EOF. */
@@ -1048,7 +1048,7 @@ export const readTool: ToolSpec = {
 				...(options ? { options } : {}),
 			});
 		} catch (err) {
-			if (err instanceof ReadCancelled) {
+			if (err instanceof ReadCanceled) {
 				return {
 					kind: "error",
 					message: `read: cancelled while scanning ${pathArg} at byte ${err.position}`,

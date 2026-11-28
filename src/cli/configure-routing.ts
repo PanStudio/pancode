@@ -25,10 +25,10 @@ function saveRoute(role: "chat" | "fleet" | "memory", target: string | null, mod
 			fleet?: Record<string, unknown> & { default?: Record<string, unknown> };
 			context?: Record<string, unknown> & { memory?: Record<string, unknown> };
 		};
-		if (role === "chat") document.chat = { ...document.chat, target, model };
+		if (role === "chat") document.chat = { ...document.chat, connection: target, model };
 		else if (role === "fleet")
-			document.fleet = { ...document.fleet, default: { ...document.fleet?.default, target, model } };
-		else document.context = { ...document.context, memory: { ...document.context?.memory, target, model } };
+			document.fleet = { ...document.fleet, default: { ...document.fleet?.default, connection: target, model } };
+		else document.context = { ...document.context, memory: { ...document.context?.memory, connection: target, model } };
 		const validation = validateSettings(document);
 		if (validation.issues.length) throw new SettingsValidationError(validation.issues);
 		return document;
@@ -37,7 +37,7 @@ function saveRoute(role: "chat" | "fleet" | "memory", target: string | null, mod
 
 export async function assignTarget(io: RouteSelectionIo, role: "chat" | "fleet" | "memory"): Promise<void> {
 	const settings = readSettings();
-	const targets = settings.targets.filter((target) => {
+	const targets = settings.connections.filter((target) => {
 		const runtime = getRuntimeRegistry().get(target.runtime);
 		return role === "fleet" || (runtime !== null && isOrchestratorEligibleRuntime(runtime));
 	});
@@ -47,10 +47,10 @@ export async function assignTarget(io: RouteSelectionIo, role: "chat" | "fleet" 
 	}
 	const currentTarget =
 		role === "chat"
-			? settings.chat.target
+			? settings.chat.connection
 			: role === "fleet"
-				? settings.fleet.default.target
-				: settings.context.memory.target;
+				? settings.fleet.default.connection
+				: settings.context.memory.connection;
 	const label = role === "chat" ? "Chat" : role === "fleet" ? "Fleet" : "Proactive memory";
 	const targetChoices = targets.map(
 		(target) =>

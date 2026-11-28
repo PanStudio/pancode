@@ -7,7 +7,7 @@ import { sumFacts, sumPricing } from "../../src/core/telemetry/pricing.js";
 import type { MuxContract } from "../../src/domains/mux/contract.js";
 import { detectMux } from "../../src/domains/mux/detect.js";
 import { createPanesRuntime } from "../../src/interactive/panes-runtime.js";
-import { currentToolPlatform, findPinnedTool } from "../../src/lib/programs/index.js";
+import { currentProgramPlatform, findPinnedProgram } from "../../src/lib/programs/index.js";
 import type { SlashCommandContext } from "../../src/session-control/slash-command-types.js";
 import { BUILTIN_SLASH_COMMANDS } from "../../src/session-control/slash-commands.js";
 import { isolatePancodeEnv } from "../harness/scratch-env.js";
@@ -51,9 +51,9 @@ describe("contracts/pane refusal remedies", () => {
 					notice = text;
 				},
 			} as SlashCommandContext);
-			const platform = currentToolPlatform();
+			const platform = currentProgramPlatform();
 			// A platform with no pinned herdr build has nothing to install, so it keeps the restart words.
-			const pinned = platform !== null && findPinnedTool("herdr")?.downloads[platform] !== undefined;
+			const pinned = platform !== null && findPinnedProgram("herdr")?.downloads[platform] !== undefined;
 			strictEqual(
 				notice,
 				pinned

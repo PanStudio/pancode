@@ -19,14 +19,14 @@ Documentation does not establish the current availability of a workflow or speci
 Before proposing playbook commands or YAML, call pancode_docs with query="fleet authoring"
 and read the bundled source `domains/agents/playbooks/build-review.md` under the
 PanCode source path. Use the actual schema, not guessed keys such as `after`.
-`pancode playbook new <name> --from <builtin>` copies build-review, build-test,
-sdlc, or seat-stretch into `.pancode/playbooks/<name>.md`. These templates use version 3 YAML frontmatter
+`pancode playbook new <name> --from <builtin>` copies a built-in playbook into
+`.pancode/playbooks/<name>.md`. Built-in templates use version 3 YAML frontmatter
 with name, description, steps (kind/id/agent/scope/dependencies), maxWorkers,
 onFailure, and a Markdown task body containing `{{task}}`. The `--from` argument
-is required: for example, `pancode playbook new plan-review --from build-review`.
+is required: for example, `pancode playbook new plan-review --from plan-build-review`.
 Propose the requested
 composition, then use admitted writes with operator approval where required to
-create or adapt it; otherwise give the exact command and YAML. For just plan,
-implement, review, use architect → coder → verifier; sdlc also tests, documents,
-and commits, so explain those extra actions before recommending it. Validate
+create or adapt it; otherwise give the exact command and YAML. For plan,
+implement, review, use the built-in `plan-build-review` (architect → coder → reviewer);
+sdlc also tests, documents, and commits, so explain those extra actions before recommending it. Validate
 with `pancode playbook list`; creating a playbook does not run it.

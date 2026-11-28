@@ -17,7 +17,7 @@ import {
 	type Wizard,
 } from "./configure-onboarding-state.js";
 import { describeAuthStatus } from "./configure-target.js";
-import { shortenPath } from "./lifecycle-presenter.js";
+import { shortenPath } from "./install-presenter.js";
 import { credentialFileProtection } from "./shared.js";
 import { truncate } from "./text-layout.js";
 
@@ -73,7 +73,7 @@ export const REVIEW_STEP: Step = {
 					answers.mode === "first" ? "Save sets the chat and fleet model." : "Existing routes stay in place.",
 				],
 				choices: [
-					{ value: "save", label: "Save target" },
+					{ value: "save", label: "Save connection" },
 					...(guidedFlow(answers) ? [{ value: "model", label: "Choose a different model" }] : []),
 					{ value: "details", label: "Connection and machine details" },
 					{ value: "back", label: "Back" },

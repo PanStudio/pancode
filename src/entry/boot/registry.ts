@@ -47,8 +47,8 @@ import type { AutonomyLevel } from "../../lib/autonomy/autonomy.js";
 import { type AskUserHandler, cancelledAskUserResult } from "../../tools/ask-user.js";
 import type { ToolBootstrapHandle } from "../../tools/bootstrap.js";
 import { createDispatchBackgroundRegistry } from "../../tools/dispatch-background.js";
+import { acpHostReadOnlySource } from "../../tools/registry/verdicts.js";
 import { createRegistry } from "../../tools/registry.js";
-import { acpHostReadOnlySource } from "../../tools/registry-verdicts.js";
 import type { BootOptions } from "../boot-options.js";
 import type { createFlowLedger } from "../flow-ledger.js";
 
@@ -216,7 +216,7 @@ export function buildBootRegistry(stageInput: BootRegistryInput) {
 		stateDir: pancodeStateDir(),
 		session: () => session?.current(),
 		autonomy: resolveEffectiveAutonomy,
-		identitySettings: () => ({ targets: cells.getCurrentSettings().targets }),
+		identitySettings: () => ({ connections: cells.getCurrentSettings().connections }),
 	});
 	// ask_user is a human interview tool, so it is registered only where a person
 	// answers: the TUI, an ACP client that advertised interviews, or a run's --answers

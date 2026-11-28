@@ -298,19 +298,19 @@ for (const runtime of [openaiRuntime, openaiCodexRuntime]) {
 	});
 }
 
-test("worker response seconds validates as a positive integer and takes effect on next dispatch", () => {
-	strictEqual(DEFAULT_SETTINGS.safety.limits.workerResponseSeconds, 600);
-	const valid = validateSettings({ safety: { limits: { workerResponseSeconds: 42 } } });
+test("worker response timeout ms validates as a positive integer and takes effect on next dispatch", () => {
+	strictEqual(DEFAULT_SETTINGS.safety.limits.workerResponseTimeoutMs, 600_000);
+	const valid = validateSettings({ safety: { limits: { workerResponseTimeoutMs: 42_000 } } });
 	deepStrictEqual(valid.issues, []);
-	strictEqual(valid.settings.safety.limits.workerResponseSeconds, 42);
-	for (const value of [0, -1, 0.5, "600"]) {
+	strictEqual(valid.settings.safety.limits.workerResponseTimeoutMs, 42_000);
+	for (const value of [0, -1, 0.5, "600000"]) {
 		ok(
-			validateSettings({ safety: { limits: { workerResponseSeconds: value } } }).issues.some(
-				(issue) => issue.path === "safety.limits.workerResponseSeconds",
+			validateSettings({ safety: { limits: { workerResponseTimeoutMs: value } } }).issues.some(
+				(issue) => issue.path === "safety.limits.workerResponseTimeoutMs",
 			),
 		);
 	}
-	ok(diffSettings(DEFAULT_SETTINGS, valid.settings).nextTurn.includes("safety.limits.workerResponseSeconds"));
+	ok(diffSettings(DEFAULT_SETTINGS, valid.settings).nextTurn.includes("safety.limits.workerResponseTimeoutMs"));
 	for (const code of ["worker_turn_timeout", "worker_output_cap_exhausted"]) {
 		ok(isRunOutcomeCode(code));
 		ok(isDeterministicOutcomeCode(code));

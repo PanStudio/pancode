@@ -94,7 +94,6 @@ export const AcpJob = Type.Object(
 		reason: Type.Union([
 			Type.Literal("count"),
 			Type.Literal("condition"),
-			Type.Literal("stopped"),
 			Type.Literal("canceled"),
 			Type.Literal("deadline"),
 			Type.Literal("failure"),

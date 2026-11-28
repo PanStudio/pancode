@@ -21,8 +21,8 @@ import { ENVELOPE_SEAT_BELT, envelopeLines } from "../../domains/extensions/enve
 import type { HubImportApplyResult, HubImportPlan } from "../../domains/interop/index.js";
 import {
 	describeHubPair,
+	type HubActionPlan,
 	type HubApplyResult,
-	type HubLifecyclePlan,
 	type HubPlanStep,
 	type HubRefreshResult,
 	type HubStepOutcome,
@@ -222,7 +222,7 @@ function stepFacts(step: HubPlanStep, review: HubStepReview | undefined, detail:
 }
 
 /** What Enter does on each operation's review, in the words of the change itself. */
-const APPLY_CONSEQUENCE: Record<HubLifecyclePlan["request"]["operation"], string> = {
+const APPLY_CONSEQUENCE: Record<HubActionPlan["request"]["operation"], string> = {
 	install: "makes exactly this change",
 	update: "replaces the installed copy with this one",
 	enable: "turns this copy back on",
@@ -257,7 +257,7 @@ function reviewChoices(applicable: boolean, verb: string, consequence: string, d
  * dependency story.
  */
 export function formatHubPlanReview(
-	rawPlan: HubLifecyclePlan,
+	rawPlan: HubActionPlan,
 	width: number,
 	options: { detail?: boolean } = {},
 ): string[] {
@@ -868,10 +868,10 @@ function openReviewOverlay(tui: TUI, spec: ReviewOverlaySpec): OverlayHandle {
 }
 
 export interface OpenHubReviewOptions {
-	plan: HubLifecyclePlan;
+	plan: HubActionPlan;
 	columns: number;
 	/** Apply the reviewed plan. Called only after the operator accepts. */
-	commit: (plan: HubLifecyclePlan) => HubApplyResult;
+	commit: (plan: HubActionPlan) => HubApplyResult;
 	/** Refresh only, for a failed or skipped session refresh. */
 	retryRefresh: () => HubRefreshResult;
 	/** Cancel before commit: nothing was written; the caller releases the staged source. */

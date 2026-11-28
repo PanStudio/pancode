@@ -15,12 +15,12 @@ test("check reaches a subscription route through a one-shot, so the only thing m
 	writeFileSync(
 		join(configDir, "settings.yaml"),
 		[
-			"targets:",
+			"connections:",
 			"  - id: anthropic-max",
 			"    runtime: anthropic-max",
 			"    defaultModel: claude-haiku-5-5",
 			"chat:",
-			"  target: anthropic-max",
+			"  connection: anthropic-max",
 			"  model: claude-haiku-5-5",
 			"",
 		].join("\n"),

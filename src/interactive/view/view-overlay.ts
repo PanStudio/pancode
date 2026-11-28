@@ -2,19 +2,19 @@
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 
 import type { NotificationLevel } from "../../core/views/notice-words.js";
+import type { Component, OverlayHandle, TUI } from "../../engine/tui.js";
+import { Input, Markdown, matchesKey, truncateToWidth, visibleWidth, wrapTextWithAnsi } from "../../engine/tui.js";
 import type {
 	ArtifactProvider,
 	ViewArtifact,
 	ViewArtifactCategory,
 	ViewArtifactFormat,
-} from "../../domains/session/view-artifacts.js";
+} from "../../session-control/view-artifacts.js";
 import {
 	listViewArtifacts,
 	VIEW_ARTIFACT_CATEGORIES,
 	viewArtifactDisplayText,
-} from "../../domains/session/view-artifacts.js";
-import type { Component, OverlayHandle, TUI } from "../../engine/tui.js";
-import { Input, Markdown, matchesKey, truncateToWidth, visibleWidth, wrapTextWithAnsi } from "../../engine/tui.js";
+} from "../../session-control/view-artifacts.js";
 import { dockBodyRows } from "../dock.js";
 import { clockLocal } from "../format-time.js";
 import { localKey } from "../keyboard-owner.js";

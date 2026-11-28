@@ -62,7 +62,7 @@ export function createAcpServerConfig(scope: AcpServerScope) {
 				sessionUpdate: "config_option_update",
 				configOptions: configOptions(options, scope.listingFallbacks, session),
 			},
-			_meta: { [ACP_SESSION_META_KEY]: { target: session.target, model: session.model } },
+			_meta: { [ACP_SESSION_META_KEY]: { connection: session.target, model: session.model } },
 		});
 	};
 	/**
@@ -170,7 +170,7 @@ export function createAcpServerConfig(scope: AcpServerScope) {
 			case "autonomy":
 				setAutonomy(session, value);
 				break;
-			case "target":
+			case "connection":
 			case "model": {
 				if (request.configId === "model" && options.providers === undefined) {
 					const modelOption = configOptions(options, scope.listingFallbacks, session).find(
@@ -194,10 +194,11 @@ export function createAcpServerConfig(scope: AcpServerScope) {
 				}
 				if (!options.setSessionRouting || !options.providers)
 					throw new AcpRequestError(-32601, "model selection is unavailable", { code: "method_not_found" });
-				const target = request.configId === "target" ? value : session.target;
-				if (request.configId === "target" && target !== session.target) await listTargetModels(target);
+				const target = request.configId === "connection" ? value : session.target;
+				if (request.configId === "connection" && target !== session.target) await listTargetModels(target);
 				const status = options.providers.list().find((item) => item.target.id === target);
-				if (!target || !status) throw new AcpRequestError(-32602, "target is not available", { code: "invalid_params" });
+				if (!target || !status)
+					throw new AcpRequestError(-32602, "connection is not available", { code: "invalid_params" });
 				const models = targetModelCandidates(status);
 				const defaultModel =
 					safeStoredIdentifier(status.target.defaultModel, ACP_MAX_MODEL_ID_BYTES) ??
@@ -221,7 +222,7 @@ export function createAcpServerConfig(scope: AcpServerScope) {
 					session.model = selected.model;
 					// The session keeps the level asked for; each model resolves what it does with it, shown as currentValue.
 				} catch (error) {
-					throw new AcpRequestError(-32602, "target cannot host this session model", {
+					throw new AcpRequestError(-32602, "connection cannot host this session model", {
 						code: "invalid_params",
 						reason: modelSelectionErrorText(error instanceof Error ? error.message : String(error), 1024),
 					});
@@ -300,14 +301,14 @@ export function createAcpServerConfig(scope: AcpServerScope) {
 				throw new AcpRequestError(-32602, "patch contains an unknown setting", { code: "invalid_params" });
 			}
 			switch (key) {
-				case "chat.target": {
+				case "chat.connection": {
 					if (value === null) {
 						patch[key] = null;
 						break;
 					}
 					const target = requireBoundedClientString(value, key, ACP_MAX_TARGET_ID_BYTES);
 					if (options.providers?.getTarget(target) === null || options.providers === undefined) {
-						throw new AcpRequestError(-32602, "target is not configured", {
+						throw new AcpRequestError(-32602, "connection is not configured", {
 							code: "invalid_params",
 							reason: "target-unknown",
 						});
@@ -334,17 +335,17 @@ export function createAcpServerConfig(scope: AcpServerScope) {
 			}
 		}
 		const current = options.settings.read();
-		const nextTarget = patch["chat.target"] === undefined ? current.target : patch["chat.target"];
+		const nextTarget = patch["chat.connection"] === undefined ? current.target : patch["chat.connection"];
 		const nextModel = patch["chat.model"] === undefined ? current.model : patch["chat.model"];
 		if (nextTarget === null && nextModel !== null) {
-			throw new AcpRequestError(-32602, "model requires a configured target", { code: "invalid_params" });
+			throw new AcpRequestError(-32602, "model requires a configured connection", { code: "invalid_params" });
 		}
 		try {
 			const committed = options.settings.commit(patch, scope.handshake.clientSurface);
 			const session = scope.boundSessionId === null ? undefined : scope.sessions.get(scope.boundSessionId);
 			if (
 				session &&
-				(patch["chat.target"] !== undefined ||
+				(patch["chat.connection"] !== undefined ||
 					patch["chat.model"] !== undefined ||
 					patch["chat.thinkingLevel"] !== undefined)
 			) {
@@ -423,7 +424,7 @@ export function createAcpServerConfig(scope: AcpServerScope) {
 		if (options.providers === undefined)
 			throw new AcpRequestError(-32601, "method not found", { code: "method_not_found" });
 		if (options.providers.getTarget(targetId) === null) {
-			throw new AcpRequestError(-32602, "target is not configured", {
+			throw new AcpRequestError(-32602, "connection is not configured", {
 				code: "invalid_params",
 				reason: "target-unknown",
 			});

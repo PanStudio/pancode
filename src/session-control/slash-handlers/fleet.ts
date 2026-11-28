@@ -96,18 +96,18 @@ export const FLEET_SLASH_COMMANDS: ReadonlyArray<BuiltinSlashCommand> = [
 		name: "tasks",
 		rank: 1,
 		acp: {
-			subcommands: ["add", "hand", "done", "drop"],
+			subcommands: ["add", "hand", "done", "remove"],
 			injectsUserTurn: true,
-			readOnlyRefuses: ["add", "hand", "done", "drop"],
+			readOnlyRefuses: ["add", "hand", "done", "remove"],
 		},
 		description: "Show the session task board, or manage project tasks",
 		group: "Work",
-		kinds: ["tasks", "tasks-add", "tasks-hand", "tasks-done", "tasks-drop"],
+		kinds: ["tasks", "tasks-add", "tasks-hand", "tasks-done", "tasks-remove"],
 		subcommandDescriptions: {
 			add: "Log a project task without notifying the agent",
 			hand: "Hand an operator task to the agent",
 			done: "Mark an operator task done",
-			drop: "Drop an operator task",
+			remove: "Remove an operator task",
 		},
 		args: {
 			subcommands: {
@@ -115,13 +115,13 @@ export const FLEET_SLASH_COMMANDS: ReadonlyArray<BuiltinSlashCommand> = [
 					parseFlagsInRest: true,
 					flags: [
 						{ name: "--expect", takesValue: true, repeatable: true, valueName: "path" },
-						{ name: "--verify", takesValue: true, repeatable: true, valueName: "checkId[:timeoutMs]" },
+						{ name: "--verify", takesValue: true, repeatable: true, valueName: "checkId[:<duration>]" },
 					],
 					positionals: [{ name: "text", required: true, rest: true }],
 				},
 				hand: { positionals: [{ name: "id", required: true }] },
 				done: { positionals: [{ name: "id", required: true }] },
-				drop: { positionals: [{ name: "id", required: true }] },
+				remove: { positionals: [{ name: "id", required: true }] },
 			},
 		},
 		fromArgs(parsed) {
@@ -138,14 +138,14 @@ export const FLEET_SLASH_COMMANDS: ReadonlyArray<BuiltinSlashCommand> = [
 						: { kind: "usage-error", command: "tasks", reason: "add requires task text" };
 				case "hand":
 				case "done":
-				case "drop": {
+				case "remove": {
 					const id = parsed.positionals[0];
 					if (!id || !/^u[1-9]\d*$/.test(id)) {
 						return { kind: "usage-error", command: "tasks", reason: `${parsed.subcommand} requires a uN id` };
 					}
 					if (parsed.subcommand === "hand") return { kind: "tasks-hand", id };
 					if (parsed.subcommand === "done") return { kind: "tasks-done", id };
-					return { kind: "tasks-drop", id };
+					return { kind: "tasks-remove", id };
 				}
 				default:
 					return { kind: "tasks" };
@@ -179,7 +179,7 @@ export const FLEET_SLASH_COMMANDS: ReadonlyArray<BuiltinSlashCommand> = [
 					ctx.notice("success", `marked operator task ${task.id} done`);
 					return;
 				}
-				if (command.kind === "tasks-drop") {
+				if (command.kind === "tasks-remove") {
 					const task = ctx.userTasks.drop(command.id);
 					ctx.notice("success", `dropped operator task ${task.id}`);
 				}

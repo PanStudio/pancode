@@ -173,8 +173,8 @@ export function sessionRoutes(
 	);
 	register(app, hub, routes.sessionTargets, ({ params }) => supervisor.targets(params.id));
 	register(app, hub, routes.probeSessionTarget, ({ params }, context) =>
-		commands.run(`probe:${params.id}:${params.targetId}`, idempotencyKey(context), {}, () =>
-			supervisor.probe(params.id, params.targetId),
+		commands.run(`probe:${params.id}:${params.connectionId}`, idempotencyKey(context), {}, () =>
+			supervisor.probe(params.id, params.connectionId),
 		),
 	);
 	register(app, hub, routes.sessionAutonomy, ({ params }) => supervisor.autonomy(params.id));

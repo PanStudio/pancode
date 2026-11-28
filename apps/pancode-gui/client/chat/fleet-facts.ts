@@ -43,7 +43,7 @@ export type FleetItemLike = Omit<FleetItem, "fact"> & {
  * `ended` is never folded from the feed: it is a run the feed last saw live that the server no longer holds, so its
  * final event never reached this view. It says what the view knows, not how the run went.
  */
-export type FleetRunState = "queued" | "running" | "progress" | "done" | "failed" | "stopped" | "ended";
+export type FleetRunState = "queued" | "running" | "progress" | "done" | "failed" | "canceled" | "ended";
 
 export interface FleetRun {
 	readonly runId: string;
@@ -75,7 +75,7 @@ export const FLEET_GLYPHS: Readonly<Record<FleetRunState, string>> = {
 	progress: "◑",
 	done: "✓",
 	failed: "✕",
-	stopped: "■",
+	canceled: "■",
 	ended: "○",
 };
 
@@ -86,7 +86,7 @@ export const FLEET_STATE_LABELS: Readonly<Record<FleetRunState, string>> = {
 	progress: "Working",
 	done: "Done",
 	failed: "Failed",
-	stopped: "Stopped",
+	canceled: "Canceled",
 	ended: "Ended (final event not received)",
 };
 
@@ -96,7 +96,7 @@ export const FLEET_STATE_TONES: Readonly<Record<FleetRunState, StatusTone>> = {
 	progress: "running",
 	done: "success",
 	failed: "fail",
-	stopped: "neutral",
+	canceled: "neutral",
 	ended: "neutral",
 };
 
@@ -206,7 +206,7 @@ function apply(
 		case "fleet.completed":
 			return {
 				...base,
-				state: lifecycle.view === "done" ? "done" : stopped ? "stopped" : "failed",
+				state: lifecycle.view === "done" ? "done" : stopped ? "canceled" : "failed",
 				outcome: terminalOutcome(payload) ?? base.outcome,
 				durationMs: integer(payload.durationMs) ?? base.durationMs,
 				tokens: text(payload.tokenDisplay) ?? base.tokens,
@@ -215,7 +215,7 @@ function apply(
 		case "fleet.failed":
 			return {
 				...base,
-				state: lifecycle.view === "done" ? "done" : stopped ? "stopped" : "failed",
+				state: lifecycle.view === "done" ? "done" : stopped ? "canceled" : "failed",
 				outcome: (stopped ? stopOutcome(payload) : terminalOutcome(payload)) ?? base.outcome,
 				durationMs: integer(payload.durationMs) ?? base.durationMs,
 				tokens: text(payload.tokenDisplay) ?? base.tokens,
@@ -377,7 +377,7 @@ export function presentFleetFact(fact: { readonly type: string; readonly payload
 		}
 		case "fleet.failed":
 			return isStop(payload)
-				? { label: "Run stopped", tone: "neutral", known: true, summary: `${stopOutcome(payload) ?? "Stopped"}.` }
+				? { label: "Run canceled", tone: "neutral", known: true, summary: `${stopOutcome(payload) ?? "Canceled"}.` }
 				: {
 						label: "Run failed",
 						tone: "fail",
@@ -466,12 +466,12 @@ export function fleetEvidence(items: readonly FleetItemLike[]): readonly FleetEv
  */
 export const STEER_REFUSALS: Readonly<Record<string, string>> = {
 	"dispatch-unavailable": "This PanCode build has no dispatch domain to steer.",
-	"fleet-unavailable": "The fleet control channel is not available in this task.",
+	"fleet-unavailable": "The fleet control channel is not available in this session.",
 	"run-not-active": "That run is no longer active, so there is nothing to steer.",
-	"cancel-failed": "PanCode could not stop that run. It may already be settling.",
+	"cancel-failed": "PanCode could not cancel that run. It may already be settling.",
 	"empty-message": "Guidance needs some text.",
-	"steering-unsupported": "That worker's runtime does not accept live guidance. It can still be stopped.",
-	"no-input-channel": "That worker has no input channel, so guidance cannot reach it. It can still be stopped.",
+	"steering-unsupported": "That worker's runtime does not accept live guidance. It can still be canceled.",
+	"no-input-channel": "That worker has no input channel, so guidance cannot reach it. It can still be canceled.",
 	"input-closed": "That worker no longer accepts input. It is finishing on its own.",
 	"run-terminating": "That run is already terminating.",
 	"steer-failed": "PanCode refused the guidance and reported no specific reason.",
@@ -493,7 +493,7 @@ export function steerOutcome(
 			message:
 				action === "guide"
 					? "Guidance queued. The worker reads it at its next step."
-					: "Stop requested. The run row settles when the worker exits.",
+					: "Cancel requested. The run row settles when the worker exits.",
 		};
 	const reason = result.reason ?? "steer-failed";
 	return { tone: "warn", message: STEER_REFUSALS[reason] ?? `PanCode refused: ${reason}.` };

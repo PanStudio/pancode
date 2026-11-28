@@ -19,7 +19,7 @@ import type { DispatchBackgroundRegistry } from "./dispatch-background.js";
 import type { DispatchPlanView, ResolvedDispatchPlanArtifact } from "./dispatch-plan.js";
 import type { DispatchRunEventRegistry } from "./dispatch-run-events.js";
 import type { DispatchSchemaComposition } from "./dispatch-schema.js";
-import type { DispatchReadRootTask, ToolInvokeOptions } from "./registry-contract.js";
+import type { DispatchReadRootTask, ToolInvokeOptions } from "./registry/contract.js";
 
 export type DispatchMode = "parallel" | "sequential" | "pipeline" | "compete" | "council";
 
@@ -146,7 +146,10 @@ export interface DispatchToolDeps {
 	getAgentRoleFacts?: AgentRoleFactsResolver;
 	getAutonomy?: () => AutonomyLevel;
 	getCostCeilingUsd?: () => number;
-	getWorkerRosters?: () => Readonly<Record<string, { members: ReadonlyArray<DispatchCouncilMember> }>>;
+	/** Settings rosters: a member names its connection as `connection`, the settings key. */
+	getWorkerRosters?: () => Readonly<
+		Record<string, { members: ReadonlyArray<Omit<DispatchCouncilMember, "target"> & { connection: string }> }>
+	>;
 	/** Which optional schema blocks this session advertises; absent means every block. */
 	getSchemaComposition?: () => DispatchSchemaComposition;
 	/**

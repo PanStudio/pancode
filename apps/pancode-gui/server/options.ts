@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import { parseArgs } from "node:util";
+import { MAX_TIMER_DELAY_MS, parseDuration } from "./pancode/http-shims.js";
 
 export type OpenMode = "always" | "never" | "auto";
 export type ReuseMode = "required" | "preferred" | "never";
@@ -77,9 +78,16 @@ export function serverOptions(args: string[]) {
 		throw new Error(
 			"--persistent requires a configuration file and cannot be combined with --port, --token-stdin, --idle-exit, --fixture or --open.",
 		);
+	let idleMs: number | undefined;
+	if (values["idle-exit"] !== undefined) {
+		const parsed = parseDuration(values["idle-exit"], { bareUnit: "ms" });
+		if (!parsed.ok) throw new Error(`--idle-exit: ${parsed.message}`);
+		if (parsed.ms > MAX_TIMER_DELAY_MS) throw new Error(`--idle-exit must be at most ${MAX_TIMER_DELAY_MS}ms.`);
+		idleMs = parsed.ms;
+	}
 	return {
 		port: integer("port", values.port ?? "0", 0, 65535),
-		idleMs: values["idle-exit"] === undefined ? undefined : integer("idle-exit", values["idle-exit"], 1, 2_147_483_647),
+		idleMs,
 		fixture: values.fixture,
 		/** `auto` opens a browser only for a person at a desktop terminal; see `autoOpenBrowser`. */
 		open: values["no-open"] || values.persistent !== undefined ? "never" : values.open ? "always" : ("auto" as OpenMode),

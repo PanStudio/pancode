@@ -24,11 +24,11 @@ export interface FleetToolInstallPlan {
 
 /** Explicit operator provisioning; ordinary dispatch never calls this path. */
 export function prepareFleetToolInstall(id: string, tool: FleetTool): FleetToolInstallPlan {
-	if (!isFleetTool(tool)) throw new Error(`remote tool installation supports ${FLEET_TOOLS.join(", ")}`);
+	if (!isFleetTool(tool)) throw new Error(`remote program installation supports ${FLEET_TOOLS.join(", ")}`);
 	const node = fleetNode(id);
 	const entry = node.pancodeEntry ?? "pancode worker";
 	if (!/\sworker\s*$/.test(entry))
-		throw new Error("remote tool installation requires a configured PanCode worker entry ending in worker");
+		throw new Error("remote program installation requires a configured PanCode worker entry ending in worker");
 	const cli = entry.replace(/\sworker\s*$/, "");
 	return {
 		node: structuredClone(node),
@@ -60,7 +60,7 @@ export function describeFleetToolInstall(plan: FleetToolInstallPlan): string {
 export async function executeFleetToolInstall(plan: FleetToolInstallPlan): Promise<string> {
 	const current = prepareFleetToolInstall(plan.node.id, plan.tool);
 	if (current.connectionHash !== plan.connectionHash || current.command !== plan.command)
-		throw new Error("node configuration changed since the tool install preview; preview again");
+		throw new Error("node configuration changed since the program install preview; preview again");
 	const versionCommand =
 		current.node.pancodeVersionCommand ??
 		`${(current.node.pancodeEntry ?? "pancode worker").replace(/\sworker\s*$/, "")} --version`;
@@ -71,7 +71,7 @@ export async function executeFleetToolInstall(plan: FleetToolInstallPlan): Promi
 			.split("\n")
 			.some((line) => line.match(/\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?/u)?.[0] === readPancodeVersion())
 	)
-		throw new Error("remote PanCode version must match this client before tool provisioning");
+		throw new Error("remote PanCode version must match this client before program provisioning");
 	const result = await runCommandVector("ssh", buildSshArgs(current.node, current.command), {
 		// An SDK component is an npm install of up to about 180 MB, which the remote client bounds at 10 minutes.
 		timeoutMs: plan.tool === "asciinema" ? 300_000 : 11 * 60_000,

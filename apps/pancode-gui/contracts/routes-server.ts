@@ -6,12 +6,12 @@ import { Empty, Id } from "./common.js";
 import { EventCursor } from "./events.js";
 import { Meta } from "./meta.js";
 import { Accepted, Operation } from "./operations.js";
+import { Install, Programs } from "./programs.js";
 import { defineRoute, get, operationParams, post } from "./route-schema.js";
 import { routes as runtimeRoutes } from "./runtime-routes.js";
-import { Install, Tools } from "./toolchain.js";
 
-const toolParams = Type.Object({ toolId: Id }, { additionalProperties: false });
-/** The server itself: versions, the OpenAPI document, authentication, the event stream, the toolchain and operations. */
+const toolParams = Type.Object({ programId: Id }, { additionalProperties: false });
+/** The server itself: versions, the OpenAPI document, authentication, the event stream, pinned programs and operations. */
 export const serverRoutes = {
 	meta: defineRoute({ ...get, response: Meta, summary: "Application and PanCode versions", ...runtimeRoutes.meta }),
 	openapi: defineRoute({
@@ -85,8 +85,8 @@ export const serverRoutes = {
 	}),
 	tools: defineRoute({
 		...get,
-		response: Tools,
-		summary: "Pinned tools in registry order",
+		response: Programs,
+		summary: "Pinned programs in registry order",
 		...runtimeRoutes.tools,
 	}),
 	install: defineRoute({
@@ -94,7 +94,7 @@ export const serverRoutes = {
 		params: toolParams,
 		body: Install,
 		response: Accepted,
-		summary: "Install the pinned tool",
+		summary: "Install the pinned program",
 		...runtimeRoutes.install,
 	}),
 	remove: defineRoute({

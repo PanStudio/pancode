@@ -76,8 +76,8 @@ export const UsagePanel = memo(function UsagePanel({
 			{sessionOpen && !supported ? (
 				<p className="pane-empty">
 					{capabilities?.telemetry
-						? "This PanCode build does not report model details or provider quota for this task."
-						: "PanCode does not report usage for this task."}
+						? "This PanCode build does not report model details or provider quota for this session."
+						: "PanCode does not report usage for this session."}
 				</p>
 			) : null}
 			{usage.isPending && sessionOpen && supported ? <p className="pane-empty">Reading usage…</p> : null}

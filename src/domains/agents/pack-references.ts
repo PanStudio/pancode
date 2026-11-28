@@ -1,0 +1,98 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { readFileSync, realpathSync } from "node:fs";
+import path from "node:path";
+import { isSameOrDescendant, relativePathEscapes } from "../../core/path-containment.js";
+import { parsePluginManifest, readPluginManifest } from "../plugins/index.js";
+
+export interface PackReferenceContext {
+	rootPath?: string;
+	/** Only plugin-owned content interprets package references. */
+	plugin?: boolean;
+}
+
+/** Prose markers with a portable, space-free slash suffix. */
+const REFERENCE_PATTERN = /\$\{(pluginRoot|component:([^}]+))\}(\/[A-Za-z0-9._~%+@/-]*)?/g;
+/** The same reference occupying an entire argv/data value, spaces and Unicode included. */
+const COMPLETE_REFERENCE = /^\$\{(pluginRoot|component:([^}]+))\}(\/[\s\S]*)?$/u;
+
+function referenceResolver(context: PackReferenceContext & { rootPath: string }) {
+	const root = realpathSync(context.rootPath);
+	let components: Map<string, string> | undefined;
+	return (reference: string, _token: string, ref: string | undefined, suffix: string | undefined): string => {
+		if (suffix && /[\\\0\r\n]/u.test(suffix)) throw new Error(`unsupported package path syntax: ${reference}`);
+		let relative = "";
+		if (ref !== undefined) {
+			if (!components) {
+				const candidate = readPluginManifest(root);
+				if (!candidate.valid || !candidate.manifest) throw new Error("plugin manifest unavailable for component reference");
+				components = new Map(
+					candidate.manifest.pancode.components.map((component) => [`${component.kind}:${component.id}`, component.path]),
+				);
+			}
+			const componentPath = components.get(ref);
+			if (componentPath === undefined) throw new Error(`unresolved component reference: ${ref}`);
+			relative = componentPath;
+		}
+		const target = path.resolve(root, relative + (suffix ?? ""));
+		try {
+			// A root token's slash suffix is package-relative, never filesystem-absolute.
+			const resolved = ref === undefined ? path.resolve(root, `.${suffix ?? ""}`) : target;
+			if (!isSameOrDescendant(resolved, root) || !isSameOrDescendant(realpathSync(resolved), root))
+				throw new Error("outside package");
+			return resolved;
+		} catch {
+			throw new Error(`unresolved or escaping package reference: ${reference}`);
+		}
+	};
+}
+
+/**
+ * Expand prose markers with portable, space-free slash suffixes. Surrounding
+ * prose is not a filesystem path; data arguments use the complete-path parser.
+ */
+export function resolvePackReferences(body: string, context: PackReferenceContext): string {
+	if (!context.rootPath || !context.plugin || !body.includes("${")) return body;
+	return body.replace(REFERENCE_PATTERN, referenceResolver({ ...context, rootPath: context.rootPath }));
+}
+
+/** Resolve an entire argv/data path, including spaces and Unicode, before use. */
+export function resolvePackPathReference(value: string, context: PackReferenceContext): string {
+	if (!context.rootPath || !context.plugin || !/\$\{(?:pluginRoot|component:)/u.test(value)) return value;
+	const match = COMPLETE_REFERENCE.exec(value);
+	if (!match || match[3]?.includes("${"))
+		throw new Error("package path references must occupy one complete argument with no embedded expressions");
+	return referenceResolver({ ...context, rootPath: context.rootPath })(value, match[1] ?? "", match[2], match[3]);
+}
+
+/** At most this many declared resources are named to the model per template turn. */
+const PLUGIN_RESOURCE_LIMIT = 12;
+
+/**
+ * The `resource` components a plugin declares (schemas, templates,
+ * references), resolved inside the package. A template turn names them so the
+ * model reads them directly instead of discovering them through the shell.
+ * An unreadable manifest or an escaping or missing path yields nothing for it.
+ */
+export function pluginResourceComponents(rootPath: string): Array<{ id: string; path: string }> {
+	try {
+		const root = realpathSync(rootPath);
+		const manifest = parsePluginManifest(readFileSync(path.join(root, "plugin.json"), "utf8"), root);
+		const resources: Array<{ id: string; path: string }> = [];
+		for (const component of manifest.pancode.components) {
+			if (component.kind !== "resource" || resources.length >= PLUGIN_RESOURCE_LIMIT) continue;
+			try {
+				const resolved = realpathSync(path.resolve(root, component.path));
+				const rel = path.relative(root, resolved);
+				if (relativePathEscapes(rel)) continue;
+				resources.push({ id: component.id, path: resolved });
+			} catch {
+				// A declared resource that does not exist is not offered; the plugin's own checks report it.
+			}
+		}
+		return resources;
+	} catch {
+		// Naming resources is guidance; a manifest that cannot be read leaves the turn without it.
+		return [];
+	}
+}

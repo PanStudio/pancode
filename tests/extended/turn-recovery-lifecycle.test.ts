@@ -306,14 +306,14 @@ test("an OAuth rejection refreshes the sent token once, then retries or ends wit
 				statuses.map((status) => status.phase),
 				["retrying", refreshed ? "recovered" : "exhausted"],
 			);
-			ok(statuses[0]?.errorMessage?.includes("target 'codex'"), statuses[0]?.errorMessage);
+			ok(statuses[0]?.errorMessage?.includes("connection 'codex'"), statuses[0]?.errorMessage);
 			const tail = state.messages.at(-1);
 			if (refreshed) {
 				strictEqual(errorMessage(tail), undefined, "the rejected round was pruned before the retry");
 				strictEqual(state.messages.length, 1);
 			} else {
 				const remedy = errorMessage(tail);
-				ok(remedy?.includes("target 'codex'") && remedy.includes("pancode auth login openai-codex"), remedy);
+				ok(remedy?.includes("connection 'codex'") && remedy.includes("pancode auth login openai-codex"), remedy);
 				strictEqual(statuses[1]?.errorMessage, remedy);
 				ok(!remedy?.includes("refresh rejected"), "provider refresh diagnostics stay out of the remedy");
 			}
@@ -449,9 +449,9 @@ test("Stop fences deferred preparation and compaction before model calls or late
 				settings.chat.thinkingLevel = "off";
 				settings.context.workingSet.enabled = false;
 				const context = dispatchStubContext({ settings });
-				const target = settings.targets[0];
+				const target = settings.connections[0];
 				ok(target);
-				settings.chat.target = target.id;
+				settings.chat.connection = target.id;
 				settings.chat.model = target.defaultModel ?? "gpt-4o";
 				process.env.PANCODE_FORCE_COMPACT = phase === "compaction" ? "1" : "0";
 				const session = createSessionBundle(context).contract;

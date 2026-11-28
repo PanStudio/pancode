@@ -41,8 +41,8 @@ import { describeCallTarget } from "../../src/lib/call-target/call-target.js";
 import { redactSecretString } from "../../src/lib/secrets/redaction.js";
 import { bashTool } from "../../src/tools/bash.js";
 import { readTool } from "../../src/tools/read.js";
+import type { PermissionRequiredMeta } from "../../src/tools/registry/contract.js";
 import { createRegistry } from "../../src/tools/registry.js";
-import type { PermissionRequiredMeta } from "../../src/tools/registry-contract.js";
 import { writeTool } from "../../src/tools/write.js";
 import { type IsolatedPancodeEnv, isolatePancodeEnv } from "../harness/scratch-env.js";
 
@@ -1138,8 +1138,8 @@ describe("safety gate boundary", () => {
 	it("asks before a share import or package code runs, and keeps an extension install blocked", () => {
 		const policy = engine();
 		for (const command of [
-			"pancode share import ./archive.json",
-			"pancode dev share import ./archive.json",
+			"pancode archive import ./archive.json",
+			"pancode dev archive import ./archive.json",
 			"pancode extensions test ./draft-extension",
 			"pancode extensions validate ./draft-extension",
 		]) {
@@ -1150,7 +1150,7 @@ describe("safety gate boundary", () => {
 			strictEqual(policy.evaluate(call, "confirmed").kind, "allow", command);
 		}
 		strictEqual(
-			policy.evaluate({ tool: ToolNames.Bash, args: { command: "pancode share import ./archive.json --dry-run" } }).kind,
+			policy.evaluate({ tool: ToolNames.Bash, args: { command: "pancode archive import ./archive.json --dry-run" } }).kind,
 			"allow",
 		);
 		strictEqual(
@@ -1774,6 +1774,68 @@ describe("safety gate boundary", () => {
 		rmSync(join(scratch, "-outside"));
 		writeFileSync(join(scratch, "--files0-from=a.txt"), "");
 		strictEqual(recognition("wc *"), "unrecognized", "a matched file name is judged as the option it becomes");
+	});
+
+	it("recognizes a for loop over a read-only find only when every value and body step only reads", () => {
+		writeInspectionFixture();
+		const policy = engine();
+		const recognition = (command: string) => policy.evaluate({ tool: ToolNames.Bash, args: { command } }).execRecognition;
+		// A fleet coder's exploration command parked behind an operator-only ask, including quoted echo labels and `"$f"`.
+		strictEqual(
+			recognition(
+				`cd ${scratch} || pwd; find . -path ./.git -prune -o -type f -print | head -100; echo; cat README.md; echo ----; for f in $(find src -name '*.js'); do echo "== $f"; cat "$f"; done`,
+			),
+			"recognized",
+		);
+		strictEqual(recognition('for f in $(find src)\ndo\n  wc -l "$f"\ndone'), "recognized");
+		for (const command of [
+			"for f in $(cat a.txt); do cat $f; done",
+			'for f in $(find src); do sed -n 1p "$f"; done',
+			'for f in $(find src); do file "$f"; done',
+			"for f in $(find src); do pytest $f; done",
+			"for f in $(find src); do rm $f; done",
+			"for f in $(find src); do cat $f > a.txt; done",
+			"for f in $(find src -printf /etc/hostname); do cat $f; done",
+			"for f in $(find src -exec cat {} +); do cat $f; done",
+			"for PATH in $(find src); do cat $PATH; done",
+			"for f in $(find src); do cat $f $g; done",
+			'for f in $(find src); do echo "== $f$g"; done',
+			`for f in $(find src); do echo "$\{f%x}"; done`,
+			'for f in $(find src); do echo "$HOME $f"; done',
+			'for f in $(find src); do echo "$f"x; done',
+			'for f in $(find src); do cat "== $f"; done',
+			"for f in $(find src); do for g in $(find src); do cat $f $g; done; done",
+			"for f in $(find src # ); do cat $f; done",
+			'for f in $(find missing); do grep "$f" /etc/passwd; done',
+			'for f in ; do grep "$f" /etc/passwd; done',
+			"for f in $(find -- -R); do grep foo $f; done",
+		]) {
+			const decision = policy.evaluate({ tool: ToolNames.Bash, args: { command } });
+			strictEqual(decision.kind !== "allow" && decision.execRecognition !== "recognized", true, command);
+		}
+		writeFileSync(join(scratch, "src", "a b.js"), "x\n");
+		strictEqual(recognition("for f in $(find src); do cat $f; done"), "unrecognized", "a spaced name splits");
+		rmSync(join(scratch, "src", "a b.js"));
+		symlinkSync("/etc/hostname", join(scratch, "src", "host.js"));
+		strictEqual(recognition("for f in $(find src); do cat $f; done"), "unrecognized", "a value links out");
+		rmSync(join(scratch, "src", "host.js"));
+		mkdirSync(join(scratch, "secret"), { recursive: true });
+		writeFileSync(join(scratch, "secret", ".env"), "SECRET=1\n");
+		symlinkSync(join(scratch, "secret"), join(scratch, "src", "link"));
+		strictEqual(
+			recognition('for f in $(find -H src/link); do cat "$f"; done'),
+			"unrecognized",
+			"find -H follows a symlink start point into zero-access",
+		);
+		strictEqual(
+			recognition('for f in $(find src/link/); do cat "$f"; done'),
+			"unrecognized",
+			"trailing slash on symlink start point follows into zero-access",
+		);
+		rmSync(join(scratch, "src", "link"));
+		rmSync(join(scratch, "secret"), { recursive: true, force: true });
+		writeFileSync(join(scratch, "src", ".env"), "SECRET=1\n");
+		strictEqual(recognition("for f in $(find src); do cat $f; done"), "unrecognized", "a value is zero-access");
 	});
 
 	it("asks for rg while the tool environment names a ripgrep config", () => {

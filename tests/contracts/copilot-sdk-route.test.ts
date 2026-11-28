@@ -33,7 +33,6 @@ import { classifyFailure } from "../../src/domains/dispatch/failure-classificati
 import { prepareWorkerModelListing } from "../../src/domains/dispatch/worker-model-metadata.js";
 import type { WorkerSpec } from "../../src/domains/dispatch/worker-spawn.js";
 import { createBackgroundMemoryModelClient } from "../../src/domains/memory/background-route.js";
-import type { MemoryRouteText } from "../../src/domains/memory/secret-text.js";
 import { prepareListedModelCapabilities } from "../../src/domains/providers/background-model-metadata.js";
 import type { ProvidersContract } from "../../src/domains/providers/contract.js";
 import { copilotAuthState, detectCopilotLogin, prepareCopilotSdk } from "../../src/domains/providers/copilot-setup.js";
@@ -74,6 +73,7 @@ import { getEngineEnvApiKey } from "../../src/engine/env-api-keys.js";
 import { getEngineOAuthProvider } from "../../src/engine/oauth.js";
 import { startWorkerRun } from "../../src/engine/worker-runtime.js";
 import { createSideRequestAdmission } from "../../src/entry/side-request-admission.js";
+import type { MemoryRouteText } from "../../src/lib/secrets/memory-route.js";
 import { type CreateChatLoopDeps, createChatLoop } from "../../src/session-control/chat-loop.js";
 import { assessToolCallFlood } from "../../src/session-control/repetition-detector.js";
 import { runOutOfTurnRound } from "../../src/session-control/side-question.js";
@@ -711,7 +711,7 @@ test("auth list shows Copilot beside the runtimes PanCode signs in, with the acc
 	}) as typeof process.stdout.write;
 	try {
 		strictEqual(await runAuthCommand(["list"]), 0);
-		match(stdout, /^\s*copilot-sdk\s+GitHub Copilot SDK\s+signed in as octo\s+targets=\d+$/mu);
+		match(stdout, /^\s*copilot-sdk\s+GitHub Copilot SDK\s+signed in as octo\s+connections=\d+$/mu);
 		stdout = "";
 		strictEqual(await runAuthCommand(["list", "--json"]), 0);
 	} finally {
@@ -1007,8 +1007,8 @@ test("a memory side call with thinking off asks a Copilot model that cannot turn
 	});
 	const settings = structuredClone(DEFAULT_SETTINGS);
 	const target = { id: "copilot-memory", runtime: "copilot-sdk", defaultModel: "three-levels" };
-	settings.targets = [target];
-	settings.context.memory.target = target.id;
+	settings.connections = [target];
+	settings.context.memory.connection = target.id;
 	settings.context.memory.model = "three-levels";
 	const bundle = createProvidersBundle(dispatchStubContext({ settings }), { getSettings: () => settings });
 	// A side call leaves an empty spare that opens on its own time (PV-2), so the newest session may be that spare.
@@ -1058,8 +1058,8 @@ test("ACP on a cold listing cache offers the account's live models, their listed
 	});
 	const settings = structuredClone(DEFAULT_SETTINGS);
 	const target = { id: "copilot-acp", runtime: "copilot-sdk", defaultModel: "fake-model" };
-	settings.targets = [target];
-	settings.chat.target = target.id;
+	settings.connections = [target];
+	settings.chat.connection = target.id;
 	settings.chat.model = "fake-model";
 	const providers = createProvidersBundle(dispatchStubContext({ settings }), { getSettings: () => settings });
 	await providers.extension.start();
@@ -1177,7 +1177,7 @@ test("every Copilot worker path resolves the main agent's thinking levels, budge
 	});
 	const settings = structuredClone(DEFAULT_SETTINGS);
 	const target = { id: "copilot-worker", runtime: "copilot-sdk", defaultModel: "worker-levels" };
-	settings.targets = [target];
+	settings.connections = [target];
 	const freshProcess = async () => {
 		const bundle = createProvidersBundle(dispatchStubContext({ settings }), { getSettings: () => settings });
 		await bundle.extension.start();
@@ -1236,8 +1236,8 @@ test("a cold Copilot worker lists before its route is chosen, so an id the listi
 	});
 	const settings = structuredClone(DEFAULT_SETTINGS);
 	const target = { id: "copilot-row357", runtime: "copilot-sdk", defaultModel: "row357-a" };
-	settings.targets = [target];
-	settings.fleet.default.target = target.id;
+	settings.connections = [target];
+	settings.fleet.default.connection = target.id;
 	const context = dispatchStubContext({ settings });
 	const providers = createProvidersBundle(context, { getSettings: () => settings });
 	await providers.extension.start();
@@ -2552,7 +2552,7 @@ test("a default copilot-sdk target admits workers beside the foreground turn, an
 		while (foreground.length < capacity.limit) foreground.push(registerForegroundStream(capacity.key));
 		await rejects(admit("behind-foreground"), (error: unknown) => {
 			ok(error instanceof Error);
-			match(error.message, /set maxConcurrentRequests on target 'copilot' above its default of \d+/u);
+			match(error.message, /set maxConcurrentRequests on connection 'copilot' above its default of \d+/u);
 			return true;
 		});
 	} finally {
@@ -2575,13 +2575,13 @@ test("steering triage at thinking off on a Copilot model that cannot turn thinki
 	const target = { id: "copilot-triage", runtime: "copilot-sdk", defaultModel: "three-levels" };
 	const settings = structuredClone(DEFAULT_SETTINGS);
 	settings.chat.prewarm = false;
-	settings.targets = [target];
-	settings.chat.target = target.id;
+	settings.connections = [target];
+	settings.chat.connection = target.id;
 	settings.chat.model = "three-levels";
 	settings.chat.steering.triage = {
 		...settings.chat.steering.triage,
 		enabled: true,
-		target: target.id,
+		connection: target.id,
 		model: "three-levels",
 		thinkingLevel: "off",
 	};
@@ -2722,7 +2722,7 @@ test("a Copilot worker asked for a model the seat does not list is refused befor
 	const last = messages.at(-1) as AssistantMessage & { modelRouteRefusal?: { code?: string } };
 	strictEqual(last.stopReason, "error");
 	strictEqual(last.modelRouteRefusal?.code, "model_unavailable");
-	match(last.errorMessage ?? "", /^no model gpt-6\.2-terra on target copilot-worker; available: /);
+	match(last.errorMessage ?? "", /^no model gpt-6\.2-terra on connection copilot-worker; available: /);
 	strictEqual(fake().sessions.length, sessionsBefore, "no Copilot session opened");
 	disposeCopilotConversations("row384-worker");
 });

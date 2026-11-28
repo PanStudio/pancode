@@ -50,7 +50,7 @@ describe("global startup flags before a subcommand", () => {
 		[["--no-skills", "paths"], "--no-skills", "paths"],
 		[["--api-key", "k-123", "doctor"], "--api-key", "doctor"],
 		[["-nc", "fleet", "status"], "-nc", "fleet"],
-		[["--skill", "skill-dir", "share", "inspect", "x.json"], "--skill", "share"],
+		[["--skill", "skill-dir", "archive", "inspect", "x.json"], "--skill", "archive"],
 		[["--with-panes", "run", "hello"], "--with-panes", "run"],
 		[["--with-panes", "acp"], "--with-panes", "acp"],
 	] as const) {
@@ -142,14 +142,14 @@ describe("global startup flags before a subcommand", () => {
 	});
 });
 
-describe("share", () => {
+describe("archive", () => {
 	it("export --dry-run reports the archive and writes nothing", () => {
 		const out = join(home.dir, "dry.pancode-share.json");
-		const result = cli(["share", "export", "--out", out, "--dry-run"]);
+		const result = cli(["archive", "export", "--out", out, "--dry-run"]);
 		equal(result.status, 0, result.stderr);
 		equal(existsSync(out), false, "a dry run must never write the archive");
 		match(result.stdout, /would write \d+ item\(s\) to /u);
-		const json = cli(["share", "export", "--out", out, "--dry-run", "--json"]);
+		const json = cli(["archive", "export", "--out", out, "--dry-run", "--json"]);
 		equal(json.status, 0, json.stderr);
 		equal(existsSync(out), false);
 		const parsed = JSON.parse(json.stdout) as { dryRun?: unknown; out?: unknown; manifest?: { files?: unknown } };
@@ -159,11 +159,11 @@ describe("share", () => {
 	});
 
 	for (const [args, flag] of [
-		[["share", "export", "--out", "x.json", "--force"], "--force"],
-		[["share", "import", "x.json", "--both"], "--both"],
-		[["share", "import", "x.json", "--prompts"], "--prompts"],
-		[["share", "inspect", "x.json", "--force"], "--force"],
-		[["share", "inspect", "x.json", "--dry-run"], "--dry-run"],
+		[["archive", "export", "--out", "x.json", "--force"], "--force"],
+		[["archive", "import", "x.json", "--both"], "--both"],
+		[["archive", "import", "x.json", "--prompts"], "--prompts"],
+		[["archive", "inspect", "x.json", "--force"], "--force"],
+		[["archive", "inspect", "x.json", "--dry-run"], "--dry-run"],
 	] as const) {
 		it(`refuses ${args.join(" ")} instead of ignoring ${flag}`, () => {
 			const result = cli(args);
@@ -484,18 +484,22 @@ describe("run --task-file envelope (SPEC 6.3)", () => {
 	};
 
 	it("merges the envelope's task and flags into the run arguments", async () => {
-		const file = envelope("ok", { schemaVersion: 1, task: "say hi", route: { model: "m1" } });
+		const file = envelope("ok", { schemaVersion: 1, task: "say hi", route: { connection: "local", model: "m1" } });
 		const parsed = await parseRunArgsWithTaskFile(["--task-file", file]);
 		equal(parsed.diagnostics.filter((diagnostic) => diagnostic.type === "error").length, 0);
 		deepStrictEqual(parsed.messages, ["say hi"]);
+		equal(parsed.target, "local");
 		equal(parsed.model, "m1");
 	});
 
 	it("refuses a key given in the file and on the command line, naming the dotted path", async () => {
-		const file = envelope("conflict", { schemaVersion: 1, task: "say hi", route: { model: "m1" } });
+		const file = envelope("conflict", { schemaVersion: 1, task: "say hi", route: { connection: "local", model: "m1" } });
 		const { slug, message } = await refusal(["--model", "m2", "--task-file", file]);
 		equal(slug, "task_flag_conflict");
 		match(message, /route\.model/);
+		const connConflict = await refusal(["--connection", "other", "--task-file", file]);
+		equal(connConflict.slug, "task_flag_conflict");
+		match(connConflict.message, /route\.connection/);
 	});
 
 	it("refuses an unknown key and malformed JSON as usage, and a schemaVersion other than 1 as schema_unsupported", async () => {
@@ -505,6 +509,12 @@ describe("run --task-file envelope (SPEC 6.3)", () => {
 		]);
 		equal(unknown.slug, "usage");
 		match(unknown.message, /route\.bogus/);
+		const oldTarget = await refusal([
+			"--task-file",
+			envelope("old-target", { schemaVersion: 1, task: "x", route: { target: "local" } }),
+		]);
+		equal(oldTarget.slug, "usage");
+		match(oldTarget.message, /route\.target/);
 		equal((await refusal(["--task-file", envelope("bad", "{")])).slug, "usage");
 		// SPEC 6.6: the envelope names the version it cannot read at the source.
 		equal((await refusal(["--task-file", envelope("v2", { schemaVersion: 2, task: "x" })])).slug, "schema_unsupported");

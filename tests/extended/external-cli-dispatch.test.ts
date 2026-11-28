@@ -15,7 +15,7 @@ import { closeAgentLedger, openAgentLedger, readAgentLedger } from "../../src/do
 import { type DispatchIntent, declaredScopeIntent } from "../../src/domains/dispatch/intent.js";
 import codexCliRuntime from "../../src/domains/providers/runtimes/codex/codex-cli.js";
 import { opencodeCliRuntime, piCliRuntime } from "../../src/domains/providers/runtimes/external-cli-peers.js";
-import { verifyRunRecordReport } from "../../src/domains/session/view-artifacts.js";
+import { verifyRunRecordReport } from "../../src/session-control/view-artifacts.js";
 import { isolateDispatchState, makeDispatchBundle, restoreDispatchState } from "../harness/dispatch.js";
 import { dispatchStubContext } from "../harness/dispatch-stub-context.js";
 
@@ -67,8 +67,8 @@ afterEach(() => {
 
 test("managed Codex CLI dispatch seals success and cancellation receipts", { timeout: 20_000 }, async () => {
 	const settings = structuredClone(DEFAULT_SETTINGS);
-	settings.targets = [{ id: "codex-test", runtime: "codex-cli", defaultModel: "codex-cli-default" }];
-	settings.fleet.default.target = "codex-test";
+	settings.connections = [{ id: "codex-test", runtime: "codex-cli", defaultModel: "codex-cli-default" }];
+	settings.fleet.default.connection = "codex-test";
 	settings.fleet.default.model = "codex-cli-default";
 	settings.fleet.retry.maxRetries = 0;
 	settings.safety.autonomy = "default";
@@ -199,8 +199,8 @@ for (const event of [
 		"# Notes\n\n- Money is integer cents; see `src/cart.ts`.\n- Run `pnpm run test:all` before committing.\n",
 	);
 	const settings = structuredClone(DEFAULT_SETTINGS);
-	settings.targets = [{ id: "codex-test", runtime: "codex-cli", defaultModel: "codex-cli-default" }];
-	settings.fleet.default.target = "codex-test";
+	settings.connections = [{ id: "codex-test", runtime: "codex-cli", defaultModel: "codex-cli-default" }];
+	settings.fleet.default.connection = "codex-test";
 	settings.fleet.default.model = "codex-cli-default";
 	settings.fleet.retry.maxRetries = 0;
 	settings.safety.autonomy = "default";
@@ -336,10 +336,10 @@ for (const event of [
 	execFileSync("git", ["-C", root, "add", "."]);
 	execFileSync("git", ["-C", root, "commit", "-qm", "base"]);
 	const settings = structuredClone(DEFAULT_SETTINGS);
-	settings.targets = [
+	settings.connections = [
 		{ id: "opencode-test", runtime: "opencode-cli", defaultModel: "opencode-cli-default", trustedUnmediated: true },
 	];
-	settings.fleet.default.target = "opencode-test";
+	settings.fleet.default.connection = "opencode-test";
 	settings.fleet.default.model = "opencode-cli-default";
 	settings.fleet.retry.maxRetries = 0;
 	settings.safety.autonomy = "default";
@@ -472,8 +472,8 @@ for (const event of [
 	chmodSync(executable, 0o755);
 	const settings = structuredClone(DEFAULT_SETTINGS);
 	// Pi has no OS read-only sandbox, so it runs only write-capable work, and only trusted.
-	settings.targets = [{ id: "pi-test", runtime: "pi-cli", defaultModel: "pi-cli-default", trustedUnmediated: true }];
-	settings.fleet.default.target = "pi-test";
+	settings.connections = [{ id: "pi-test", runtime: "pi-cli", defaultModel: "pi-cli-default", trustedUnmediated: true }];
+	settings.fleet.default.connection = "pi-test";
 	settings.fleet.default.model = "pi-cli-default";
 	settings.fleet.retry.maxRetries = 0;
 	settings.safety.autonomy = "default";
@@ -539,8 +539,8 @@ for (const event of [
 	);
 	chmodSync(executable, 0o755);
 	const settings = structuredClone(DEFAULT_SETTINGS);
-	settings.targets = [{ id: "pi-test", runtime: "pi-cli", defaultModel: "pi-cli-default", trustedUnmediated: true }];
-	settings.fleet.default.target = "pi-test";
+	settings.connections = [{ id: "pi-test", runtime: "pi-cli", defaultModel: "pi-cli-default", trustedUnmediated: true }];
+	settings.fleet.default.connection = "pi-test";
 	settings.fleet.default.model = "pi-cli-default";
 	settings.fleet.retry.maxRetries = 0;
 	settings.safety.autonomy = "default";
@@ -625,8 +625,8 @@ if (process.argv[2] === "--version") {
 	);
 	writeFileSync(join(root, "AGENTS.md"), "# Notes\n\n- Run `pnpm run test:all` before committing.\n");
 	const settings = structuredClone(DEFAULT_SETTINGS);
-	settings.targets = [{ id: "pi-test", runtime: "pi-cli", defaultModel: "pi-cli-default", trustedUnmediated: true }];
-	settings.fleet.default.target = "pi-test";
+	settings.connections = [{ id: "pi-test", runtime: "pi-cli", defaultModel: "pi-cli-default", trustedUnmediated: true }];
+	settings.fleet.default.connection = "pi-test";
 	settings.fleet.default.model = "pi-cli-default";
 	settings.fleet.retry.maxRetries = 0;
 	settings.safety.autonomy = "default";
@@ -711,10 +711,10 @@ test("external edits distinguish current checkout, preserved worktree, and faile
 	chmodSync(executable, 0o755);
 	const settings = structuredClone(DEFAULT_SETTINGS);
 	// Write-capable work on an unmediated CLI needs the operator's explicit trust (Q6).
-	settings.targets = [
+	settings.connections = [
 		{ id: "codex-test", runtime: "codex-cli", defaultModel: "codex-cli-default", trustedUnmediated: true },
 	];
-	settings.fleet.default.target = "codex-test";
+	settings.fleet.default.connection = "codex-test";
 	settings.fleet.default.model = "codex-cli-default";
 	settings.fleet.retry.maxRetries = 0;
 	settings.safety.autonomy = "default";
@@ -857,8 +857,8 @@ for (const event of [
 	);
 	chmodSync(executable, 0o755);
 	const settings = structuredClone(DEFAULT_SETTINGS);
-	settings.targets = [{ id: "codex-test", runtime: "codex-cli", defaultModel: "codex-cli-default" }];
-	settings.fleet.default.target = "codex-test";
+	settings.connections = [{ id: "codex-test", runtime: "codex-cli", defaultModel: "codex-cli-default" }];
+	settings.fleet.default.connection = "codex-test";
 	settings.fleet.default.model = "codex-cli-default";
 	settings.fleet.retry.maxRetries = 0;
 	settings.safety.autonomy = "default";
@@ -876,7 +876,7 @@ for (const event of [
 				requestOrigin: "user",
 				denyTools: ["write"],
 			}),
-			/denyTools cannot be enforced on an external CLI target/,
+			/denyTools cannot be enforced on an external CLI connection/,
 		);
 		const writeRequest = {
 			agentId: "coder",
@@ -892,7 +892,7 @@ for (const event of [
 		// Codex runs its own tool loop, so write-capable work is refused until the
 		// operator marks the target trusted-unmediated, and the opt-in is sealed.
 		await rejects(bundle.contract.dispatch(writeRequest), /refused write-capable work.*trustedUnmediated: true/u);
-		const target = settings.targets[0];
+		const target = settings.connections[0];
 		ok(target);
 		target.trustedUnmediated = true;
 		const run = await bundle.contract.dispatch(writeRequest);

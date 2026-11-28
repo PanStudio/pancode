@@ -58,10 +58,10 @@ test("setup --next: nothing found, a key found, and a ready route; it writes not
 
 	initializePancodeHome();
 	updateSettings((settings) => {
-		settings.targets = [
+		settings.connections = [
 			{ id: "claude", runtime: "anthropic", defaultModel: "claude-sonnet-5", auth: { apiKeyEnvVar: "ANTHROPIC_API_KEY" } },
 		];
-		settings.chat.target = "claude";
+		settings.chat.connection = "claude";
 		settings.chat.model = "claude-sonnet-5";
 	});
 	assert.deepEqual(await nextStepLines(noServers), [...head, "       Chat uses claude / claude-sonnet-5."]);

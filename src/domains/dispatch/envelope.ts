@@ -33,8 +33,8 @@ import {
 import { directSurfaceNames, withGatewayForCapabilities } from "../../core/tool-surface.js";
 import { type WorkerStaticHeadInput, workerEnvelopeDigest, workerStaticHead } from "../../lib/worker-wire/protocol.js";
 import { applyToolProfile, type ToolProfileName } from "../../tools/profiles.js";
-import { roleExcludes, roleHeldTools, roleRemedy, toolActionClass } from "../agents/role-class.js";
 import type { AgentCapabilityClass } from "../agents/spec.js";
+import { roleExcludes, roleHeldTools, roleRemedy, toolActionClass } from "../safety/index.js";
 import { toolEscapesWriteRoots } from "../safety/policy-write-landing.js";
 import type { WorkerMcpAttestation, WorkerPermitAllowance } from "../safety/worker-permit.js";
 import type { RunRole } from "./obligation.js";
@@ -283,7 +283,7 @@ export function resolveWorkerEnvelope(input: EnvelopeInput): WorkerEnvelope {
 		const harness = isHarnessExtensionToolName(tool);
 		if (isMcpToolName(tool) || harness ? !input.runtime.ownLoop : !input.runtime.offers(tool)) {
 			if (unasked(tool)) continue;
-			take(tool, "runtime", "the selected runtime runs its own tools; choose a native target");
+			take(tool, "runtime", "the selected runtime runs its own tools; choose a native connection");
 			continue;
 		}
 		// An extension tool this host has not enabled, or a name no build knows, is nothing to offer.

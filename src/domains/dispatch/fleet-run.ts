@@ -227,6 +227,19 @@ async function settleFleetAssignment(
 	).catch(() => undefined);
 }
 
+/** The live plan's steps that ran, out of those it planned, and the ones that never ran nor were found unneeded. */
+function stepCoverage(
+	steps: ReadonlyArray<{ id: string }>,
+	result: { results: ReadonlyMap<string, unknown>; unneeded: ReadonlyArray<string> },
+): Pick<FleetRunOutcome, "notRunStepIds" | "plannedStepCount" | "ranStepCount"> {
+	return {
+		notRunStepIds: steps
+			.filter((step) => !result.results.has(step.id) && !result.unneeded.includes(step.id))
+			.map((step) => step.id),
+		plannedStepCount: steps.length,
+		ranStepCount: steps.filter((step) => result.results.has(step.id)).length,
+	};
+}
 async function runFleetHoldingWorkspace(
 	input: ExecuteFleetRunInput,
 	place: FleetRunPlace,
@@ -1261,9 +1274,7 @@ async function runFleetHoldingWorkspace(
 		receipts,
 		totalCost: sumRunSpend(receipts),
 		totalUsage: sumRunTokens(receipts),
-		notRunStepIds: livePlan.steps
-			.filter((step) => !result.results.has(step.id) && !result.unneeded.includes(step.id))
-			.map((step) => step.id),
+		...stepCoverage(livePlan.steps, result),
 		requiredStepCount: required.length,
 		succeededStepCount,
 		resolvedLoopCount: result.loops.length - failedLoops.length,

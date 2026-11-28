@@ -34,7 +34,7 @@ import { pluginContentDigest } from "../../src/domains/plugins/index.js";
 import { clearPluginSnapshots } from "../../src/domains/plugins/resources.js";
 import { loadPromptTemplates } from "../../src/domains/resources/prompts/loader.js";
 import { loadSkills } from "../../src/domains/resources/skills/loader.js";
-import { PINNED_TOOLS } from "../../src/lib/programs/registry.js";
+import { PINNED_PROGRAMS } from "../../src/lib/programs/registry.js";
 import { closeServer, readRequestBody } from "../harness/openai-compat-fixture.js";
 
 const ROOT = fileURLToPath(new URL("../..", import.meta.url));
@@ -222,7 +222,7 @@ async function assertInstalledReasoningReplay(bin: string, cwd: string, home: st
 	try {
 		await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
 		const settings = structuredClone(DEFAULT_SETTINGS);
-		settings.targets = [
+		settings.connections = [
 			{
 				id: "replay",
 				runtime: "litellm",
@@ -231,10 +231,10 @@ async function assertInstalledReasoningReplay(bin: string, cwd: string, home: st
 				auth: { apiKeyEnvVar: "PANCODE_REPLAY_FIXTURE_KEY" },
 			},
 		];
-		settings.chat.target = "replay";
+		settings.chat.connection = "replay";
 		settings.chat.model = modelId;
 		settings.chat.maxOutputTokens = 16384;
-		settings.fleet.profiles = { replay: { target: "replay", model: modelId, thinkingLevel: "xhigh" } };
+		settings.fleet.profiles = { replay: { connection: "replay", model: modelId, thinkingLevel: "xhigh" } };
 		settings.context.memory.enabled = false;
 		mkdirSync(join(home, "config/agents"), { recursive: true });
 		writeFileSync(join(home, "config/settings.yaml"), JSON.stringify(settings));
@@ -553,15 +553,15 @@ async function assertInstalledWebApp(packageRoot: string, bin: string, prefix: s
 
 		await checkInstalledBrowser(origin, await mintLaunchTicket(origin, credential));
 
-		const tools = await request("/api/toolchain/tools");
+		const tools = await request("/api/programs");
 		strictEqual(tools.status, 200);
 		strictEqual(
 			((await tools.json()) as unknown[]).length,
-			PINNED_TOOLS.length,
+			PINNED_PROGRAMS.length,
 			"the reads worker lists every pinned tool",
 		);
 
-		const removal = await request("/api/toolchain/tools/herdr/remove", {});
+		const removal = await request("/api/programs/herdr/remove", {});
 		strictEqual(removal.status, 202);
 		const { operationId } = (await removal.json()) as { operationId: string };
 		let operation: { status: string } | undefined;
@@ -596,8 +596,8 @@ async function assertInstalledWebApp(packageRoot: string, bin: string, prefix: s
 		const workspace = JSON.parse(openedText) as { id: string; path: string };
 		match(workspace.id, /^[a-f0-9]{32}$/u);
 		strictEqual(workspace.path, realpathSync.native(foreign));
-		const targets = await request(`/api/workspaces/${workspace.id}/targets`);
-		strictEqual(targets.status, 200, `targets through the installed CLI: ${await targets.text()}`);
+		const connections = await request(`/api/workspaces/${workspace.id}/connections`);
+		strictEqual(connections.status, 200, `connections through the installed CLI: ${await connections.text()}`);
 
 		const index = await request("/");
 		strictEqual(index.status, 200);
@@ -1003,7 +1003,7 @@ describe("smoke/installed package", { concurrency: false }, () => {
 				}),
 			) as { kind: string; output?: string; message?: string };
 			strictEqual(packedRead.kind, "ok", packedRead.message);
-			match(packedRead.output ?? "", /from "\.\.\/core\/assistant-model\.js"/);
+			match(packedRead.output ?? "", /from "\.\.\/core\/defaults\.js"/);
 			// A directory that exists only in the pack answers like a loose one, not "File not found".
 			const packedDirectory = dirname(packedSource);
 			strictEqual(existsSync(packedDirectory), false, "src/interactive must ship packed, not as a loose directory");
@@ -1114,6 +1114,7 @@ describe("smoke/installed package", { concurrency: false }, () => {
 			withIsolatedState(hubHome, () => {
 				const pristineDiagnostics: AgentRecipeDiagnostic[] = [];
 				const pristineRecipes = loadRecipesFromDir(
+					loadSkills,
 					{
 						source: "builtin",
 						dir: builtinSourceDir,

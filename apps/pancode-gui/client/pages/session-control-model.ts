@@ -42,7 +42,7 @@ export function observedControlOutcome(request: SessionControlRequest, snapshot:
 	return {
 		succeeded: "The original turn finished before this refresh. It is no longer running.",
 		failed: "The original turn failed. Open the session to review its result.",
-		cancelled: "The original turn is stopped.",
+		cancelled: "The original turn is canceled.",
 	}[turn.status];
 }
 
@@ -109,7 +109,7 @@ export function sessionControlNotice(
 	const needsReview = unresolved.length > 0 || notice !== null;
 	const sending = pending.length > 0;
 	const idle = !needsReview && !sending && latest?.nothingStopped === true;
-	// A settled request is titled by what happened, so a stop reads "Stopped" rather than a generic check.
+	// A settled request is titled by what happened, so a turn cancel reads "Canceled" rather than a generic check.
 	const label = needsReview
 		? "Check session"
 		: sending
@@ -117,15 +117,15 @@ export function sessionControlNotice(
 			: latest?.action === "close"
 				? "Closed"
 				: idle
-					? "Nothing to stop"
-					: "Stopped";
+					? "Nothing to cancel"
+					: "Canceled";
 	const summary = needsReview
 		? `${unresolved.length || 1} session ${unresolved.length > 1 ? "requests need" : "request needs"} your review.`
 		: pending.length > 1
 			? `${pending.length} session requests in progress…`
 			: latest?.action === "close"
 				? `${sending ? "Close request" : "Closed"} · ${latest.title}`
-				: `${sending ? "Stop request" : idle ? "Nothing stopped" : "Stop confirmed"} · ${latest?.title ?? "Session"}`;
+				: `${sending ? "Cancel request" : idle ? "Nothing canceled" : "Cancel confirmed"} · ${latest?.title ?? "Session"}`;
 	return {
 		shown: latest !== undefined || notice !== null,
 		needsReview,

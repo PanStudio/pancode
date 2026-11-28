@@ -38,8 +38,8 @@ test("a target change keeps the model only when the new target lists it", () => 
 });
 
 test("every model setting names the target whose catalog it picks from", () => {
-	assert.equal(MODEL_TARGET_PATHS["chat.model"], "chat.target");
-	assert.equal(MODEL_TARGET_PATHS["fleet.default.model"], "fleet.default.target");
-	assert.equal(MODEL_TARGET_PATHS["context.memory.model"], "context.memory.target");
-	assert.equal(MODEL_TARGET_PATHS["context.compaction.model"], "chat.target");
+	assert.equal(MODEL_TARGET_PATHS["chat.model"], "chat.connection");
+	assert.equal(MODEL_TARGET_PATHS["fleet.default.model"], "fleet.default.connection");
+	assert.equal(MODEL_TARGET_PATHS["context.memory.model"], "context.memory.connection");
+	assert.equal(MODEL_TARGET_PATHS["context.compaction.model"], "chat.connection");
 });

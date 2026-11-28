@@ -22,7 +22,7 @@ export function packProblem(pack: "arena" | "research", stderr: string): AppProb
 	return null;
 }
 
-export class CliCancelled extends Error {}
+export class CliCanceled extends Error {}
 export class CliRunner {
 	private jobs = new Map<AbortController, Promise<unknown>>();
 	private closed = false;
@@ -42,7 +42,7 @@ export class CliRunner {
 			return Promise.reject(
 				new AppProblem("unavailable", "PanCode is running too many commands or is stopping. Retry shortly."),
 			);
-		if (signal?.aborted) return Promise.reject(new CliCancelled());
+		if (signal?.aborted) return Promise.reject(new CliCanceled());
 		const controller = new AbortController();
 		const abort = () => controller.abort();
 		signal?.addEventListener("abort", abort, { once: true });
@@ -77,7 +77,7 @@ export class CliRunner {
 						stopPancodeCommand(child, birthToken, "SIGKILL");
 				}, 1000);
 			};
-			const abort = () => stop(new CliCancelled());
+			const abort = () => stop(new CliCanceled());
 			const timer = setTimeout(
 				() => stop(new AppProblem("operation_failed", "The pancode command exceeded its time limit.")),
 				this.timeoutMs,
@@ -108,7 +108,7 @@ export class CliRunner {
 				}
 				// A completed fleet preflight exits 1 for negative evidence and still emits its JSON record; so does a
 				// research report whose recomputed grades disagree with the journal.
-				const recordOnOne = command.kind === "machines.check" || command.kind === "research.report";
+				const recordOnOne = command.kind === "nodes.check" || command.kind === "research.report";
 				if (code !== 0 && !(recordOnOne && code === 1)) {
 					const verb = command.kind.split(".")[0];
 					if (code === 2 && (verb === "arena" || verb === "research")) {

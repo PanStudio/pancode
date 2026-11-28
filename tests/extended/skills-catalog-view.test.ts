@@ -3,7 +3,7 @@
 import { deepStrictEqual, ok, strictEqual } from "node:assert/strict";
 import { describe, it } from "node:test";
 import { SKILL_SUGGESTION_ANCHOR } from "../../src/core/skill-activation.js";
-import { buildSkillCatalogView, type SkillCatalogPackage } from "../../src/domains/resources/skills/catalog-view.js";
+import { buildSkillCatalogView, type SkillCatalogPack } from "../../src/domains/resources/skills/catalog-view.js";
 import { lexicalMatches } from "../../src/domains/resources/skills/lexical-match.js";
 import type { Skill } from "../../src/domains/resources/skills/loader.js";
 import type { MarketplaceSkill } from "../../src/domains/resources/skills/marketplace.js";
@@ -54,7 +54,7 @@ function marketplaceEntry(name: string, description: string, category?: string):
 	} as MarketplaceSkill;
 }
 
-function pkg(name: string): SkillCatalogPackage {
+function pkg(name: string): SkillCatalogPack {
 	return { name, names: [name], scope: "user", state: "ready", origin: "catalog", path: `/plugins/${name}` };
 }
 
@@ -66,7 +66,7 @@ function renderSkillsListBeforeChange(
 	marketplace: ReadonlyArray<MarketplaceSkill>,
 	marketplaceOffered: boolean,
 	modelActivation: boolean,
-	packages: ReadonlyArray<SkillCatalogPackage> = [],
+	packages: ReadonlyArray<SkillCatalogPack> = [],
 ): string {
 	if (skills.length === 0 && marketplace.length === 0 && packages.length === 0) {
 		return marketplaceOffered
@@ -147,7 +147,7 @@ const MARKET = [
 ];
 
 describe("contracts/skills catalog view byte identity", () => {
-	const postures: Array<[string, Skill[], SkillCatalogPackage[], MarketplaceSkill[], boolean, boolean]> = [
+	const postures: Array<[string, Skill[], SkillCatalogPack[], MarketplaceSkill[], boolean, boolean]> = [
 		["ready only", READY, [], [], true, false],
 		["ready plus marketplace", READY, [], MARKET, true, false],
 		["everything, operator-gated", [...READY, ...SESSION], PACKAGES, MARKET, true, false],

@@ -35,8 +35,8 @@ import type { TurnMiddleware } from "../../src/session-control/turn-middleware.j
 import { type AgentRuntime, createTurnState } from "../../src/session-control/turn-state.js";
 import { registerAllTools } from "../../src/tools/bootstrap.js";
 import { createContextTool } from "../../src/tools/context/index.js";
+import type { ToolRegistry } from "../../src/tools/registry/contract.js";
 import { createRegistry } from "../../src/tools/registry.js";
-import type { ToolRegistry } from "../../src/tools/registry-contract.js";
 import { makeDispatchBundle } from "../harness/dispatch.js";
 import { dispatchStubContext } from "../harness/dispatch-stub-context.js";
 import { type IsolatedPancodeEnv, isolatePancodeEnv } from "../harness/scratch-env.js";
@@ -100,7 +100,7 @@ describe("native budget inspection through the registered context tool", () => {
 
 	function fixture(capture = true) {
 		const settings = structuredClone(DEFAULT_SETTINGS);
-		settings.chat.target = "fixture";
+		settings.chat.connection = "fixture";
 		settings.chat.model = "model";
 		settings.context.compaction.threshold = 0.85;
 		const state = createTurnState("medium");
@@ -423,7 +423,7 @@ describe("native budget inspection through the registered context tool", () => {
 		const f = fixture();
 		const original = viewOf((await inspect(f.registry)).payload);
 		f.state.runtime = null;
-		f.settings.chat.target = "other-target";
+		f.settings.chat.connection = "other-target";
 		f.settings.chat.model = "other-model";
 		f.descriptor.defaultCapabilities.contextWindow = 131_072;
 		const saved = viewOf((await inspect(f.registry)).payload);
@@ -766,8 +766,8 @@ describe("native budget inspection through the registered context tool", () => {
 		options: Parameters<typeof makeDispatchBundle>[1] = {},
 	) {
 		const settings = structuredClone(DEFAULT_SETTINGS);
-		settings.targets = [{ id: targetId, runtime: "openai-codex", defaultModel: "gpt-6-luna" }];
-		settings.chat.target = targetId;
+		settings.connections = [{ id: targetId, runtime: "openai-codex", defaultModel: "gpt-6-luna" }];
+		settings.chat.connection = targetId;
 		const runtime = {
 			id: "openai-codex",
 			displayName: "OpenAI Codex",

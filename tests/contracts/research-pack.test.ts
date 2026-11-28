@@ -133,7 +133,7 @@ function hostServices(repo: string) {
 	const worktrees = createExtensionWorktreeService({ extensionId: "research", workspace: repo });
 	const receipts = createExtensionCheckReceipts();
 	const verify = createExtensionVerifyService({
-		settings: () => ({ safety: { sandbox: "off" } }) as unknown as Pick<PancodeSettings, "safety" | "targets">,
+		settings: () => ({ safety: { sandbox: "off" } }) as unknown as Pick<PancodeSettings, "safety" | "connections">,
 		resolvePlace: (place) => worktrees.resolvePlace(place),
 		receipts,
 		launch: { file: process.execPath, args: ["-e", "process.exit(9)"], env: {} },

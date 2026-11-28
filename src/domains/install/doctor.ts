@@ -772,7 +772,7 @@ export function runDoctor(options: DoctorOptions = {}): DoctorFinding[] {
 		findings.push({
 			ok: true,
 			name: "credentials",
-			detail: "none saved; save a key with `pancode auth login <target>`",
+			detail: "none saved; save a key with `pancode auth login <connection>`",
 		});
 	} else {
 		try {
@@ -971,7 +971,7 @@ export function withDoctorCommand(finding: DoctorFinding): DoctorFinding {
 }
 
 /**
- * Asynchronous doctor sweep: walks settings.targets and fingerprints any
+ * Asynchronous doctor sweep: walks settings.connections and fingerprints any
  * protocol-compatible URL that responds as a known native server (LM Studio,
  * Ollama). Emits a WARN finding so the user knows to switch to the native
  * runtime for proper resident-model lifecycle management. Network-bound and
@@ -1130,7 +1130,7 @@ export async function runDoctorRuntimeChecks(): Promise<DoctorFinding[]> {
 	} catch {
 		return [];
 	}
-	const candidates = settings.targets.filter(
+	const candidates = settings.connections.filter(
 		(entry) => (entry.runtime === "openai-compat" || entry.runtime === "anthropic-compat") && Boolean(entry.url),
 	);
 	if (candidates.length === 0) return [];
@@ -1143,8 +1143,8 @@ export async function runDoctorRuntimeChecks(): Promise<DoctorFinding[]> {
 			return {
 				ok: true,
 				level: "warn",
-				name: `target ${target.id}`,
-				detail: `${fingerprint.displayName} detected at ${url}; run \`pancode targets convert ${target.id} --runtime ${fingerprint.runtimeId}\` for proper resident-model lifecycle`,
+				name: `connection ${target.id}`,
+				detail: `${fingerprint.displayName} detected at ${url}; run \`pancode connections convert ${target.id} --runtime ${fingerprint.runtimeId}\` for proper resident-model lifecycle`,
 			};
 		}),
 	);
@@ -1167,24 +1167,24 @@ function configuredModelRoles(
 		roles.push({
 			role: "defaultModel",
 			model: target.defaultModel,
-			path: `targets[${settings.targets.indexOf(target)}].defaultModel`,
+			path: `connections[${settings.connections.indexOf(target)}].defaultModel`,
 		});
-	if (settings.chat.target === target.id && settings.chat.model) {
+	if (settings.chat.connection === target.id && settings.chat.model) {
 		roles.push({ role: "chat.model", model: settings.chat.model });
 	}
-	if (settings.context.memory.target === target.id && settings.context.memory.model) {
+	if (settings.context.memory.connection === target.id && settings.context.memory.model) {
 		roles.push({ role: "memory.model", model: settings.context.memory.model, path: "context.memory.model" });
 	}
-	if (settings.fleet.default.target === target.id && settings.fleet.default.model) {
+	if (settings.fleet.default.connection === target.id && settings.fleet.default.model) {
 		roles.push({ role: "fleet.default.model", model: settings.fleet.default.model });
 	}
 	for (const [name, profile] of Object.entries(settings.fleet.profiles)) {
-		if (profile.target === target.id && profile.model)
+		if (profile.connection === target.id && profile.model)
 			roles.push({ role: `fleet.profiles.${name}.model`, model: profile.model });
 	}
 	for (const [name, roster] of Object.entries(settings.fleet.rosters)) {
 		for (const [index, member] of roster.members.entries()) {
-			if (member.target === target.id && member.model)
+			if (member.connection === target.id && member.model)
 				roles.push({
 					role: `fleet.rosters.${name}.${member.label}.model`,
 					model: member.model,
@@ -1330,11 +1330,11 @@ function nearestModelId(model: string, catalog: readonly string[]): string | nul
 /** Whether chat, memory or the fleet routes to the target, which makes its failures errors instead of warnings. */
 export function targetIsActive(settings: ReturnType<typeof readSettings>, id: string): boolean {
 	return (
-		settings.chat.target === id ||
-		settings.context.memory.target === id ||
-		settings.fleet.default.target === id ||
-		Object.values(settings.fleet.profiles).some((profile) => profile.target === id) ||
-		Object.values(settings.fleet.rosters).some((roster) => roster.members.some((member) => member.target === id))
+		settings.chat.connection === id ||
+		settings.context.memory.connection === id ||
+		settings.fleet.default.connection === id ||
+		Object.values(settings.fleet.profiles).some((profile) => profile.connection === id) ||
+		Object.values(settings.fleet.rosters).some((roster) => roster.members.some((member) => member.connection === id))
 	);
 }
 
@@ -1359,17 +1359,17 @@ export async function runDoctorModelChecks(
 		const layered = readLayeredSettings(process.cwd());
 		({ settings, sources } = layered);
 		replacedTargets = layered.issues
-			.filter((issue) => issue.path === "targets" && issue.message === PROJECT_TARGETS_REPLACE_USER_TARGETS)
+			.filter((issue) => issue.path === "connections" && issue.message === PROJECT_TARGETS_REPLACE_USER_TARGETS)
 			.map((issue) => ({
 				ok: true,
 				level: "warn",
-				name: "project targets",
+				name: "project connections",
 				detail: formatSettingsLayerIssue(layered, issue),
 			}));
 	} catch {
 		return [];
 	}
-	if (settings.targets.length === 0) return replacedTargets;
+	if (settings.connections.length === 0) return replacedTargets;
 	// Every runtime descriptor and the model catalog sit behind these two
 	// imports. They are loaded here, not at module load, so a doctor run on a
 	// home with no targets (the `--fix` seed every CLI test starts from) pays
@@ -1399,14 +1399,14 @@ export async function runDoctorModelChecks(
 	// Kept per target so each bound System One engine can report its own round trip.
 	const observations = new Map<string, DoctorProbeObservation | null>();
 	const results = await Promise.all(
-		settings.targets.map(async (target): Promise<DoctorFinding[]> => {
+		settings.connections.map(async (target): Promise<DoctorFinding[]> => {
 			const runtime = registry.get(target.runtime);
 			if (!runtime) {
 				const replacement = closestRuntimeId(registry, target.runtime);
 				return [
 					{
 						ok: false,
-						name: `target ${target.id}`,
+						name: `connection ${target.id}`,
 						detail: `runtime '${target.runtime}' is unknown; ${replacement ? `use '${replacement}' instead` : "choose a registered runtime from `pancode configure --list`"} in settings.yaml`,
 					},
 				];
@@ -1660,15 +1660,15 @@ async function systemOneFindings(
 			continue;
 		}
 		const { engine } = resolved;
-		const connection = connections.find((finding) => finding.name === `connection ${engine.target}`);
+		const connection = connections.find((finding) => finding.name === `connection ${engine.connection}`);
 		const unverified = connection === undefined || !connection.ok || connection.level === "warn";
 		findings.push({
 			ok: true,
 			...(unverified ? { level: "warn" as const } : {}),
 			name,
 			detail:
-				`${resolved.name} (${engine.kind}) → ${engine.target}/${engine.model ?? "target default"}` +
-				(unverified ? `; connection ${engine.target} is not verified, so consult may give no answer` : ""),
+				`${resolved.name} (${engine.kind}) → ${engine.connection}/${engine.model ?? "connection default"}` +
+				(unverified ? `; connection ${engine.connection} is not verified, so consult may give no answer` : ""),
 		});
 		findings.push(...(await systemOneEngineFindings(settings, [resolved.name], runtimes, observations, profiles)));
 	}
@@ -1694,7 +1694,7 @@ async function systemOneEngineFindings(
 	for (const name of names) {
 		const engine = Object.hasOwn(settings.systemOne.engines, name) ? settings.systemOne.engines[name] : undefined;
 		if (engine === undefined || engine.kind !== "systemone") continue;
-		const target = settings.targets.find((entry) => entry.id === engine.target);
+		const target = settings.connections.find((entry) => entry.id === engine.connection);
 		const runtime = target === undefined ? null : runtimes.get(target.runtime);
 		if (target === undefined || runtime === null || runtime.decide === undefined) continue;
 		const profile = profileFor(engine.profile);
@@ -1702,10 +1702,10 @@ async function systemOneEngineFindings(
 		const window = engineWindow(profile, declared ?? runtime.defaultCapabilities.contextWindow);
 		const source =
 			declared === undefined
-				? `the ${runtime.id} runtime default; set capabilities.contextWindow on target ${target.id}`
+				? `the ${runtime.id} runtime default; set capabilities.contextWindow on connection ${target.id}`
 				: window !== declared
-					? `target ${target.id} declares ${declared}, profile ceiling ${profile.windowCeiling}`
-					: `declared on target ${target.id}`;
+					? `connection ${target.id} declares ${declared}, profile ceiling ${profile.windowCeiling}`
+					: `declared on connection ${target.id}`;
 		const counting =
 			profile.tokenizer === undefined
 				? ""
@@ -1827,7 +1827,7 @@ function harnessFindings(workspaceRoot: string): DoctorFinding[] {
 	let input: HarnessInput;
 	let issues: HarnessIssue[];
 	try {
-		input = collectHarnessInput(workspaceRoot);
+		input = collectHarnessInput(workspaceRoot, { loadSkills });
 		issues = validateHarness(input);
 	} catch (err) {
 		return [

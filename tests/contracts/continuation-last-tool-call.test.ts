@@ -49,9 +49,9 @@ async function stoppedTurn(
 	const settings = structuredClone(DEFAULT_SETTINGS);
 	settings.chat.prewarm = false;
 	const context = dispatchStubContext({ settings });
-	const target = settings.targets[0];
+	const target = settings.connections[0];
 	ok(target);
-	settings.chat.target = target.id;
+	settings.chat.connection = target.id;
 	settings.chat.model = target.defaultModel ?? "gpt-4o";
 	const entries: SessionEntry[] = [];
 	let leaf: string | null = null;

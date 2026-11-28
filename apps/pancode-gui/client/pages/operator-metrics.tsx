@@ -9,8 +9,8 @@ import type { CostReportV1, Quantity } from "../../contracts/wire.js";
 import type { Client } from "../api/client.js";
 import { formatTime } from "../api/clock.js";
 import { SESSION_HISTORY_FRESHNESS, sessionHistoryQuery, workspacesQuery } from "../api/queries.js";
+import { useSessionOverview } from "../shell/sessions.js";
 import { taskRows } from "../shell/shell-model.js";
-import { useSessionOverview } from "../shell/tasks.js";
 import { Explained } from "../telemetry/Explained.js";
 import { explainable, quantityParts, quantityText } from "../telemetry/quantity-model.js";
 import type { ScopeTask } from "./metrics-scope-model.js";
@@ -113,13 +113,13 @@ function ModelMetrics({ client, cost }: { client: Client; cost: readonly CostRep
 						Per model
 					</button>
 					<button type="button" aria-pressed={by === "target"} onClick={() => setBy("target")}>
-						Per target
+						Per connection
 					</button>
 				</fieldset>
 				<input
 					type="search"
-					aria-label="Find recorded model or target"
-					placeholder="Model or target"
+					aria-label="Find recorded model or connection"
+					placeholder="Model or connection"
 					value={search}
 					maxLength={256}
 					onChange={(event) => setSearch(event.target.value)}
@@ -131,7 +131,7 @@ function ModelMetrics({ client, cost }: { client: Client; cost: readonly CostRep
 					<table className="operator-table">
 						<thead>
 							<tr>
-								<th scope="col">{by === "model" ? "Target / model" : "Target"}</th>
+								<th scope="col">{by === "model" ? "Connection / model" : "Connection"}</th>
 								<th scope="col">Calls</th>
 								<th scope="col">Input</th>
 								<th scope="col">Output</th>
@@ -177,7 +177,7 @@ function ModelMetrics({ client, cost }: { client: Client; cost: readonly CostRep
 				</section>
 			) : (
 				<p className="panel-empty">
-					{search ? "No recorded route matches this search." : "No model or target calls in these records."}
+					{search ? "No recorded route matches this search." : "No model or connection calls in these records."}
 				</p>
 			)}
 			<p className="operator-note">
@@ -497,7 +497,7 @@ export function OperatorMetrics({
 			) : null}
 			{compact ? (
 				<details className="operator-records">
-					<summary>Recorded metrics · models, targets, session trends, tools & compactions</summary>
+					<summary>Recorded metrics · models, connections, session trends, tools & compactions</summary>
 					{sections}
 				</details>
 			) : (

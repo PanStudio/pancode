@@ -308,7 +308,7 @@ test("demo-off skips welcome-only readers and live toggles restore the full welc
 	const settings = structuredClone(DEFAULT_SETTINGS);
 	settings.interface.demo = false;
 	settings.interface.outputDetail = "detailed";
-	settings.chat.target = "local";
+	settings.chat.connection = "local";
 	settings.chat.model = "test-model";
 	const reads = { context: 0, quota: 0, recipes: 0, keys: 0 };
 	const header = createWelcomeDashboard({
@@ -513,7 +513,7 @@ test("welcome renders orientation guidance without configuration inventory or du
 		ok(artRows.length > 0);
 		const text = rows.join("\n");
 		ok(!/describe a task|Permissions|configured|recipes|Systems engineering/u.test(text));
-		match(text, /✓ ready · local target healthy/u);
+		match(text, /✓ ready · local connection healthy/u);
 		match(text, /contained · OS sandbox active/u);
 		match(text, /not indexed yet · \/context init/u);
 		const stale = buildWelcomeDashboardLines({ ...stats, projectContext: "stale" }, "0.5.7", width, "launchpad")
@@ -528,7 +528,7 @@ test("the detailed banner claims only automatic edits on a host whose shell runs
 	process.env.TERM = "xterm-256color";
 	delete process.env.PANCODE_SCREEN_READER;
 	const settings = structuredClone(DEFAULT_SETTINGS);
-	settings.chat.target = "local";
+	settings.chat.connection = "local";
 	settings.chat.model = "test-model";
 	settings.interface.demo = true;
 	settings.interface.outputDetail = "detailed";
@@ -579,7 +579,7 @@ test("startup and live tier changes share one bounded welcome policy", () => {
 	process.env.TERM = "xterm-256color";
 	delete process.env.PANCODE_SCREEN_READER;
 	const settings = structuredClone(DEFAULT_SETTINGS);
-	settings.chat.target = "local";
+	settings.chat.connection = "local";
 	settings.chat.model = "test-model";
 	const live = createWelcomeDashboard({
 		providers: { list: () => [] },

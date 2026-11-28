@@ -144,10 +144,10 @@ export async function fixedViewportSteps(run: SmokeRun) {
 			await page.goto(run.workspaceUrl);
 			// The harness PanCode never saves a task, so it cannot be renamed here: the name is the first request.
 			const longTitle = "Renamed convergence check for the sensors";
-			await page.locator("main button.primary", { hasText: "New task" }).click();
+			await page.locator("main button.primary", { hasText: "New session" }).click();
 			await page.waitForURL(`${origin}/`);
 			await composerField.fill(longTitle);
-			await page.getByRole("button", { name: "Start task", exact: true }).click();
+			await page.getByRole("button", { name: "Start session", exact: true }).click();
 			await page.waitForURL(/\/sessions\/[^/]+$/);
 			const sessionPath = new URL(page.url()).pathname;
 			await page.locator(".chat-turn.is-settled").first().waitFor();
@@ -407,7 +407,7 @@ export async function fixedViewportSteps(run: SmokeRun) {
 			await eventually(composerFocused, true, "Ctrl+Shift+O did not focus the message box");
 			await page.goto(`${origin}/sessions`);
 			await page.locator("main").getByRole("heading", { level: 1 }).first().waitFor();
-			await page.locator("nav.wb-side__actions").getByRole("button", { name: "New task", exact: true }).click();
+			await page.locator("nav.wb-side__actions").getByRole("button", { name: "New session", exact: true }).click();
 			await eventually(composerFocused, true, "the rail's New task did not focus the message box");
 			await page.setViewportSize({ width, height: 1050 });
 		});

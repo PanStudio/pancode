@@ -225,7 +225,7 @@ const CAPABILITY_DOMAINS: readonly CapabilityDomainEntry[] = [
 			if (parts.length === 0) return "/settings";
 			return ascii ? parts.join(", ") : parts.join(` ${GLYPH.sep} `);
 		},
-		description: (w) => (w >= 96 || w < 80 ? `yolo mode ${GLYPH.sep} detail tier` : `yolo ${GLYPH.sep} detail tier`),
+		description: (w) => (w >= 96 || w < 80 ? `YOLO mode ${GLYPH.sep} detail tier` : `YOLO ${GLYPH.sep} detail tier`),
 	},
 ];
 

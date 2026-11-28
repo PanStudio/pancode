@@ -525,7 +525,7 @@ export function extractAssistantTerminalError(message: unknown): string {
 	if (stopReason === "length") {
 		// A cut with calls in it is stated once, by the output-limit notice and its "not run" rows (bt-39 a).
 		if (outputLimitCutOffToolCallIds(message).length > 0) return "";
-		return "[stopped: length] Model target hit its generation/output limit before a complete response. This is not a safety denial. Continue with a shorter answer or lower thinking; use /context compact if the context meter is also near full.";
+		return "[stopped: length] Model connection hit its generation/output limit before a complete response. This is not a safety denial. Continue with a shorter answer or lower thinking; use /context compact if the context meter is also near full.";
 	}
 	const raw = (message as { errorMessage?: unknown }).errorMessage;
 	if (isSelfExplainingAbort({ stopReason, errorMessage: raw, text: extractText(message as AgentMessage) })) return "";

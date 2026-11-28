@@ -45,9 +45,9 @@ import { countRender } from "../render/render-probe.js";
 import { requestReport } from "../report/report-events.js";
 import { PancodePulse, PULSE_SIZE } from "../shell/PancodeMark.js";
 import { useSessionCommands } from "../shell/SessionControls.js";
+import { useRenameSession } from "../shell/sessions.js";
 import { useShell } from "../shell/shell-context.js";
 import { taskTitle } from "../shell/shell-model.js";
-import { useRenameTask } from "../shell/tasks.js";
 import { AutonomyPill } from "./AutonomyPill.js";
 import { persistAttachments, savedAttachments } from "./attachment-drafts.js";
 import { readAttachment } from "./attachment-image.js";
@@ -274,7 +274,7 @@ export const Composer = memo(function Composer({
 	const [aliasNote, setAliasNote] = useState<{ text: string; message: string } | null>(null);
 	const shell = useShell();
 	const navigate = useNavigate();
-	const renameTask = useRenameTask(client);
+	const renameTask = useRenameSession(client);
 	// The branch tree is keyed on settled turns, the way the pane passes it.
 	const [settledTurns, setSettledTurns] = useState(0);
 	useEffect(() => {
@@ -663,13 +663,13 @@ export const Composer = memo(function Composer({
 		if (target.kind === "command") {
 			const line = `/${target.command} ${target.subcommand}${target.passRest && rest !== "" ? ` ${rest}` : ""}`;
 			const parsed = parseSlashLine(line, commandCatalog.data);
-			if (parsed === null) return note(`/${alias.name} is not available in this task.`);
+			if (parsed === null) return note(`/${alias.name} is not available in this session.`);
 			if (parsed.kind === "invalid") return note(parsed.error);
 			runCommand(parsed.plan, store.snapshot().text);
 			return;
 		}
 		if (target.kind === "control" && target.control === "rename") {
-			if (rest === "") return note("Type a name after /rename, or click the task title.");
+			if (rest === "") return note("Type a name after /rename, or click the session title.");
 			renameTask.mutate(
 				{ sessionId, workspaceId, label: rest },
 				{ onError: (error) => setAliasNote({ text: store.snapshot().text, message: error.message }) },
@@ -1199,7 +1199,7 @@ export const Composer = memo(function Composer({
 					)}
 					{stopArmed && running ? (
 						<p className="composer__notice" role="status">
-							Press <Keycaps chord="Esc" /> again to stop this turn.
+							Press <Keycaps chord="Esc" /> again to cancel this turn.
 						</p>
 					) : null}
 					{steerNote ? (
@@ -1326,12 +1326,14 @@ export const Composer = memo(function Composer({
 									type="button"
 									disabled={!!stopping}
 									onClick={() => stopTurn()}
-									aria-label={stopping ? (stopping.stage === "unresolved" ? "Review stop request" : "Stopping…") : "Stop turn"}
+									aria-label={
+										stopping ? (stopping.stage === "unresolved" ? "Review cancel request" : "Canceling…") : "Cancel turn"
+									}
 									title="End this turn now. Nothing further is run."
 								>
 									<Icon name="stop" />
 									<span aria-hidden="true">
-										{stopping ? (stopping.stage === "unresolved" ? "Check request" : "Stopping") : "Stop"}
+										{stopping ? (stopping.stage === "unresolved" ? "Check request" : "Canceling") : "Cancel"}
 									</span>
 								</button>
 							) : null}

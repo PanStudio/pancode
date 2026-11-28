@@ -122,7 +122,7 @@ test("a hub command is projected as subcommands only, narrowed to the wire-shape
 		"reset",
 	]);
 	assert.deepEqual(Object.keys(descriptor("memory").args.subcommands ?? {}), ["seed"]);
-	assert.deepEqual(Object.keys(descriptor("tasks").args.subcommands ?? {}).sort(), ["add", "done", "drop", "hand"]);
+	assert.deepEqual(Object.keys(descriptor("tasks").args.subcommands ?? {}).sort(), ["add", "done", "hand", "remove"]);
 	// The bare form opens an overlay, so it is not reachable even though the name is.
 	assert.equal(
 		refusalReason(() => invokeAcpCommand({ command: "context", argv: [] }, host())),

@@ -37,7 +37,7 @@ function describeNewerHome(newer: NewerHome): string {
 /** Whether the user settings name a chat target, read without creating or migrating the home. */
 function chatRouteChosen(): boolean {
 	const { settings, issues } = validateSettingsFile();
-	return issues.length > 0 || Boolean(settings.chat.target);
+	return issues.length > 0 || Boolean(settings.chat.connection);
 }
 
 /**
@@ -196,7 +196,7 @@ export async function runPancodeCommand(
 		if (keptRoute) {
 			if (verdict.kind !== "missing-credential") {
 				process.stderr.write(
-					`${describeVerdict(verdict)} Your saved chat route is kept and no other target is used. Run \`pancode configure\` to fix it.\n`,
+					`${describeVerdict(verdict)} Your saved chat route is kept and no other connection is used. Run \`pancode configure\` to fix it.\n`,
 				);
 				return 2;
 			}
@@ -237,7 +237,7 @@ export async function runPancodeCommand(
 			startupSettings = configuredLayers.settings;
 			const configuredVerdict = classifyDefaultTarget(startupSettings);
 			if (configuredVerdict.kind !== "usable" && configuredVerdict.kind !== "missing-credential") {
-				process.stderr.write(`${describeVerdict(configuredVerdict)} Configuration did not complete; startup cancelled.\n`);
+				process.stderr.write(`${describeVerdict(configuredVerdict)} Configuration did not complete; startup canceled.\n`);
 				return 2;
 			}
 		}

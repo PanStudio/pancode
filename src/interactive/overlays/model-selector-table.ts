@@ -131,7 +131,7 @@ export function modelTableLines(rows: ReadonlyArray<ModelRow>, selectedIndex: nu
 			),
 			target: longest(
 				rows.map((row) => row.target),
-				"target",
+				"connection",
 			),
 			runtime: longest(
 				rows.map((row) => row.runtimeShortName),
@@ -148,7 +148,7 @@ export function modelTableLines(rows: ReadonlyArray<ModelRow>, selectedIndex: nu
 			? [{ label: "state", min: STATE_COL_WIDTH, max: STATE_COL_WIDTH, priority: 3 } satisfies TableColumn]
 			: []),
 		...(layout.showTarget
-			? [{ label: "target", min: layout.targetWidth, max: layout.targetWidth, priority: 2 } satisfies TableColumn]
+			? [{ label: "connection", min: layout.targetWidth, max: layout.targetWidth, priority: 2 } satisfies TableColumn]
 			: []),
 		...(layout.showRuntime
 			? [{ label: "runtime", min: layout.runtimeWidth, max: layout.runtimeWidth, priority: 1 } satisfies TableColumn]

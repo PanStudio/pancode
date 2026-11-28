@@ -22,7 +22,7 @@ export const navigation = [
 	{ label: "Arena", path: "/arena", icon: "arena", group: "more" },
 	{ label: "Research", path: "/research", icon: "research", group: "more" },
 	{ label: "Hub", path: "/hub", icon: "hub", group: "more" },
-	{ label: "Toolchain", path: "/toolchain", icon: "toolchain", group: "more" },
+	{ label: "Programs", path: "/programs", icon: "toolchain", group: "more" },
 	{ label: "Settings", path: "/settings", icon: "settings", group: "more" },
 	{ label: "System", path: "/system", icon: "system", group: "more" },
 ] as const;

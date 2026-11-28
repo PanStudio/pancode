@@ -96,13 +96,13 @@ function advanceScopedTarget(
 	if (registry.list().length === 0) registerBuiltinRuntimes(registry);
 	const filteredScope = scope.filter((entry) => {
 		const [targetId] = entry.split("/");
-		const target = settings.targets.find((e) => e.id === targetId);
+		const target = settings.connections.find((e) => e.id === targetId);
 		if (!target) return false;
 		const runtime = registry.get(target.runtime);
 		return runtime !== null && isOrchestratorEligibleRuntime(runtime);
 	});
 	if (filteredScope.length === 0) return null;
-	const activeTarget = settings.chat.target ?? "";
+	const activeTarget = settings.chat.connection ?? "";
 	const activeModel = settings.chat.model ?? "";
 	const activeCombinedRef = activeTarget.length > 0 && activeModel.length > 0 ? `${activeTarget}/${activeModel}` : "";
 	const idx = filteredScope.findIndex((entry) => entry === activeCombinedRef || entry === activeTarget);
@@ -117,7 +117,7 @@ function advanceScopedTarget(
 	if (activeTarget === targetId) {
 		return { target: targetId, model: activeModel || null };
 	}
-	const descriptor = settings.targets.find((entry) => entry.id === targetId);
+	const descriptor = settings.connections.find((entry) => entry.id === targetId);
 	return { target: targetId, model: descriptor?.defaultModel ?? null };
 }
 
@@ -204,9 +204,9 @@ export function createSessionSettingsView(deps: SessionSettingsViewDeps) {
 		const chat = getCurrentSettings().chat;
 		const level = chat.thinkingLevel ?? "off";
 		const resolved =
-			chat.target && chat.model
+			chat.connection && chat.model
 				? resolveRuntimeTarget(providers, {
-						targetId: chat.target,
+						targetId: chat.connection,
 						wireModelId: chat.model,
 						requestedThinkingLevel: level,
 						use: "orchestrator",
@@ -372,7 +372,7 @@ export function createSessionSettingsView(deps: SessionSettingsViewDeps) {
 		const current = getCurrentSettings();
 		const thinkingLevel = deps.clampThinkingLevel(
 			providers,
-			patch.target ?? current.chat.target,
+			patch.target ?? current.chat.connection,
 			patch.model ?? current.chat.model,
 			patch.thinkingLevel ?? current.chat.thinkingLevel,
 		);
@@ -381,7 +381,7 @@ export function createSessionSettingsView(deps: SessionSettingsViewDeps) {
 	const readAcpSafeSettings = (): AcpSafeSettingsSnapshot => {
 		const settings = getCurrentSettings();
 		return {
-			target: settings.chat.target,
+			target: settings.chat.connection,
 			model: settings.chat.model,
 			thinkingLevel: settings.chat.thinkingLevel ?? "off",
 			autonomy: settings.safety.autonomy,
@@ -395,7 +395,7 @@ export function createSessionSettingsView(deps: SessionSettingsViewDeps) {
 	 */
 	const commitAcpSafeSettings = (patch: AcpSafeSettingsPatch, source: "acp" | "gui"): AcpSafeSettingsSnapshot => {
 		const orchestrator: NonNullable<RoutingPatch["orchestrator"]> = {};
-		if (patch["chat.target"] !== undefined) orchestrator.target = patch["chat.target"];
+		if (patch["chat.connection"] !== undefined) orchestrator.target = patch["chat.connection"];
 		if (patch["chat.model"] !== undefined) orchestrator.model = patch["chat.model"];
 		if (patch["chat.thinkingLevel"] !== undefined) {
 			orchestrator.thinkingLevel = patch["chat.thinkingLevel"];
@@ -447,7 +447,7 @@ export function createSessionSettingsView(deps: SessionSettingsViewDeps) {
 	 *     every other id becomes a session override. settings.yaml is untouched.
 	 *   - scope "global": apply live and persist just that leaf as the new
 	 *     default, clearing any prior session override for it.
-	 * Restart-required ids (budget.concurrency, runtimePlugins,
+	 * Restart-required ids (budget.concurrency, providerPackages,
 	 * terminal.tuiMode, terminal.fullscreenScrollbar) cannot apply
 	 * live, so the overlay only offers "global" for them; the file write is what
 	 * a later restart picks up.
@@ -506,7 +506,7 @@ export function createSessionSettingsView(deps: SessionSettingsViewDeps) {
 			const current = getCurrentSettings();
 			const thinking = resolveModelRuntimeCapabilitiesForProviders(
 				providers,
-				current.chat.target,
+				current.chat.connection,
 				current.chat.model,
 				current.chat.thinkingLevel ?? "off",
 			)?.thinking;
@@ -535,7 +535,7 @@ export function createSessionSettingsView(deps: SessionSettingsViewDeps) {
 		const settings = getCurrentSettings();
 		session?.create({
 			cwd: process.cwd(),
-			...(settings.chat.target ? { target: settings.chat.target } : {}),
+			...(settings.chat.connection ? { target: settings.chat.connection } : {}),
 			...(settings.chat.model ? { model: settings.chat.model } : {}),
 		});
 		persistCurrentThinkingLevel();

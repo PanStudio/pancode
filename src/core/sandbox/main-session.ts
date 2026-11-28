@@ -188,7 +188,7 @@ export function yoloContainedNotice(
 	availability: SandboxAvailability,
 ): string {
 	const notes = yoloContainmentNotes(safety.sandbox, availability, safety.judge.enabled);
-	return `Yolo runs contained: ${notes.sandbox}; ${notes.judge}; nothing waits for you, and a call that would need you is refused back to PanCode instead of asking. To run yolo unconfined, set safety.yoloConfinement: unconfined and safety.yoloUnconfinedAccepted: true in your user settings, or choose it in /settings.`;
+	return `YOLO runs contained: ${notes.sandbox}; ${notes.judge}; nothing waits for you, and a call that would need you is refused back to PanCode instead of asking. To run YOLO unconfined, set safety.yoloConfinement: unconfined and safety.yoloUnconfinedAccepted: true in your user settings, or choose it in /settings.`;
 }
 
 export interface MainSandboxPolicyInput {

@@ -19,7 +19,7 @@ import {
 	type PlaybookListing,
 	type PlaybookStep,
 } from "../domains/agents/index.js";
-import { jsonDocument, writeCliFailure } from "./kit/json-out.js";
+import { jsonDocument, writeCliFailure } from "./lib/json-out.js";
 
 const HELP = `pancode playbook <subcommand>
 
@@ -28,7 +28,7 @@ Author and check repo-owned playbooks. The fleet runs them: pancode fleet run <p
 Subcommands:
   list [--json]                 list built-in, plugin, user and project playbooks with validation status
   new <name> --from <builtin> [--json]
-                                copy the build-review, build-test, sdlc, or seat-stretch playbook into .pancode/playbooks/
+                                copy a built-in playbook into .pancode/playbooks/
   validate <name> [--var key=value ...] [--json]
                                 run a playbook's execution preflight without side effects
   graph <name> [--var key=value ...] [--json]

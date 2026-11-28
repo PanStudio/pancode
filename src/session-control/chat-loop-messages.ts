@@ -45,7 +45,7 @@ import { toContextOverflowError } from "../domains/providers/errors.js";
 import type { ResolvedRuntimeTarget } from "../domains/providers/index.js";
 import { ceilChars } from "../domains/session/context-accounting.js";
 import type { AgentMessage } from "../engine/types.js";
-import type { AskUserToolPolicy, ToolRegistry } from "../tools/registry-contract.js";
+import type { AskUserToolPolicy, ToolRegistry } from "../tools/registry/contract.js";
 import { attachedToolSchemaBytes, attachedToolSchemasFromState } from "./prompt-cache-identity.js";
 
 /** Minimal structural view of the engine agent used by state-inspection helpers. */
@@ -62,15 +62,15 @@ interface RuntimeResolutionView {
  * Why chat cannot start, in the words `pancode doctor` uses on its chat row,
  * so the two surfaces name the same missing piece and the same next command.
  */
-export function notConfiguredNotice(chat: { target?: string | null; model?: string | null } = {}): string {
-	const target = chat.target?.trim();
+export function notConfiguredNotice(chat: { connection?: string | null; model?: string | null } = {}): string {
+	const target = chat.connection?.trim();
 	if (target && !chat.model?.trim()) {
 		return `[PanCode] ${describeMissing({ kind: "model", target }).sentence}`;
 	}
 	return [
-		"[PanCode] No model target is configured; run `pancode configure` to choose one.",
+		"[PanCode] No model connection is configured; run `pancode configure` to choose one.",
 		"Without a terminal: pancode configure --id <id> --runtime <runtime> --url <url> --model <model> --set-orchestrator",
-		`(chat.target and chat.model live in ${settingsPath()})`,
+		`(chat.connection and chat.model live in ${settingsPath()})`,
 	].join("\n");
 }
 
@@ -90,7 +90,7 @@ export function nameMissingCredentialRemedy(
 	const variable = target?.auth?.apiKeyEnvVar?.trim();
 	failure.errorMessage =
 		target !== undefined && variable
-			? `${missing[0]}. ${describeMissing({ kind: "env", target: target.id, variable }).sentence.replace(/\.$/u, "")}; set it with \`export ${variable}=<key>\`, or reconfigure the target with \`pancode configure\`.`
+			? `${missing[0]}. ${describeMissing({ kind: "env", target: target.id, variable }).sentence.replace(/\.$/u, "")}; set it with \`export ${variable}=<key>\`, or reconfigure the connection with \`pancode configure\`.`
 			: `${missing[0]}. ${describeMissing({ kind: "credential", target: missing[1], provider: missing[1] }).sentence}`;
 }
 
@@ -171,7 +171,7 @@ export function terminalFailureFromAssistantMessage(
 			? rawError
 			: stopReason === "aborted"
 				? "request aborted"
-				: "model target returned an error";
+				: "model connection returned an error";
 	const rawFailure = (message as unknown as { failure?: TurnFailureRecord }).failure;
 	const observedFailure = readCallFailure(
 		rawFailure?.stage === "budget" ? { ...rawFailure, stage: "admission" } : rawFailure,
@@ -223,7 +223,7 @@ export function isSelfExplainingAbort(view: { stopReason: unknown; errorMessage:
 }
 
 /** What the model and the ledger are told when the operator cancels a streaming turn. */
-export const OPERATOR_CANCEL_REASON = "Cancelled at your request.";
+export const OPERATOR_CANCEL_REASON = "Canceled at your request.";
 
 export function isOperatorCancelReason(value: unknown): boolean {
 	return value === OPERATOR_CANCEL_REASON;
@@ -304,7 +304,7 @@ function lengthStopMetadata(message: AgentMessage): Record<string, unknown> {
 		kind: "provider_length_stop",
 		stopReason: "length",
 		message:
-			"Model target hit its generation/output limit before a complete assistant response. This is not a safety denial; compacting helps only when the prompt and tool observations are also near the context window.",
+			"Model connection hit its generation/output limit before a complete assistant response. This is not a safety denial; compacting helps only when the prompt and tool observations are also near the context window.",
 	};
 	if (usage && typeof usage === "object") {
 		const u = usage as Record<string, unknown>;

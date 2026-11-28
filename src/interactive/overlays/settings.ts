@@ -704,11 +704,11 @@ export class SettingsCenter implements Component {
 	private activateSelectedItem(): void {
 		const item = this.selectedItem();
 		if (!item || item.readOnly) return;
-		if (item.id === "targets.add-cta") {
+		if (item.id === "connections.add-cta") {
 			this.options.onAddTarget?.();
 			return;
 		}
-		if (item.id === "targets.url-cta") {
+		if (item.id === "connections.url-cta") {
 			this.options.onConnectByUrl?.();
 			return;
 		}
@@ -880,7 +880,7 @@ export class SettingsCenter implements Component {
 				? `Affected agent routes: ${affectedBindings.length > 0 ? affectedBindings.join(", ") : "none"} ${GLYPH.sep} `
 				: "";
 		const targetRemovalPreflight = (() => {
-			if (!plan.rowId.startsWith("targets.") || plan.selectedValue !== "remove") return "";
+			if (!plan.rowId.startsWith("connections.") || plan.selectedValue !== "remove") return "";
 			const paths = (prefix: string): string[] =>
 				plan.leaves.filter((leaf) => leaf.path.startsWith(prefix)).map((leaf) => settingsPathLabel(leaf.path));
 			const profiles = plan.leaves
@@ -1258,7 +1258,7 @@ export class SettingsCenter implements Component {
 		const starts: number[] = [];
 		{
 			// Models opens with the connections table; the rest of the area renders as setting rows.
-			const tableItems = section.items.filter((item) => item.id === "targets" || item.targetConsole !== undefined);
+			const tableItems = section.items.filter((item) => item.id === "connections" || item.targetConsole !== undefined);
 			const table =
 				tableItems.length > 0 ? renderTargetTable(theme, tableItems, selectedId, width, labelWidth) : undefined;
 			section.items.forEach((item, index) => {
@@ -1291,7 +1291,7 @@ export class SettingsCenter implements Component {
 		// title counts: lines would add the group headings, so a title of 12 settings
 		// sat over `1–10 of 13 rows`.
 		const ordinals = section.items.flatMap((item, index) =>
-			this.isSelectableRow(item) && item.id !== "targets" ? [starts[index] ?? 0] : [],
+			this.isSelectableRow(item) && item.id !== "connections" ? [starts[index] ?? 0] : [],
 		);
 		const shown = ordinals.flatMap((line, ordinal) =>
 			line >= start && line < start + window.length ? [ordinal + 1] : [],
@@ -1469,7 +1469,7 @@ function settingsFileResolver(cwd: string): (origin: SettingValueOrigin) => stri
 export function openSettingsOverlay(tui: TUI, deps: OpenSettingsOverlayDeps): SettingsOverlayHandle {
 	let wizard: OverlayHandle | null = null;
 	const launchWizard = (targetId?: string, byUrl = false): void => {
-		const target = targetId ? deps.getSettings().targets.find((entry) => entry.id === targetId) : undefined;
+		const target = targetId ? deps.getSettings().connections.find((entry) => entry.id === targetId) : undefined;
 		if (targetId && !target) return;
 		wizard?.hide();
 		const options: TargetWizardOptions = target
@@ -1486,14 +1486,14 @@ export function openSettingsOverlay(tui: TUI, deps: OpenSettingsOverlayDeps): Se
 			});
 		});
 	};
-	// A target removed from user settings takes the key it owned, as `pancode targets remove` does;
+	// A target removed from user settings takes the key it owned, as `pancode connections remove` does;
 	// after it is gone no command can name that key.
 	const removedTargetCredential = (plan: SettingsChangePlan): string | null => {
 		const auth = deps.providers?.auth;
-		if (!auth || !plan.rowId.startsWith("targets.") || plan.selectedValue !== "remove") return null;
-		const targetId = plan.rowId.slice("targets.".length);
-		const removed = plan.original.targets.find((target) => target.id === targetId);
-		const remaining = deps.getSettings().targets;
+		if (!auth || !plan.rowId.startsWith("connections.") || plan.selectedValue !== "remove") return null;
+		const targetId = plan.rowId.slice("connections.".length);
+		const removed = plan.original.connections.find((target) => target.id === targetId);
+		const remaining = deps.getSettings().connections;
 		if (!removed || remaining.some((target) => target.id === targetId)) return null;
 		return applyTargetCredentialPlan(
 			planTargetCredentialRemoval(removed as TargetDescriptor, remaining, getRuntimeRegistry().list()),

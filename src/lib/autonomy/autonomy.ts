@@ -227,7 +227,7 @@ export function autonomyAskRejection(
 				`Autonomy ${level} reads, lists, and searches inside the workspace without asking and parks a path outside it for the operator.`,
 			hints: [
 				"Approving resumes only this call.",
-				"Yolo reads outside the workspace without asking; zero-access paths stay refused at every level.",
+				"YOLO reads outside the workspace without asking; zero-access paths stay refused at every level.",
 			],
 		};
 	}
@@ -237,7 +237,7 @@ export function autonomyAskRejection(
 			detail:
 				`The call declared exposure=outward, so answering it publishes or sends something outside the workspace. ` +
 				`Autonomy ${level} auto-answers local gates and parks outward-facing ones for the operator.`,
-			hints: ["Approving resumes only this call.", "Yolo answers outward gates too; the safety net still applies there."],
+			hints: ["Approving resumes only this call.", "YOLO answers outward gates too; the safety net still applies there."],
 		};
 	}
 	return {

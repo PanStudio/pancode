@@ -61,7 +61,7 @@ The package does not resolve XDG directories or walk to a project root; the host
 ## `pancode store`
 
 `pancode store` runs the store's commands from a shell, against the roots, cache and project PanCode resolves from
-its settings: `tags`, `ls`, `stat`, `history`, `verify`, `put`, `get`, `rm`, `rm-tag`, `adopt`, `where`, `usage` and
+its settings: `tags`, `list`, `stat`, `history`, `verify`, `put`, `get`, `remove`, `remove-tag`, `adopt`, `where`, `usage` and
 `locks`. Every checkout and task worktree of one repository derives the same project key; a project's
 `store.projectId` keys the store by that id instead, so checkouts at different paths on different hosts reach one
 store. The records these commands write name the actor `standalone`. `locks` lists the project's store locks and

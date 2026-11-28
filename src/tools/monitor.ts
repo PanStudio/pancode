@@ -23,7 +23,7 @@ import type { JobOperations } from "./job-types.js";
 import { collectDetachedBatch, collectRuns, durableRunEvidence } from "./monitor-collect.js";
 import { listJobMonitor, runJobMonitor } from "./monitor-jobs.js";
 import { monitorToolSurface } from "./monitor-surface.js";
-import type { ToolInvokeOptions } from "./registry-contract.js";
+import type { ToolInvokeOptions } from "./registry/contract.js";
 import type { ToolResult, ToolSpec } from "./tool-spec.js";
 import { truncateUtf8 } from "./truncate-utf8.js";
 import type { FinishedRun } from "./worker-evidence.js";
@@ -599,7 +599,7 @@ async function runWait(
 			if (elapsed >= timeoutMs) {
 				return {
 					kind: "ok",
-					output: `wait timed out after ${timeoutMs}ms: ${assignment ? "assignment" : "run"} ${runId} is still ${assignment?.status ?? run.status} and keeps running normally. Wait again or collect later. Only steer(action="cancel") if the result is no longer needed: cancelling discards its work.`,
+					output: `wait timed out after ${timeoutMs}ms: ${assignment ? "assignment" : "run"} ${runId} is still ${assignment?.status ?? run.status} and keeps running normally. Wait again or collect later. Only steer(action="cancel") if the result is no longer needed: canceling discards its work.`,
 					details: {
 						mode: "wait",
 						runId,

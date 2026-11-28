@@ -443,7 +443,7 @@ export function createWorkerStreamFn(scope: WorkerRunScope) {
 							responseSeconds:
 								input.limits !== undefined
 									? input.limits.time.responseMs / 1000
-									: workerSettings.safety.limits.workerResponseSeconds,
+									: workerSettings.safety.limits.workerResponseTimeoutMs / 1000,
 							round,
 							onLimit: (outcomeCode, detail) => {
 								phase.seal(detail);

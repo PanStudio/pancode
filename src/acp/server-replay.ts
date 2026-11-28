@@ -417,7 +417,7 @@ export function prepareAcpReplay(
 	const params = turns.flatMap((turn, index) => {
 		const route = {
 			...(turn.model !== undefined ? { model: turn.model } : {}),
-			...(turn.target !== undefined ? { target: turn.target } : {}),
+			...(turn.target !== undefined ? { connection: turn.target } : {}),
 		};
 		return turn.frames.map((frame) => ({
 			sessionId,
@@ -473,7 +473,7 @@ export function sessionResultMeta(
 ): AcpSessionResultMeta {
 	return {
 		sessionId: session.id,
-		target: session.target,
+		connection: session.target,
 		model: session.model,
 		autonomy: session.autonomy,
 		createdAt: safeIso(session.createdAt),

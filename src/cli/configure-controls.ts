@@ -15,7 +15,7 @@ import { validateSettings } from "../core/settings-validate.js";
 import { diffSettings } from "../domains/config/classify.js";
 import { settingsRuntimeFacts } from "../domains/providers/settings-facts.js";
 import type { ConfigurePrompts } from "./configure-prompts.js";
-import { createLifecyclePresenter } from "./lifecycle-presenter.js";
+import { createInstallPresenter } from "./install-presenter.js";
 
 function editText(control: SettingControl, value: unknown): string {
 	if (value === null || value === undefined) return "";
@@ -61,7 +61,7 @@ export { orderedAreaControls } from "../core/settings-controls.js";
 /** Open one fully explained, validated global setting edit. */
 export async function editSettingControl(prompts: ConfigurePrompts, control: SettingControl): Promise<boolean> {
 	prompts.clearScreen();
-	const presenter = createLifecyclePresenter({ stream: prompts.output });
+	const presenter = createInstallPresenter({ stream: prompts.output });
 	presenter.header(control.label, "configure");
 	for (const line of controlInstructions(control).split("\n")) presenter.note(line);
 	const current = getAtPath(readSettings(), control.path);

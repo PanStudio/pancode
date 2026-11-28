@@ -62,8 +62,8 @@ export interface SkillCatalogRow {
 	key: string;
 }
 
-/** Disk-install state for one package, as {@link installedSkillPackages} reports it. */
-export interface SkillCatalogPackage {
+/** Disk-install state for one package, as {@link installedSkillPacks} reports it. */
+export interface SkillCatalogPack {
 	name: string;
 	names: string[];
 	scope: string;
@@ -75,7 +75,7 @@ export interface SkillCatalogPackage {
 export interface SkillCatalogViewInput {
 	/** Model-visible skills, already filtered by trust and disable-model-invocation. */
 	skills: ReadonlyArray<Skill>;
-	packages: ReadonlyArray<SkillCatalogPackage>;
+	packages: ReadonlyArray<SkillCatalogPack>;
 	marketplace: ReadonlyArray<MarketplaceSkill>;
 	/** Names of ready skills whose content no longer matches its recorded hash. */
 	drifted?: ReadonlySet<string>;
@@ -233,7 +233,7 @@ function haystackForMarketplace(entry: MarketplaceSkill): string {
 	return `${entry.name.replace(/-/g, " ")} ${entry.description} ${entry.category ?? ""} ${(entry.triggers ?? []).join(" ")}`;
 }
 
-function haystackForPackage(record: SkillCatalogPackage): string {
+function haystackForPackage(record: SkillCatalogPack): string {
 	return `${record.name.replace(/-/g, " ")} ${record.names.join(" ").replace(/-/g, " ")}`;
 }
 

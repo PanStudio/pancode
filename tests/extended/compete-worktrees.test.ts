@@ -81,11 +81,13 @@ for (const agent of ["scout", "coder"] as const) {
 		let judgeTask = "";
 		const settings = structuredClone(DEFAULT_SETTINGS);
 		settings.fleet.retry.maxRetries = 0;
-		settings.targets = [{ id: "only-route", runtime: "openai", defaultModel: "fixture-model" }];
-		settings.fleet.default = { target: "only-route", model: "fixture-model", thinkingLevel: "off" };
+		settings.connections = [{ id: "only-route", runtime: "openai", defaultModel: "fixture-model" }];
+		settings.fleet.default = { connection: "only-route", model: "fixture-model", thinkingLevel: "off" };
 		settings.fleet.profiles = {};
 		settings.fleet.rosters = {
-			panel: { members: ["a", "b", "judge"].map((label) => ({ label, target: "only-route", model: "fixture-model" })) },
+			panel: {
+				members: ["a", "b", "judge"].map((label) => ({ label, connection: "only-route", model: "fixture-model" })),
+			},
 		};
 		const context = dispatchStubContext({
 			settings,
@@ -408,8 +410,8 @@ for (const { pick, cites } of [
 		let judgeTask = "";
 		const settings = structuredClone(DEFAULT_SETTINGS);
 		settings.fleet.retry.maxRetries = 0;
-		settings.targets = [{ id: "only-route", runtime: "openai", defaultModel: "fixture-model" }];
-		settings.fleet.default = { target: "only-route", model: "fixture-model", thinkingLevel: "off" };
+		settings.connections = [{ id: "only-route", runtime: "openai", defaultModel: "fixture-model" }];
+		settings.fleet.default = { connection: "only-route", model: "fixture-model", thinkingLevel: "off" };
 		settings.fleet.profiles = {};
 		const context = dispatchStubContext({ settings });
 		const specs = context.getContract("agents")?.listSpecs() ?? [];

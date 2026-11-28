@@ -477,7 +477,7 @@ export function createOverlaySessionLifecycle(deps: OverlaySessionLifecycleDeps)
 			onCancel: () => {
 				controller.abort();
 				deps.transitions.close();
-				if (!failed) deps.notify("info", "handoff cancelled; nothing was written", "handoff:cancelled");
+				if (!failed) deps.notify("info", "handoff canceled; nothing was written", "handoff:cancelled");
 			},
 		});
 		deps.transitions.handle = review;

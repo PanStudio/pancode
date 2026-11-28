@@ -443,7 +443,7 @@ describe("contracts/skills catalog through the context tool", () => {
 	});
 
 	it("does not leak a same-id package installed at another scope into a page", async () => {
-		// `installedSkillPackages` reads every scope, so one id can produce two
+		// `installedSkillPacks` reads every scope, so one id can produce two
 		// package rows. Selecting details by kind and name alone would put both on
 		// a page that carried one.
 		installSkillPackage("probe-kit", "A probe skill package.");

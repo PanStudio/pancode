@@ -434,7 +434,7 @@ export const SHARE_EVENT_PROJECTIONS: { readonly [N in ShareableEventName]: Payl
 	),
 	"config.snapshotted": keep("settings", "settingsFingerprint"),
 	// Changed settings are named by their key paths, which are structure; the values live in the config objects.
-	// A path's dictionary segments, such as a model id under targets[].lmstudio.models, are the operator's own keys.
+	// A path's dictionary segments, such as a model id under connections[].lmstudio.models, are the operator's own keys.
 	"config.changed": {
 		...keep("source", "scope", "before", "after", "settingsFingerprint"),
 		paths: "settings-path",
@@ -791,7 +791,7 @@ export const SHARE_EVENT_PROJECTIONS: { readonly [N in ShareableEventName]: Payl
  * read by absolute path, and a fragment by its path, so both become anonymous ids; a preload's label and a tool's
  * description are prose. Settings hold whatever an operator typed (paths, hosts, URLs, names), so every string in
  * them becomes an anonymous id, and so does every dictionary key they hold, such as a model id under
- * `targets[].lmstudio.models`; only their fixed field names, switches and numbers stay readable.
+ * `connections[].lmstudio.models`; only their fixed field names, switches and numbers stay readable.
  */
 const SHARE_OBJECT_PROJECTIONS: Readonly<Record<string, FieldProjection>> = {
 	"prompt-structure": {
@@ -851,16 +851,16 @@ function mapStrings(value: unknown, map: (text: string) => string): unknown {
 
 /** Like {@link mapStrings}, and an object's keys are mapped too unless `fixedKey` names them. */
 /**
- * A settings document without its funding: the pools (scheme, payer, fee, grant, local tariff) and each target's
+ * A settings document without its funding: the pools (scheme, payer, fee, grant, local tariff) and each connection's
  * pool binding are private funding metadata, so no share carries them under any profile.
  */
 function withoutFunding(value: unknown): unknown {
 	if (value === null || typeof value !== "object" || Array.isArray(value)) return value;
 	const { funding: _funding, ...rest } = value as Record<string, unknown>;
-	if (!Array.isArray(rest.targets)) return rest;
+	if (!Array.isArray(rest.connections)) return rest;
 	return {
 		...rest,
-		targets: rest.targets.map((target: unknown) => {
+		connections: rest.connections.map((target: unknown) => {
 			if (target === null || typeof target !== "object" || Array.isArray(target)) return target;
 			const { funding: _binding, ...kept } = target as Record<string, unknown>;
 			return kept;

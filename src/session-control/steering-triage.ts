@@ -231,15 +231,15 @@ function typedTriageVerdicts(picks: ReadonlyArray<TriagePick>, probabilities: bo
 
 /** A bound route takes the round unless the operator named a triage target, which keeps the side model. */
 function typedTriageRoute(
-	triage: Pick<SteeringTriageSettings, "target">,
+	triage: Pick<SteeringTriageSettings, "connection">,
 	systemOne: TriageSystemOne | undefined,
 ): TriageSystemOne | null {
-	return !triage.target && systemOne?.bound() === true ? systemOne : null;
+	return !triage.connection && systemOne?.bound() === true ? systemOne : null;
 }
 
 /** Queue length that starts a round: one when a route answers, so a lone "stop" is read; the side model keeps its setting. */
 export function triageFloor(
-	triage: Pick<SteeringTriageSettings, "target" | "minQueued">,
+	triage: Pick<SteeringTriageSettings, "connection" | "minQueued">,
 	systemOne: TriageSystemOne | undefined,
 ): number {
 	return typedTriageRoute(triage, systemOne) === null ? triage.minQueued : 1;
@@ -253,7 +253,7 @@ export function triageFloor(
  * route failed on stays where the operator left it.
  */
 export async function runTriageRound(input: {
-	readonly triage: Pick<SteeringTriageSettings, "target" | "minQueued" | "timeoutMs">;
+	readonly triage: Pick<SteeringTriageSettings, "connection" | "minQueued" | "timeoutMs">;
 	readonly systemOne: TriageSystemOne | undefined;
 	readonly asked: ReadonlyArray<TriageEntry>;
 	readonly task: () => string;

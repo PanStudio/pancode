@@ -31,8 +31,8 @@ import {
 } from "../../src/tools/ask-user.js";
 import { registerAllTools } from "../../src/tools/bootstrap.js";
 import { resolveToolRow } from "../../src/tools/presentation.js";
+import type { AskUserToolPolicy } from "../../src/tools/registry/contract.js";
 import { createRegistry } from "../../src/tools/registry.js";
-import type { AskUserToolPolicy } from "../../src/tools/registry-contract.js";
 import type { ToolResult } from "../../src/tools/tool-spec.js";
 import { dispatchStubContext } from "../harness/dispatch-stub-context.js";
 import { type IsolatedPancodeEnv, isolatePancodeEnv } from "../harness/scratch-env.js";
@@ -654,9 +654,9 @@ describe("ask_user tool", () => {
 		const settings = structuredClone(DEFAULT_SETTINGS);
 		settings.chat.prewarm = false;
 		const context = dispatchStubContext({ settings });
-		const target = settings.targets[0];
+		const target = settings.connections[0];
 		ok(target);
-		settings.chat.target = target.id;
+		settings.chat.connection = target.id;
 		settings.chat.model = target.defaultModel ?? "gpt-4o";
 		const registry = createRegistry({ safety: createWorkerSafety(), autonomy: () => "default" });
 		registerAllTools(registry, {
@@ -841,15 +841,15 @@ describe("ask_user: who answered, and how long a round waits", () => {
 	});
 
 	it("bounds a yolo round's window, and shortens it once the operator was seen away", () => {
-		strictEqual(askUserWindowMs(300, { yolo: false, away: false }), 300_000);
+		strictEqual(askUserWindowMs(300_000, { yolo: false, away: false }), 300_000);
 		strictEqual(askUserWindowMs(0, { yolo: false, away: false }), 0, "default honors wait-forever");
 		strictEqual(askUserWindowMs(0, { yolo: true, away: false }), YOLO_ASK_WINDOW_FLOOR_SECONDS * 1000);
-		strictEqual(askUserWindowMs(300, { yolo: true, away: true }), AWAY_ASK_WINDOW_MS);
-		strictEqual(askUserWindowMs(10, { yolo: false, away: true }), 10_000);
+		strictEqual(askUserWindowMs(300_000, { yolo: true, away: true }), AWAY_ASK_WINDOW_MS);
+		strictEqual(askUserWindowMs(10_000, { yolo: false, away: true }), 10_000);
 		strictEqual(askUserWindowMs(0, { yolo: false, away: true }), 0);
 		// F-C1: an operator_only question stays open past the unattended window at every autonomy level.
 		for (const yolo of [false, true])
 			for (const away of [false, true])
-				strictEqual(askUserWindowMs(300, { yolo, away, operatorOnly: true }), 0, `yolo ${yolo}, away ${away}`);
+				strictEqual(askUserWindowMs(300_000, { yolo, away, operatorOnly: true }), 0, `yolo ${yolo}, away ${away}`);
 	});
 });

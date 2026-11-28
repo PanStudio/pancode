@@ -147,7 +147,7 @@ export function acpCommandHost(input: AcpCommandHostInput): Parameters<typeof ac
 		...archiveCommandHost(shareArchiver),
 		// `/report` previews as text and sends only on a second `/report send <id>`.
 		reportHost: lazyReportTextHost(reportSession),
-		getChatTarget: () => getCurrentSettings().chat.target,
+		getChatTarget: () => getCurrentSettings().chat.connection,
 		getChatModel: () => getCurrentSettings().chat.model,
 		getFleetAgentProfiles: () => getCurrentSettings().fleet.agentProfiles,
 		getAutonomy: resolveEffectiveAutonomy,

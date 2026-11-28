@@ -2,10 +2,11 @@
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import { lstatSync, readdirSync, readFileSync, realpathSync } from "node:fs";
 import path from "node:path";
+import { INTEROP_AGENT_KINDS, interopUserRoot } from "../../../core/interop-agents.js";
 import { isModelTier, type ModelTier } from "../../../core/model-tier.js";
 import { isStrictDescendant, relativePathEscapes } from "../../../core/path-containment.js";
 import { parseCommandArgs, substituteArgs } from "../../../engine/prompt-templates.js";
-import { INTEROP_AGENT_KINDS, interopUserRoot } from "../../interop/registry.js";
+import { resolvePackReferences } from "../../agents/index.js";
 import {
 	type ResourceCandidate,
 	type ResourceDiagnostic,
@@ -20,7 +21,6 @@ import {
 	splitYamlFrontmatter,
 	stringField,
 } from "../common-loader.js";
-import { resolvePackageReferences } from "../package-references.js";
 import { importedToolSurface, projectCompatTrusted, templateToolSurface } from "../skills/loader.js";
 import { type TemplateTurnBounds, templateTurnBounds } from "./turn-bounds.js";
 
@@ -76,7 +76,7 @@ export interface PromptTemplate {
 }
 
 export interface PromptTemplateRoot {
-	owner?: import("../../../core/package-identity.js").PackageIdentity;
+	owner?: import("../../../core/pack-identity.js").PackIdentity;
 	plugin?: boolean;
 	path: string;
 	/** Present only for an installed plugin resource root. */
@@ -239,7 +239,7 @@ type BodyResolution = { body: string } | { reason: string };
 function resolvePackageRootReferences(body: string, root: PromptTemplateRoot): BodyResolution {
 	if (!root.plugin) return { body };
 	try {
-		return { body: resolvePackageReferences(body, root) };
+		return { body: resolvePackReferences(body, root) };
 	} catch (error) {
 		return { reason: `prompt template: ${error instanceof Error ? error.message : String(error)}` };
 	}
@@ -594,7 +594,7 @@ export function expandPromptTemplateInput(
 	if (!template.trusted) {
 		const message =
 			template.sourceInfo.scope === "package"
-				? `prompt template ${template.name} is imported but untrusted; review it and enable integrations.projectResources.trustProjectImports to use it`
+				? `prompt template ${template.name} is imported but untrusted; review it and enable integrations.hub.trustProjectImports to use it`
 				: `prompt template ${template.name} is discovered from another agent; explicitly import it into PanCode with interop adopt or hub import before use. The trust setting does not import loose files`;
 		return {
 			expanded: false,

@@ -2,8 +2,8 @@
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import { dirname } from "node:path";
 import { renderHerdrThemeBlock } from "../domains/mux/yazi/theme.js";
-import { writeCliFailure } from "./kit/json-out.js";
-import type { ErrorSlug } from "./kit/slugs.js";
+import { writeCliFailure } from "./lib/json-out.js";
+import type { ErrorSlug } from "./lib/slugs.js";
 import { runProgramsCommand } from "./programs.js";
 
 const HELP = `pancode panes install [--if-missing] [--force] [--json]

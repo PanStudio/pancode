@@ -33,7 +33,11 @@ import {
 	releaseMainCacheLanes,
 } from "../../src/domains/dispatch/capacity-lease.js";
 import type { AgentRoleFacts } from "../../src/domains/dispatch/execution-role.js";
-import { isBoundedGateRolePrompt, REVIEWER_GATE_PROMPT } from "../../src/domains/dispatch/gate-role-prompts.js";
+import {
+	isBoundedGateRolePrompt,
+	REVIEWER_GATE_PROMPT,
+	reviewerGatePrompt,
+} from "../../src/domains/dispatch/gate-role-prompts.js";
 import { normalizeDispatchIntent } from "../../src/domains/dispatch/intent.js";
 import {
 	architectPlanOutsideWriteRoots,
@@ -292,8 +296,8 @@ describe("dispatch admission boundary", () => {
 
 	it("refuses a pinned route only on a fresh, explicit provider quota denial, naming window, reset and evidence age (R3)", async () => {
 		const settings = structuredClone(DEFAULT_SETTINGS);
-		settings.targets = [{ id: "codex", runtime: "openai-codex", defaultModel: "gpt-6-luna" }];
-		settings.fleet.default.target = "codex";
+		settings.connections = [{ id: "codex", runtime: "openai-codex", defaultModel: "gpt-6-luna" }];
+		settings.fleet.default.connection = "codex";
 		settings.fleet.default.model = "gpt-6-luna";
 		let starts = 0;
 		const options = {
@@ -307,7 +311,7 @@ describe("dispatch admission boundary", () => {
 		const unmetered = makeDispatchBundle(dispatchStubContext(), options);
 		// A target that names its own Codex login spends a credential the quota adapter never read.
 		const ownLoginSettings = structuredClone(settings);
-		ownLoginSettings.targets = [
+		ownLoginSettings.connections = [
 			{ id: "codex", runtime: "openai-codex", defaultModel: "gpt-6-luna", auth: { oauthProfile: "codex-work" } },
 		];
 		const ownLogin = makeDispatchBundle(dispatchStubContext({ settings: ownLoginSettings }), options);
@@ -409,7 +413,7 @@ describe("dispatch admission boundary", () => {
 			extra: Record<string, unknown> = {},
 		) => {
 			const settings = structuredClone(DEFAULT_SETTINGS);
-			settings.targets = [
+			settings.connections = [
 				{
 					id: "api",
 					runtime: runtime.id,
@@ -417,7 +421,7 @@ describe("dispatch admission boundary", () => {
 					...(runtime.kind === "subprocess" ? { trustedUnmediated: true } : {}),
 				},
 			];
-			settings.fleet.default = { ...settings.fleet.default, target: "api", model };
+			settings.fleet.default = { ...settings.fleet.default, connection: "api", model };
 			settings.chat.maxOutputTokens = maxOutputTokens;
 			const context = dispatchStubContext({ settings, runtime });
 			const bundle = makeDispatchBundle(context);
@@ -494,10 +498,10 @@ describe("dispatch admission boundary", () => {
 
 	it("runs a 6-task plan on a 4-slot endpoint as two waves with a notice, not a refusal (M8)", async () => {
 		const settings = structuredClone(DEFAULT_SETTINGS);
-		settings.targets = [
+		settings.connections = [
 			{ id: "local", runtime: "openai", defaultModel: "gpt-4o", url: "http://127.0.0.1:9/v1", maxConcurrentRequests: 4 },
 		];
-		settings.fleet.default = { ...settings.fleet.default, target: "local", model: "gpt-4o" };
+		settings.fleet.default = { ...settings.fleet.default, connection: "local", model: "gpt-4o" };
 		const context = dispatchStubContext({ settings });
 		const bundle = makeDispatchBundle(context);
 		await bundle.extension.start();
@@ -1542,7 +1546,7 @@ describe("dispatch admission boundary", () => {
 		// A fresh home has no slot record, so admission bound llama.cpp targets
 		// to one slot and refused a two-task batch until `targets --probe` ran.
 		const settings = structuredClone(DEFAULT_SETTINGS);
-		settings.targets = [
+		settings.connections = [
 			{ id: "mini", runtime: "llama.cpp", url: "http://127.0.0.1:8080", defaultModel: "m" },
 			{
 				id: "mini-pinned",
@@ -1552,7 +1556,7 @@ describe("dispatch admission boundary", () => {
 				maxConcurrentRequests: 2,
 			},
 		];
-		settings.fleet.default.target = "mini";
+		settings.fleet.default.connection = "mini";
 		settings.fleet.default.model = "m";
 		const runtime: RuntimeDescriptor = {
 			id: "llama.cpp",
@@ -1614,6 +1618,41 @@ describe("dispatch admission boundary", () => {
 			false,
 		);
 		strictEqual(isBoundedGateRolePrompt({ role: "reviewer", readOnly: true, systemPrompt: "caller persona" }), false);
+		strictEqual(reviewerGatePrompt({ source: "builtin", body: "# Reviewer" }), REVIEWER_GATE_PROMPT);
+		strictEqual(reviewerGatePrompt({ source: "custom", body: "External ACP delegation." }), REVIEWER_GATE_PROMPT);
+		strictEqual(reviewerGatePrompt({ source: "unrecognized", body: "# Untrusted" }), REVIEWER_GATE_PROMPT);
+		const recipe = { source: "project", body: "# Strict\nAlso check that every hunk is necessary." };
+		const composed = reviewerGatePrompt(recipe);
+		ok(composed.startsWith(`${recipe.body}\n\n## Review gate\n`));
+		strictEqual(isBoundedGateRolePrompt({ role: "reviewer", readOnly: true, systemPrompt: composed, recipe }), true);
+		strictEqual(isBoundedGateRolePrompt({ role: "reviewer", readOnly: true, systemPrompt: composed }), false);
+		strictEqual(
+			isBoundedGateRolePrompt({
+				role: "reviewer",
+				readOnly: true,
+				systemPrompt: `${recipe.body}\n\n## Review gate\nYou may edit files.`,
+				recipe,
+			}),
+			false,
+		);
+		strictEqual(
+			isBoundedGateRolePrompt({
+				role: "reviewer",
+				readOnly: true,
+				systemPrompt: composed,
+				recipe: { source: "project", body: "# Other" },
+			}),
+			false,
+		);
+		strictEqual(
+			isBoundedGateRolePrompt({
+				role: "reviewer",
+				readOnly: true,
+				systemPrompt: composed,
+				recipe: { source: "unrecognized", body: recipe.body },
+			}),
+			false,
+		);
 	});
 
 	it("admits a budget-declaring recipe on a Claude CLI target as an external one-shot budget", async (t) => {
@@ -1623,8 +1662,10 @@ describe("dispatch admission boundary", () => {
 		t.after(() => rmSync(cwd, { recursive: true, force: true }));
 		const settings = structuredClone(DEFAULT_SETTINGS);
 		// An artifact-write run on an unmediated CLI needs the operator's trust (Q6).
-		settings.targets = [{ id: "claude-worker", runtime: "claude-code", defaultModel: "sonnet", trustedUnmediated: true }];
-		settings.fleet.default.target = "claude-worker";
+		settings.connections = [
+			{ id: "claude-worker", runtime: "claude-code", defaultModel: "sonnet", trustedUnmediated: true },
+		];
+		settings.fleet.default.connection = "claude-worker";
 		settings.fleet.default.model = "sonnet";
 		const spawn = (runtime: RuntimeDescriptor) => {
 			let spawned = 0;

@@ -16,7 +16,7 @@ import { afterEach, beforeEach, describe, it } from "node:test";
 import { stringify } from "yaml";
 import { type ChangedFile, type HubReviewDeps, reviewHubChanges } from "../../scripts/hub-review.js";
 import type { RegistryRow } from "../../scripts/pin-hub-remote.js";
-import { validateHubPackage } from "../../src/domains/resources/hub-validation.js";
+import { validateHubPack } from "../../src/domains/resources/hub-validation.js";
 
 let root: string;
 
@@ -82,7 +82,7 @@ function extension(commit: string, net: boolean): string {
 }
 
 function row(location: string, commit: string, overrides: Partial<RegistryRow> = {}): RegistryRow {
-	const result = validateHubPackage(location);
+	const result = validateHubPack(location);
 	return {
 		kind: result.manifest?.pancode.kind ?? "plugin",
 		publisher: "octo",
@@ -104,7 +104,7 @@ function deps(trees: Record<string, string>): HubReviewDeps {
 			if (!location) throw new Error(`unknown commit ${source.commit}`);
 			return { root: location, cleanup: () => {}, commit: source.commit };
 		},
-		validateHubPackage,
+		validateHubPack,
 	};
 }
 

@@ -38,23 +38,23 @@ export async function workspaceSteps(run: SmokeRun) {
 		await revealSidebar();
 		await page
 			.locator(".wb-sidebar")
-			.getByRole("button", { name: /^Open workspace/ })
+			.getByRole("button", { name: /^Open project/ })
 			.click();
 		await openDialog.getByLabel("Project folder", { exact: true }).fill(h.home.path);
 		await openDialog.getByRole("button", { name: "Open", exact: true }).click();
 		await page.waitForURL(/\/workspaces\/[^/]+\/sessions$/);
-		await page.locator("main button.primary", { hasText: "New task" }).click();
+		await page.locator("main button.primary", { hasText: "New session" }).click();
 		await page.waitForURL(`${origin}/`);
 		await page.getByLabel("Message PanCode", { exact: true }).fill("Summarize this project.");
-		await page.getByRole("button", { name: "Start task", exact: true }).click();
+		await page.getByRole("button", { name: "Start session", exact: true }).click();
 		await page.waitForURL(/\/sessions\/[^/]+$/);
 		await page.getByLabel("Message PanCode", { exact: true }).waitFor();
 		run.noticeSessionUrl = page.url();
 		// The bar also holds the transcript detail picker, so the task's menu is found by its name.
-		await page.locator('.conversation .wb-bar .wb-menu:has(> summary[aria-label="Task actions"]) summary').click();
-		await page.getByRole("menuitem", { name: /^All tasks in / }).click();
+		await page.locator('.conversation .wb-bar .wb-menu:has(> summary[aria-label="Session actions"]) summary').click();
+		await page.getByRole("menuitem", { name: /^All sessions in / }).click();
 		await page.waitForURL(/\/workspaces\/[^/]+\/sessions$/);
-		await page.locator("main button.primary", { hasText: "New task" }).waitFor();
+		await page.locator("main button.primary", { hasText: "New session" }).waitFor();
 		await page
 			.locator("main")
 			.getByRole("heading", { name: /^Your work in / })
@@ -68,7 +68,7 @@ export async function workspaceSteps(run: SmokeRun) {
 		await revealSidebar();
 		await page
 			.locator(".wb-sidebar")
-			.getByRole("button", { name: /^Open workspace/ })
+			.getByRole("button", { name: /^Open project/ })
 			.click();
 		await openDialog.getByLabel("Project folder", { exact: true }).fill(join(h.home.path, "does-not-exist"));
 		await openDialog.getByRole("button", { name: "Open", exact: true }).click();
@@ -179,7 +179,7 @@ export async function workspaceSteps(run: SmokeRun) {
 						const rect = element.getBoundingClientRect();
 						return element.contains(document.elementFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2));
 					});
-				for (const name of ["Reject", "Allow once"]) {
+				for (const name of ["Deny", "Allow once"]) {
 					const answer = noticePage.locator(".conversation__approval").getByRole("button", { name, exact: true });
 					await answer.scrollIntoViewIfNeeded();
 					assert.equal(await receivesPointer(answer), true, `${name} stays reachable with notices at ${width}×${height}`);
@@ -316,11 +316,11 @@ export async function workspaceSteps(run: SmokeRun) {
 		// The routing inventory shows one of profiles, agent bindings and cached models at a time.
 		await page
 			.getByRole("navigation", { name: "Routing inventory", exact: true })
-			.getByRole("button", { name: /^Agent bindings ·/ })
+			.getByRole("button", { name: /^Agent routes ·/ })
 			.click();
 		await page
 			.locator("main")
-			.getByRole("heading", { name: /^Agent bindings ·/ })
+			.getByRole("heading", { name: /^Agent routes ·/ })
 			.waitFor();
 		await check("routing");
 		if (width === 1600 || width === 390)
@@ -351,7 +351,7 @@ export async function workspaceSteps(run: SmokeRun) {
 		);
 		await check("usage-explain");
 		await page.keyboard.press("Escape");
-		// Each recorded route has a dense row whose figures explain themselves; the grouping switches to targets.
+		// Each recorded route has a dense row whose figures explain themselves; the grouping switches to connections.
 		const usageModelRow = page
 			.getByRole("region", { name: "Recorded usage by model", exact: true })
 			.locator("tbody tr", { has: page.locator("th", { hasText: /fixture-model$/ }) });
@@ -360,9 +360,9 @@ export async function workspaceSteps(run: SmokeRun) {
 		await modelTokens.locator(".explain__panel dt", { hasText: /^Coverage$/ }).waitFor();
 		await check("usage-model-row");
 		await modelTokens.locator("summary").click();
-		await page.locator("main").getByRole("button", { name: "Per target", exact: true }).click();
+		await page.locator("main").getByRole("button", { name: "Per connection", exact: true }).click();
 		await page
-			.getByRole("region", { name: "Recorded usage by target", exact: true })
+			.getByRole("region", { name: "Recorded usage by connection", exact: true })
 			.locator("tbody tr", { has: page.locator("th", { hasText: /fixture/ }) })
 			.first()
 			.waitFor();

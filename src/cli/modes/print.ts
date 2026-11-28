@@ -39,7 +39,7 @@ import {
 } from "../../session-control/chat-loop-messages.js";
 import { sealCompletion } from "../../tools/finish.js";
 import { openSteerChannel } from "../headless-steer.js";
-import { EXPLORATION_STALLED_EXIT_CODE } from "../kit/exit-codes.js";
+import { EXPLORATION_STALLED_EXIT_CODE } from "../lib/exit-codes.js";
 import { flushRawStdout, writeRawStdout } from "../output-guard.js";
 import { UNSCRIPTED_EXIT_CODE, unscriptedRunMessage } from "../run-answers.js";
 import {
@@ -146,7 +146,7 @@ export async function runHeadlessMainAgent(chat: ChatLoop, options: HeadlessMain
 		const unpriced = options.unpricedRoutes?.(delegating ? "delegating" : "main") ?? [];
 		if (unpriced.length > 0) {
 			writeRunRefusal(
-				`pancode run: --require-priced: routes this run can reach have no known pricing: ${unpriced.join(", ")}; declare targets[].pricing for them${delegating ? " or add --no-delegate if only worker routes are listed" : ""}\n`,
+				`pancode run: --require-priced: routes this run can reach have no known pricing: ${unpriced.join(", ")}; declare connections[].pricing for them${delegating ? " or add --no-delegate if only worker routes are listed" : ""}\n`,
 				"not_configured",
 			);
 			return 2;
@@ -699,7 +699,7 @@ export async function runHeadlessMainAgent(chat: ChatLoop, options: HeadlessMain
 		// Keep the outcome detail, but emit that diagnostic only at the timer.
 		stderrMessage =
 			settlement.live.length > 0
-				? `pancode run: cancelling ${settlement.live.length} dispatched run(s) still in flight: ${describeRuns(settlement.live)}`
+				? `pancode run: canceling ${settlement.live.length} dispatched run(s) still in flight: ${describeRuns(settlement.live)}`
 				: null;
 		if (options.deadline?.expired() !== true) {
 			stderrMessage = [terminal.failureMessage, stderrMessage].filter(Boolean).join("\n") || null;

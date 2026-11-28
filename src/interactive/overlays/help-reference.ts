@@ -368,7 +368,7 @@ export function openHelpOverlay(
 				"**Enter**: toggles the inline worker-progress detail on any run, and Esc folds an open detail before it closes the board.",
 				"**Watch**: press `w` on a live run in a `--with-panes` session to take the workers dock over for that run (opening it, or bringing back a hidden one, without moving the keyboard); the arrow keys then move it between runs.",
 				"**Steer**: press `m` (message) on a live native run to close the board and prefill `@<runId> `. Add guidance and submit it normally. The first notice means queued; a received notice confirms worker delivery.",
-				"**Cancel**: press `x` on a running, stale, queued, or retry-waiting run. The row changes to cancelling while the worker or retry is being stopped.",
+				"**Cancel**: press `x` on a running, stale, queued, or retry-waiting run. The row changes to canceling while the worker or retry is being stopped.",
 				"**Capabilities**: ACP delegation runs cannot accept live steering. The board footer only advertises actions supported by the selected row.",
 				"**Tasks versus runs**: `/tasks` shows the agent's plan steps. Fleet runs are concrete delegated worker executions and remain in this board as recent terminal history.",
 			],
@@ -416,7 +416,7 @@ export function openHelpOverlay(
 				"**Safety net**: the floor (deleting or overwriting /, home or a system tree, mkfs, wipefs, block-device writes, fork bombs, writes into PanCode's own state, reads of its credential store) and rules in an approved `.pancode/safety.yaml` block at every level; secret and protected paths block at default. " +
 					"At default, other damage-control rules ask instead of blocking.",
 				"**Mode** (`/settings`, persisted as `safety.autonomy`): default runs workspace edits, and shell commands inside an OS sandbox where the host has one, without asking. " +
-					"Commands that leave the sandbox and outward actions are first reviewed by the safety judge, larger dispatch plans ask you, and destructive workspace operations run after a snapshot `/rewind` can undo. Yolo shows no approval cards but still asks you questions; one nobody answers within `safety.unattendedAfterSeconds` takes its recommended option unless that option leaves the workspace. Contained yolo (the default) keeps default's sandbox, snapshots and judge, and refuses what would need your approval; unconfined yolo (`safety.yoloConfinement`) skips approvals and the sandbox unless `safety.sandbox` is required. " +
+					"Commands that leave the sandbox and outward actions are first reviewed by the safety judge, larger dispatch plans ask you, and destructive workspace operations run after a snapshot `/rewind` can undo. YOLO shows no approval cards but still asks you questions; one nobody answers within `safety.unattendedAfterMs` takes its recommended option unless that option leaves the workspace. Contained YOLO (the default) keeps default's sandbox, snapshots and judge, and refuses what would need your approval; unconfined YOLO (`safety.yoloConfinement`) skips approvals and the sandbox unless `safety.sandbox` is required. " +
 					"Its first activation shows a one-time acceptance card, and it is refused as root outside a container.",
 				"**Approvals**: a parked call waits for a one-shot operator decision; approving resumes only that call. " +
 					"Workers resolve asks per `fleet.permissions.mode` (Fleet approvals routing in /settings); headless runs deny what the safety judge does not allow.",

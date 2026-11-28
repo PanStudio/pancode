@@ -14,7 +14,7 @@ export function createResourcesBundle(
 		...(options.cwd !== undefined ? { cwd: options.cwd } : {}),
 		...(options.reservedPromptNames !== undefined ? { reservedPromptNames: options.reservedPromptNames } : {}),
 		skills: () => ({
-			...skillOptions(config()?.get().integrations.projectResources.trustProjectImports === true, options),
+			...skillOptions(config()?.get().integrations.hub.trustProjectImports === true, options),
 		}),
 		// Read at each expansion: the providers domain loads after this one.
 		modelTier: options.modelTier ?? (() => context.getContract("providers")?.chatModel?.()?.tier),

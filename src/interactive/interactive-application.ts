@@ -5,109 +5,67 @@ import type { PancodeSettings } from "../core/config.js";
 import { nextOutputStyle } from "../core/defaults.js";
 import { installDiagnosticSink } from "../core/diagnostics.js";
 import { GLYPH } from "../core/glyphs.js";
-import { flushHarnessProfile, hydrateHarnessProfile, scheduleHarnessFeature } from "../core/harness-profile.js";
+import { flushHarnessProfile, hydrateHarnessProfile } from "../core/harness-profile.js";
 import { readPancodeVersion } from "../core/package-root.js";
 import { consumeRestartContinuation, restartContinuationMessage } from "../core/restart-intent.js";
-import { firePendingModelRestart, nextModelRestartChain, setRestartHost } from "../core/restart-request.js";
+import { nextModelRestartChain, setRestartHost } from "../core/restart-request.js";
 import { isRestartHandoff } from "../core/restart-status.js";
 import { getTerminationCoordinator } from "../core/termination.js";
 import { immediateSequence } from "../core/timers.js";
 import { pancodeStateDir } from "../core/xdg.js";
 import { openDetachedBatchViews } from "../domains/dispatch/nudges/dispatch-nudge.js";
-import {
-	createChatTurnUsage,
-	createTurnObservations,
-	subscribeExtensionObservations,
-} from "../domains/extensions/bus-observations.js";
-import { createExtensionHostServices } from "../domains/extensions/host-services.js";
-import { type PromptRef, promptRefs } from "../domains/extensions/operator-commands.js";
-import { OperatorExtensions } from "../domains/extensions/operator-extensions.js";
-import { bindExtensionOwnerNames, extensionOwnerLabel } from "../domains/extensions/owner-label.js";
-import type { PanesWatchController } from "../domains/mux/operations.js";
+import { subscribeExtensionObservations } from "../domains/extensions/bus-observations.js";
+import { extensionOwnerLabel } from "../domains/extensions/owner-label.js";
 import { holdExitSummaryForLauncher } from "../domains/mux/workspace/exit-summary-handoff.js";
 import type { ThinkingLevel } from "../domains/providers/index.js";
-import { isArcadeTrigger } from "../domains/session/easter-eggs.js";
-import { setDiffusionFramesEnabled } from "../engine/apis/diffusion-frames.js";
-import { createAgentProgress, TuiAltScreen } from "../engine/tui.js";
-import { createDockKeyGate } from "../lib/panes/dock-keys.js";
+import { TuiAltScreen } from "../engine/tui.js";
 import type { ChatLoopEvent } from "../session-control/chat-loop.js";
-import { reportLoopChanges } from "../session-control/loop-command.js";
-import { BUILTIN_SLASH_NAMES } from "../session-control/slash-commands.js";
 import { readWorkerRunResultFacts } from "../session-control/worker-run-results.js";
-import type { WorkerEntryState } from "../session-control/worker-stream.js";
-import { runParkedInterview } from "../tools/extension-interview.js";
+import { createAppExtensions } from "./application/extensions.js";
+import { createAppPresentation } from "./application/presentation.js";
+import { createAppProjection } from "./application/projection.js";
+import type { ApplicationScope } from "./application/scope.js";
 import type { ApplicationController } from "./application-controller.js";
-import {
-	ARCADE_PAUSED_NOTICE,
-	type ArcadeSession,
-	createArcadePhraseScreen,
-	openArcadeOverlay,
-} from "./arcade-overlay.js";
-import { createAttachController } from "./attach-host.js";
+import { createArcadePhraseScreen } from "./arcade-overlay.js";
 import { warmTranscriptRender } from "./chat-panel.js";
 import { emitCommandNotice } from "./command-fallbacks.js";
-import { appendNotice, appendOperatorAside, OPERATOR_COMMAND_ENTRY, TURN_TIMING_ENTRY } from "./command-output.js";
+import { appendNotice, appendOperatorAside, OPERATOR_COMMAND_ENTRY } from "./command-output.js";
 import { presentContextCommands } from "./context-command-presentation.js";
 import { dispatchCouncilThroughRegistry } from "./council-dispatch.js";
 import { createDetachedBatchWake, detachedBatchDecisions } from "./detached-batch-wake.js";
 import { createDispatchSteering } from "./dispatch-steering.js";
-import { dockTop } from "./dock.js";
 import { createEditorSubmitController, EDITOR_BASH_SHUTDOWN_MS, RESTORED_DRAFT_NOTICE } from "./editor-submit.js";
 import { renderExitSummary, renderExitWithoutConversation } from "./exit-summary.js";
 import { createExitSummaryCollector } from "./exit-summary-collector.js";
-import { createExtensionDevSession, type ExtensionDevSession } from "./extension-dev-session.js";
-import { createInteractiveDesktopNotifications } from "./footer/notifications.js";
-import {
-	expandInteractiveSubmitAsync,
-	type InteractiveDeps,
-	type InteractiveSubmitExpansion,
-} from "./interactive-deps.js";
+import type { InteractiveDeps } from "./interactive-deps.js";
 import { type DockKeyOrigin, pressFilesKey } from "./interactive-dock-keys.js";
-import { createInteractiveEventProjection } from "./interactive-event-projection.js";
 import { explainProtectedExit } from "./interactive-exit-explanation.js";
 import { createInteractiveInputRuntime } from "./interactive-input-runtime.js";
 import { dispatchInteractiveAction } from "./interactive-key-actions.js";
-import { createInteractivePresentation } from "./interactive-presentation.js";
 import { appendReloadReport, createInteractiveReload } from "./interactive-reload.js";
-import { createInteractiveRestart, interactiveRestartBusyReason } from "./interactive-restart.js";
 import { createProcessInteractiveShell, getActiveRenderTrace } from "./interactive-shell.js";
 import { createInteractiveSlashRuntime, resolveAvailableThinkingLevels } from "./interactive-slash-runtime.js";
 import { createInteractiveSubscriptions } from "./interactive-subscriptions.js";
 import { createInteractiveTickers } from "./interactive-tickers.js";
-import { formatKeyLabel } from "./keybinding-manager.js";
 import { releaseRegularDock, returnToLiveEdge } from "./layout.js";
 import { createOverlayLifecycle, type OverlayLifecycleController } from "./overlay-lifecycle.js";
 import { openAskUserOverlay } from "./overlays/ask-user.js";
-import { interopOverlaySurface } from "./overlays/interop.js";
 import { paneWatchDecision } from "./pane-policy.js";
 import { describePanesLeftBehind } from "./panes-runtime.js";
 import { slashDraftUnderApprovalNotice } from "./permission-hint.js";
 import { suspendProcessUntilContinued } from "./process-suspend.js";
 import { projectShadowNotice } from "./project-shadow-notice.js";
-import { createProjectTrustSession } from "./project-trust-session.js";
 import { writeInputWedgeDump } from "./render-trace.js";
 import { renderContextOperationResult } from "./renderers/context-operation.js";
-import { hydrateResumedSessionPresentation } from "./resumed-session-presentation.js";
 import { createSessionFileRecorder, sessionFileOutcomeForExitCode } from "./session-file.js";
 import { settleChatBeforeSessionSwitch } from "./session-switch-settlement.js";
 import { createSessionTranscript } from "./session-transcript.js";
-import { createStaleBuildNotice } from "./stale-build.js";
 import { createSteerReceipts } from "./steer-receipts.js";
 import { processAutoPacingAllowed } from "./stream-pacing-policy.js";
-import {
-	ambientDrawingPlace,
-	createAmbientSurfaces,
-	hasExtensionDrawing,
-	opensOwnSurface,
-} from "./surfaces/ambient.js";
-import { createExtensionPaneKeys } from "./surfaces/extension-pane-keys.js";
-import { createWorkspaceSurfaces, WORKSPACE_LEAVE_KEY } from "./surfaces/registry.js";
-import { renderView } from "./surfaces/view-renderer.js";
-import { followTerminalColors } from "./terminal-color-follow.js";
+import { ambientDrawingPlace, hasExtensionDrawing, opensOwnSurface } from "./surfaces/ambient.js";
 import { workersDockHiddenNotice } from "./watch-pane.js";
 import { WORKER_SETTLED_ENTRY } from "./worker-replay.js";
 import { createWorkspaceFacts } from "./workspace-facts.js";
-import { createYoloActivation } from "./yolo-activation.js";
 
 /** The report offer's notice key; dismissing it records a no (R-11). */
 const REPORT_OFFER_NOTICE_KEY = "report-offer";
@@ -119,18 +77,6 @@ const REPORT_OFFER_TTL_MS = 60_000;
 function availableInteractiveThinkingLevels(deps: InteractiveDeps): ReadonlyArray<ThinkingLevel> {
 	const settings = deps.getSettings?.();
 	return settings ? resolveAvailableThinkingLevels(deps.providers, settings) : ["off"];
-}
-
-function livePrompts(resources: InteractiveDeps["resources"]): PromptRef[] {
-	return promptRefs(resources?.promptsForDisplay(process.cwd()).items ?? []);
-}
-
-function isChatReadOnly(chat: InteractiveDeps["chat"]): boolean {
-	return chat.toolLimits?.()?.readOnly === true || chat.currentTurnConstraints?.()?.readOnly === true;
-}
-
-function frozenExtensionTools(registry: NonNullable<InteractiveDeps["toolRegistry"]>) {
-	return registry.listAll().flatMap((tool) => (tool.sourceInfo?.extension ? [tool.sourceInfo.extension] : []));
 }
 
 export async function createInteractiveApplication(host: InteractiveDeps): Promise<number> {
@@ -239,8 +185,8 @@ export async function createInteractiveApplication(host: InteractiveDeps): Promi
 		undeliveredTurns: () => undeliveredMessages().length,
 		getModel: () => {
 			const settings = deps.getSettings?.();
-			return settings?.chat.target && settings.chat.model
-				? { target: settings.chat.target, model: settings.chat.model }
+			return settings?.chat.connection && settings.chat.model
+				? { target: settings.chat.connection, model: settings.chat.model }
 				: null;
 		},
 	});
@@ -261,320 +207,111 @@ export async function createInteractiveApplication(host: InteractiveDeps): Promi
 		process.once("exit", (code) => recordAt(code));
 	}
 	/**
-	 * Ctrl+G armed the leader and is waiting for the next key. Owned here because
-	 * the footer reads it and the input runtime that flips it is built later.
-	 */
-	let leaderArmed = false;
-	/**
-	 * A Ctrl+C armed the double tap and its APPLICATION_DOUBLE_TAP_MS (3 s) window is still open. Owned
-	 * here for the same reason as the leader flag above.
-	 */
-	/** False, or the armed line the footer shows while a second Ctrl+C would quit. */
-	let shutdownArmed: string | false = false;
-	const updateAbort = new AbortController();
-	let updateTimer: ReturnType<typeof setTimeout> | undefined;
-	let updateMonitor: ReturnType<typeof import("./update-monitor.js").startUpdateMonitor> | undefined;
-	let upgradeFlow: ReturnType<typeof import("./interactive-upgrade.js").createInteractiveUpgradeFlow> | undefined;
-	// One deferred package-manager update per session, armed by the update
-	// monitor or by /upgrade, whichever comes first (#436). The package manager
-	// replaces the install in place, so it runs only after this process has left
-	// persist. A /restart keeps this process alive as the new child's guardian,
-	// so a wrapper started then would wait on both for its full window.
-	let deferredUpdateArmed = false;
-	const armDeferredUpdate = (start: () => boolean): boolean => {
-		if (deferredUpdateArmed) return false;
-		deferredUpdateArmed = true;
-		getTerminationCoordinator().onPersist(() => {
-			if (!getTerminationCoordinator().hasExitHandoff()) start();
-		});
-		return true;
-	};
-	/**
 	 * Assigned after the presentation because it renders into it. The composer
 	 * rail reads it through the optional chain before then as "no prompt".
 	 */
 	let overlayLifecycle: OverlayLifecycleController;
-	let refreshOperatorUi = (): void => {};
-	let scheduleOperatorMaintenance = (): void => {};
-	let operatorTimer: ReturnType<typeof setTimeout> | undefined;
-	// The startup reload starts runtimes after the first frame, so a prompt
-	// submitted as soon as the editor takes keys ran its prompt_submit and
-	// before_tool hooks against no runtime and they failed open. Hook and tool
-	// calls wait for that reload, as the headless and ACP host does
-	// (extension-host.ts), and the reload counts the session as idle meanwhile:
-	// nothing runs yet that it could swap out, and a turn parked on a hook
-	// must not hold back the generation it waits for.
-	let extensionStartupPending = true;
-	let extensionsAwaitGeneration = (): boolean => false;
-	let finishExtensionStartup = (): void => {};
-	const extensionStartup = new Promise<void>((resolve) => {
-		finishExtensionStartup = () => {
-			extensionStartupPending = false;
-			resolve();
-		};
-	});
-	const extensionPane = createExtensionPaneKeys({
-		mux: deps.extensions ? deps.mux : undefined,
-		operator: () => operatorExtensions,
-		keybindings: () => keybindings,
-		notify: (level, text, key) => notify(level, text, key),
-	});
-	const operatorExtensions = deps.extensions
-		? new OperatorExtensions({
-				...(extensionPane.pane ? { pane: extensionPane.pane } : {}),
-				builtinCommandNames: () => BUILTIN_SLASH_NAMES,
-				services: createExtensionHostServices({
-					providers: deps.providers,
-					telemetry: deps.telemetry,
-					session: deps.session,
-					ask: (questions) => overlayLifecycle.openTransientAskUserOverlayState(questions),
-				}),
-				sandboxUnixSockets: () => deps.getSettings?.().safety.sandboxUnixSockets ?? "block",
-				readOnly: () => isChatReadOnly(deps.chat),
-				context: () => ({
-					workspace: process.cwd(),
-					sessionId: deps.session?.current()?.id ?? deps.getSessionId?.() ?? null,
-					mode: "interactive",
-				}),
-				isIdle: () =>
-					extensionStartupPending ||
-					extensionsAwaitGeneration() ||
-					(!deps.chat.isStreaming() &&
-						deps.chat.turnPreparation().phase === "idle" &&
-						(overlayLifecycle?.getState() ?? "closed") === "closed" &&
-						!editorSubmit?.hasActiveEditorBash()),
-				list: (cwd) => deps.extensions?.list(cwd, { all: true }) ?? [],
-				...(deps.reloadExtensions ? { commitHooks: deps.reloadExtensions } : {}),
-				onChange: () => refreshOperatorUi(),
-				...(deps.toolRegistry ? { frozenTools: frozenExtensionTools(deps.toolRegistry) } : {}),
-				onDiagnostic: (message) => {
-					if (!deps.reloadClasses?.captureIssue(message)) notify("warning", message, "operator-extensions:observation");
-				},
-				// A mute fences the runtime at once; the reload that unloads it waits for idle.
-				admits: (extensionId): boolean => devSession?.isMuted(extensionId) !== true,
-				onReload: (result, reason) => {
-					extensionPane.bindings();
-					if (deps.reloadClasses?.active) return;
-					if (result.status === "deferred") return;
-					const failed = result.status === "rejected" || result.degraded === undefined;
-					const degraded = (result.degraded ?? 0) > 0;
-					if (reason !== "reload" && !failed && !degraded) return;
-					notify(failed ? "error" : degraded ? "warning" : "info", result.message, "operator-extensions:reload");
-				},
-			})
-		: undefined;
-	// Every extension surface names its owner by the installed package's name. The
-	// inventory is read from disk, so the names are re-read at most every two
-	// seconds rather than on every painted frame.
-	let ownerNames: { at: number; names: Map<string, string> } = { at: 0, names: new Map() };
-	bindExtensionOwnerNames(
-		deps.extensions
-			? (extensionId) => {
-					const now = Date.now();
-					if (now - ownerNames.at > 2000) {
-						const list = deps.extensions?.list(process.cwd(), { all: true }) ?? [];
-						ownerNames = {
-							at: now,
-							names: new Map(list.filter((entry) => entry.effective).map((entry) => [entry.id, entry.name])),
-						};
-					}
-					return ownerNames.names.get(extensionId);
-				}
-			: undefined,
-	);
-	const turnObservations = operatorExtensions
-		? createTurnObservations((observation) => operatorExtensions.observeV2(observation))
-		: undefined;
-	// A turn_end carries the provider-reported usage every session host folds alike; the turn summary says how it ended.
-	const turnUsage = turnObservations ? createChatTurnUsage() : undefined;
-	// The dev scope is a terminal concept: only this surface sets the overlay,
-	// so headless runs, ACP and workers never load a package under development.
-	const devSession: ExtensionDevSession | undefined =
-		operatorExtensions && deps.extensions
-			? createExtensionDevSession({
-					extensions: deps.extensions,
-					operator: operatorExtensions,
-					cwd: () => process.cwd(),
-					isIdle: () =>
-						!deps.chat.isStreaming() &&
-						deps.chat.turnPreparation().phase === "idle" &&
-						(overlayLifecycle?.getState() ?? "closed") === "closed" &&
-						!editorSubmit?.hasActiveEditorBash(),
-					ask: (questions, options) => overlayLifecycle.openTransientAskUserOverlayState(questions, options),
-					notify: (level, text) => notify(level, text, "operator-extensions:dev"),
-				})
-			: undefined;
-	if (operatorExtensions) extensionsAwaitGeneration = () => operatorExtensions.v2.awaitingGeneration;
-	const extensionsSettled = <T>(run: () => Promise<T>): Promise<T> =>
-		extensionStartup.then(() => operatorExtensions?.v2.whenLive()).then(run, run);
-	if (operatorExtensions)
-		deps.runtimeHooks?.bind({
-			hook: (extensionId, event, timeoutMs, signal) =>
-				extensionsSettled(() => operatorExtensions.hook(extensionId, event, timeoutMs, signal)),
-			notify: (message) => notify("warning", message, "operator-extensions:hook"),
-			advise: (message, key) => notify("info", message, `operator-extensions:advice:${key}`),
-			observeTurnStart: (text) => turnObservations?.turnStart(text),
-			tool: (extensionId, name, input, signal) =>
-				extensionsSettled(() => operatorExtensions.tool(extensionId, name, input, signal)),
-			// A tool's interview is asked like the model's own question, so a
-			// permission card preempts it and it resumes afterwards.
-			interview: (extensionId, interview, signal) =>
-				runParkedInterview(
-					{
-						ask: (questions, options) => overlayLifecycle.openAskUserOverlayState(questions, options),
-						renderIntro: (view, width) => renderView(view, width).lines,
-					},
-					interview,
-					{ extensionId, title: extensionId },
-					// The closing cancel still reaches the handler after an abort.
-					(answer) => operatorExtensions.interview(extensionId, answer, answer.nav === "cancel" ? undefined : signal),
-					signal,
-				),
-		});
-	const workspaceSurfaces = operatorExtensions
-		? createWorkspaceSurfaces({
-				model: operatorExtensions.surface,
-				tui,
-				skinFor: (active) => operatorExtensions.skinFor(active.extensionId, active.workspaceId),
-				// Read at render time only while a workspace is active, after the presentation exists.
-				leaveHint: () => {
-					const leader = keybindings.getKeys("pancode.leader")[0];
-					return leader ? `${formatKeyLabel(leader, "")} ${WORKSPACE_LEAVE_KEY} or /extensions leave` : "/extensions leave";
-				},
-				terminalRows: () => terminal.rows,
-				press: (extensionId, action, source = "leader") => extensionPane.press(extensionId, { id: action, source }),
-				leaderLabel: () => {
-					const leader = keybindings.getKeys("pancode.leader")[0];
-					return leader ? formatKeyLabel(leader, "") : null;
-				},
-				leave: () => {
-					operatorExtensions.leaveWorkspace();
-				},
-				focusBoard: (extensionId, title, view) => {
-					if (!ambientSurfaces?.focusRegion(extensionId, title, view, "board"))
-						notify("info", "Close the open panel first; the board opens over the composer.");
-				},
-			})
-		: undefined;
-	const ambientSurfaces = operatorExtensions
-		? createAmbientSurfaces({
-				operator: operatorExtensions,
-				tui,
-				dock: extensionPane.viewDock({
-					mux: deps.mux ?? null,
-					stateDir: deps.stateDir,
-					sessionId: () => deps.session?.current()?.id ?? deps.getSessionId?.() ?? null,
-					log: (message) => notify("warning", message, "operator-extensions:dock"),
-				}),
-				overlay: () => overlayLifecycle,
-				notice: (notice) => notifications.add(notice),
-				appendCard: (render) => chatRenderer.mutate(() => chatPanel.appendReplayBlock(render), "extension-card"),
-				showText: (owner, text) =>
-					slashRuntime.context.showReference?.({ command: owner, source: extensionOwnerLabel(owner), kind: "result", text }),
-				fill: (text) => editor.setLiteralText(text),
-				submit: (text) => {
-					editor.setLiteralText(text);
-					editor.onSubmit?.(text);
-				},
-			})
-		: undefined;
-	let lastSlashCommand: string | null = null;
-	// The in-session trust card: `/trust`, a `/reload` that finds new project configuration, and the header reminder.
-	const projectTrust = createProjectTrustSession({
-		cwd: () => process.cwd(),
-		openCard: (model, done) => overlayLifecycle.openProjectTrustState(model, done),
-		restart: () => interactiveRestart(),
-		notice: (level, text) => notify(level === "warn" ? "warning" : "info", text, "project-trust"),
-		onChange: () => tui.requestRender(),
-	});
-	// The worker fold is built with the subscriptions below; a replay before then has no live run to adopt.
-	let adoptLiveWorker: (runId: string) => WorkerEntryState | undefined = () => undefined;
-	let watchPaneRef: PanesWatchController | null = null;
-	const presentation = createInteractivePresentation({
-		adoptLiveWorker: (runId) => adoptLiveWorker(runId),
-		getLastCommand: () => lastSlashCommand,
-		getProjectConfigReminder: () => projectTrust.reminder(),
-		commandUnavailable: (command) =>
-			command === "panes" && deps.panes === undefined ? "needs a pane host; this session has none" : undefined,
-		...(deps.jobs ? { jobs: deps.jobs } : {}),
-		workersDockAvailable: () =>
-			deps.mux !== undefined && deps.mux.mode !== "none" && deps.createWatchPane !== undefined && deps.mux.available(),
-		getQueuedMessageCount: () => {
-			const queue = deps.chat.queuedMessages();
-			return queue.steer.length + queue.followUp.length;
-		},
-		recordTurnTiming: (fields) => {
-			try {
-				if (!deps.session?.current()) return;
-				deps.session.appendEntry({
-					kind: "custom",
-					customType: TURN_TIMING_ENTRY,
-					parentTurnId: deps.session.leafId() ?? null,
-					display: false,
-					data: fields,
-				});
-			} catch {
-				// Best effort; a resumed receipt then measures between its ledger rows, without the split.
-			}
-		},
-		bus: deps.bus,
-		getLifecycleHint: () => updateMonitor?.text() ?? null,
-		getLeaderArmed: () => leaderArmed,
-		extensionCommands: () => operatorExtensions?.commands(livePrompts(deps.resources)) ?? [],
-		...(workspaceSurfaces ? { workspaceSurfaces } : {}),
-		// Extension statuses reach the footer once, through the workspace surfaces' status facts, which
-		// also drop an owner name the text repeats. A second feed here printed each one twice (tui-verify 16).
-		getShutdownArmed: () => shutdownArmed,
-		isAwaitingApproval: () => overlayLifecycle?.getState() === "permission-confirm",
-		getOverlayState: () => overlayLifecycle?.getState() ?? "closed",
-		isWatchPaneVisible: () => watchPaneRef?.visibility() === "visible",
-		getPermissionInspection: () => {
-			if (overlayLifecycle === undefined || overlayLifecycle === null) return "none";
-			if (!overlayLifecycle.canInspectMutation()) return "none";
-			return overlayLifecycle.isInspectingMutation() ? "open" : "closed";
-		},
-		getPermissionTerms: () => (overlayLifecycle?.isShowingPermissionTerms() === true ? "open" : "closed"),
-		resolveVisibleEventSequence: (event) => visibleEventIngress.get(event)?.traceSequence ?? null,
-		resolveStreamIngress: (event) => visibleEventIngress.get(event) ?? null,
-		commitFrame: (reason) => shell.commitCurrentFrame(reason === "teardown" ? 300 : 30_000),
-		hasObservedBackpressure: () => shell.hasObservedBackpressure(),
-		onSmoothStreamingMode: (_mode, pacingActive) => shell.setStreamPacingActive(pacingActive),
-		providers: deps.providers,
-		dispatch: deps.dispatch,
-		telemetry: deps.telemetry,
-		...(deps.telemetryRunReaders ? { telemetryRunReaders: deps.telemetryRunReaders } : {}),
-		chat: deps.chat,
+	const scope: ApplicationScope = {
+		deps,
+		terminal,
+		tui,
+		shell,
+		lease,
+		visibleEventIngress,
 		workspaceFacts,
 		sessionTranscript,
-		tui,
-		terminal,
-		...(!lease ? { mount: (root, editor) => shell.mount(root, editor) } : {}),
-		...(lease
-			? {
-					editor: lease.editor,
-					keybindings: lease.keybindings,
-					bootPending: lease.pending,
-				}
-			: {}),
-		...(deps.getSettings ? { getSettings: deps.getSettings } : {}),
-		...(deps.getConnections ? { getConnections: deps.getConnections } : {}),
-		...(deps.resources ? { resources: deps.resources } : {}),
-		...(deps.mcpSubmit ? { mcpSubmit: deps.mcpSubmit } : {}),
-		...(deps.agents ? { agents: deps.agents } : {}),
-		...(deps.session ? { session: deps.session } : {}),
-		...(deps.getSessionId ? { getSessionId: deps.getSessionId } : {}),
-		...(deps.getTaskBoard ? { getTaskBoard: deps.getTaskBoard } : {}),
-		...(deps.scheduling?.localCapacity ? { getLocalCapacity: () => deps.scheduling?.localCapacity?.() ?? null } : {}),
-		...(deps.userTasks ? { userTasks: deps.userTasks } : {}),
-		...(deps.getTaskMemoryStatus ? { getTaskMemoryStatus: deps.getTaskMemoryStatus } : {}),
-		...(deps.getTaskMemorySeedOffer ? { getTaskMemorySeedOffer: deps.getTaskMemorySeedOffer } : {}),
-		...(deps.getContextState ? { getContextState: deps.getContextState } : {}),
-		...(deps.startsResumed === true ? { startsResumed: true } : {}),
-	});
+		readStructuredEntries,
+		recordChatEventIngress,
+		exitSummary,
+		sessionFile,
+		refreshLiveWorkspaceGit,
+		get refreshPresentationFooter() {
+			return refreshPresentationFooter;
+		},
+		set refreshPresentationFooter(value) {
+			refreshPresentationFooter = value;
+		},
+		leaderArmed: false,
+		shutdownArmed: false,
+		updateTimer: undefined,
+		updateMonitor: undefined,
+		upgradeFlow: undefined,
+		refreshOperatorUi: (): void => {},
+		scheduleOperatorMaintenance: (): void => {},
+		operatorTimer: undefined,
+		finishExtensionStartup: (): void => {},
+		lastSlashCommand: null,
+		adoptLiveWorker: () => undefined,
+		watchPaneRef: null,
+		arcade: null,
+		get keybindings() {
+			return keybindings;
+		},
+		get chatPanel() {
+			return chatPanel;
+		},
+		get notifications() {
+			return notifications;
+		},
+		get notify() {
+			return notify;
+		},
+		get editor() {
+			return editor;
+		},
+		get chatRenderer() {
+			return chatRenderer;
+		},
+		get slashRuntime() {
+			return slashRuntime;
+		},
+		get editorSubmit() {
+			return editorSubmit;
+		},
+		get overlayLifecycle() {
+			return overlayLifecycle;
+		},
+		get interactiveRestart() {
+			return interactiveRestart;
+		},
+		get showMachineTurn() {
+			return showMachineTurn;
+		},
+		get watchPane() {
+			return watchPane;
+		},
+		get appExtensions() {
+			return appExtensions;
+		},
+		get appPresentation() {
+			return appPresentation;
+		},
+		get applicationController() {
+			return applicationController;
+		},
+		get detachedBatchWake() {
+			return detachedBatchWake;
+		},
+		get appProjection() {
+			return appProjection;
+		},
+	};
+	const appExtensions = createAppExtensions(scope);
 	const {
+		updateAbort,
+		armDeferredUpdate,
+		extensionPane,
+		operatorExtensions,
+		devSession,
+		workspaceSurfaces,
+		ambientSurfaces,
+	} = appExtensions;
+	const appPresentation = createAppPresentation(scope);
+	const {
+		projectTrust,
+		presentation,
 		keybindings,
 		chatPanel,
-		followUpQueuePanel,
 		statusController,
 		dispatchBoardStore,
 		contextActivityStore,
@@ -587,310 +324,30 @@ export async function createInteractiveApplication(host: InteractiveDeps): Promi
 		dispatchBoard,
 		chatRenderer,
 		io,
-	} = presentation;
-	if (deps.startsResumed && deps.session)
-		hydrateResumedSessionPresentation(deps.session, chatPanel, readStructuredEntries, presentation.setLastTurnSummary);
-	// Every operator entry point reports the effective state after a successful
-	// change. One observer keeps shortcuts, slash commands, and forms consistent.
-	const withSettingFeedback =
-		<Args extends unknown[], Result>(action: (...args: Args) => Result) =>
-		(...args: Args): Result => {
-			const result = action(...args);
-			presentation.announceSettingChanges();
-			return result;
-		};
-	// Turning yolo on is gated: refused as root outside a container, and the
-	// first activation shows the acceptance card (#407).
-	const commitSetting = deps.commitSetting;
-	const yoloActivation =
-		commitSetting === undefined
-			? undefined
-			: createYoloActivation({
-					getSettings: () => deps.getSettings?.(),
-					refusal: deps.yoloRefusal ?? null,
-					commitSetting,
-					ask: (questions, options) => overlayLifecycle.openTransientAskUserOverlayState(questions, options),
-					prepareScreen: () => {
-						const state = overlayLifecycle.getState();
-						if (state !== "closed" && state !== "ask-user") overlayLifecycle.closeOverlay();
-					},
-					notify: (level, text, key) => notify(level, text, key),
-					afterCommit: () => {
-						presentation.announceSettingChanges();
-						if (watchPane?.refreshPresentation?.() === false)
-							notify("warning", "Could not update the workers pane's output detail; reopen it to retry.");
-						footer.refresh();
-						tui.requestRender();
-					},
-				});
-	const settingActions = {
-		...(yoloActivation ? { commitSetting: withSettingFeedback(yoloActivation.commit) } : {}),
-		...(deps.writeSettings ? { writeSettings: withSettingFeedback(deps.writeSettings) } : {}),
-		...(deps.onSetThinkingLevel ? { onSetThinkingLevel: withSettingFeedback(deps.onSetThinkingLevel) } : {}),
-		...(deps.onSelectModel ? { onSelectModel: withSettingFeedback(deps.onSelectModel) } : {}),
-		...(deps.onCycleThinking ? { onCycleThinking: withSettingFeedback(deps.onCycleThinking) } : {}),
-		...(deps.onCycleScopedModelForward
-			? { onCycleScopedModelForward: withSettingFeedback(deps.onCycleScopedModelForward) }
-			: {}),
-		...(deps.onCycleScopedModelBackward
-			? { onCycleScopedModelBackward: withSettingFeedback(deps.onCycleScopedModelBackward) }
-			: {}),
-	};
-	// The dock keys. A first tap shows or hides at once and a second inside the
-	// window ends the process. A tap can also arrive from inside the dock (Alt+E in
-	// Yazi), where PanCode's own key handler is not the one that hears it; those
-	// hide the pane and hand the keyboard back to PanCode.
-	const dockKeys = createDockKeyGate();
-	// The factory arrives only from an active `--with-panes` boot (or a test); a
-	// plain session has no deps.panes and no factory, and loads no yazi code.
-	const yaziBridge =
-		deps.panes && deps.createYaziBridge
-			? deps.createYaziBridge({
-					...(deps.mux ? { mux: deps.mux } : {}),
-					getDraft: () => editor.getText(),
-					setDraft: (text) => editor.setText(text),
-					requestRender: () => tui.requestRender(),
-					notice: (level, text) => notify(level, text, `files:${level}`),
-					getCwd: () => process.cwd(),
-					getSettings: () =>
-						deps.getSettings?.().interface.panes.files ?? {
-							mode: "companion",
-							profile: "managed",
-							followCwd: true,
-						},
-					stopUi: () => tui.stop(),
-					startUi: () => {
-						tui.start();
-						tui.requestRender(true);
-						terminalColors.refresh();
-					},
-					onDockKey: () => pressFilesKey(deps, notify, dockKeys, "dock"),
-				})
-			: null;
-	const detachYaziBridge = yaziBridge ? deps.attachYaziBridge?.(yaziBridge) : undefined;
-	refreshPresentationFooter = () => footer.refresh();
-	refreshOperatorUi = () => {
-		scheduleOperatorMaintenance();
-		footer.refresh();
-		tui.requestRender();
-	};
-	const agentProgress = createAgentProgress(terminal);
-	const terminalColors = followTerminalColors(tui);
-	// Only the interactive surface asks a diffusion provider for whole-response
-	// frames; it is the one consumer that can show noise settling into text.
-	setDiffusionFramesEnabled(process.stdout.isTTY === true);
-	// Desktop notifications are a protocol write on the terminal owner, issued
-	// outside any render transaction, so the sequence carries frameId null and
-	// never lands inside a frame. A non-TTY process never emits one even when
-	// `PANCODE_INTERACTIVE=1` forced the interactive surface on.
-	const staleBuildNotice = createStaleBuildNotice((notice) => notifications.add(notice));
-	const desktopNotifications = createInteractiveDesktopNotifications({
-		write: (data) => terminal.write(data),
-		enabled: () => deps.getSettings?.().interface.desktopNotifications ?? false,
-		interactiveTty: () => process.stdout.isTTY === true,
-		getOpenBatches: () => openDetachedBatchViews(deps.dispatch),
-	});
-	const busNoticeSink = {
-		appendReplayBlock: (renderBlock: Parameters<typeof chatPanel.appendReplayBlock>[0]) =>
-			chatRenderer.mutate(() => chatPanel.appendReplayBlock(renderBlock), "bus-notice"),
-		requestRender: () => {},
-	};
-	// Job transitions (a pause, an ended job, a matched condition) reach the transcript
-	// once each; a command's own result is reported by the command, never again here.
-	const loopJobs = deps.jobs
-		? reportLoopChanges(deps.jobs, ({ level, text }) => appendNotice(level, text, busNoticeSink))
-		: undefined;
-	// `/attach`: a second terminal watches this session, answers its card, or pairs.
-	const attachController = createAttachController({
-		bus: deps.bus,
-		chat: deps.chat,
-		...(deps.session ? { session: deps.session } : {}),
-		cards: () => overlayLifecycle.permissionCards(),
-		notice: (level, text) => appendNotice(level, text, busNoticeSink),
-		showTurn: (text, origin) => showMachineTurn(text, origin),
-	});
-	const eventProjection = createInteractiveEventProjection({
-		heldQueueNotice: (count) =>
-			`${count === 1 ? "1 queued message is" : `${count} queued messages are`} held and nothing was sent. ${keybindings.actionLabel("pancode.message.interrupt")} sends the queue in order, ${keybindings.actionLabel("pancode.queue.open")} then a restores it to the composer, and a new prompt takes it at its first slot.`,
-		restoreDroppedQueue: (texts) => {
-			const current = editor.getExpandedText();
-			editor.setLiteralText([texts.join("\n\n"), current].filter((part) => part.trim().length > 0).join("\n\n"));
-			notify(
-				"info",
-				`${texts.length === 1 ? "1 message" : `${texts.length} messages`} queued behind the old session ${texts.length === 1 ? "was" : "were"} put back in the editor`,
-				"session:queue",
-			);
-		},
-		isReloadReporting: () => deps.reloadClasses?.active === true,
-		bus: deps.bus,
-		chat: deps.chat,
-		status: statusController,
-		...(deps.initialNotices ? { initialNotices: deps.initialNotices } : {}),
-		...(deps.getSettings ? { getSettings: deps.getSettings } : {}),
-		getTerminalColumns: () => terminal.columns,
-		onChatEventIngress: (event) => {
-			turnUsage?.observe(event);
-			exitSummary.observeChat(event);
-			sessionFile?.observeChat(event);
-			recordChatEventIngress(event);
-			presentation.recordChatEvent(event);
-		},
-		applyChatEvent: (event) => chatRenderer.applyEvent(event),
-		setFollowUpMessages: (messages) => {
-			followUpQueuePanel.setMessages(messages);
-			// A navigator on screen stays open when the run drains the queue under it and
-			// says so, because closing it handed the next key, meant for a message, to the
-			// composer. One drained behind an approval card is put away when the card closes
-			// (`restorable` in the overlay lifecycle).
-		},
-		isAskUserWaiting: () => overlayLifecycle.isAskUserWaiting(),
-		closeAskUserSession: () => overlayLifecycle.closeAskUserSession(),
-		resetAskUserCancellation: () => overlayLifecycle.resetAskUserCancellation(),
-		recordToolStart: (toolName, toolCallId) => {
-			presentation.recordToolStart(toolCallId, toolName);
-			turnObservations?.toolStart(toolCallId);
-		},
-		recordToolEnd: (toolName, toolCallId, isError, truncated, settledAsSteps) => {
-			presentation.recordToolEnd({ toolCallId, isError, truncated, ...(settledAsSteps ? { settledAsSteps } : {}) });
-			turnObservations?.toolEnd(toolName, toolCallId, isError);
-		},
-		setLastTurnSummary: (summary) => {
-			presentation.setLastTurnSummary(summary);
-			if (summary && turnUsage)
-				turnObservations?.turnEnd({
-					...turnUsage.current(),
-					modelId: summary.modelId,
-					targetId: summary.targetId,
-					stopReason: summary.stopReason,
-				});
-		},
-		startTerminalProgress: () => agentProgress.start(),
-		stopTerminalProgress: () => agentProgress.stop(),
-		onTurnEnded: () => {
-			desktopNotifications.turnEnded();
-			detachedBatchWake.poke();
-			devSession?.poke();
-			staleBuildNotice();
-			firePendingModelRestart();
-		},
-		refreshLiveWorkspaceGit: (force) => void refreshLiveWorkspaceGit(force),
-		refreshFooter: () => {
-			presentation.announceSettingChanges();
-			footer.refresh();
-		},
-		requestRender: () => tui.requestRender(),
-		notify,
-		dismissNotification: (key) => notifications.dismiss(key),
-		supersedeWorkNotifications: () => notifications.supersede("work"),
-		appendTranscriptNotice: (level, text, source) => appendNotice(level, text, busNoticeSink, source),
-		refreshSettingsOverlay: () => overlayLifecycle.refreshSettingsOverlay(),
-		onConfigHotReload: (settings) => {
-			keybindings.reload(settings.interface.keybindings ?? {});
-			presentation.announceSettingChanges();
-			footer.refresh();
-			tui.requestRender();
-			const mode = settings.interface.smoothStreaming;
-			const autoAllowed = processAutoPacingAllowed(shell.hasObservedBackpressure());
-			chatRenderer.setSmoothStreamingMode(mode);
-			shell.setStreamPacingActive(mode === "on" || (mode === "auto" && autoAllowed));
-		},
-	});
-	// The overlay reads the report this process already produced at boot; it
-	// never probes on a keystroke.
-	const interop = deps.interop;
-	// `/council` reaches execution only through the tool registry, so the
-	// approval overlay this application already installs on it is the same one an
-	// operator-typed council parks.
-	const toolRegistry = deps.toolRegistry;
-	const interopSurface = interop ? interopOverlaySurface(interop, (level, text) => notify(level, text)) : null;
-	// What the operator uses themselves retires the matching demo guidance tip.
-	// Off with interface.demo: no profile read or write while guidance is off.
-	// The profile write is synchronous and durable, and it runs on the Enter path of
-	// any `@` or slash submit: it held the acknowledging frame 10 to 20 ms. The frame
-	// goes out on the next tick, ahead of this immediate.
-	const recordFeature = (feature: string): void => {
-		if (feature.startsWith("/")) lastSlashCommand = feature;
-		else if (feature.startsWith("key:")) lastSlashCommand = null;
-		const settings = deps.getSettings?.();
-		if (settings && settings.interface.demo !== false) scheduleHarnessFeature(feature);
-	};
-	// Every submit expansion in flight owns its controller, so a second submit
-	// never orphans the first. A huge `@file.pdf` could otherwise hold Enter for
-	// two 60 s poppler timeouts with no way out; Esc, Ctrl+C and shutdown abort
-	// it, and the status line names the file while it is read.
-	const submitExpansions = new Set<AbortController>();
-	const SUBMIT_EXPANSION_STATUS = "submit:expanding";
-	const expandSubmitCancellable = async (text: string): Promise<InteractiveSubmitExpansion> => {
-		const controller = new AbortController();
-		submitExpansions.add(controller);
-		try {
-			const expansion = await expandInteractiveSubmitAsync(text, deps.resources, process.cwd(), {
-				signal: controller.signal,
-				...(deps.mcpSubmit ? { mcp: deps.mcpSubmit } : {}),
-				onExtract: (shortPath) =>
-					notifications.add({
-						level: "info",
-						text: `Reading ${shortPath} ${GLYPH.sep} Esc cancels and keeps your message`,
-						key: SUBMIT_EXPANSION_STATUS,
-						ttlMs: 0,
-					}),
-			});
-			// A cancel that lands after the last read still wins; the operator asked for nothing to be sent.
-			controller.signal.throwIfAborted();
-			return expansion;
-		} finally {
-			submitExpansions.delete(controller);
-			if (submitExpansions.size === 0) notifications.dismiss(SUBMIT_EXPANSION_STATUS);
-		}
-	};
-	const cancelSubmitExpansions = (): boolean => {
-		if (submitExpansions.size === 0) return false;
-		for (const controller of submitExpansions) controller.abort();
-		return true;
-	};
-	// The arcade egg owns every key while it is open; closing it hands the TUI back as it was. An approval or an
-	// ask_user card puts it away with the board kept, and the trigger phrase brings it back where it stopped.
-	let arcade: ArcadeSession | null = null;
-	const arcadeNeedsOperator = (): boolean =>
-		overlayLifecycle?.getState() === "permission-confirm" || dockTop(tui)?.frame.dockAwaitingInput?.() === true;
-	const noticeArcadePaused = (): void => {
-		notifications.add({ level: "info", key: "arcade:paused", text: ARCADE_PAUSED_NOTICE, ttlMs: 6_000 });
-	};
-	const openArcadeEgg = (text: string): boolean => {
-		if (!isArcadeTrigger(text) || arcade?.isOpen()) return false;
-		if (arcade?.isPaused()) {
-			if (!arcade.resume())
-				notifications.add({
-					level: "info",
-					key: "arcade:paused",
-					text: "Ms. PanCode waits until PanCode's question is answered",
-					ttlMs: 4_000,
-				});
-			return true;
-		}
-		arcade = openArcadeOverlay(tui, { needsOperator: arcadeNeedsOperator, onPause: noticeArcadePaused });
-		return true;
-	};
-
-	// `restart_session` asks for a restart during a turn; it runs once that turn has settled.
-	const interactiveRestart = createInteractiveRestart({
-		...(deps.session ? { session: deps.session } : {}),
-		stateDir: deps.stateDir,
-		saveWorkspace: () => operatorExtensions?.saveWorkspace(),
-		busyReason: () =>
-			interactiveRestartBusyReason({
-				chat: deps.chat,
-				dispatch: deps.dispatch,
-				operator: operatorExtensions,
-				editorBash: editorSubmit.hasActiveEditorBash(),
-				reloading: deps.reloadClasses?.active === true,
-				shuttingDown: shutdownArmed !== false || getTerminationCoordinator().getPhase() !== "idle",
-			}),
-		settle: () => deps.chat.whenSettled(),
-		armHandoff: () => deps.armRestartHandoff?.(),
-		shutdown: () => applicationController.shutdown(),
-		notify,
-	});
+		yoloActivation,
+		settingActions,
+		dockKeys,
+		yaziBridge,
+		detachYaziBridge,
+		agentProgress,
+		terminalColors,
+		desktopNotifications,
+		busNoticeSink,
+		loopJobs,
+		attachController,
+	} = appPresentation;
+	const appProjection = createAppProjection(scope);
+	const {
+		eventProjection,
+		toolRegistry,
+		interopSurface,
+		recordFeature,
+		expandSubmitCancellable,
+		cancelSubmitExpansions,
+		noticeArcadePaused,
+		openArcadeEgg,
+		interactiveRestart,
+	} = appProjection;
 	const slashRuntime = createInteractiveSlashRuntime({
 		recordFeature,
 		...(deps.telemetry.read ? { getTelemetry: () => deps.telemetry.read?.live() ?? null } : {}),
@@ -1005,7 +462,7 @@ export async function createInteractiveApplication(host: InteractiveDeps): Promi
 			// explicitly asks to review it.
 			void import("./interactive-upgrade.js")
 				.then(({ createInteractiveUpgradeFlow }) => {
-					upgradeFlow ??= createInteractiveUpgradeFlow({
+					scope.upgradeFlow ??= createInteractiveUpgradeFlow({
 						runningVersion: readPancodeVersion(),
 						openAskUser: (questions, options) => openTransientAskUserOverlayState(questions, options),
 						notify,
@@ -1015,8 +472,8 @@ export async function createInteractiveApplication(host: InteractiveDeps): Promi
 							return (
 								overlayLifecycle.getState() === "closed" &&
 								editor.getText().length === 0 &&
-								!leaderArmed &&
-								!shutdownArmed &&
+								!scope.leaderArmed &&
+								!scope.shutdownArmed &&
 								!operatorExtensions?.busy &&
 								!editorSubmit.hasActiveEditorBash() &&
 								!deps.chat.isStreaming() &&
@@ -1025,7 +482,7 @@ export async function createInteractiveApplication(host: InteractiveDeps): Promi
 								queue.steer.length + queue.followUp.length === 0
 							);
 						},
-						dismissUpdateHint: () => updateMonitor?.dismiss(),
+						dismissUpdateHint: () => scope.updateMonitor?.dismiss(),
 						shutdown: () => {
 							void applicationController.shutdown();
 						},
@@ -1033,7 +490,7 @@ export async function createInteractiveApplication(host: InteractiveDeps): Promi
 						cwd: process.cwd(),
 						armDeferredUpdate,
 					});
-					upgradeFlow.start();
+					scope.upgradeFlow.start();
 				})
 				.catch((error) =>
 					notify(
@@ -1173,7 +630,7 @@ export async function createInteractiveApplication(host: InteractiveDeps): Promi
 	});
 	editor.onSubmit = (submitted) => {
 		const text = editor.addressSubmission(submitted);
-		if (upgradeFlow?.isRunning()) {
+		if (scope.upgradeFlow?.isRunning()) {
 			// Pi clears the composer before invoking onSubmit. Package replacement
 			// must not race a new turn, so restore the draft exactly and leave it for
 			// the restarted (or still-current) process.
@@ -1263,7 +720,10 @@ export async function createInteractiveApplication(host: InteractiveDeps): Promi
 		openAskUserOverlay: (host, card) =>
 			openAskUserOverlay(host, {
 				...card,
-				screenKeys: createArcadePhraseScreen({ active: () => arcade?.isPaused() === true, onPhrase: noticeArcadePaused }),
+				screenKeys: createArcadePhraseScreen({
+					active: () => scope.arcade?.isPaused() === true,
+					onPhrase: noticeArcadePaused,
+				}),
 			}),
 		lastOperatorInputAt: () => lastOperatorInputAt,
 		dismissNotification: (key) => notifications.dismiss(key),
@@ -1390,7 +850,7 @@ export async function createInteractiveApplication(host: InteractiveDeps): Promi
 		// A busy /new cancels the run first. Say so, and give back any message typed
 		// meanwhile: resetForSession drops the queues, so it vanished silently (p7/A2).
 		const wasBusy = deps.chat.isStreaming();
-		if (wasBusy) notify("info", "/new: cancelling the active run before starting a new session", "session:new");
+		if (wasBusy) notify("info", "/new: canceling the active run before starting a new session", "session:new");
 		const unsent = wasBusy ? deps.chat.clearQueuedFollowUps() : [];
 		const settlement = settleChatBeforeSessionSwitch(deps.chat);
 		if (settlement) await settlement;
@@ -1480,8 +940,8 @@ export async function createInteractiveApplication(host: InteractiveDeps): Promi
 		operatorIdle: () =>
 			overlayLifecycle.getState() === "closed" &&
 			editor.getText().length === 0 &&
-			!leaderArmed &&
-			!shutdownArmed &&
+			!scope.leaderArmed &&
+			!scope.shutdownArmed &&
 			!operatorExtensions?.busy &&
 			!editorSubmit.hasActiveEditorBash(),
 		showTurn: showMachineTurn,
@@ -1504,7 +964,7 @@ export async function createInteractiveApplication(host: InteractiveDeps): Promi
 					},
 				})
 			: null;
-	watchPaneRef = watchPane;
+	scope.watchPaneRef = watchPane;
 	const detachWatchPane = watchPane ? deps.attachWatchPane?.(watchPane) : undefined;
 	// The workers key. With a pane host it drives the workers dock the way the
 	// files key drives its own, and Alt+W or q pressed inside the
@@ -1672,7 +1132,7 @@ export async function createInteractiveApplication(host: InteractiveDeps): Promi
 			}
 		},
 	});
-	adoptLiveWorker = (runId) => interactiveSubscriptions.workers.adopt(runId);
+	scope.adoptLiveWorker = (runId) => interactiveSubscriptions.workers.adopt(runId);
 	const exitBlocker = (): "editor" | "work" | "settling" | null => {
 		if (editor.getText().length > 0) return "editor";
 		const queue = deps.chat.queuedMessages();
@@ -1817,11 +1277,11 @@ export async function createInteractiveApplication(host: InteractiveDeps): Promi
 		overlay: overlayLifecycle,
 		refreshFooter: () => footer.refresh(),
 		onLeaderStateChange: (pending) => {
-			leaderArmed = pending;
+			scope.leaderArmed = pending;
 		},
 		onShutdownArmedChange: (armed, detail) => {
 			const workers = armed ? deps.dispatch.snapshot().running.length : 0;
-			shutdownArmed = !armed
+			scope.shutdownArmed = !armed
 				? false
 				: [
 						// The draft stays while the window is open; quitting prints it and saves nothing.
@@ -1861,7 +1321,7 @@ export async function createInteractiveApplication(host: InteractiveDeps): Promi
 			deps.chat.isStreaming() ||
 			deps.chat.turnPreparation().phase !== "idle" ||
 			(operatorExtensions?.busy ?? false) ||
-			(upgradeFlow?.isRunning() ?? false),
+			(scope.upgradeFlow?.isRunning() ?? false),
 		cancelActiveRun,
 		editor,
 		editorSubmit,
@@ -1875,7 +1335,7 @@ export async function createInteractiveApplication(host: InteractiveDeps): Promi
 				return notifications.dismiss(idOrKey);
 			},
 			dismissAll: () => {
-				updateMonitor?.dismiss();
+				scope.updateMonitor?.dismiss();
 				if (notifications.list().some((entry) => entry.key === REPORT_OFFER_NOTICE_KEY)) reportOffers?.decline();
 				notifications.dismissAll();
 			},
@@ -1895,9 +1355,9 @@ export async function createInteractiveApplication(host: InteractiveDeps): Promi
 				deps.chat.dispose();
 			},
 			disposeSubscriptions: () => {
-				clearTimeout(updateTimer);
+				clearTimeout(scope.updateTimer);
 				updateAbort.abort();
-				clearTimeout(operatorTimer);
+				clearTimeout(scope.operatorTimer);
 				for (const unsubscribe of operatorSubscriptions) unsubscribe();
 				void ambientSurfaces?.dispose();
 				devSession?.dispose();
@@ -1985,8 +1445,8 @@ export async function createInteractiveApplication(host: InteractiveDeps): Promi
 		},
 		registerInputListener: (listener) => {
 			const handleInput: typeof listener = (data) => {
-				if (arcade?.isOpen()) {
-					arcade.handleInput(data);
+				if (scope.arcade?.isOpen()) {
+					scope.arcade.handleInput(data);
 					return { consume: true };
 				}
 				lastOperatorInputAt = Date.now();
@@ -2030,19 +1490,19 @@ export async function createInteractiveApplication(host: InteractiveDeps): Promi
 				)
 				.concat(subscribeExtensionObservations(deps.bus, (observation) => operatorExtensions.observeV2(observation)))
 		: [];
-	scheduleOperatorMaintenance = () => {
-		clearTimeout(operatorTimer);
+	scope.scheduleOperatorMaintenance = () => {
+		clearTimeout(scope.operatorTimer);
 		const delay = operatorExtensions?.maintenanceDelayMs;
 		if (delay === undefined || delay === null) return;
-		operatorTimer = setTimeout(() => {
+		scope.operatorTimer = setTimeout(() => {
 			operatorExtensions?.maintenance();
-			scheduleOperatorMaintenance();
+			scope.scheduleOperatorMaintenance();
 		}, delay);
-		operatorTimer.unref();
+		scope.operatorTimer.unref();
 	};
 	getTerminationCoordinator().onDrain(
 		async () => {
-			clearTimeout(operatorTimer);
+			clearTimeout(scope.operatorTimer);
 			for (const unsubscribe of operatorSubscriptions) unsubscribe();
 			deps.runtimeHooks?.bind(null);
 			devSession?.dispose();
@@ -2111,8 +1571,8 @@ export async function createInteractiveApplication(host: InteractiveDeps): Promi
 
 	const startupAbort = new AbortController();
 	// A startup that never reaches its reload must not park hook calls forever.
-	startupAbort.signal.addEventListener("abort", () => finishExtensionStartup(), { once: true });
-	if (!operatorExtensions) finishExtensionStartup();
+	startupAbort.signal.addEventListener("abort", () => scope.finishExtensionStartup(), { once: true });
+	if (!operatorExtensions) scope.finishExtensionStartup();
 	const startupWorkspace = process.cwd();
 	const startupSession = deps.session?.current() ?? null;
 	let startupTimer: ReturnType<typeof setTimeout> | undefined;
@@ -2171,7 +1631,7 @@ export async function createInteractiveApplication(host: InteractiveDeps): Promi
 				if (startupAbort.signal.aborted) return;
 				// Dev copies are taken before the startup reload lists packages.
 				devSession?.start();
-				void operatorExtensions.reload("startup").finally(finishExtensionStartup);
+				void operatorExtensions.reload("startup").finally(scope.finishExtensionStartup);
 			});
 		if (deps.opensResumePicker)
 			afterPaint(() => {
@@ -2196,7 +1656,7 @@ export async function createInteractiveApplication(host: InteractiveDeps): Promi
 					if (startupAbort.signal.aborted) return;
 					const settings = deps.getSettings?.();
 					const model = settings?.chat.model;
-					const target = settings?.targets.find((entry) => entry.id === settings.chat.target);
+					const target = settings?.connections.find((entry) => entry.id === settings.chat.connection);
 					if (!model || !target) return;
 					const snapshot = readTargetModelSnapshot(target);
 					if (!snapshot) return;
@@ -2254,7 +1714,7 @@ export async function createInteractiveApplication(host: InteractiveDeps): Promi
 		if (process.env.PANCODE_UPDATE_CHECK !== "0" && !process.env.NO_UPDATE_NOTIFIER && !process.env.CI) {
 			// No import, disk probe, subprocess or registry request belongs on the boot path.
 			const runningVersion = readPancodeVersion();
-			updateTimer = setTimeout(() => {
+			scope.updateTimer = setTimeout(() => {
 				if (updateAbort.signal.aborted) return;
 				// The reply check reads only reports whose reporter ticked it, at most once a day (R-14).
 				void import("../domains/report/index.js")
@@ -2268,7 +1728,7 @@ export async function createInteractiveApplication(host: InteractiveDeps): Promi
 				void import("./update-monitor.js")
 					.then(({ startUpdateMonitor }) => {
 						if (updateAbort.signal.aborted) return;
-						updateMonitor = startUpdateMonitor({
+						scope.updateMonitor = startUpdateMonitor({
 							runningVersion,
 							signal: updateAbort.signal,
 							autoUpdate: () => deps.getSettings?.().interface.autoUpdate ?? true,
@@ -2284,10 +1744,10 @@ export async function createInteractiveApplication(host: InteractiveDeps): Promi
 								return (
 									overlayLifecycle.getState() === "closed" &&
 									editor.getText().length === 0 &&
-									!leaderArmed &&
-									!shutdownArmed &&
+									!scope.leaderArmed &&
+									!scope.shutdownArmed &&
 									!operatorExtensions?.busy &&
-									!(upgradeFlow?.isRunning() ?? false) &&
+									!(scope.upgradeFlow?.isRunning() ?? false) &&
 									!editorSubmit.hasActiveEditorBash() &&
 									!deps.chat.isStreaming() &&
 									deps.chat.turnPreparation().phase === "idle" &&
@@ -2300,7 +1760,7 @@ export async function createInteractiveApplication(host: InteractiveDeps): Promi
 					})
 					.catch(() => {});
 			}, 5000);
-			updateTimer.unref();
+			scope.updateTimer.unref();
 		}
 		// Pay the transcript renderers' first-use cost now, between the hydrated
 		// frame and the first answer, rather than in the middle of that answer.
@@ -2318,7 +1778,7 @@ export async function createInteractiveApplication(host: InteractiveDeps): Promi
 	try {
 		return await applicationController.run;
 	} finally {
-		clearTimeout(updateTimer);
+		clearTimeout(scope.updateTimer);
 		updateAbort.abort();
 		clearTimeout(startupTimer);
 		startupAbort.abort();

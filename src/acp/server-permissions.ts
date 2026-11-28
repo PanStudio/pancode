@@ -29,7 +29,7 @@ import { mutationFacts, sessionApprovalTask } from "../session-control/approval-
 import type { ApprovalRequestView, MutationFacts } from "../session-control/approval-request-view.js";
 import { resolvePermission } from "../session-control/index.js";
 import { askUserExposure } from "../tools/ask-user.js";
-import type { ToolRegistry } from "../tools/registry-contract.js";
+import type { ToolRegistry } from "../tools/registry/contract.js";
 import { ACP_DISPATCH_PLAN_META_KEY, dispatchPlanTitle, projectDispatchPlanMeta } from "./dispatch-plan-meta.js";
 import { AcpTimeoutError } from "./errors.js";
 import { boundString, redactCallText, safeStoredIdentifier, safeStoredString } from "./server-bounds.js";

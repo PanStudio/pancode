@@ -35,7 +35,7 @@ import { pancodeCachePath } from "../core/xdg.js";
 import { openStoreBackend, type StoreBackend } from "../domains/store/index.js";
 import { buildPutRecord, putHashObservation } from "../domains/store/provenance.js";
 import { printError, printOk } from "./argv.js";
-import { confirmAction } from "./kit/confirm.js";
+import { confirmAction } from "./lib/confirm.js";
 
 export type VerifyResult = StoreVerifyResult;
 
@@ -155,7 +155,7 @@ async function storeLogin(cwd: string): Promise<number> {
 	}
 	const key = await readApiKey(`Secret key for S3 access key ${bucket.accessKeyId} (${bucket.endpoint})`);
 	if (key === null || key.length === 0) {
-		printError(key === null ? "login cancelled" : "empty secret key");
+		printError(key === null ? "login canceled" : "empty secret key");
 		return 1;
 	}
 	try {

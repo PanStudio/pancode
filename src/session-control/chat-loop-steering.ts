@@ -141,7 +141,7 @@ export function createChatLoopSteering(loop: ChatLoopScope, state: ChatLoopSteer
 		const triage = deps.getSettings().chat.steering.triage;
 		const runtime = state.runtime;
 		if (!runtime) return null;
-		if (!triage.target) {
+		if (!triage.connection) {
 			const resolution = runtime.runtimeResolution;
 			const sideAuth = await resolveSideCallAuth(
 				deps.providers.auth,
@@ -169,7 +169,7 @@ export function createChatLoopSteering(loop: ChatLoopScope, state: ChatLoopSteer
 			};
 		}
 		const resolved = resolveRuntimeTarget(deps.providers, {
-			targetId: triage.target,
+			targetId: triage.connection,
 			wireModelId: triage.model,
 			requestedThinkingLevel: "off",
 			requireTools: false,

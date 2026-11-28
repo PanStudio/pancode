@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
-import { INTEROP_AGENT_KINDS } from "./registry.js";
+import { INTEROP_AGENT_KINDS } from "../../core/interop-agents.js";
 import type { InteropAgentKind, InteropAgentRecord } from "./types.js";
 
 export type PeerModeStatus = "ready" | "experimental" | "unavailable";
@@ -85,21 +85,21 @@ export function peerModeCapabilities(
 		const reason = !binaryPresent
 			? `${kind.binaryNames[0] ?? kind.label} CLI is missing`
 			: targetIds.length === 0
-				? `No target uses the ${kind.headlessRuntimeId} runtime`
+				? `No connection uses the ${kind.headlessRuntimeId} runtime`
 				: kind.id === "opencode"
-					? "target configured; OpenCode headless supports writable runs but refuses read-only runs; authentication is checked at launch"
-					: "target configured; CLI authentication and the selected model are checked when a run starts";
+					? "connection configured; OpenCode headless supports writable runs but refuses read-only runs; authentication is checked at launch"
+					: "connection configured; CLI authentication and the selected model are checked when a run starts";
 		const setupAction = !binaryPresent
 			? installAction(kind)
 			: targetIds.length === 0
-				? `Configure a target with runtime ${kind.headlessRuntimeId}`
-				: `Try /run --target ${targetIds[0]} <agent> <task> and verify its run record`;
+				? `Configure a connection with runtime ${kind.headlessRuntimeId}`
+				: `Try /run --connection ${targetIds[0]} <agent> <task> and verify its run record`;
 		modes.push({
 			mode: "headless",
 			status,
 			reason,
 			setupAction,
-			command: targetIds.length > 0 ? `/run --target ${targetIds[0]} <agent> <task>` : null,
+			command: targetIds.length > 0 ? `/run --connection ${targetIds[0]} <agent> <task>` : null,
 			targetIds,
 		});
 	}

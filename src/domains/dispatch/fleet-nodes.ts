@@ -98,11 +98,11 @@ async function fleetPreflightTargets(nodeId: string): Promise<FleetPreflightTarg
 	const pinned = new Set(
 		Object.values(settings.fleet.profiles)
 			.filter((profile) => profile.node === nodeId)
-			.map((profile) => profile.target),
+			.map((profile) => profile.connection),
 	);
-	if (settings.fleet.defaultNode === nodeId) pinned.add(settings.fleet.default.target);
+	if (settings.fleet.defaultNode === nodeId) pinned.add(settings.fleet.default.connection);
 	const targets: FleetPreflightTarget[] = [];
-	for (const target of settings.targets) {
+	for (const target of settings.connections) {
 		const runtime = registry.get(target.runtime);
 		const credentialed = pinned.has(target.id);
 		const headers: Record<string, string> = credentialed ? { ...target.auth?.headers } : {};

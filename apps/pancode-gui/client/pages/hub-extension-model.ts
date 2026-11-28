@@ -6,10 +6,10 @@
 
 import {
 	copyOperations,
-	matchesPackage,
+	type HubPack,
+	matchesHubPack,
 	missingScopes,
 	PACKAGE_KINDS,
-	type Package,
 	type Scope,
 	verb,
 } from "./hub-plan.js";
@@ -23,13 +23,13 @@ export const TERMINAL_NOTE =
 	"Extensions are reviewed and changed in the terminal, where their capability envelope is shown for approval. Run one of these, or open /hub in PanCode.";
 
 /** True when the plan contract accepts this package's ref, so the catalog may offer Install, Update, Enable, Disable and Remove. */
-export const desktopManaged = (pkg: Pick<Package, "kind">): boolean =>
+export const desktopManaged = (pkg: Pick<HubPack, "kind">): boolean =>
 	(PACKAGE_KINDS as readonly string[]).includes(pkg.kind);
 
 const scopeFlag = (scope: Scope) => `--${scope}`;
 
 /** The terminal command for each action the catalog would have offered on this row, in the order it would have offered them. */
-export function terminalSteps(pkg: Package): TerminalStep[] {
+export function terminalSteps(pkg: HubPack): TerminalStep[] {
 	const steps: TerminalStep[] = [];
 	for (const copy of pkg.copies) {
 		const scope = copy.scope as Scope;
@@ -52,7 +52,7 @@ export function terminalSteps(pkg: Package): TerminalStep[] {
 	return steps;
 }
 
-export function catalogKinds(packages: readonly Package[]): string[] {
+export function catalogKinds(packages: readonly HubPack[]): string[] {
 	return [...new Set([...PACKAGE_KINDS, ...packages.map((pkg) => pkg.kind)])].filter((kind) =>
 		packages.some((pkg) => pkg.kind === kind),
 	);
@@ -63,7 +63,7 @@ export const catalogKind = (kinds: readonly string[], value: string | null | und
 	kinds.find((candidate) => candidate === value) ?? "all";
 
 /** The kind buttons: "All kinds" first, then every kind with at least one pack, each with its count. */
-export function catalogFacets(packages: readonly Package[], kinds: readonly string[]) {
+export function catalogFacets(packages: readonly HubPack[], kinds: readonly string[]) {
 	return ["all", ...kinds]
 		.filter((name) => name === "all" || packages.some((pkg) => pkg.kind === name))
 		.map((name) => ({
@@ -78,14 +78,14 @@ export function catalogFacets(packages: readonly Package[], kinds: readonly stri
  * the limit, and whether a selected pack is hidden by the filters or gone.
  */
 export function catalogView(
-	packages: readonly Package[],
+	packages: readonly HubPack[],
 	view: { kind: string; installedOnly: boolean; filter: string; selected: string | null | undefined; limit: number },
 ) {
 	const visible = packages.filter(
 		(pkg) =>
 			(view.kind === "all" || pkg.kind === view.kind) &&
 			(!view.installedOnly || pkg.copies.length > 0) &&
-			matchesPackage(pkg, view.filter),
+			matchesHubPack(pkg, view.filter),
 	);
 	const displayed = visible.slice(0, view.limit);
 	const selectedPackage = visible.find((pkg) => pkg.ref === view.selected);

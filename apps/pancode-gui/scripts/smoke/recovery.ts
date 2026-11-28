@@ -36,7 +36,7 @@ export async function recoverySteps(run: SmokeRun) {
 		await revealSidebar();
 		await page
 			.locator(".wb-sidebar")
-			.getByRole("button", { name: /^Open workspace/ })
+			.getByRole("button", { name: /^Open project/ })
 			.click();
 		await openDialog.getByLabel("Project folder", { exact: true }).fill(join(h.home.path, "does-not-exist"));
 		await openDialog.getByRole("button", { name: "Open", exact: true }).click();
@@ -128,7 +128,7 @@ export async function recoverySteps(run: SmokeRun) {
 			await page.goto(`${origin}/sessions`);
 			await typeFast(page.getByRole("searchbox", { name: "Search sessions", exact: true }), "Sessions");
 			await page.goto(run.workspaceUrl);
-			const tasksBox = page.getByRole("searchbox", { name: "Find a task", exact: true });
+			const tasksBox = page.getByRole("searchbox", { name: "Find a session", exact: true });
 			await typeFast(tasksBox, "the project task list");
 			// Clear filters is an outside write: the box adopts it, and Back restores the committed search.
 			await page.locator("main").getByRole("button", { name: "Clear filters", exact: true }).click();
@@ -252,7 +252,7 @@ export async function recoverySteps(run: SmokeRun) {
 		// From Ctrl+Enter until the first turn renders, the operator's words never leave the screen. The Home
 		// field still holds them while the task starts, so a sample reads field values as well as text.
 		await page.goto(run.workspaceUrl);
-		await page.locator("main button.primary", { hasText: "New task" }).click();
+		await page.locator("main button.primary", { hasText: "New session" }).click();
 		await page.waitForURL(`${origin}/`);
 		await composerField.fill("[hold] start probe");
 		await page.evaluate(() => {
@@ -282,7 +282,7 @@ export async function recoverySteps(run: SmokeRun) {
 			[],
 			"the request left the screen while the task started",
 		);
-		const stop = page.getByRole("button", { name: "Stop turn", exact: true });
+		const stop = page.getByRole("button", { name: "Cancel turn", exact: true });
 		if (await stop.count()) await stop.click();
 		await settled();
 	});
@@ -327,7 +327,7 @@ export async function recoverySteps(run: SmokeRun) {
 		assert.ok((await recordRow.locator(".tool-card").count()) > 0, "the decision record is not at its call's row");
 		await composerField.fill("[approval] Write the probe file once more.");
 		await page.getByRole("button", { name: "Send", exact: true }).click();
-		await page.getByRole("button", { name: "Reject", exact: true }).first().click();
+		await page.getByRole("button", { name: "Deny", exact: true }).first().click();
 		await page.getByText("Permission rejected.", { exact: true }).last().waitFor();
 		await settled();
 		const outcome = page.locator(".chat-turn").last().locator(".turn-outcome");
@@ -418,7 +418,7 @@ export async function recoverySteps(run: SmokeRun) {
 		const missing = `not-open-probe-${width}-${zoom}`;
 		await page.goto(`${origin}/sessions/${missing}`);
 		const state = page.locator(".task-state");
-		await state.getByRole("heading", { name: "This task is not open", exact: true }).waitFor();
+		await state.getByRole("heading", { name: "This session is not open", exact: true }).waitFor();
 		const sizes = await state.evaluate((node) => ({
 			heading: Number.parseFloat(getComputedStyle(node.querySelector("h1") as Element).fontSize),
 			text: Number.parseFloat(getComputedStyle(node.querySelector("p") as Element).fontSize),

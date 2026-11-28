@@ -20,7 +20,7 @@ import {
 import { createTelemetryHub } from "../../src/core/telemetry/hub.js";
 import { ToolNames } from "../../src/core/tool-names.js";
 import type { ProvidersContract } from "../../src/domains/providers/index.js";
-import { registerHubPackage } from "../../src/domains/resources/hub.js";
+import { registerHubPack } from "../../src/domains/resources/hub.js";
 import {
 	type LoadSkillsInput,
 	loadSkills,
@@ -567,9 +567,9 @@ describe("skill tool surface lifetime", () => {
 		const settings = structuredClone(DEFAULT_SETTINGS);
 		settings.chat.prewarm = false;
 		const context = dispatchStubContext({ settings });
-		const target = settings.targets[0];
+		const target = settings.connections[0];
 		ok(target);
-		settings.chat.target = target.id;
+		settings.chat.connection = target.id;
 		settings.chat.model = target.defaultModel ?? "gpt-4o";
 		const session = createSessionBundle(context).contract;
 		const entries = (): SessionEntry[] => {
@@ -913,7 +913,7 @@ describe("model skill activation by autonomy level", () => {
 				},
 			}),
 		);
-		registerHubPackage(source, { cwd: root, scope: "project" });
+		registerHubPack(source, { cwd: root, scope: "project" });
 
 		// Marketplace rows only appear when discovery is on, which is what makes
 		// this the real not-installed path rather than an unknown-name miss.

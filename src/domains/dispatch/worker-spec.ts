@@ -336,7 +336,7 @@ export function buildDispatchWorkerSpec(input: DispatchWorkerSpecInput, config?:
 		role: input.role,
 		wallMs: wall.wallMs,
 		deadlineAt: wall.deadlineAt,
-		responseSeconds: limitSettings.safety.limits.workerResponseSeconds,
+		responseSeconds: limitSettings.safety.limits.workerResponseTimeoutMs / 1000,
 		toolCeiling: input.budget.ceiling ?? input.budget.hardCap,
 		maxRetries: limitSettings.fleet.retry.maxRetries,
 		refusals: WORKER_REFUSAL_LIMIT,
@@ -346,7 +346,7 @@ export function buildDispatchWorkerSpec(input: DispatchWorkerSpecInput, config?:
 		// D13: a ceiling PanCode cannot apply refuses rather than runs unbounded.
 		if (input.target.runtime.kind !== "http")
 			throw new Error(
-				`dispatch: safety.resources.workers is set but the ${input.target.runtime.kind} runtime ${input.target.runtime.id} runs its own commands, which PanCode cannot bound; unset the worker ceilings or dispatch to a target PanCode runs the tools for.`,
+				`dispatch: safety.resources.workers is set but the ${input.target.runtime.kind} runtime ${input.target.runtime.id} runs its own commands, which PanCode cannot bound; unset the worker ceilings or dispatch to a connection PanCode runs the tools for.`,
 			);
 		limits.resources = resources;
 	}
@@ -503,7 +503,7 @@ export function buildDispatchWorkerSpec(input: DispatchWorkerSpecInput, config?:
 	if (input.req.trustProjectCompatRoots !== undefined) {
 		spec.trustProjectCompatRoots = input.req.trustProjectCompatRoots;
 	} else if (settings) {
-		spec.trustProjectCompatRoots = settings.integrations.projectResources.trustProjectImports === true;
+		spec.trustProjectCompatRoots = settings.integrations.hub.trustProjectImports === true;
 	}
 	spec.gitCommitAttribution = settings?.integrations.git.commitAttribution ?? true;
 	spec.gitCommitAuthor = settings?.integrations.git.commitAuthor ?? "auto";

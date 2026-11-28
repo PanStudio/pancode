@@ -50,8 +50,8 @@ import {
 import { admissionAutonomy, effectiveYoloConfinement } from "../../src/lib/autonomy/autonomy.js";
 import { createTurnMiddleware } from "../../src/session-control/turn-middleware.js";
 import { type AgentRuntime, createTurnState } from "../../src/session-control/turn-state.js";
+import type { PermissionRequiredMeta, RegistryDeps } from "../../src/tools/registry/contract.js";
 import { createRegistry } from "../../src/tools/registry.js";
-import type { PermissionRequiredMeta, RegistryDeps } from "../../src/tools/registry-contract.js";
 import type { ToolSpec } from "../../src/tools/tool-spec.js";
 import { isolatePancodeEnv } from "../harness/scratch-env.js";
 
@@ -378,8 +378,8 @@ test("the contained-yolo notice states the sandbox backend and judge state a yol
 		yoloContainedNotice({ sandbox: "auto", judge: { enabled: true } }, none),
 		/without an OS sandbox \(bwrap not found\)/u,
 	);
-	match(on, /^Yolo runs contained: commands run in the bwrap OS sandbox/u);
-	match(on, /To run yolo unconfined, set safety\.yoloConfinement: unconfined/u);
+	match(on, /^YOLO runs contained: commands run in the bwrap OS sandbox/u);
+	match(on, /To run YOLO unconfined, set safety\.yoloConfinement: unconfined/u);
 });
 
 test("contained yolo runs an outward call the judge allows only when the operator named it", async () => {

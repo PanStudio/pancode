@@ -9,13 +9,13 @@ import { isMcpToolName, mcpToolName, ToolNames } from "../../core/tool-names.js"
 import type { TurnConstraints } from "../../core/turn-constraints.js";
 import { turnDelegatesTool } from "../../core/turn-constraints.js";
 import { workerPermitDigest } from "../../lib/worker-wire/protocol.js";
-import { capabilityClassExcludes } from "../agents/role-class.js";
 import type { AgentCapabilityClass } from "../agents/spec.js";
 import type { McpAttestedSkill } from "../mcp/skill-catalog.js";
 import type { McpTrustActionClass } from "../mcp/trust.js";
 import type { RuntimeEnforcement } from "../providers/index.js";
 import { classify } from "./action-classifier.js";
 import type { ApprovalAuthority } from "./admission.js";
+import { capabilityClassExcludes } from "./role-class.js";
 
 /**
  * The effective worker permit (Codex review, "The corrected authority
@@ -309,7 +309,7 @@ export function resolveWorkerPermit(input: WorkerPermitInput): WorkerPermit {
 	if (ceilingErrors.length > 0) throw new WorkerPermitAdmissionError(`${who}: ${ceilingErrors.join("; ")}`);
 	if (input.readOnly && !readOnlyWorkAdmitted(input.runtime)) {
 		throw new WorkerPermitAdmissionError(
-			`runtime '${input.runtime.id}' cannot run read-only work: PanCode cannot mediate its individual calls and it has no OS-level read-only sandbox, so it could change user files; trustedUnmediated does not change this. Choose a native, claude-sdk or codex-cli target for target '${input.runtime.targetId}'`,
+			`runtime '${input.runtime.id}' cannot run read-only work: PanCode cannot mediate its individual calls and it has no OS-level read-only sandbox, so it could change user files; trustedUnmediated does not change this. Choose a native, claude-sdk or codex-cli connection for connection '${input.runtime.targetId}'`,
 		);
 	}
 	// Operator decision Q6: a runtime PanCode cannot mediate per call takes
@@ -317,7 +317,7 @@ export function resolveWorkerPermit(input: WorkerPermitInput): WorkerPermit {
 	const unmediatedWrite = !input.readOnly && !input.runtime.enforcement.perCallMediation;
 	if (unmediatedWrite && !input.runtime.trustedUnmediated) {
 		throw new WorkerPermitAdmissionError(
-			`runtime '${input.runtime.id}' runs its own tool loop and PanCode cannot mediate its individual calls, so it is refused write-capable work; choose a native or claude-sdk target, or set trustedUnmediated: true on target '${input.runtime.targetId}' in settings.yaml to accept the runtime's own authority`,
+			`runtime '${input.runtime.id}' runs its own tool loop and PanCode cannot mediate its individual calls, so it is refused write-capable work; choose a native or claude-sdk connection, or set trustedUnmediated: true on connection '${input.runtime.targetId}' in settings.yaml to accept the runtime's own authority`,
 		);
 	}
 

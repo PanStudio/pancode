@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import type { LifecycleContext } from "../../core/hub-receipts.js";
-import type { PackageIdentity } from "../../core/package-identity.js";
+import type { PackIdentity } from "../../core/pack-identity.js";
 
 export type PluginScope = "user" | "project";
 export type PluginResourceKind = "skills" | "prompts" | "agents" | "playbooks";
@@ -39,7 +39,7 @@ export interface PluginExpectedCopy {
 	enabled?: boolean;
 	recordedDigest?: string;
 	kind?: HubEntryKind;
-	trust?: PackageTrust;
+	trust?: PackTrust;
 	/** Compared JSON-equal, so identical bytes with a different origin still stale a plan. */
 	origin?: PluginOrigin;
 }
@@ -91,7 +91,7 @@ export interface PluginCandidate {
 
 /** Format of a foreign package as it was found on disk; author labels never set this. */
 export const FOREIGN_PACKAGE_FORMATS = ["portable", "claude-code", "codex", "agent-skill"] as const;
-export type ForeignPackageFormat = (typeof FOREIGN_PACKAGE_FORMATS)[number];
+export type ForeignPackFormat = (typeof FOREIGN_PACKAGE_FORMATS)[number];
 /**
  * `interop` is a package imported from an installed local agent; `import` is an
  * explicit source path or GitHub tree. Both always carry foreign trust.
@@ -99,12 +99,12 @@ export type ForeignPackageFormat = (typeof FOREIGN_PACKAGE_FORMATS)[number];
 export type PluginOrigin =
 	| string
 	| { kind: "local" | "catalog" | "github"; source: string; commit?: string }
-	| { kind: "interop"; host: string; source: string; format?: ForeignPackageFormat; marketplace?: string }
+	| { kind: "interop"; host: string; source: string; format?: ForeignPackFormat; marketplace?: string }
 	| {
 			kind: "import";
 			source: string;
 			transport: "local" | "github";
-			format: ForeignPackageFormat;
+			format: ForeignPackFormat;
 			/** The exact commit a GitHub import was fetched at. */
 			commit?: string;
 			host?: string;
@@ -113,7 +113,7 @@ export type PluginOrigin =
 export function isForeignPluginOrigin(origin: PluginOrigin | undefined): boolean {
 	return typeof origin === "object" && (origin.kind === "interop" || origin.kind === "import");
 }
-export type PackageTrust = "trusted" | "foreign";
+export type PackTrust = "trusted" | "foreign";
 
 export interface PluginProvenance {
 	id: string;
@@ -127,7 +127,7 @@ export interface PluginProvenance {
 export interface InstalledPlugin {
 	id: string;
 	kind?: HubEntryKind;
-	trust?: PackageTrust;
+	trust?: PackTrust;
 	/** Where the install record says the package came from. */
 	origin?: PluginOrigin;
 	name: string;
@@ -152,7 +152,7 @@ export interface InstalledPlugin {
 }
 
 export interface PluginResourceRoot {
-	owner?: PackageIdentity;
+	owner?: PackIdentity;
 	id: string;
 	scope: PluginScope;
 	path: string;
@@ -160,7 +160,7 @@ export interface PluginResourceRoot {
 	source: string;
 	provenance: PluginProvenance;
 	generation: number;
-	trust?: PackageTrust;
+	trust?: PackTrust;
 }
 
 export interface PluginListOptions {
@@ -180,19 +180,19 @@ export interface PluginInstallOptions extends PluginMutationOptions {
 	expectedId?: string;
 	expectedVersion?: string;
 	origin?: PluginOrigin;
-	trust?: PackageTrust;
+	trust?: PackTrust;
 	expectedKind?: HubEntryKind;
 	/** Who answers for the package; defaults to the GitHub owner of the origin, else local. */
 	publisher?: string;
 }
 
 /** One kind-aware publication seam for the hub and interop adapters. */
-export interface HubPackageInstallInput extends Omit<PluginInstallOptions, "expectedKind"> {
+export interface HubPackInstallInput extends Omit<PluginInstallOptions, "expectedKind"> {
 	kind: HubEntryKind;
 	sourcePath: string;
 	scope: PluginScope;
 	origin: PluginOrigin;
-	trust: PackageTrust;
+	trust: PackTrust;
 }
 
 export interface PluginMutationResult {
@@ -209,7 +209,7 @@ interface PluginInstallFacts {
 	source: string;
 	origin?: PluginOrigin;
 	contentDigest: string;
-	trust?: PackageTrust;
+	trust?: PackTrust;
 	publisher: string;
 }
 
@@ -230,4 +230,4 @@ export interface PluginSnapshot {
 	resourceRoots: Readonly<Record<PluginResourceKind, ReadonlyArray<PluginResourceRoot>>>;
 }
 
-import type { HubEntryKind, HubRequirementRef } from "../resources/hub-types.js";
+import type { HubEntryKind, HubRequirementRef } from "./hub-types.js";

@@ -30,6 +30,8 @@ import { offerNotice } from "./report/report-model.js";
 import { ASIDE_DOCK_QUERY, toggleAside, useAsideExpanded } from "./shell/aside-state.js";
 import { OpenWorkspaceDialog } from "./shell/OpenWorkspaceDialog.js";
 import { SessionControlNotice, SessionControlsProvider, useSessionCommands } from "./shell/SessionControls.js";
+import { SessionSidebar } from "./shell/SessionSidebar.js";
+import { rememberedWorkspace, rememberWorkspace, useSessionActions, useSessionOverview } from "./shell/sessions.js";
 import { type ShellApi, ShellContext } from "./shell/shell-context.js";
 import {
 	isChatPath,
@@ -42,8 +44,6 @@ import {
 	workspacesByRecency,
 } from "./shell/shell-model.js";
 import { staleBundle } from "./shell/stale-bundle-model.js";
-import { TaskSidebar } from "./shell/TaskSidebar.js";
-import { rememberedWorkspace, rememberWorkspace, useSessionOverview, useTaskActions } from "./shell/tasks.js";
 import { useApplyTheme } from "./shell/theme.js";
 import { WindowTitlebar } from "./shell/WindowTitlebar.js";
 import { launchedPath, openAppWindow, whenFocused } from "./shell/windows.js";
@@ -155,7 +155,7 @@ function Workbench({ client, local }: { client: Client; local: Client }) {
 			}
 			setFirstRun(false);
 			const from = (location.state as { from?: unknown } | null)?.from;
-			void navigate(to === "home" ? "/" : typeof from === "string" ? from : "/settings/targets", { replace: true });
+			void navigate(to === "home" ? "/" : typeof from === "string" ? from : "/settings/connections", { replace: true });
 		},
 		[navigate, location.state, location.pathname],
 	);
@@ -227,7 +227,7 @@ function Workbench({ client, local }: { client: Client; local: Client }) {
 			if (stranded && opener?.isConnected) opener.focus();
 		});
 	}, [drawer, phone]);
-	const actions = useTaskActions(client, closeDrawer);
+	const actions = useSessionActions(client, closeDrawer);
 	const previousPath = useRef(location.pathname);
 	useEffect(() => {
 		if (previousPath.current !== location.pathname) {
@@ -564,7 +564,7 @@ function Workbench({ client, local }: { client: Client; local: Client }) {
 				}}
 			>
 				{authed ? (
-					<TaskSidebar
+					<SessionSidebar
 						client={client}
 						local={local}
 						remoteHost={meta.data?.host}

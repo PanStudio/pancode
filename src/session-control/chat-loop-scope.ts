@@ -1,13 +1,15 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import type { AsyncLocalStorage } from "node:async_hooks";
 import type { PendingSkillRequest, PendingSkillToolPolicy, SkillSurfaceChange } from "../core/skill-activation.js";
 import type { TurnConstraints } from "../core/turn-constraints.js";
 import type { MiddlewareToolChoiceControl } from "../domains/middleware/index.js";
+import type { createConversationEggs } from "../domains/session/easter-eggs.js";
 import type { RetrySettings } from "../domains/session/retry.js";
 import type { EngineAgentHandle, EngineAgentOptions } from "../engine/agent.js";
 import type { TurnFailureRecord } from "../lib/turn-control/outcome.js";
 import type { HeadlessObservationPool } from "../tools/observation.js";
-import type { AskUserToolPolicy, ToolInvokeOptions } from "../tools/registry-contract.js";
+import type { AskUserToolPolicy, ToolInvokeOptions } from "../tools/registry/contract.js";
 import type {
 	ChatCancelOptions,
 	ChatLoop,
@@ -67,6 +69,14 @@ export interface ChatLoopScope {
 	readonly retrySettings: () => RetrySettings;
 	readonly headlessObservation: HeadlessObservationPool | null;
 	readonly missingOutputs: () => string[];
+	readonly hostRunContext: AsyncLocalStorage<ToolInvokeOptions["hostRun"]>;
+	readonly preparingSubmits: () => number;
+	readonly operatorToolLimits: TurnConstraints | undefined;
+	readonly sessionResetListeners: Set<() => void>;
+	readonly eggs: ReturnType<typeof createConversationEggs>;
+	readonly leavePreparation: () => void;
+	readonly enterPreparation: () => void;
+	readonly sideQuestionRound: NonNullable<CreateChatLoopDeps["runSideQuestion"]>;
 	readonly currentToolInvokeOptions: (toolCallId?: string) => Partial<ToolInvokeOptions>;
 	sessionToolLimits: TurnConstraints | undefined;
 	promptToolLimits: TurnConstraints | undefined;
@@ -88,9 +98,14 @@ export interface ChatLoopScope {
 	stepPolicyStop: { template?: string } | null;
 	lastStepPipeline: StepPipelineEnd | null;
 	stepTurnScope: { evidence: SubmitEvidence; continuation: boolean } | null;
+	activeSubmit: Promise<void>;
 	priorSubmit: Promise<void>;
 	sessionResetSettlement: Promise<void>;
 	machinePreparation: { token: object; runtime: AgentRuntime | null } | null;
+	machineTurnRunning: object | null;
+	pendingMachineCancellation: object | null;
+	machineHostDisposed: boolean;
+	nextRequestPrepared: Promise<void>;
 	nextRequestNavigation: number;
 	turnActive: boolean;
 	pendingPreTurnRead: AbortController | null;
@@ -109,6 +124,15 @@ export interface ChatLoopScope {
 	readonly recovery: ChatLoopComposition["recovery"];
 	readonly requestBudgetRoll: ChatLoopComposition["requestBudgetRoll"];
 	readonly turnRuntime: ChatLoopComposition["turnRuntime"];
+	readonly steerInterrupter: ChatLoopComposition["steerInterrupter"];
+	readonly prewarm: ChatLoopStateMachine["prewarm"];
+	readonly prepareNextRequest: ChatLoopStateMachine["prepareNextRequest"];
+	readonly cancelTriage: ChatLoopSteering["cancelTriage"];
+	readonly withEndpointSlot: ChatLoopStateMachine["withEndpointSlot"];
+	readonly prepareOutOfTurnRound: ChatLoopStateMachine["prepareOutOfTurnRound"];
+	readonly routeMoveWait: ChatLoopComposition["routeMoveWait"];
+	readonly routeFit: ChatLoopComposition["routeFit"];
+	readonly continuity: ChatLoopComposition["continuity"];
 	readonly stepStarts: ChatLoopBus["stepStarts"];
 	readonly stepPipeline: ChatLoopBus["stepPipeline"];
 	readonly yoloContinuationDue: ChatLoopStateMachine["yoloContinuationDue"];

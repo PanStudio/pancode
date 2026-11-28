@@ -70,7 +70,7 @@ export function groupControls(controls: SettingControl[]): Array<{ group: string
 
 /** What an empty value means for this control, in the operator's words. */
 export function emptyMeaning(control: SettingControl): string {
-	if (control.path === "context.memory.target") return "Same as chat";
+	if (control.path === "context.memory.connection") return "Same as chat";
 	if (["chat.model", "fleet.default.model", "context.memory.model"].includes(control.path))
 		return "Use connection default";
 	if (control.kind === "list") return "None";

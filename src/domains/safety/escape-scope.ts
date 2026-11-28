@@ -32,7 +32,7 @@ import { asksToLeaveSandbox, SANDBOX_ESCAPE_REASON, SANDBOX_ESCAPE_RULE_ID } fro
 export const ESCAPE_SCOPE_CUSTOM_TYPE = "pancode.escape-scope";
 
 /** How every session-scope option label starts; ask_user drops an agent-authored option that claims it. */
-export const ESCAPE_SCOPE_OPTION_PREFIX = "Approve for this session:";
+export const ESCAPE_SCOPE_OPTION_PREFIX = "Allow for this session:";
 
 /** What an escape scope covers, as the harness read it from the asked call. */
 export interface EscapeScope {

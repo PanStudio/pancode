@@ -18,7 +18,7 @@ const viewerPaths = [
 	/^view$/,
 	/^artifacts\/read$/,
 	/^fleet\/preview$/,
-	/^targets\/[^/]+\/probe$/,
+	/^connections\/[^/]+\/probe$/,
 	/^load$/,
 	/^control$/,
 ];

@@ -163,7 +163,7 @@ test("compact tier stays at most 2 rows even when busy with alerts, and ASCII id
 		state.notices = [];
 		const busyRows = renderCompactDashboard(state, 96);
 		strictEqual(busyRows.length, 2);
-		match(stripTerminalSequences(busyRows[0] ?? ""), /Esc stops/);
+		match(stripTerminalSequences(busyRows[0] ?? ""), /Esc cancels/);
 		match(stripTerminalSequences(busyRows[1] ?? ""), /▐∀▌/);
 	} finally {
 		setPresentationTier(prevTier);
@@ -390,11 +390,11 @@ test("Alt+U boxed island deck matches geometry, detailed default/welcome auto-fo
 		strictEqual(footer.isExpanded(), false, "deck auto-hides while a dock owns the surface");
 		strictEqual(footer.view.render(96).length, 1);
 
-		// /fleet hides deck and suppresses Row 1 worker count
+		// /fleet hides deck; Row 1 keeps the live count the board beside it states
 		fleetOpen = true;
 		const fleetLines = footer.view.render(96).map(stripTerminalSequences);
 		strictEqual(fleetLines.length, 1);
-		doesNotMatch(fleetLines[0] ?? "", /1 worker/u);
+		match(fleetLines[0] ?? "", /✓ ready · ● 1 running/u);
 		fleetOpen = false;
 		keyContext = "idle";
 
@@ -517,11 +517,12 @@ test("Alt+U boxed island deck matches geometry, detailed default/welcome auto-fo
 		quiet: false,
 	};
 	yoloState.session.autonomyWindow = {
-		caps: { turns: 100, minutes: 120, tokens: 0, usd: 0 },
-		usage: { turns: 0, activeMs: 0, tokens: 0, usd: 0 },
+		caps: { toolCalls: 100, minutes: 120, tokens: 0 },
+		usage: { toolCalls: 0, activeMs: 0, tokens: 0 },
+		turn: { toolCalls: 0, budget: 40 },
+		halted: null,
 		osSandbox: true,
-		paused: false,
-	} as never;
+	};
 	const yoloDeck96 = renderDeckDrawer(yoloState, 96, 40).map(stripTerminalSequences).join("\n");
 	doesNotMatch(yoloDeck96, /tu…/u);
 	match(yoloDeck96, /YOLO/u);

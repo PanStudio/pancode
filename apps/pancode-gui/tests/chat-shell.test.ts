@@ -28,7 +28,7 @@ import {
 import type { HealthRow } from "../client/chat/health.js";
 import { type ChatTurn, groupTurns, turnStatuses } from "../client/chat/turns.js";
 import { appCommands, DESTINATIONS, liveStopTarget, NO_SITUATION } from "../client/interaction/commands.js";
-import { stopRefusal } from "../client/pages/session-control-model.js";
+import { sessionControlNotice, stopRefusal } from "../client/pages/session-control-model.js";
 import type { Problem } from "../contracts/common.js";
 import type { TimelineItem, Turn } from "../contracts/sessions.js";
 
@@ -405,15 +405,18 @@ test("the open task's commands are a This task group: one runs, one that needs a
 		fillTaskCommand: (name: string) => calls.push(`fill ${name}`),
 	};
 	const open = { sessionId: "s1", runningTurnId: null, sessionOpen: true, hasNotices: false, catalog };
-	const rows = appCommands(open, run).filter((row) => row.group === "This task");
+	const rows = appCommands(open, run).filter((row) => row.group === "This session");
 	assert.deepEqual(
 		rows.map((row) => row.title),
 		["Run doctor", "Run share…"],
 	);
 	for (const row of rows) row.run();
 	assert.deepEqual(calls, ["run doctor", "fill share"]);
-	assert.equal(appCommands({ ...open, sessionOpen: false }, run).filter((row) => row.group === "This task").length, 0);
-	assert.equal(appCommands(open, on).filter((row) => row.group === "This task").length, 0);
+	assert.equal(
+		appCommands({ ...open, sessionOpen: false }, run).filter((row) => row.group === "This session").length,
+		0,
+	);
+	assert.equal(appCommands(open, on).filter((row) => row.group === "This session").length, 0);
 });
 
 test("a stop names the turn running when it is pressed, and nothing once that turn settled", () => {
@@ -454,6 +457,23 @@ test("a refused stop reads as nothing stopped, never as accepted", () => {
 		"utf8",
 	);
 	assert.match(actions, /stopRefusal\(error\.problem\)/);
+	const base = {
+		sessionId: "s1",
+		workspaceId: "w1",
+		title: "Seed turn",
+		action: "stop" as const,
+		turnId: "t1",
+		key: "k1",
+		epoch: "e1",
+		message: "",
+		restarted: false,
+	};
+	const sending = sessionControlNotice([{ ...base, stage: "sending" }], null);
+	assert.equal(sending.summary, "Cancel request · Seed turn");
+	const confirmed = sessionControlNotice([{ ...base, stage: "complete" }], null);
+	assert.deepEqual([confirmed.label, confirmed.summary], ["Canceled", "Cancel confirmed · Seed turn"]);
+	const idle = sessionControlNotice([{ ...base, stage: "complete", nothingStopped: true }], null);
+	assert.deepEqual([idle.label, idle.summary], ["Nothing to cancel", "Nothing canceled · Seed turn"]);
 });
 
 test("appCommands opens the task's session dialogs by name, only those its agent can serve", () => {
@@ -474,7 +494,7 @@ test("appCommands opens the task's session dialogs by name, only those its agent
 	});
 	assert.deepEqual(
 		full.map((command) => command.title),
-		["Branches…", "Hand off to a new conversation…", "Side question…", "Drafts…", "Extensions…", "Run a playbook…"],
+		["Session tree…", "Hand off to a new session…", "Side question…", "Drafts…", "Extensions…", "Run a playbook…"],
 	);
 	assert.ok(full.find((command) => command.title === "Side question…")?.keywords?.includes("btw"));
 	full.find((command) => command.title === "Drafts…")?.run();
@@ -508,7 +528,7 @@ test("the palette's task commands leave out what Download transcript and Report 
 			} as never,
 		},
 		{ ...on, runTaskCommand: () => undefined, fillTaskCommand: () => undefined },
-	).filter((row) => row.group === "This task");
+	).filter((row) => row.group === "This session");
 	assert.deepEqual(
 		rows.map((row) => row.id),
 		["task-command.doctor", "task-command.archive"],

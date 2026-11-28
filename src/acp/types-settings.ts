@@ -30,11 +30,16 @@ const settingModel = Type.Union([
 ]);
 const AcpThinkingLevelSchema = literalUnion(THINKING_LEVELS);
 export const AcpAutonomyLevelSchema = Type.Union([Type.Literal("default"), Type.Literal("yolo")]);
-export const ACP_SAFE_SETTINGS_KEYS = ["chat.target", "chat.model", "chat.thinkingLevel", "safety.autonomy"] as const;
+export const ACP_SAFE_SETTINGS_KEYS = [
+	"chat.connection",
+	"chat.model",
+	"chat.thinkingLevel",
+	"safety.autonomy",
+] as const;
 /** `params.patch` of `_pancode/settings/patch_safe`. */
 export const AcpSafeSettingsPatchSchema = Type.Object(
 	{
-		"chat.target": Type.Optional(settingTarget),
+		"chat.connection": Type.Optional(settingTarget),
 		"chat.model": Type.Optional(settingModel),
 		"chat.thinkingLevel": Type.Optional(AcpThinkingLevelSchema),
 		"safety.autonomy": Type.Optional(AcpAutonomyLevelSchema),
@@ -47,14 +52,17 @@ export const AcpSafeSettings = Type.Object(
 	{
 		settings: Type.Object(
 			{
-				chat: Type.Object({ target: settingTarget, model: settingModel, thinkingLevel: AcpThinkingLevelSchema }, closed),
+				chat: Type.Object(
+					{ connection: settingTarget, model: settingModel, thinkingLevel: AcpThinkingLevelSchema },
+					closed,
+				),
 				safety: Type.Object({ autonomy: AcpAutonomyLevelSchema }, closed),
 			},
 			closed,
 		),
 		editable: Type.Array(
 			Type.Union([
-				Type.Literal("chat.target"),
+				Type.Literal("chat.connection"),
 				Type.Literal("chat.model"),
 				Type.Literal("chat.thinkingLevel"),
 				Type.Literal("safety.autonomy"),
@@ -126,8 +134,8 @@ export const AcpTargetProbe = Type.Object(
 export type AcpTargetProbe = Static<typeof AcpTargetProbe>;
 
 export const MODEL_TARGET_PATHS: Readonly<Record<string, string>> = {
-	"chat.model": "chat.target",
-	"fleet.default.model": "fleet.default.target",
-	"context.memory.model": "context.memory.target",
-	"context.compaction.model": "chat.target",
+	"chat.model": "chat.connection",
+	"fleet.default.model": "fleet.default.connection",
+	"context.memory.model": "context.memory.connection",
+	"context.compaction.model": "chat.connection",
 };

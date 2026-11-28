@@ -374,7 +374,7 @@ function hostOf(url: string): string | null {
 }
 
 export interface IdentitySettings {
-	targets?: ReadonlyArray<{ id: string; url?: string | undefined }>;
+	connections?: ReadonlyArray<{ id: string; url?: string | undefined }>;
 }
 
 /**
@@ -455,7 +455,7 @@ export async function localIdentity(
 	if (workspace !== cwd) paths.push(cwd);
 	add("project", basename(workspace));
 
-	for (const target of settings.targets ?? []) {
+	for (const target of settings.connections ?? []) {
 		add("target", target.id);
 		const targetHost = target.url ? hostOf(target.url) : null;
 		if (targetHost && !/^[\d.]+$/u.test(targetHost) && !targetHost.startsWith("[")) add("host", targetHost);

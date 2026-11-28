@@ -10,7 +10,7 @@ import { type Client, emptyInput } from "../api/client.js";
 import { Icon } from "../design/icons.js";
 import { PancodePulse, PULSE_SIZE } from "../shell/PancodeMark.js";
 import { PathField } from "../shell/PathField.js";
-import { rememberWorkspace } from "../shell/tasks.js";
+import { rememberWorkspace } from "../shell/sessions.js";
 import { type SignIn, testedLede, type WizardView } from "./wizard-model.js";
 
 function useHeadingFocus() {
@@ -219,7 +219,7 @@ export function EndStep({
 	return (
 		<section className="wizard-step" ref={root} aria-labelledby={id}>
 			<h1 id={id} tabIndex={-1}>
-				{kind === "failed" ? "Setup stopped." : "Setup cancelled."}
+				{kind === "failed" ? "Setup stopped." : "Setup canceled."}
 			</h1>
 			<p className="wizard-step__lede" role={kind === "failed" ? "alert" : undefined}>
 				{kind === "failed" ? problem : "Nothing was saved, except a browser sign-in you had already finished."}

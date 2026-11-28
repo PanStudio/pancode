@@ -53,12 +53,18 @@ export function TargetsPage({ client, view }: { client: Client; view: "targets" 
 		return request.workspaceId
 			? client.call(
 					scoped,
-					{ ...emptyInput, params: { id: request.workspaceId, targetId } },
+					{ ...emptyInput, params: { id: request.workspaceId, connectionId: targetId } },
 					request.key,
 					undefined,
 					request.epoch ?? undefined,
 				)
-			: client.call(user, { ...emptyInput, params: { targetId } }, request.key, undefined, request.epoch ?? undefined);
+			: client.call(
+					user,
+					{ ...emptyInput, params: { connectionId: targetId } },
+					request.key,
+					undefined,
+					request.epoch ?? undefined,
+				);
 	});
 	const { operation, request, busy } = tracking;
 	const operationView = operation.data ? connectionOperationView(operation.data) : null;
@@ -127,7 +133,7 @@ export function TargetsPage({ client, view }: { client: Client; view: "targets" 
 							{operation.data.status === "succeeded" && <p>{operation.data.result.message}</p>}
 							{busy && !operation.error && operation.data.cancellable && (
 								<button type="button" onClick={() => cancel.mutate()} disabled={cancel.isPending}>
-									{cancel.isPending ? "Cancelling…" : "Cancel probe"}
+									{cancel.isPending ? "Canceling…" : "Cancel probe"}
 								</button>
 							)}
 							{cancel.error && <p role="alert">{cancel.error.message}</p>}
@@ -232,7 +238,7 @@ export function TargetsPage({ client, view }: { client: Client; view: "targets" 
 							<div className="routing-guide">
 								<strong>Agent → profile → connection & model</strong>
 								<p>
-									Profiles select a model. Agent bindings choose a profile. Inspect each step below or{" "}
+									Profiles select a model. Agent routes choose a profile. Inspect each step below or{" "}
 									<Link to={`/settings/advanced?${new URLSearchParams({ ...(id ? { workspace: id } : {}), q: "fleet" })}`}>
 										edit fleet settings
 									</Link>
@@ -242,7 +248,7 @@ export function TargetsPage({ client, view }: { client: Client; view: "targets" 
 							<nav ref={routingBar} className="settings-tabs" aria-label="Routing inventory">
 								{[
 									{ id: "profiles", label: "Profiles", count: routing.data.profiles.length },
-									{ id: "bindings", label: "Agent bindings", count: routing.data.bindings.length },
+									{ id: "bindings", label: "Agent routes", count: routing.data.bindings.length },
 									{ id: "models", label: "Cached models", count: routing.data.models.length },
 								].map((tab) => (
 									<button
@@ -323,7 +329,7 @@ export function TargetsPage({ client, view }: { client: Client; view: "targets" 
 								</dl>
 							</section>
 							<section hidden={routingView !== "bindings"}>
-								<h2>Agent bindings · {routing.data.bindings.length}</h2>
+								<h2>Agent routes · {routing.data.bindings.length}</h2>
 								{!routing.data.bindings.length && <PanelEmpty>{emptyState.emptyStore("agent binding")}</PanelEmpty>}
 								<dl className="settings-list">
 									{routing.data.bindings.map((row) => (

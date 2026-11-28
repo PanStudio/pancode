@@ -12,15 +12,15 @@
 import { randomUUID } from "node:crypto";
 import { homedir } from "node:os";
 import path from "node:path";
-import { PLUGIN_RESOURCE_USE, recordPackageActivity } from "../../core/package-activity.js";
+import { PLUGIN_RESOURCE_USE, recordPackActivity } from "../../core/pack-activity.js";
 import { relativePathEscapes } from "../../core/path-containment.js";
 import type { PendingSkillRequest } from "../../core/skill-activation.js";
 import type { TurnConstraints } from "../../core/turn-constraints.js";
 import { templateTurnConstraints } from "../../core/turn-constraints.js";
 import type { ImageContent } from "../../engine/types.js";
 import { expandInlineFileReferencesAsync } from "../../tools/file-references.js";
+import { pluginResourceComponents } from "../agents/index.js";
 import type { ResourcesContract } from "./contract.js";
-import { pluginResourceComponents } from "./package-references.js";
 
 export interface SubmitExpansion {
 	text: string;
@@ -423,7 +423,7 @@ export async function expandSubmitText(
 	}
 	const promptOwner = promptExpansion?.expanded ? promptExpansion.template.sourceInfo?.owner : undefined;
 	if (promptExpansion?.expanded && promptOwner)
-		recordPackageActivity({
+		recordPackActivity({
 			type: PLUGIN_RESOURCE_USE,
 			kind: "prompt",
 			owner: promptOwner,

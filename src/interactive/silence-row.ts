@@ -87,7 +87,7 @@ function endingWords(next: AgentStatus, nextModel: string, wait: SilentWait): st
 	// Only a request this wait sent can say its output arrived; an earlier call's first byte is not this wait's.
 	const request = next.modelRequest && next.modelRequest.sentAt >= wait.waitingFrom ? next.modelRequest : undefined;
 	if (phase === "writing" || phase === "thinking" || request?.firstByteAt) return "then output arrived";
-	if (phase === "cancelling" || next.cancelRequestedAt !== undefined) return "then you stopped it";
+	if (phase === "cancelling" || next.cancelRequestedAt !== undefined) return "then you canceled it";
 	if (phase === "retrying") return "then PanCode retried";
 	if (phase === "tool_running" || phase === "tool_blocked") return "then a tool call arrived";
 	return "then the wait ended";

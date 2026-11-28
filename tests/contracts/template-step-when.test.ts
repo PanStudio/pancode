@@ -21,8 +21,8 @@ import type { SessionEntry } from "../../src/domains/session/entries.js";
 import { createLoopGuardRegistration } from "../../src/engine/loop-guard.js";
 import type { AgentEvent, AgentMessage } from "../../src/engine/types.js";
 import { createWorkerSafety } from "../../src/engine/worker-tools.js";
+import { stepPipelineEnd } from "../../src/session-control/chat-loop/submit-settle.js";
 import { type CreateChatLoopDeps, createChatLoop } from "../../src/session-control/chat-loop.js";
-import { stepPipelineEnd } from "../../src/session-control/chat-loop-submit.js";
 import { createRegistry } from "../../src/tools/registry.js";
 import { dispatchStubContext } from "../harness/dispatch-stub-context.js";
 import { loopSafety } from "../harness/loop-guard.js";
@@ -78,14 +78,14 @@ async function drive(
 	const settings = structuredClone(DEFAULT_SETTINGS);
 	settings.chat.prewarm = false;
 	const routes = [route, ...(switchTo ? [switchTo] : [])];
-	settings.targets = routes.map((entry) => ({
+	settings.connections = routes.map((entry) => ({
 		id: `route-${entry.model}`,
 		runtime: "openai" as const,
 		defaultModel: entry.model,
 		...(entry.uncached === true ? { cache: { retention: "none" as const } } : {}),
 	}));
 	const context = dispatchStubContext({ settings });
-	settings.chat.target = `route-${route.model}`;
+	settings.chat.connection = `route-${route.model}`;
 	settings.chat.model = route.model;
 	const providers = {
 		...(context.getContract("providers") as ProvidersContract),
@@ -305,7 +305,7 @@ async function drive(
 							);
 						}
 						if (switchTo !== undefined && turns.length === 1) {
-							settings.chat.target = `route-${switchTo.model}`;
+							settings.chat.connection = `route-${switchTo.model}`;
 							settings.chat.model = switchTo.model;
 						}
 						const message = {

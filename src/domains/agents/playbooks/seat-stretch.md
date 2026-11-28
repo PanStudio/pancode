@@ -17,7 +17,7 @@ steps:
     id: review
     maxAttempts: 2
     dependencies: [build]
-    check: {kind: agent, agent: verifier, scope: readonly}
+    check: {kind: agent, agent: reviewer, scope: readonly}
     repair: {kind: agent, agent: coder, scope: worktree}
 maxWorkers: 1
 onFailure: stop
@@ -46,7 +46,7 @@ diff HEAD` shows every tracked change, staged or not, and `git status --short
 its files). When the request's own checks pass, report done; the review that
 follows is independent and does not replace your checks.
 
-Review. A separate read-only verifier inspects the workspace afterwards and
+Review. A separate read-only reviewer inspects the workspace afterwards and
 answers a typed pass/fail with per-check evidence. If it fails the build, the
 builder receives its failed checks and gets exactly one revision. Close the
 findings it reported and nothing else.
@@ -82,11 +82,11 @@ extra fee, but an overage call or an unknown charge is not free.
    or `deferred until unknown` when no reset is reported. A window's `access:
    null` only means the provider gave no verdict for that window; the pool's
    `access` stands for it.
-3. The pool is the chat route's: the target in settings `chat.target`. A
-   forecast line names its route as `<target>/<model>`; a route whose target
-   matches draws on this pool. For any other target this view holds no reading, so
+3. The pool is the chat route's: the connection in settings `chat.connection`. A
+   forecast line names its route as `<connection>/<model>`; a route whose connection
+   matches draws on this pool. For any other connection this view holds no reading, so
    its reserve cannot be checked: rebind that role to the chat route's
-   target, bring route-specific evidence, or defer.
+   connection, bring route-specific evidence, or defer.
 4. `usedPct` is a percentage from 0 to 100: `1` means 1% used, not all of
    it. A window is at its line when its `usedPct` is at least 100 minus the
    Reserve above. A window with `unlimited: true` has no line. A pool with no
@@ -113,8 +113,8 @@ extra fee, but an overage call or an unknown charge is not free.
    answer is `undetermined`: keep the bound route and name the evidence that
    would decide. Do not invent a winner.
 7. The routes come from `fleet.agentProfiles` bindings. Every step here runs
-   `coder` or `verifier`, so those two bindings route the chain. Choose by
-   binding or by a per-call target pin; never by changing settings mid-run.
+   `coder` or `reviewer`, so those two bindings route the chain. Choose by
+   binding or by a per-call connection pin; never by changing settings mid-run.
 8. A question that needs only a read goes to one ordinary `scout` dispatch on
    its bound route, not to this chain.
 

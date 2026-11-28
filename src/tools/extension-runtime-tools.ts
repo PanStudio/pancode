@@ -10,7 +10,7 @@ import { type InstalledExtension, isLoadableExtension } from "../domains/extensi
 import { sessionHoldsToolDetails, storeToolDetail } from "../domains/session/tool-details.js";
 import { builtin } from "./builtin-tool-catalog.js";
 import { createDetailLedgerTool } from "./ledger.js";
-import type { ToolRegistry } from "./registry-contract.js";
+import type { ToolRegistry } from "./registry/contract.js";
 import type { ToolResult, ToolSpec } from "./tool-spec.js";
 
 /** What a tool returns to the model is bounded like a command tool's output. */

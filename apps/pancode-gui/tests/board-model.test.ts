@@ -53,9 +53,9 @@ test("operator tasks carry exactly the actions their state admits", () => {
 	assert.deepEqual(
 		view.tasks.map((task) => [task.id, task.word, task.actions, task.acceptance]),
 		[
-			["u1", "Open", ["hand", "done", "drop"], "expects report.md · 2 declared checks"],
+			["u1", "Open", ["hand", "done", "remove"], "expects report.md · 2 declared checks"],
 			["u2", "Dropped", [], ""],
-			["u3", "In PanCode's plan", ["done", "drop"], ""],
+			["u3", "In PanCode's plan", ["done", "remove"], ""],
 		],
 	);
 });
@@ -117,7 +117,7 @@ test("with only superseded decisions the board says none is active, not that non
 	const { decisionsEmptyLine } = await import("../client/chat/board-model.js");
 	assert.equal(
 		decisionsEmptyLine({ activeDecisions: [], earlierDecisions: [] }),
-		"No decision has been recorded in this task.",
+		"No decision has been recorded in this session.",
 	);
 	assert.equal(
 		decisionsEmptyLine({ activeDecisions: [], earlierDecisions: [{} as never] }),

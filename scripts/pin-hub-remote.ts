@@ -17,7 +17,6 @@ import path from "node:path";
 import { parse } from "yaml";
 import { loadManifestFromRoot } from "../src/domains/extensions/index.js";
 import { fetchPluginCommit, type PluginSource, parseHubIndexRows } from "../src/domains/plugins/catalog.js";
-import { hubEnvelopeDigest, hubMcpDigest } from "../src/domains/resources/hub-digests.js";
 import {
 	clipAtWord,
 	HUB_PROVIDES_LIMITS,
@@ -25,8 +24,9 @@ import {
 	type HubRowSource,
 	type HubTier,
 	isHubComponentKind,
-} from "../src/domains/resources/hub-types.js";
-import { type HubPackageValidationResult, validateHubPackage } from "../src/domains/resources/hub-validation.js";
+} from "../src/domains/plugins/hub-types.js";
+import { hubEnvelopeDigest, hubMcpDigest } from "../src/domains/resources/hub-digests.js";
+import { type HubPackValidationResult, validateHubPack } from "../src/domains/resources/hub-validation.js";
 
 export type RegistryRow = Record<string, unknown> & { kind: string; name: string };
 
@@ -59,7 +59,7 @@ const ROW_FILE_FIELDS = new Set([
 ]);
 
 /** The licence a pack declares in its own manifest, if any. */
-export function packLicense(root: string, result: Pick<HubPackageValidationResult, "manifest">): string | undefined {
+export function packLicense(root: string, result: Pick<HubPackValidationResult, "manifest">): string | undefined {
 	if (result.manifest?.pancode.kind === "extension") return loadManifestFromRoot(root).manifest?.license;
 	return result.manifest?.license;
 }
@@ -72,7 +72,7 @@ export function packLicense(root: string, result: Pick<HubPackageValidationResul
  */
 export function buildRegistryRow(
 	root: string,
-	result: Pick<HubPackageValidationResult, "manifest" | "contentDigest" | "validation">,
+	result: Pick<HubPackValidationResult, "manifest" | "contentDigest" | "validation">,
 	location: RowLocation,
 	category: string | undefined,
 	trust: RowTrust = { publisher: "pancode", tier: "core" },
@@ -244,10 +244,10 @@ export function readRevokedList(root: string): { revoked: Array<Record<string, u
 
 export interface CommunityFetchDeps {
 	fetchPluginCommit: (source: HubRowSource, expectedSha256?: string) => PluginSource;
-	validateHubPackage: (root: string) => HubPackageValidationResult;
+	validateHubPack: (root: string) => HubPackValidationResult;
 }
 
-const defaultDeps: CommunityFetchDeps = { fetchPluginCommit, validateHubPackage };
+const defaultDeps: CommunityFetchDeps = { fetchPluginCommit, validateHubPack };
 
 type CommunityRowResult = { ok: true; row: RegistryRow } | { ok: false; error: string };
 
@@ -265,7 +265,7 @@ export function refreshCommunityRow(row: RegistryRow, deps: CommunityFetchDeps =
 	try {
 		const source = row.source as HubRowSource;
 		fetched = deps.fetchPluginCommit(source, row.sha256 as string);
-		const result = deps.validateHubPackage(fetched.root);
+		const result = deps.validateHubPack(fetched.root);
 		if (!result.valid || !result.manifest) {
 			const messages = [
 				...result.diagnostics.map((d) => d.message),

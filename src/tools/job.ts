@@ -34,7 +34,7 @@ import {
 	prepareJobCommand,
 	prepareJobConditions,
 } from "./job-command.js";
-import type { ToolInvokeOptions, ToolRegistry } from "./registry-contract.js";
+import type { ToolInvokeOptions, ToolRegistry } from "./registry/contract.js";
 import type { ToolResult, ToolSpec } from "./tool-spec.js";
 
 export interface JobToolDeps {
@@ -67,7 +67,7 @@ function predicateSchema(description: string) {
 
 type PreparedJob =
 	| { kind: "create"; input: JobCreateInput; owner: JobOwner }
-	| { kind: "control"; action: JobControlAction; id: string; owner: JobOwner; job: JobRecord }
+	| { kind: "control"; action: JobControlAction; id: string; now?: boolean; owner: JobOwner; job: JobRecord }
 	| { kind: "execution"; context: JobExecutionContext }
 	| { kind: "error"; message: string };
 
@@ -98,6 +98,7 @@ export function createJobTool(deps: JobToolDeps): {
 	const fields = new Set([
 		"action",
 		"job_id",
+		"now",
 		"runner",
 		"every_ms",
 		"count",
@@ -126,8 +127,8 @@ export function createJobTool(deps: JobToolDeps): {
 						`job: unsupported field '${field}'; model-supplied ownership, grants, scopes and unenforceable limits are refused.`,
 					);
 			const action = args.action;
-			if (action !== "create" && action !== "pause" && action !== "resume" && action !== "stop" && action !== "cancel")
-				throw new Error("job: action must be create, pause, resume, stop or cancel.");
+			if (action !== "create" && action !== "pause" && action !== "resume" && action !== "cancel")
+				throw new Error("job: action must be create, pause, resume or cancel.");
 			const refusal = action === "create" || action === "resume" ? deps.hostRefusal() : null;
 			if (refusal !== null) throw new Error(refusal);
 			const owner = deps.owner(action === "create");
@@ -135,17 +136,31 @@ export function createJobTool(deps: JobToolDeps): {
 				throw new Error("job: open a conversation in an attended or ACP host before controlling session-owned jobs.");
 			if (action !== "create") {
 				for (const field of Object.keys(args))
-					if (field !== "action" && field !== "job_id")
-						throw new Error(`job: ${action} takes only job_id; widening a job requires a new create.`);
+					if (field !== "action" && field !== "job_id" && !(action === "cancel" && field === "now"))
+						throw new Error(
+							action === "cancel"
+								? "job: cancel takes only job_id and optional now; widening a job requires a new create."
+								: `job: ${action} takes only job_id; widening a job requires a new create.`,
+						);
+				if (action === "cancel" && args.now !== undefined && typeof args.now !== "boolean")
+					throw new Error("job: now must be a boolean.");
 				if (typeof args.job_id !== "string" || !args.job_id.trim())
 					throw new Error("job: control requires job_id from monitor or create.");
 				const id = args.job_id.trim();
 				const job = deps.controller.get(id, owner);
 				if (job === null) throw new Error("job: unknown job or creator session/process/cwd ownership does not match.");
 				if (action === "resume" && job.spec.runner.kind === "command") attestJobCommand(job.spec.runner);
-				prepared.set(args, { kind: "control", action, id, owner, job });
+				prepared.set(args, {
+					kind: "control",
+					action,
+					id,
+					...(action === "cancel" && args.now === true ? { now: true } : {}),
+					owner,
+					job,
+				});
 				return args;
 			}
+			if (args.now !== undefined) throw new Error("job: now applies only to action=cancel.");
 			if (!turnAllowsTool(deps.constraints(), ToolNames.Job))
 				throw new Error("job: the current task constraints do not allow scheduling jobs.");
 			// An event job starts on arrivals; every_ms only spaces its starts, so a burst coalesces.
@@ -295,8 +310,13 @@ export function createJobTool(deps: JobToolDeps): {
 		description:
 			"Create and control bounded session-owned interval jobs. main repeats an explicit prompt; command polls exact argv without a shell. The first run is due immediately after creation, then every interval. A job without count or for_ms defaults to five starts. until_stopped=true runs it until the operator stops it (or until matches); use it when the operator says to keep going until they say so. To wait on several conditions (CI and a cluster run, a file and a check), give one command job also=[{argv, until}, ...] next to its own argv and until: every poll the host runs each command and checks each predicate itself, and the job matches only when all hold at once. Never leave a condition only in the conversation. mcp_event subscribes to an MCP server's event (server, event, arguments from mcp find with the server id) and runs nothing on a clock: the job matches on the first arrival whose data meets until (any arrival without until), then on_match=main_turn wakes a turn with follow_up and the event's data; every_ms (default 1000) only spaces starts so a burst wakes once. Each occurrence rechecks current policy; scheduling approval never approves future effects. Use allow=[capability names] to enforce a main job tool boundary regardless of autonomy; prompt text alone does not restrict tools. Observe with monitor(job_id=...).",
 		parameters: Type.Object({
-			action: StringEnum(["create", "pause", "resume", "stop", "cancel"]),
+			action: StringEnum(["create", "pause", "resume", "cancel"]),
 			job_id: Type.Optional(Type.String()),
+			now: Type.Optional(
+				Type.Boolean({
+					description: "With action=cancel: abort any in-flight run immediately instead of letting it finish.",
+				}),
+			),
 			runner: Type.Optional(StringEnum(["main", "command", "mcp_event"])),
 			server: Type.Optional(Type.String({ description: "mcp_event: the declared MCP server id." })),
 			event: Type.Optional(Type.String({ description: "mcp_event: the event name the server lists." })),
@@ -334,7 +354,7 @@ export function createJobTool(deps: JobToolDeps): {
 			),
 			follow_up: Type.Optional(Type.String({ description: "main_turn prompt, at most 8192 characters." })),
 			until_stopped: Type.Optional(
-				Type.Boolean({ description: "Run until the operator stops or cancels it; no count or for_ms." }),
+				Type.Boolean({ description: "Run until the operator cancels it; no count or for_ms." }),
 			),
 			also: Type.Optional(
 				Type.Array(
@@ -405,7 +425,12 @@ export function createJobTool(deps: JobToolDeps): {
 								{ ...artifact.input, ...(options?.turnId === undefined ? {} : { originTurnId: options.turnId }) },
 								artifact.owner,
 							)
-						: await deps.controller.control(artifact.id, artifact.action, artifact.owner);
+						: await deps.controller.control(
+								artifact.id,
+								artifact.action,
+								artifact.owner,
+								artifact.now ? { now: true } : undefined,
+							);
 				return jobToolResult(job);
 			} catch (error) {
 				const message = error instanceof Error ? error.message : String(error);

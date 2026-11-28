@@ -104,7 +104,7 @@ export function safeSettingsProjection(snapshot: AcpSafeSettingsSnapshot): AcpSa
 	return {
 		settings: {
 			chat: {
-				target: safeConfiguredIdentifier(snapshot.target, ACP_MAX_TARGET_ID_BYTES),
+				connection: safeConfiguredIdentifier(snapshot.target, ACP_MAX_TARGET_ID_BYTES),
 				model: safeConfiguredIdentifier(snapshot.model, ACP_MAX_MODEL_ID_BYTES),
 				thinkingLevel,
 			},
@@ -148,7 +148,7 @@ export function modelNotDeclared(
 ): AcpRequestError {
 	return new AcpRequestError(
 		-32602,
-		"model is not declared for this target; choose an available model or update targets[].wireModels in settings.yaml and restart the ACP session",
+		"model is not declared for this connection; choose an available model or update connections[].wireModels in settings.yaml and restart the ACP session",
 		{
 			code: "invalid_params",
 			modelSelection: {
@@ -159,7 +159,7 @@ export function modelNotDeclared(
 					.slice(0, ACP_TARGET_MODEL_LIMIT)
 					.map((choice) => modelSelectionErrorText(choice, ACP_MAX_MODEL_ID_BYTES)),
 				remedy:
-					"Add the requested model to targets[].wireModels for this target in settings.yaml, then restart the ACP session.",
+					"Add the requested model to connections[].wireModels for this connection in settings.yaml, then restart the ACP session.",
 			},
 		},
 	);
@@ -295,12 +295,12 @@ export const configOptions = (
 	];
 	if (options.providers && options.setSessionRouting) {
 		optionsList.push({
-			id: "target",
-			name: "Target",
+			id: "connection",
+			name: "Connection",
 			// Custom categories start with an underscore. Keeping `model` for the model
 			// option alone stops a peer that takes the first model-category option from
 			// choosing a target as the model.
-			category: "_target",
+			category: "_connection",
 			type: "select",
 			currentValue: session.target,
 			options: options.providers

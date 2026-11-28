@@ -38,8 +38,8 @@ export function TopBar({
 				<button
 					type="button"
 					className="wb-icon"
-					aria-label="New task"
-					title={`New task (${chordHint("newTask")})`}
+					aria-label="New session"
+					title={`New session (${chordHint("newTask")})`}
 					disabled={shell?.starting}
 					onClick={() => shell?.startTask()}
 				>
@@ -52,12 +52,12 @@ export function TopBar({
 					title={titleLabel ?? title}
 				>
 					{rename?.active ? (
-						<InlineRename value={title} label="Task name" onCommit={rename.onSave} onCancel={rename.onCancel} />
+						<InlineRename value={title} label="Session name" onCommit={rename.onSave} onCancel={rename.onCancel} />
 					) : rename ? (
 						<button
 							type="button"
 							className="wb-bar__rename"
-							title={`${titleLabel ?? title}\nRename task (F2)`}
+							title={`${titleLabel ?? title}\nRename session (F2)`}
 							onClick={rename.onStart}
 							onKeyDown={(event) => {
 								if (event.key === "F2") {

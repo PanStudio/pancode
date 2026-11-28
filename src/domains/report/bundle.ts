@@ -66,7 +66,7 @@ const BUNDLE_NEVER_KEPT: ReadonlyArray<string> = [
 	"Prompts, model text, thinking, tool arguments and output, unless the transcript is ticked.",
 	"File contents, diffs, commit messages.",
 	"Absolute or relative paths, repository names and remotes, branch names.",
-	"Host and user names, endpoint URLs, target ids, agent, rule and hook names, environment variables.",
+	"Host and user names, endpoint URLs, connection ids, agent, rule and hook names, environment variables.",
 	"Anything a schema does not bound.",
 ];
 

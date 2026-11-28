@@ -4,11 +4,11 @@
 import { ToolNames } from "../../../core/tool-names.js";
 import { gatewayChainReceipts } from "../../../core/tool-surface.js";
 import { isRecord } from "../../../core/type-guards.js";
+import { redactForMemoryRoute } from "../../../lib/secrets/memory-route.js";
 import { isRefusalToolResultError } from "../../../tools/result-disposition.js";
 import type { MiddlewareEffect, MiddlewareHookInput } from "../../middleware/types.js";
 import { successfulShellReceipt } from "../command-evidence.js";
 import { recordObservedRead, repositoryRelativePath } from "../lesson-evidence.js";
-import { redactForMemoryRoute } from "../secret-text.js";
 import { shortText } from "../util.js";
 import { type InterventionScope, NO_EFFECTS, setBounded, type TrajectoryStep } from "./scope.js";
 import {

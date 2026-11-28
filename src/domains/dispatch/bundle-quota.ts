@@ -137,7 +137,7 @@ export function createQuotaPolling(rt: DispatchRuntime) {
 
 	/** The chat route by the effective settings, or null when there is none. */
 	function chatQuotaRoute(): { target: TargetDescriptor; runtime: RuntimeDescriptor } | null {
-		const target = providers.getTarget(getEffectiveSettings()?.chat?.target ?? "");
+		const target = providers.getTarget(getEffectiveSettings()?.chat?.connection ?? "");
 		const runtime = target === null ? null : providers.getRuntime(target.runtime);
 		return target === null || runtime === null ? null : { target, runtime };
 	}

@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 
+import { redactForMemoryRoute } from "../../../lib/secrets/memory-route.js";
 import { headForRedaction } from "../../../lib/secrets/redact.js";
 import type { MiddlewareEffect } from "../../middleware/types.js";
 import { ceilChars } from "../../session/context-accounting.js";
-import { redactForMemoryRoute } from "../secret-text.js";
 import { TASK_MEMORY_DEFAULT_PROCEDURAL_CAP, type TaskMemoryEntry } from "../task-bank.js";
 import { shortText } from "../util.js";
 import {

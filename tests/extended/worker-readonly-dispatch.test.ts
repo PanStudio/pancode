@@ -634,8 +634,8 @@ test("worker resource ceilings are sealed into the spec's limits, checked on rea
 		throws(() => parseWorkerSpec(edited), refusal);
 	}
 	const sdkSettings = withCeilings();
-	sdkSettings.targets = [{ id: "sdk-worker", runtime: "claude-sdk", defaultModel: "claude-sonnet-4-6" }];
-	sdkSettings.fleet.default.target = "sdk-worker";
+	sdkSettings.connections = [{ id: "sdk-worker", runtime: "claude-sdk", defaultModel: "claude-sonnet-4-6" }];
+	sdkSettings.fleet.default.connection = "sdk-worker";
 	sdkSettings.fleet.default.model = "claude-sonnet-4-6";
 	const sdk = await dispatched(
 		"pancode-worker-resources-sdk-",

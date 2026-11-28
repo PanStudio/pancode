@@ -10,8 +10,8 @@ import type { LoopHost } from "../../src/session-control/loop-command.js";
 import { parseLoopLine, runLoopCommand } from "../../src/session-control/loop-command.js";
 
 for (const count of [0, 1, 2]) {
-	test(`bare /loop stop --now resolves only one active loop (${count} active)`, async () => {
-		const parsed = parseLoopLine("stop --now");
+	test(`bare /loop cancel --now resolves only one active loop (${count} active)`, async () => {
+		const parsed = parseLoopLine("cancel --now");
 		ok(parsed.ok);
 		const invoked: unknown[] = [];
 		const notices: string[] = [];
@@ -35,7 +35,7 @@ for (const count of [0, 1, 2]) {
 		};
 		await runLoopCommand(parsed.command, host);
 		if (count === 1) {
-			deepStrictEqual(invoked, [{ action: "cancel", job_id: "job-0" }]);
+			deepStrictEqual(invoked, [{ action: "cancel", job_id: "job-0", now: true }]);
 		} else {
 			strictEqual(invoked.length, 0);
 			match(notices.join("\n"), count === 0 ? /No active loop/u : /job id.*\/loop to see/u);
@@ -43,15 +43,21 @@ for (const count of [0, 1, 2]) {
 	});
 }
 
-test("other loop control verbs still require an id, stop --now preserves its id, and an unknown word lists the verbs", () => {
-	for (const verb of ["pause", "resume", "stop"]) strictEqual(parseLoopLine(verb).ok, false);
-	deepStrictEqual(parseLoopLine("stop chosen --now"), {
+test("loop control verbs require an id, cancel drains by default, cancel --now aborts, and stop is rejected", () => {
+	for (const verb of ["pause", "resume", "cancel"]) strictEqual(parseLoopLine(verb).ok, false);
+	deepStrictEqual(parseLoopLine("cancel chosen"), {
 		ok: true,
 		command: { kind: "control", action: "cancel", id: "chosen" },
 	});
+	deepStrictEqual(parseLoopLine("cancel chosen --now"), {
+		ok: true,
+		command: { kind: "control", action: "cancel", id: "chosen", now: true },
+	});
+	const legacy = parseLoopLine("stop chosen");
+	ok(!legacy.ok);
 	const parsed = parseLoopLine("frobnicate chosen");
 	ok(!parsed.ok);
-	match(parsed.reason, /Unrecognized interval .*status, pause, resume, stop$/u);
+	match(parsed.reason, /Unrecognized interval .*status, pause, resume, cancel$/u);
 });
 
 test("/loop status words a job's spend from the read model over the turns its ledger origin names", async () => {

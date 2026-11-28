@@ -34,7 +34,7 @@ import type { ThinkingLevel } from "./views/thinking-levels.js";
 export { THINKING_LEVELS, type ThinkingLevel } from "./views/thinking-levels.js";
 
 interface WorkerTarget {
-	target: string | null;
+	connection: string | null;
 	model: string | null;
 	thinkingLevel: ThinkingLevel;
 	/** Optional fleet node pin: workers routed through this profile run on that node. */
@@ -61,7 +61,7 @@ export const THEME_NAMED_COLORS = [
 type ThemeNamedColor = (typeof THEME_NAMED_COLORS)[number];
 interface WorkerRosterMember {
 	label: string;
-	target: string;
+	connection: string;
 	model?: string;
 	thinkingLevel?: ThinkingLevel;
 	color?: ThemeNamedColor | string;
@@ -83,8 +83,8 @@ export type SystemOneUse = string | string[] | null;
 
 export interface SystemOneEngineSettings {
 	kind: SystemOneEngineKind;
-	/** A `targets[].id`. */
-	target: string;
+	/** A `connections[].id`. */
+	connection: string;
 	/** Wire model id; absent means the target's default model. */
 	model?: string;
 	/**
@@ -417,7 +417,7 @@ interface InterfaceSettings {
 interface ReviewSettings {
 	enabled: boolean;
 	/** Target id the watchdog run is dispatched to; the session's active target when unset. */
-	target?: string;
+	connection?: string;
 	/** Mid-turn cadence in tool calls; no mid-turn firing when unset. */
 	cadenceToolCalls?: number;
 }
@@ -429,11 +429,6 @@ interface ModelSelectorSettings {
 	favorites: string[];
 	/** Maximum number of recently selected target/model refs to retain. */
 	recentLimit: number;
-}
-
-interface ProjectResourcesSettings {
-	/** Admit explicitly imported foreign skills/prompts at either scope; loose compatibility roots stay inactive. */
-	trustProjectImports: boolean;
 }
 
 interface GitIntegrationSettings {
@@ -652,7 +647,7 @@ export interface RoutingActivationSettings {
  */
 export interface SteeringTriageSettings {
 	enabled: boolean;
-	target: string | null;
+	connection: string | null;
 	model: string | null;
 	/** Thinking level of the triage side call; `off` sends no reasoning request. */
 	thinkingLevel: ThinkingLevel;
@@ -743,7 +738,7 @@ interface MemorySettings {
 	 */
 	sideShare: number;
 	surfaces: MemorySurfaceSettings;
-	target: string | null;
+	connection: string | null;
 	model: string | null;
 	/** Thinking level of the memory side call; `off` sends no reasoning request. */
 	thinkingLevel: ThinkingLevel;
@@ -760,7 +755,7 @@ export type SemanticModality = (typeof SEMANTIC_MODALITIES)[number];
 /** The optional local semantic index and its explicit ingestion roots. */
 interface SemanticSettings {
 	enabled: boolean;
-	target: string | null;
+	connection: string | null;
 	model: string | null;
 	assetIdentity: string | null;
 	projectorIdentity: string | null;
@@ -792,7 +787,7 @@ export interface SafetySettings {
 		templateToolCallsPerTurnMax: number | null;
 		/** The same ceiling for a template's `budget.observationBytes` over `observationBytesPerTurn`. */
 		templateObservationBytesPerTurnMax: number | null;
-		workerResponseSeconds: number;
+		workerResponseTimeoutMs: number;
 		/** Tool calls one yolo stretch runs before it pauses for the operator; 0 is off. */
 		autonomousToolCalls: number;
 		/** Minutes of active turn time one yolo stretch runs before it pauses; 0 is off. */
@@ -800,10 +795,10 @@ export interface SafetySettings {
 		/** Tokens one yolo stretch spends before it pauses; 0 is off. */
 		autonomousTokens: number;
 		/**
-		 * Seconds a main-session foreground bash call may go with no output and no CPU in its process tree before it
+		 * Milliseconds a main-session foreground bash call may go with no output and no CPU in its process tree before it
 		 * ends as an idle timeout (FX-32); 0 is off.
 		 */
-		bashIdleSeconds: number;
+		bashIdleTimeoutMs: number;
 	};
 	review: ReviewSettings;
 	/**
@@ -849,7 +844,7 @@ export interface SafetySettings {
 	 * live check of a candidate build can sign in (copilot-sdk: `$COPILOT_HOME/config.json`). Workers keep every
 	 * mask. Read only from the operator's own settings file.
 	 */
-	liveCheckTargets: string[];
+	liveCheckConnections: string[];
 	/**
 	 * Unix-domain sockets inside the OS sandbox. block refuses new ones, since a
 	 * socket a contained command can see (a terminal multiplexer, X11, a
@@ -905,13 +900,13 @@ export interface SafetySettings {
 	 */
 	validationWrappers: string[];
 	/**
-	 * Seconds an attended permission card or ask_user round waits for the
+	 * Milliseconds an attended permission card or ask_user round waits for the
 	 * operator before PanCode resolves it and the turn continues: a parked call is
 	 * denied, an unanswered question takes its recommended option unless that
 	 * option leaves the workspace. 0 waits forever. Read only from the
 	 * operator's own settings file.
 	 */
-	unattendedAfterSeconds: number;
+	unattendedAfterMs: number;
 	/**
 	 * The operator accepted what yolo does, once, through the acceptance card
 	 * of its first interactive activation (#407). Read only from the operator's
@@ -974,7 +969,7 @@ export interface EgressSettings {
 interface SafetyJudgeSettings {
 	enabled: boolean;
 	/** Target the judge asks; null asks the session's main chat route. */
-	target: string | null;
+	connection: string | null;
 	/** Model on that target; null asks the chat model, or the judge target's default model. */
 	model: string | null;
 	/** Facts about the operator's environment the judge reads, in their own words. */
@@ -995,9 +990,8 @@ export const WORKSPACE_SNAPSHOT_MODES: ReadonlyArray<WorkspaceSnapshotMode> = ["
 type ModelSettings = Record<string, { tier?: ModelTier }>;
 
 interface IntegrationsSettings {
-	projectResources: ProjectResourcesSettings;
 	externalAgents: ExternalAgentsSettings;
-	runtimePlugins: string[];
+	providerPackages: string[];
 	hub: {
 		catalog: string | null;
 		remote: string | null;
@@ -1005,6 +999,8 @@ interface IntegrationsSettings {
 		sync: boolean;
 		/** Base URL of the signed hub index release; "" turns remote index refresh off. */
 		index: string;
+		/** Admit explicitly imported foreign skills/prompts at either scope; loose compatibility roots stay inactive. */
+		trustProjectImports: boolean;
 	};
 	git: GitIntegrationSettings;
 }
@@ -1012,12 +1008,12 @@ interface IntegrationsSettings {
 export const DEFAULT_SETTINGS = {
 	version: 2 as const,
 	turnControl: {
-		workflows: ["detached-collection"],
+		hooks: ["detached-collection"],
 	} as TurnControlSettings,
-	targets: [] as TargetDescriptor[],
+	connections: [] as TargetDescriptor[],
 	funding: {} as FundingDefinitions,
 	chat: {
-		target: null as string | null,
+		connection: null as string | null,
 		model: null as string | null,
 		thinkingLevel: "low" as ThinkingLevel,
 		modelPicker: {
@@ -1040,7 +1036,7 @@ export const DEFAULT_SETTINGS = {
 		steering: {
 			triage: {
 				enabled: false,
-				target: null as string | null,
+				connection: null as string | null,
 				model: null as string | null,
 				thinkingLevel: "off" as ThinkingLevel,
 				minQueued: 2,
@@ -1052,7 +1048,7 @@ export const DEFAULT_SETTINGS = {
 	fleet: {
 		defaultNode: null as string | null,
 		default: {
-			target: null as string | null,
+			connection: null as string | null,
 			model: null as string | null,
 			thinkingLevel: "off" as ThinkingLevel,
 		} as WorkerTarget,
@@ -1107,7 +1103,7 @@ export const DEFAULT_SETTINGS = {
 				bank: "rules",
 				history: "off",
 			},
-			target: null as string | null,
+			connection: null as string | null,
 			model: null as string | null,
 			thinkingLevel: "off" as ThinkingLevel,
 			cadenceToolCalls: 10,
@@ -1117,7 +1113,7 @@ export const DEFAULT_SETTINGS = {
 		} as MemorySettings,
 		semantic: {
 			enabled: false,
-			target: null,
+			connection: null,
 			model: null,
 			assetIdentity: null,
 			projectorIdentity: null,
@@ -1140,11 +1136,11 @@ export const DEFAULT_SETTINGS = {
 			observationBytesPerTurn: GUARDRAIL_DEFAULTS.observationTurnBudgetBytes,
 			templateToolCallsPerTurnMax: null as number | null,
 			templateObservationBytesPerTurnMax: null as number | null,
-			workerResponseSeconds: 600,
+			workerResponseTimeoutMs: 600_000,
 			autonomousToolCalls: 600,
 			autonomousMinutes: 120,
 			autonomousTokens: 5_000_000,
-			bashIdleSeconds: 0,
+			bashIdleTimeoutMs: 0,
 		},
 		review: { enabled: false } as ReviewSettings,
 		sandbox: "auto" as SandboxMode,
@@ -1159,7 +1155,7 @@ export const DEFAULT_SETTINGS = {
 		},
 		scratchRoots: [] as string[],
 		sandboxPassEnv: [] as string[],
-		liveCheckTargets: [] as string[],
+		liveCheckConnections: [] as string[],
 		sandboxUnixSockets: "block" as UnixSocketMode,
 		sandboxUnconfinedLocalWorkers: false,
 		workerIsolation: "children" as WorkerIsolationMode,
@@ -1173,13 +1169,13 @@ export const DEFAULT_SETTINGS = {
 		} as HomeReadsSettings,
 		snapshots: "auto" as WorkspaceSnapshotMode,
 		validationWrappers: [] as string[],
-		unattendedAfterSeconds: 300,
+		unattendedAfterMs: 300_000,
 		yoloAccepted: false,
 		yoloConfinement: "contained" as YoloConfinement,
 		yoloUnconfinedAccepted: false,
 		judge: {
 			enabled: true,
-			target: null,
+			connection: null,
 			model: null,
 			environment: [] as string[],
 			allow: [] as string[],
@@ -1212,7 +1208,6 @@ export const DEFAULT_SETTINGS = {
 		keybindings: {} as Record<string, string | string[]>,
 	} as InterfaceSettings,
 	integrations: {
-		projectResources: { trustProjectImports: false },
 		externalAgents: {
 			entries: [] as DelegationAgentConfig[],
 			defaults: {
@@ -1222,13 +1217,14 @@ export const DEFAULT_SETTINGS = {
 				toolGovernance: "pancode-policy" as DelegationToolGovernance,
 			},
 		} as ExternalAgentsSettings,
-		runtimePlugins: [] as string[],
+		providerPackages: [] as string[],
 		hub: {
 			catalog: null as string | null,
 			remote: null as string | null,
 			confirmedRemote: null as string | null,
 			sync: false,
 			index: DEFAULT_HUB_INDEX_URL,
+			trustProjectImports: false,
 		},
 		git: { commitAttribution: true, commitAuthor: "auto" as GitCommitAuthorSetting },
 	} as IntegrationsSettings,

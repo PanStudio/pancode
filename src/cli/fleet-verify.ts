@@ -16,9 +16,9 @@ import { type FleetRootSeal, inspectFleetRootSeal } from "../domains/dispatch/fl
 import { openLedger } from "../domains/dispatch/state.js";
 import { inspectRunTrustStatus, TRUST_STATUS_AXES, type TrustStatusAxis } from "../domains/evidence/index.js";
 import { readRunRecord } from "../domains/telemetry/index.js";
-import { EXIT_CODES } from "./kit/exit-codes.js";
-import { parseCommandFlags } from "./kit/flags.js";
-import { writeCliFailure } from "./kit/json-out.js";
+import { EXIT_CODES } from "./lib/exit-codes.js";
+import { parseCommandFlags } from "./lib/flags.js";
+import { writeCliFailure } from "./lib/json-out.js";
 
 /** A run's trust as of this check: still pending, verified, failed, or unavailable. */
 export type FleetVerifyState = "pending" | "verified" | "failed" | "unavailable";

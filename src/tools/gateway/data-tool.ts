@@ -26,7 +26,7 @@ import {
 	reserveObservation,
 } from "../observation.js";
 import { resolveToCwd } from "../path-utils.js";
-import type { ToolInvokeOptions } from "../registry-contract.js";
+import type { ToolInvokeOptions } from "../registry/contract.js";
 import type { ToolResult, ToolSpec } from "../tool-spec.js";
 import { DATA_OBSERVATION_SELF_CAP_BYTES } from "./caps.js";
 import {

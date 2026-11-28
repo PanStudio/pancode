@@ -8,12 +8,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PassThrough } from "node:stream";
 import { afterEach, describe, it } from "node:test";
+import { interopAgentKind } from "../../src/core/interop-agents.js";
 import { readTelemetryRecord } from "../../src/core/telemetry/envelope.js";
 import type { WorkerTelemetryFrame } from "../../src/core/telemetry/forwarder.js";
 import { factKnownValue } from "../../src/core/telemetry/known.js";
 import { runUsageFromCallRecords } from "../../src/domains/dispatch/run-call-usage.js";
 import { peerModeCapabilities } from "../../src/domains/interop/peer-modes.js";
-import { interopAgentKind } from "../../src/domains/interop/registry.js";
 import type { InteropAgentRecord } from "../../src/domains/interop/types.js";
 import type { ProvidersContract } from "../../src/domains/providers/contract.js";
 import { resolveRuntimeTarget } from "../../src/domains/providers/runtime-resolution.js";
@@ -125,10 +125,10 @@ describe("PanCode external CLI connectors", { skip: process.platform === "win32"
 			},
 		);
 		equal(unverified.find((mode) => mode.mode === "acp")?.status, "experimental");
-		equal(modes.find((mode) => mode.mode === "headless")?.command, "/run --target codex-peer <agent> <task>");
+		equal(modes.find((mode) => mode.mode === "headless")?.command, "/run --connection codex-peer <agent> <task>");
 		equal(modes.find((mode) => mode.mode === "pane")?.status, "unavailable");
 		equal(modes.find((mode) => mode.mode === "pane")?.command, "/panes peer codex <brief>");
-		const parsed = parseSlashCommand("/run --target codex-peer --worktree coder Fix parser");
+		const parsed = parseSlashCommand("/run --connection codex-peer --worktree coder Fix parser");
 		equal(parsed.kind, "run");
 		if (parsed.kind === "run") {
 			equal(parsed.options.target, "codex-peer");

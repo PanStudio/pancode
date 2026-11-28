@@ -287,7 +287,7 @@ const litellmRuntime: RuntimeDescriptor = {
 
 	async probe(target: TargetDescriptor, ctx: ProbeContext): Promise<ProbeResult> {
 		const base = rootUrl(target);
-		if (!base) return { ok: false, error: "target has no url" };
+		if (!base) return { ok: false, error: "connection has no url" };
 		const headers = bearerHeaders(target, ctx);
 
 		// Liveness is supplementary: a reverse proxy may restrict this public

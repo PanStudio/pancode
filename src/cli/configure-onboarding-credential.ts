@@ -15,7 +15,7 @@ import {
 	type Wizard,
 } from "./configure-onboarding-state.js";
 import { describeAuthStatus, LOCAL_APP_RUNTIME_IDS } from "./configure-target.js";
-import { shortenPath } from "./lifecycle-presenter.js";
+import { shortenPath } from "./install-presenter.js";
 import { credentialFileProtection } from "./shared.js";
 
 /** The credential source the screen opens on, which is the one that is usually right. */
@@ -145,7 +145,7 @@ export const CREDENTIAL_STEP: Step = {
 					"",
 					chalk.bold(`Sign in to ${runtime.displayName}`),
 					chalk.dim(`credential: ${stored}`),
-					"Sign-in stores credentials immediately; target settings wait for Save.",
+					"Sign-in stores credentials immediately; connection settings wait for Save.",
 				],
 				choices,
 				initialIndex: Math.max(

@@ -50,8 +50,8 @@ import { runTriageRound, type TriageSystemOne } from "../../src/session-control/
 import { createTurnMiddleware } from "../../src/session-control/turn-middleware.js";
 import { createTurnOutcomeCollector } from "../../src/session-control/turn-outcome-collector.js";
 import { type AgentRuntime, createTurnState } from "../../src/session-control/turn-state.js";
+import type { ToolInvokeOptions } from "../../src/tools/registry/contract.js";
 import { createRegistry } from "../../src/tools/registry.js";
-import type { ToolInvokeOptions } from "../../src/tools/registry-contract.js";
 import { dispatchStubContext } from "../harness/dispatch-stub-context.js";
 import { middlewareOwner } from "../harness/middleware-owner.js";
 import { trustProjectPackages } from "../harness/project-trust.js";
@@ -389,7 +389,7 @@ describe("middleware hook boundary", () => {
 			// Steering triage settles on its typed route: acted when the verdict applied, expired when the queue moved on.
 			for (const current of [true, false])
 				await runTriageRound({
-					triage: { target: null, minQueued: 2, timeoutMs: 1000 },
+					triage: { connection: null, minQueued: 2, timeoutMs: 1000 },
 					systemOne: {
 						bound: () => true,
 						ask: async () => ({
@@ -491,9 +491,9 @@ describe("middleware hook boundary", () => {
 			const settings = structuredClone(DEFAULT_SETTINGS);
 			settings.chat.prewarm = false;
 			const stubContext = dispatchStubContext({ settings });
-			const target = settings.targets[0];
+			const target = settings.connections[0];
 			ok(target);
-			settings.chat.target = target.id;
+			settings.chat.connection = target.id;
 			settings.chat.model = target.defaultModel ?? "gpt-4o";
 			const entries: SessionEntry[] = [];
 			let leaf: string | null = null;

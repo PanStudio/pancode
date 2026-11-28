@@ -13,9 +13,9 @@ import {
 	loadSessionTelemetrySourceAsync,
 } from "../domains/telemetry/telemetry-source.js";
 import { formatColumns } from "./argv.js";
-import { parseCommandFlags } from "./kit/flags.js";
-import { writeCliFailure } from "./kit/json-out.js";
-import type { ErrorSlug } from "./kit/slugs.js";
+import { parseCommandFlags } from "./lib/flags.js";
+import { writeCliFailure } from "./lib/json-out.js";
+import type { ErrorSlug } from "./lib/slugs.js";
 import { resolveSessionSelector } from "./telemetry-target.js";
 
 /**

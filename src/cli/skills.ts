@@ -32,7 +32,7 @@ export function runSkillsRead(args: ReadonlyArray<string>): number {
 	const list = loadSkills(
 		command === "validate" && positional[0]
 			? { disableDiscovery: true, explicitSkillPaths: [resolve(positional[0])] }
-			: { cwd: process.cwd(), trustProjectCompatRoots: readSettings().integrations.projectResources.trustProjectImports },
+			: { cwd: process.cwd(), trustProjectCompatRoots: readSettings().integrations.hub.trustProjectImports },
 	);
 	// Compatibility files remain inspectable with --all, but their diagnostics
 	// do not describe the default inventory of usable PanCode skills.

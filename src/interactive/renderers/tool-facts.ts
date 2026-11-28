@@ -195,7 +195,7 @@ function classFacts(finished: ToolExecutionFinished, row: ResolvedToolRow, prove
 			break;
 		}
 		case "interaction":
-			if (details?.cancelled === true) parts.push("cancelled");
+			if (details?.cancelled === true) parts.push("canceled");
 			// The operator's own choice closed with nobody answering; the call ran, nothing was chosen.
 			else if (details?.operatorChoiceUnanswered === true) parts.push("unanswered, nothing chosen");
 			break;

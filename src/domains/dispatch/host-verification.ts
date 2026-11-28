@@ -418,7 +418,7 @@ export function hostVerificationRejection(
  * `required` a missing backend refuses each check rather than running it bare.
  */
 export function hostVerificationSandbox(
-	settings: Readonly<Pick<PancodeSettings, "safety" | "targets">> | undefined,
+	settings: Readonly<Pick<PancodeSettings, "safety" | "connections">> | undefined,
 	workspace: string | Pick<NonNullable<DispatchRequest["taskWorktree"]>, "path" | "root">,
 	availability = sandboxAvailability(),
 ): MainSandboxPolicy | undefined {

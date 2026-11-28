@@ -16,6 +16,7 @@ import {
 	compareRuns,
 	type RunApprovalFacts,
 	type RunCell,
+	type RunCountBuckets,
 	type RunFacts,
 	type RunIntegrity,
 	type RunOrigin,
@@ -29,6 +30,7 @@ import { truncateToWidth, visibleWidth } from "../../engine/tui.js";
 import { sanitizeCallTargetText } from "../../lib/call-target/call-target.js";
 import { isHelperRun } from "../../session-control/worker-stream.js";
 import type { DispatchBoardRow } from "../dispatch-row-model.js";
+import { ACTIVE_DISPATCH_STATUSES } from "../footer-panel.js";
 import type { HarnessFactsSource } from "../harness-facts.js";
 import { actionKeyLabel } from "../keybinding-manager.js";
 import { GLYPH, pancodeTheme } from "../theme/index.js";
@@ -110,6 +112,18 @@ function bandRuns(rows: ReadonlyArray<DispatchBoardRow>): DispatchBoardRow[] {
 	);
 }
 
+/**
+ * The live runs the band counts, by state: a live plan is its plan row, not its steps. The idle footer reads these, so
+ * it never says ready alone beside a band that shows a plan running.
+ */
+export function liveRunCounts(rows: ReadonlyArray<DispatchBoardRow>, now: number): RunCountBuckets {
+	return runCountBuckets(
+		bandRuns(rows)
+			.filter((row) => ACTIVE_DISPATCH_STATUSES.has(row.status))
+			.map((row) => runFactsOf(row, now)),
+	);
+}
+
 function originOf(row: DispatchBoardRow): RunOrigin {
 	switch (row.requestOrigin) {
 		case "agent":
@@ -157,7 +171,7 @@ function livePhase(row: DispatchBoardRow, room = 48): string {
 			: "waiting for slot";
 	}
 	if (row.status === "retrying") return row.retry ? `retrying ${GLYPH.sep} attempt ${row.retry.attempt}` : "retrying";
-	if (row.status === "cancelling") return "stopping";
+	if (row.status === "cancelling") return "canceling";
 	if (row.progress === undefined) return "starting";
 	return workerActivityWords(row.progress, { room, history: row.routeFirstOutput ?? null });
 }
@@ -178,7 +192,7 @@ function runFactsOf(row: DispatchBoardRow, now: number): RunFacts {
 		case "enqueued":
 			return { ...base, outcome: "queued", phase: livePhase(row) };
 		case "cancelling":
-			return { ...base, outcome: "running", phase: "stopping" };
+			return { ...base, outcome: "running", phase: "canceling" };
 		case "aborted":
 			return { ...base, outcome: "cancelled", ...(reason === undefined ? {} : { reason }) };
 		case "failed":

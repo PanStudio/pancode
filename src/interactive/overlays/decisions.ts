@@ -121,7 +121,7 @@ function interviewHeader(interview: DecisionLedgerEntry, width: number, now: num
 				theme.fg("annotation", rounds),
 				interview.interviewStatus === "complete"
 					? statusChip(theme, "ok", "complete")
-					: statusChip(theme, "cancelled", "cancelled"),
+					: statusChip(theme, "cancelled", "canceled"),
 			],
 			width,
 		),
@@ -226,7 +226,7 @@ function formatDecisionsOverlayBodyLines(
 			const words =
 				interview.interviewStatus === "complete"
 					? "Finished without recording an answer."
-					: "Cancelled before an answer was recorded.";
+					: "Canceled before an answer was recorded.";
 			lines.push(...emptyState(theme, words, Math.max(1, width - 2)).map((line) => fitRow(`  ${line}`, width)));
 			// What it asked, so an interview that recorded nothing still says what it was about.
 			const asked = interview.questions ?? [];

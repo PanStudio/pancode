@@ -239,7 +239,7 @@ export function permissionChoices(
 			{ key: "Esc", verb: "deny", consequence: "skips it; an identical call in this run is refused without asking" },
 			{
 				key: permissionKeyLabel(PERMISSION_STOP_KEY),
-				verb: "stop",
+				verb: "deny and stop",
 				// A worker asks while the main agent is often idle, and a key cannot end a turn that is not running.
 				consequence: endsWithTurn
 					? "denies it and ends the main turn, which also stops this worker"
@@ -260,7 +260,7 @@ export function permissionChoices(
 				consequence: `sandboxed commands reach it until this session ends${draftNote}`,
 			},
 			{ key: "Esc", verb: "deny", consequence: "refuses it; this session does not ask about it again" },
-			{ key: permissionKeyLabel(PERMISSION_STOP_KEY), verb: "stop", consequence: stopWords, tone: "error" },
+			{ key: permissionKeyLabel(PERMISSION_STOP_KEY), verb: "deny and stop", consequence: stopWords, tone: "error" },
 		];
 	}
 	if (view.axis.kind === "net" && view.axis.ruleId === SESSION_CODE_CONSENT_RULE_ID) {
@@ -271,21 +271,21 @@ export function permissionChoices(
 				consequence: `runs it, and later test runners this session${draftNote}`,
 			},
 			{ key: "Esc", verb: "deny", consequence: "skips it; the next test runner asks again" },
-			{ key: permissionKeyLabel(PERMISSION_STOP_KEY), verb: "stop", consequence: stopWords, tone: "error" },
+			{ key: permissionKeyLabel(PERMISSION_STOP_KEY), verb: "deny and stop", consequence: stopWords, tone: "error" },
 		];
 	}
 	if (view.artifact?.kind === "mcp-skill") {
 		return [
 			{ key: "Enter", verb: "allow", consequence: `records this skill version as approved and loads it${draftNote}` },
 			{ key: "Esc", verb: "deny", consequence: "skips it; the skill stays listed and unloaded" },
-			{ key: permissionKeyLabel(PERMISSION_STOP_KEY), verb: "stop", consequence: stopWords, tone: "error" },
+			{ key: permissionKeyLabel(PERMISSION_STOP_KEY), verb: "deny and stop", consequence: stopWords, tone: "error" },
 		];
 	}
 	if (view.artifact?.kind === "settings-change") {
 		return [
 			{ key: "Enter", verb: "allow", consequence: `saves this change to your settings${draftNote}` },
 			{ key: "Esc", verb: "deny", consequence: "skips it; nothing is saved" },
-			{ key: permissionKeyLabel(PERMISSION_STOP_KEY), verb: "stop", consequence: stopWords, tone: "error" },
+			{ key: permissionKeyLabel(PERMISSION_STOP_KEY), verb: "deny and stop", consequence: stopWords, tone: "error" },
 		];
 	}
 	if (view.artifact !== undefined) {
@@ -308,7 +308,7 @@ export function permissionChoices(
 			{ key: "Esc", verb: "deny", consequence: "PanCode continues without this dispatch" },
 			{
 				key: permissionKeyLabel(PERMISSION_STOP_KEY),
-				verb: "stop",
+				verb: "deny and stop",
 				consequence: "denies this call and ends the turn",
 				tone: "error",
 			},
@@ -321,13 +321,13 @@ export function permissionChoices(
 			? [
 					{
 						key: permissionKeyLabel(PERMISSION_SESSION_SCOPE_KEY),
-						verb: "approve for this session",
-						consequence: `${view.escapeScope.label.replace(/^Approve for this session:\s*/u, "")}; reruns of these unchanged files run without asking${draftNote}`,
+						verb: "allow for this session",
+						consequence: `${view.escapeScope.label.replace(/^Allow for this session:\s*/u, "")}; reruns of these unchanged files run without asking${draftNote}`,
 					},
 				]
 			: []),
 		{ key: "Esc", verb: "deny", consequence: "skips it" },
-		{ key: permissionKeyLabel(PERMISSION_STOP_KEY), verb: "stop", consequence: stopWords, tone: "error" },
+		{ key: permissionKeyLabel(PERMISSION_STOP_KEY), verb: "deny and stop", consequence: stopWords, tone: "error" },
 	];
 }
 

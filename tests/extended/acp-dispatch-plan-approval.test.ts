@@ -17,8 +17,8 @@ import { createWorkerSafety } from "../../src/engine/worker-tools.js";
 import { mutationFacts } from "../../src/session-control/approval-request-facts.js";
 import { bashTool } from "../../src/tools/bash.js";
 import { describeDispatchPlan } from "../../src/tools/dispatch-plan.js";
+import type { PermissionRequiredMeta } from "../../src/tools/registry/contract.js";
 import { createRegistry } from "../../src/tools/registry.js";
-import type { PermissionRequiredMeta } from "../../src/tools/registry-contract.js";
 import type { ToolSpec } from "../../src/tools/tool-spec.js";
 import { writeTool } from "../../src/tools/write.js";
 

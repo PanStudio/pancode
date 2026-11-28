@@ -117,7 +117,7 @@ export function AppPreferencesPanel({
 				</>
 			) : enabled ? (
 				<>
-					<p>Keep PanCode beside your other apps. It uses the same projects and tasks as this browser.</p>
+					<p>Keep PanCode beside your other apps. It uses the same projects and sessions as this browser.</p>
 					{!pwa.storage ? (
 						<p role="alert">
 							This browser cannot save your connection. Allow site storage before installing so PanCode can reconnect when
@@ -148,7 +148,7 @@ export function AppPreferencesPanel({
 						)
 					)}
 					<p>
-						This browser stays connected on this device. Forgetting it keeps saved tasks in PanCode, removes unsent drafts
+						This browser stays connected on this device. Forgetting it keeps saved sessions in PanCode, removes unsent drafts
 						from this tab, and requires a fresh launch link to reconnect.
 					</p>
 					<button

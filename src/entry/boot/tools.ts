@@ -60,7 +60,7 @@ import type { AskUserHandler } from "../../tools/ask-user.js";
 import { registerAllTools } from "../../tools/bootstrap.js";
 import type { DispatchBackgroundRegistry } from "../../tools/dispatch-background.js";
 import { dispatchSchemaCompositionFor } from "../../tools/dispatch-schema.js";
-import type { ToolRegistry } from "../../tools/registry-contract.js";
+import type { ToolRegistry } from "../../tools/registry/contract.js";
 import { createVisionSidecar } from "../../tools/vision-sidecar.js";
 import type { BootOptions } from "../boot-options.js";
 import type { ExtensionReloadCoordinator } from "../extension-reload.js";
@@ -253,7 +253,7 @@ export function registerBootTools(input: BootToolsInput) {
 		jobTool: jobHost.tool,
 		jobs: jobHost.operations,
 		flow: flowPort,
-		...(resolvedSettings.fleet.profiles.vision?.target
+		...(resolvedSettings.fleet.profiles.vision?.connection
 			? {
 					visionSidecar,
 					getRecentVisionImages: () => {
@@ -272,7 +272,7 @@ export function registerBootTools(input: BootToolsInput) {
 		// consult exists only when a route is named at startup, so an operator who
 		// never named one keeps the registry, tool signature and prompt they had. A
 		// route removed mid-session answers "no usable answer". bound() reads the
-		// effective settings view built above, which is why that block precedes this call.
+		// effective settings view built earlier by buildBootSettings.
 		...(systemOne.bound()
 			? {
 					consult: {
@@ -307,7 +307,7 @@ export function registerBootTools(input: BootToolsInput) {
 				// The session header keeps the target the session was created with;
 				// routing changed in the TUI or over ACP only appends ledger entries.
 				// The prompt path reports the runtime it actually compiled for.
-				const settingsTarget = getCurrentSettings().chat.target;
+				const settingsTarget = getCurrentSettings().chat.connection;
 				const runtimeId =
 					lastMemoryPromptRuntimeId ?? (settingsTarget ? providers.getTarget(settingsTarget)?.runtime : undefined);
 				return {
@@ -380,7 +380,7 @@ export function registerBootTools(input: BootToolsInput) {
 		...(config ? { getWorkerRosters: () => config.get().fleet.rosters } : {}),
 		...(config ? { getDispatchSchemaComposition: () => dispatchSchemaCompositionFor(config.get().fleet) } : {}),
 		getSkillLoaderOptions: () => ({
-			trustProjectCompatRoots: config?.get().integrations.projectResources.trustProjectImports === true,
+			trustProjectCompatRoots: config?.get().integrations.hub.trustProjectImports === true,
 			disableDiscovery: options.noSkills === true || options.headless?.noSkills === true,
 			...(options.skillPaths && options.skillPaths.length > 0
 				? { explicitSkillPaths: options.skillPaths }
@@ -452,7 +452,7 @@ export function registerBootTools(input: BootToolsInput) {
 		else process.stderr.write(notice);
 	}
 	// A headless `--session`/`--continue` resumed before the route was seeded;
-	// restore it now, letting an explicit --target/--model/--thinking win.
+	// restore it now, letting an explicit --connection/--model/--thinking win.
 	if (resumedSessionAtBoot) {
 		const notice = restoreResumedRoute({
 			route: options.headless?.target !== undefined || options.headless?.model !== undefined,
