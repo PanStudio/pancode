@@ -299,7 +299,7 @@ test("rule17 keeps owner capabilities with the owning composition and contract t
 	const registrar = 'import type { MiddlewareRegistrar } from "../domains/middleware/index.js";\n';
 	strictEqual(checkDomainContractAccess("src/domains/dispatch/extension.ts", registrar).length, 1);
 	strictEqual(checkDomainContractAccess("src/tools/registry.ts", "createMiddlewareDomain();").length, 1);
-	deepStrictEqual(checkDomainContractAccess("src/entry/orchestrator.ts", registrar), []);
+	deepStrictEqual(checkDomainContractAccess("src/entry/boot/domains.ts", registrar), []);
 	deepStrictEqual(checkDomainContractAccess("src/domains/middleware/snapshot.ts", registrar), []);
 	const binder = 'import type { TelemetryRunReaderBinder } from "../domains/telemetry/index.js";\n';
 	strictEqual(checkDomainContractAccess("src/domains/dispatch/extension.ts", binder).length, 1);
