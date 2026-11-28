@@ -44,8 +44,6 @@ import {
 	SCRATCH_DISPOSABLE_REASON_CODE,
 	SNAPSHOT_RECOVERABLE_GIT_PATTERNS,
 	SNAPSHOT_RECOVERABLE_REASON_CODE,
-	STARTUP_PATH_RULE_ID,
-	startupPathReason,
 } from "./containment.js";
 import { CONFIRMED_POSTURE } from "./contract.js";
 import type { DamageControlMatch, DamageControlRule } from "./damage-control.js";
@@ -155,15 +153,15 @@ import {
 } from "./policy-pancode-trees.js";
 import { RG_WALK_BUDGET } from "./policy-read-only-inspectors.js";
 import {
+	createGitControlChecker,
+	createStartupPathChecker,
 	EXECUTION_TOOLS,
 	evaluateWriteRoots,
-	gitControlLanding,
 	isWriteConfinementEscape,
 	mayRewriteGitConfig,
 	outsideExistingTypedMutationTarget,
-	resolveGitControls,
 	scratchRootWrite,
-	startupPathLanding,
+	startupPathPolicyInput,
 	WRITE_ROOT_TOOLS,
 	writeRootViolation,
 } from "./policy-write-landing.js";
@@ -475,22 +473,8 @@ export function createSafetyPolicyEngine(options: SafetyPolicyEngineOptions = {}
 	const writeRoots = (options.writeRoots ?? []).map((root) => resolvePathBoundary(writeRootCwd, root));
 	const writeRootsOsConfined = options.writeRootsOsConfined === true;
 	const workerSandboxContained = options.workerSandboxConfinesWrites === true;
-	// The cwd repository's git control paths (the shell sandbox's read-only
-	// set, the core.hooksPath directories included) are resolved when the
-	// engine is built and again only after a call that may have rewritten a
-	// git config, so a typed write pays no walk for them: the per-call fs
-	// budget is pinned (admission-fs-ops). The name pattern covers a
-	// repository created after that.
-	let gitControls = resolveGitControls(cwd);
-	let gitControlsStale = false;
-	// Captured once at construction so typed startup-path checks pay zero per-call fs ops (admission-fs-ops).
-	const startupWorkspaceReal = canonicalizePath(cwd);
-	const startupWorkspaceForms =
-		startupWorkspaceReal === null || startupWorkspaceReal === cwd ? [cwd] : [cwd, startupWorkspaceReal];
-	const startupHome = homedir();
-	const startupHomeReal = canonicalizePath(startupHome);
-	const startupHomeForms =
-		startupHomeReal === null || startupHomeReal === startupHome ? [startupHome] : [startupHome, startupHomeReal];
+	const gitControls = createGitControlChecker(cwd);
+	const startupPathHit = createStartupPathChecker(cwd);
 	/** First secret-bearing path an admitted call read, or null; taints later outbound fetches. */
 	let secretRead: string | null = null;
 	const secretBearingReadOf = (rawCall: ClassifierCall): string | null => {
@@ -501,28 +485,6 @@ export function createSafetyPolicyEngine(options: SafetyPolicyEngineOptions = {}
 		if (rawCall.tool !== ToolNames.Bash) return null;
 		const tokens = flowSourceCallFor(rawCall, cwd).readTokens ?? [];
 		return tokens.find((token) => isSecretBearingPath(token)) ?? null;
-	};
-	const gitControlHit = (call: ClassifierCall, candidates: ReturnType<typeof mutationCandidates>): string | null => {
-		if (!WRITE_ROOT_TOOLS.has(call.tool)) return null;
-		if (gitControlsStale) {
-			gitControls = resolveGitControls(cwd);
-			gitControlsStale = false;
-		}
-		return gitControlLanding(candidates, gitControls);
-	};
-	const startupPathHit = (
-		call: ClassifierCall,
-		candidates: ReturnType<typeof mutationCandidates>,
-		resort: DefaultResort | undefined,
-	): string | null => {
-		if (EXECUTION_TOOLS.has(call.tool) || call.tool === ToolNames.RunScript || candidates.length === 0) return null;
-		const currentHome = homedir();
-		const homeForms = currentHome === startupHome ? startupHomeForms : [...startupHomeForms, currentHome];
-		const roots =
-			resort === undefined || resort.scratchRoots.length === 0
-				? startupWorkspaceForms
-				: [...startupWorkspaceForms, ...resort.scratchRoots];
-		return startupPathLanding(candidates, roots, homeForms);
 	};
 	const skillRoots = activePancodeSkillRoots(cwd);
 	// PanCode's own trees are the operator's real directories, captured once when the session's engine is built; a HOME or
@@ -1552,24 +1514,15 @@ export function createSafetyPolicyEngine(options: SafetyPolicyEngineOptions = {}
 			}
 			return gateDecision("block", base, blockInput);
 		}
-		// Protected editor, agent, git and shell startup paths are read-only in
-		// the shell sandbox; typed writes, edits and deletes to the same shared
-		// path list go straight to the operator approval card (never silent, never
-		// the judge), and headless runs and workers deny them.
-		const startupPath = startupPathHit(call, candidates, resort);
+		const startupPath = startupPathHit(call, candidates, resort?.scratchRoots);
 		if (startupPath !== null) {
-			const input = {
-				ruleId: STARTUP_PATH_RULE_ID,
-				reasonCode: STARTUP_PATH_RULE_ID,
-				reasons: [startupPathReason(startupPath)],
-				policySource: "builtin-classifier" as const,
-			};
+			const input = startupPathPolicyInput(startupPath);
 			return settle(posture === CONFIRMED_POSTURE ? allowDecision(base, input) : gateDecision("ask", base, input));
 		}
 		// The contained shell cannot write the repository's hooks, config or git
 		// dir pointers, so under the operator's default a typed write asks for
 		// them too and the safety judge weighs it against the operator's intent.
-		const gitControl = resort === undefined ? null : gitControlHit(call, candidates);
+		const gitControl = resort === undefined ? null : gitControls.hit(call, candidates);
 		if (gitControl !== null) {
 			const input = {
 				ruleId: GIT_CONTROL_FILE_RULE_ID,
@@ -1790,7 +1743,7 @@ export function createSafetyPolicyEngine(options: SafetyPolicyEngineOptions = {}
 		// a git control path; admission asks the main agent when a worker at
 		// default made it. A yolo posture admits it unread.
 		if (resort === undefined && posture !== "yolo") {
-			const gitControl = gitControlHit(call, candidates);
+			const gitControl = gitControls.hit(call, candidates);
 			if (gitControl !== null) allowInput.gitControl = gitControl;
 		}
 		return settle(allowDecision(base, allowInput));
@@ -1858,16 +1811,9 @@ export function createSafetyPolicyEngine(options: SafetyPolicyEngineOptions = {}
 			return gateDecision("block", base, { ...floor, reasons: [...floor.reasons, LOGIN_PATH_PENDING_YOLO_HOLD] });
 		if (floor !== null) return gateDecision("block", base, floor);
 		if (scope.worker === true && !EXECUTION_TOOLS.has(call.tool) && call.tool !== ToolNames.RunScript) {
-			const targets = pathPolicyTargets(call, judgedCommand);
-			const startupPath = startupPathHit(call, mutationCandidates(targets, callCwd, judgedCommand), undefined);
-			if (startupPath !== null) {
-				return gateDecision("block", base, {
-					ruleId: STARTUP_PATH_RULE_ID,
-					reasonCode: STARTUP_PATH_RULE_ID,
-					reasons: [startupPathReason(startupPath)],
-					policySource: "builtin-classifier",
-				});
-			}
+			const targets = pathPolicyTargets(call, callCwd);
+			const hit = startupPathHit(call, mutationCandidates(targets, callCwd, null, createPathWalkMemo()));
+			if (hit !== null) return gateDecision("block", base, startupPathPolicyInput(hit));
 		}
 		const held: string[] = [];
 		const required = yoloRequiredSandbox(rawCall, call, base.classification, judgedCommand, scope, () => ({
@@ -2174,7 +2120,7 @@ export function createSafetyPolicyEngine(options: SafetyPolicyEngineOptions = {}
 				gate === null ? evaluateScoped(rawCall, posture, scope) : evaluateTaskGate(rawCall, gate, posture, scope);
 			// A judge's allow runs the asked call without a second admission, so an
 			// ask counts as well as an allow; the refresh waits for the next typed write.
-			if (decision.kind !== "block" && mayRewriteGitConfig(rawCall, decision, cwd)) gitControlsStale = true;
+			if (decision.kind !== "block" && mayRewriteGitConfig(rawCall, decision, cwd)) gitControls.markStale();
 			if (
 				secretRead &&
 				decision.kind === "allow" &&

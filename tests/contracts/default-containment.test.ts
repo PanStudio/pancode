@@ -859,7 +859,11 @@ test("a typed write into the core.hooksPath directory asks at default, also once
 		evaluateAdmission({ principal: "main", effects: [call], safety, autonomy: "default", operatorDefault });
 	const asked = admitMain(main, write(".githooks/pre-commit"));
 	strictEqual(asked.kind === "ask" && asked.decision.policy?.reasonCode, "git-control-file");
-	const workerAsked = evaluateAdmission({ principal: "worker", effects: [write(".githooks/pre-commit")], safety: worker });
+	const workerAsked = evaluateAdmission({
+		principal: "worker",
+		effects: [write(".githooks/pre-commit")],
+		safety: worker,
+	});
 	strictEqual(workerAsked.kind === "ask" && workerAsked.approvalAuthority, "main");
 	strictEqual(admitMain(main, write("src/app.py")).kind, "allow");
 	// An engine built before the setting re-reads it after an admitted command that may have written it.
@@ -882,12 +886,12 @@ test("typed writes and edits to protected startup paths require operator approva
 	const main = createWorkerSafety({ cwd });
 	const worker = createWorkerSafety({ cwd, writeRoots: [`${cwd}/`] });
 	const operatorDefault: OperatorDefaultScope = { level: "default", scratchRoots: [], sandbox: true, snapshots: true };
-	const writeCall = (path: string): ClassifierCall => ({ tool: ToolNames.Write, args: { path, content: "x" } });
-	const editCall = (path: string): ClassifierCall => ({
+	const writeCall = (path: string) => ({ tool: ToolNames.Write, args: { path, content: "x" } });
+	const editCall = (path: string) => ({
 		tool: ToolNames.Edit,
 		args: { path, old_string: "{}\n", new_string: '{"x":1}\n' },
 	});
-	const askCases: ClassifierCall[] = [
+	const askCases = [
 		writeCall(".vscode/tasks.json"),
 		editCall(".vscode/tasks.json"),
 		writeCall(".husky/pre-commit"),
@@ -899,7 +903,13 @@ test("typed writes and edits to protected startup paths require operator approva
 		writeCall(join(homedir(), ".zprofile")),
 	];
 	for (const call of askCases) {
-		const asked = evaluateAdmission({ principal: "main", effects: [call], safety: main, autonomy: "default", operatorDefault });
+		const asked = evaluateAdmission({
+			principal: "main",
+			effects: [call],
+			safety: main,
+			autonomy: "default",
+			operatorDefault,
+		});
 		strictEqual(asked.kind, "ask", `${call.tool} ${String(call.args.path)} should ask in main`);
 		if (asked.kind !== "ask") continue;
 		strictEqual(asked.approvalAuthority, "operator");
@@ -922,11 +932,12 @@ test("typed writes and edits to protected startup paths require operator approva
 			operatorDefault,
 			authorization: { issuer: "operator", actionClass: asked.decision.classification.actionClass },
 		});
-		strictEqual(confirmed.kind, "allow", `${call.tool} ${String(call.args.path)} should allow after operator confirmation`);
-		for (const workerOpts of [
-			{},
-			{ workerExecuteAutonomy: "yolo" as const },
-		]) {
+		strictEqual(
+			confirmed.kind,
+			"allow",
+			`${call.tool} ${String(call.args.path)} should allow after operator confirmation`,
+		);
+		for (const workerOpts of [{}, { workerExecuteAutonomy: "yolo" as const }]) {
 			const workerDenied = evaluateAdmission({
 				principal: "worker",
 				effects: [call],
