@@ -317,7 +317,7 @@ export function seedOpenAICompatOrchestrator(configDir: string, url: string): vo
 /**
  * The orchestrator seed above plus the capability keys a tool-calling turn
  * needs, and an optional saved autonomy level written to `safety.autonomy`
- * (tests/contracts/tool-orchestrator-seed.test.ts pins that the level reaches the session).
+ * (tests/extended/tool-orchestrator-seed.test.ts pins that the level reaches the session).
  */
 export function seedOpenAICompatToolOrchestrator(configDir: string, url: string, autonomy?: string): void {
 	editSettings(configDir, (settings) => {
