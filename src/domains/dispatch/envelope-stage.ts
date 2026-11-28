@@ -153,7 +153,8 @@ export function resolveDispatchEnvelopeStage(input: {
 		...sandbox
 	} = placementSandboxFacts(target.runtime.kind, input.settings, input.placement, hoare, network);
 	// D14: refused here, before the permit, so a preview names the same refusal a launch would.
-	assertWorkerIsolationAdmitted(input.settings?.safety.workerIsolation, {
+	const workerIsolation = input.settings?.safety.workerIsolation;
+	assertWorkerIsolationAdmitted(workerIsolation, {
 		target,
 		localPlacement: input.placement.node.kind === "local",
 		sandbox: {
@@ -206,7 +207,7 @@ export function resolveDispatchEnvelopeStage(input: {
 			contextAttached: (tools) => canonicalContextAttached(target.runtime, tools),
 		},
 		read: { roots: pathScope.workingContextPaths, outside: req.extraReadRoots ?? [] },
-		sandbox,
+		sandbox: workerIsolation === "process" ? { ...sandbox, workerIsolation } : sandbox,
 	};
 	// The draft settles the tool list the permit is resolved over; its approval block is replaced below.
 	const draft = resolveWorkerEnvelope({

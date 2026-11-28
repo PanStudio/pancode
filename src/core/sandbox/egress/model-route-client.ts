@@ -1,6 +1,17 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 
+import { request } from "node:http";
+
+/** Never relayed: the worker asks here, with its surrogate, for the credential the upstream rejected to be refreshed. */
+export const MODEL_ROUTE_REFRESH_PATH = "/.pancode/model-route/refresh";
+
+/**
+ * `refreshed`: a new credential replaces the rejected one, so one retry may succeed. `unchanged`: the host holds the
+ * same one (an API key), so a retry would be refused again. `failed`: no credential resolves; the operator must log in.
+ */
+export type ModelRouteRefreshOutcome = "refreshed" | "unchanged" | "failed";
+
 /** What a routed worker carries in its spec: where its model calls go, and the token that stands in for its key. */
 export interface ModelRouteBinding {
 	/** The admitted provider origin, `scheme://host[:port]`, as the worker's model and probes address it. */
@@ -52,4 +63,49 @@ export async function installModelRouteDispatcher(binding: ModelRouteBinding): P
 		}
 	}
 	setGlobalDispatcher(new ModelRouteDispatcher());
+}
+
+/**
+ * Asks the host route to refresh the credential the provider rejected (#427 under D14). The route alone holds and
+ * refreshes it; this process sends its surrogate and learns only the outcome.
+ */
+export function requestModelRouteRefresh(
+	binding: ModelRouteBinding,
+	signal?: AbortSignal,
+): Promise<ModelRouteRefreshOutcome> {
+	return new Promise((resolve, reject) => {
+		const req = request(
+			new URL(MODEL_ROUTE_REFRESH_PATH, binding.route),
+			{
+				method: "POST",
+				headers: { authorization: `Bearer ${binding.surrogate}`, "content-length": "0" },
+				agent: false,
+				...(signal !== undefined ? { signal } : {}),
+			},
+			(res) => {
+				let body = "";
+				res.setEncoding("utf8");
+				res.on("data", (chunk: string) => {
+					if (body.length < 4096) body += chunk;
+				});
+				res.on("error", reject);
+				res.on("end", () => {
+					const outcome = res.statusCode === 200 ? parsedOutcome(body) : null;
+					if (outcome === null) reject(new Error(`model route: refresh answered ${res.statusCode}: ${body.trim()}`));
+					else resolve(outcome);
+				});
+			},
+		);
+		req.on("error", reject);
+		req.end();
+	});
+}
+
+function parsedOutcome(body: string): ModelRouteRefreshOutcome | null {
+	try {
+		const outcome = (JSON.parse(body) as { outcome?: unknown }).outcome;
+		return outcome === "refreshed" || outcome === "unchanged" || outcome === "failed" ? outcome : null;
+	} catch {
+		return null;
+	}
 }

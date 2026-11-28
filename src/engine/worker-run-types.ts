@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import type { ModelRouteBinding } from "../core/sandbox/egress/model-route-client.js";
 import type { WorkerTelemetryContext } from "../core/telemetry/context.js";
 import type { ToolName } from "../core/tool-names.js";
 import type { ResultContract } from "../domains/agents/result-contract-types.js";
@@ -51,6 +52,8 @@ export interface WorkerRunInput {
 	apiKey?: string;
 	/** Local PanCode credential owner; remote workers receive only the resolved access credential. */
 	authProfile?: string;
+	/** The host model route (D14): `apiKey` is its surrogate, and a rejected credential is refreshed by the route. */
+	modelRoute?: ModelRouteBinding;
 	credentialExpiresAt?: number;
 	thinkingLevel?: ThinkingLevel;
 	/** JSON Schema enforced by the native llama.cpp request payload. */

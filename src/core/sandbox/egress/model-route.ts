@@ -4,6 +4,7 @@ import { randomBytes, timingSafeEqual } from "node:crypto";
 import http from "node:http";
 import type net from "node:net";
 import type { Duplex } from "node:stream";
+import { MODEL_ROUTE_REFRESH_PATH, type ModelRouteRefreshOutcome } from "./model-route-client.js";
 
 /**
  * The host side of one worker launch's model route (D14, sandbox-p10 design 2.2). The worker's dispatcher
@@ -72,13 +73,18 @@ export interface ModelRouteReceipt {
 	upgrade?: true;
 	/** Why the route answered itself. */
 	refused?: string;
+	/** A refresh the worker asked for, and its outcome. */
+	refresh?: ModelRouteRefreshOutcome;
 }
 
 export interface ModelRoute {
 	/** Serves one listener: a host loopback one, or the one a sandboxed launch hands over. The route owns and closes it. */
 	serve(listener: net.Server): void;
-	/** Force-refreshes the credential last injected, after the upstream rejected it; false when the refresh failed. */
-	refresh(): Promise<boolean>;
+	/**
+	 * Force-refreshes the credential the upstream last rejected (else the one last injected: a WebSocket refuses in
+	 * band). Concurrent calls for one rejected credential share one refresh.
+	 */
+	refresh(): Promise<ModelRouteRefreshOutcome>;
 	receipts(): ModelRouteReceipt[];
 	/** Closes every listener and destroys every client and upstream connection. */
 	close(): void;
@@ -152,6 +158,8 @@ export function createModelRoute(options: ModelRouteOptions): ModelRoute {
 	const aborts = new Set<AbortController>();
 	const receipts: ModelRouteReceipt[] = [];
 	let lastInjected: string | null = null;
+	let lastRejected: string | null = null;
+	const refreshing = new Map<string, Promise<ModelRouteRefreshOutcome>>();
 	let closed = false;
 
 	const record = (receipt: Omit<ModelRouteReceipt, "at">): void => {
@@ -193,6 +201,34 @@ export function createModelRoute(options: ModelRouteOptions): ModelRoute {
 		return credential;
 	};
 
+	const refresh = (): Promise<ModelRouteRefreshOutcome> => {
+		const rejected = lastRejected ?? lastInjected;
+		if (closed || rejected === null) return Promise.resolve("failed");
+		const pending = refreshing.get(rejected);
+		if (pending !== undefined) return pending;
+		const outcome = (async (): Promise<ModelRouteRefreshOutcome> => {
+			try {
+				const credential = await options.resolve(rejected);
+				lastInjected = credential.apiKey;
+				return credential.apiKey === rejected ? "unchanged" : "refreshed";
+			} catch {
+				return "failed";
+			}
+		})();
+		refreshing.set(rejected, outcome);
+		void outcome.finally(() => refreshing.delete(rejected));
+		return outcome;
+	};
+
+	const answerRefresh = (req: http.IncomingMessage, res: http.ServerResponse): void => {
+		req.resume();
+		void refresh().then((outcome) => {
+			record({ method: "POST", path: MODEL_ROUTE_REFRESH_PATH, status: 200, refresh: outcome });
+			res.writeHead(200, { "content-type": "application/json" });
+			res.end(JSON.stringify({ outcome }));
+		});
+	};
+
 	const onRequest = (req: http.IncomingMessage, res: http.ServerResponse): void => {
 		const admitted = admit(req);
 		const method = req.method ?? "GET";
@@ -201,6 +237,10 @@ export function createModelRoute(options: ModelRouteOptions): ModelRoute {
 			req.resume();
 			res.writeHead(admitted.status, { "content-type": "text/plain; charset=utf-8", connection: "close" });
 			res.end(`PanCode model route: ${admitted.reason}\n`);
+			return;
+		}
+		if (admitted.url.pathname === MODEL_ROUTE_REFRESH_PATH) {
+			answerRefresh(req, res);
 			return;
 		}
 		const abort = new AbortController();
@@ -237,6 +277,9 @@ export function createModelRoute(options: ModelRouteOptions): ModelRoute {
 					bodyTimeout: 0,
 				});
 				record({ method, path: admitted.url.pathname, status: upstream.statusCode });
+				if (upstream.statusCode === 401 || upstream.statusCode === 403) lastRejected = credential.apiKey;
+				// A later worker asking after the retry succeeded must not rotate the working credential.
+				else if (upstream.statusCode < 400 && credential.apiKey !== lastRejected) lastRejected = null;
 				res.writeHead(upstream.statusCode, responseHeaders(upstream.headers));
 				upstream.body.on("error", () => res.destroy());
 				upstream.body.pipe(res);
@@ -267,6 +310,11 @@ export function createModelRoute(options: ModelRouteOptions): ModelRoute {
 		if (!admitted.ok) {
 			record({ method: req.method ?? "GET", path: pathOf(req.url), status: 0, upgrade: true, refused: admitted.reason });
 			refuseSocket(socket, admitted.status, admitted.reason);
+			return;
+		}
+		if (admitted.url.pathname === MODEL_ROUTE_REFRESH_PATH) {
+			record({ method: "GET", path: MODEL_ROUTE_REFRESH_PATH, status: 0, upgrade: true, refused: "not relayed" });
+			refuseSocket(socket, 400, "the refresh path takes no upgrade");
 			return;
 		}
 		const abort = new AbortController();
@@ -342,17 +390,7 @@ export function createModelRoute(options: ModelRouteOptions): ModelRoute {
 				server.emit("connection", socket);
 			});
 		},
-		async refresh() {
-			const rejected = lastInjected;
-			if (closed || rejected === null) return false;
-			try {
-				const credential = await options.resolve(rejected);
-				lastInjected = credential.apiKey;
-				return true;
-			} catch {
-				return false;
-			}
-		},
+		refresh,
 		receipts: () => receipts.map((receipt) => ({ ...receipt })),
 		close() {
 			if (closed) return;

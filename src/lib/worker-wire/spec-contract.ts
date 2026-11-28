@@ -800,7 +800,7 @@ function validateWorkerEnvelope(value: unknown): void {
 	readEnum(approval.autonomy, "WorkerSpec.envelope.approval.autonomy", ["default", "yolo"] as const);
 	readEnum(approval.asks, "WorkerSpec.envelope.approval.asks", ENVELOPE_ASKS);
 	const sandbox = readRecord(envelope.sandbox, "WorkerSpec.envelope.sandbox");
-	exactKeys(sandbox, ["backend", "confinesWrites", "unconfined"], "WorkerSpec.envelope.sandbox");
+	exactKeys(sandbox, ["backend", "confinesWrites", "unconfined", "workerIsolation"], "WorkerSpec.envelope.sandbox");
 	readEnum(sandbox.backend, "WorkerSpec.envelope.sandbox.backend", ENVELOPE_SANDBOX_BACKENDS);
 	if (typeof sandbox.confinesWrites !== "boolean")
 		throw new Error("WorkerSpec.envelope.sandbox.confinesWrites must be a boolean");
@@ -808,6 +808,8 @@ function validateWorkerEnvelope(value: unknown): void {
 		throw new Error("WorkerSpec.envelope.sandbox.confinesWrites needs the bwrap backend");
 	if (sandbox.unconfined !== undefined && (sandbox.unconfined !== true || sandbox.backend !== "none"))
 		throw new Error("WorkerSpec.envelope.sandbox.unconfined must be true and only with no backend");
+	if (sandbox.workerIsolation !== undefined && (sandbox.workerIsolation !== "process" || sandbox.backend !== "bwrap"))
+		throw new Error("WorkerSpec.envelope.sandbox.workerIsolation must be process and only with the bwrap backend");
 	if (!SHA256_HEX.test(readString(envelope.staticHead, "WorkerSpec.envelope.staticHead")))
 		throw new Error("WorkerSpec.envelope.staticHead must be a sha256 hex digest");
 	if (!Array.isArray(envelope.withheld)) throw new Error("WorkerSpec.envelope.withheld must be an array");
@@ -1444,6 +1446,9 @@ export function parseWorkerSpec(value: unknown): WorkerSpec {
 		}
 	}
 	validateWorkerEnvelope(spec.envelope);
+	// The admitted isolation and the route travel together; either alone was edited after admission.
+	if ((spec.modelRoute !== undefined) !== ((spec.envelope as WorkerEnvelope).sandbox.workerIsolation === "process"))
+		throw new Error("WorkerSpec.modelRoute disagrees with the envelope's sandbox.workerIsolation");
 	if (spec.helperResult !== undefined) {
 		if (spec.helperResult !== true) throw new Error("WorkerSpec.helperResult must be true when present");
 		const contract = readRecord(spec.resultContract, "WorkerSpec.resultContract");

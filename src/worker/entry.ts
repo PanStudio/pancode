@@ -419,7 +419,10 @@ async function main(): Promise<number> {
 	if (spec.sessionId) input.sessionId = spec.sessionId;
 	if (spec.telemetryContext) input.telemetryContext = { ...spec.telemetryContext };
 	if (spec.apiKey) input.apiKey = spec.apiKey;
-	else if (spec.modelRoute !== undefined) input.apiKey = spec.modelRoute.surrogate;
+	else if (spec.modelRoute !== undefined) {
+		input.apiKey = spec.modelRoute.surrogate;
+		input.modelRoute = spec.modelRoute;
+	}
 	if (spec.authProfile) input.authProfile = spec.authProfile;
 	if (spec.credentialExpiresAt !== undefined) input.credentialExpiresAt = spec.credentialExpiresAt;
 	if (spec.thinkingLevel) input.thinkingLevel = spec.thinkingLevel;

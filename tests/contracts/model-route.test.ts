@@ -18,6 +18,7 @@ import { codexAccountScope } from "../../src/core/codex-account.js";
 import { DEFAULT_SETTINGS } from "../../src/core/defaults.js";
 import { sandboxAvailability, sandboxNetworkIsolation } from "../../src/core/sandbox/availability.js";
 import { createModelRoute, type ModelRoute, modelRouteSurrogate } from "../../src/core/sandbox/egress/model-route.js";
+import { requestModelRouteRefresh } from "../../src/core/sandbox/egress/model-route-client.js";
 import { WORKER_SANDBOX_SPEC_VERSION, type WorkerSandboxSpec } from "../../src/core/sandbox/types.js";
 import {
 	isolatedChildPolicy,
@@ -246,12 +247,68 @@ describe("model route (host side)", () => {
 		});
 		const port = await serveRoute(route);
 		await call(port, { headers: { authorization: "Bearer s-2" }, body: "{}" });
-		equal(await route.refresh(), true);
+		equal(await route.refresh(), "refreshed");
 		await call(port, { headers: { authorization: "Bearer s-2" }, body: "{}" });
 		deepEqual(rejected, [undefined, "key-1", undefined]);
 		equal(upstream.requests[1]?.headers.authorization, "Bearer key-2");
 		route.close();
 		await rejects(call(port, { headers: { authorization: "Bearer s-2" } }), /ECONNREFUSED|ECONNRESET|socket hang up/u);
+	});
+
+	it("refreshes the rejected credential once for concurrent workers, at a path it never relays", async () => {
+		let key = "key-1";
+		upstream = await startUpstream((req, res) => {
+			res.statusCode = req.headers.authorization === "Bearer key-1" ? 401 : 200;
+			res.end();
+		});
+		const rejected: Array<string | undefined> = [];
+		route = createModelRoute({
+			origin: upstream.origin,
+			surrogate: "s-3",
+			resolve: async (rejectedApiKey) => {
+				rejected.push(rejectedApiKey);
+				if (rejectedApiKey === "key-1") {
+					await new Promise((resolve) => setTimeout(resolve, 50));
+					key = "key-2";
+				}
+				return { apiKey: key };
+			},
+		});
+		const port = await serveRoute(route);
+		const binding = { origin: upstream.origin, route: `http://127.0.0.1:${port}`, surrogate: "s-3" };
+		equal((await call(port, { headers: { authorization: "Bearer s-3" }, body: "{}" })).status, 401);
+		deepEqual(await Promise.all([requestModelRouteRefresh(binding), requestModelRouteRefresh(binding)]), [
+			"refreshed",
+			"refreshed",
+		]);
+		equal(await requestModelRouteRefresh(binding), "refreshed", "a worker asking late learns the key changed");
+		equal((await call(port, { headers: { authorization: "Bearer s-3" }, body: "{}" })).status, 200);
+		deepEqual(rejected, [undefined, "key-1", "key-1", undefined]);
+		equal(upstream.requests.length, 2, "the refresh path reaches no upstream");
+		await rejects(requestModelRouteRefresh({ ...binding, surrogate: "wrong" }), /refresh answered 401/u);
+		equal(route.receipts().filter((receipt) => receipt.refresh === "refreshed").length, 3);
+	});
+
+	it("tells the worker a refresh changed nothing, or failed, so it retries only a new credential", async () => {
+		upstream = await startUpstream((_req, res) => {
+			res.statusCode = 401;
+			res.end();
+		});
+		let available = true;
+		route = createModelRoute({
+			origin: upstream.origin,
+			surrogate: "s-4",
+			resolve: async () => {
+				if (!available) throw new Error("logged out");
+				return { apiKey: "static-key" };
+			},
+		});
+		const port = await serveRoute(route);
+		const binding = { origin: upstream.origin, route: `http://127.0.0.1:${port}`, surrogate: "s-4" };
+		await call(port, { headers: { authorization: "Bearer s-4" }, body: "{}" });
+		equal(await requestModelRouteRefresh(binding), "unchanged");
+		available = false;
+		equal(await requestModelRouteRefresh(binding), "failed");
 	});
 
 	it("answers 401 with the reason when no credential resolves, and 502 when the origin is down", async () => {
