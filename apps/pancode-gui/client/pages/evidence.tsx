@@ -10,7 +10,7 @@ import { RequestRecovery, useOperationRequest } from "../api/operation-request.j
 import { Facts } from "../design/facts.js";
 import { PanelEmpty, PanelHeading } from "../design/panel.js";
 import { emptyState, PANELS } from "../design/panel-model.js";
-import { InspectionError, InspectionSummary } from "../design/run-inspection.js";
+import { InspectionError, InspectionSummary, LoadOlder } from "../design/run-inspection.js";
 import { StatusMark } from "../design/status.js";
 import { Explained } from "../telemetry/Explained.js";
 import { explainable } from "../telemetry/quantity-model.js";
@@ -164,11 +164,7 @@ function EvidenceActions({
 								Start work from a conversation.
 							</PanelEmpty>
 						)}
-						{dispatches.hasNextPage && !dispatches.isRefetchError && (
-							<button type="button" disabled={dispatches.isFetching} onClick={() => void dispatches.fetchNextPage()}>
-								Load older dispatches
-							</button>
-						)}
+						<LoadOlder pages={dispatches} label="Load older dispatches" />
 						<p className="panel-note">
 							The list covers installation history. Confirm the chosen workspace matches the run you intend to inspect.
 						</p>
@@ -403,14 +399,8 @@ export function EvidencePage({ client }: { client: Client }) {
 					</article>
 				))}
 			</div>
-			{inventory.hasNextPage && !inventory.isRefetchError && (
-				<>
-					<PanelEmpty>{emptyState.bounded("runs")}</PanelEmpty>
-					<button type="button" disabled={inventory.isFetching} onClick={() => void inventory.fetchNextPage()}>
-						{inventory.isFetchingNextPage ? "Loading evidence…" : "Load older evidence"}
-					</button>
-				</>
-			)}
+			{inventory.hasNextPage && !inventory.isRefetchError && <PanelEmpty>{emptyState.bounded("runs")}</PanelEmpty>}
+			<LoadOlder pages={inventory} label="Load older evidence" loading="Loading evidence…" />
 		</section>
 	);
 }

@@ -5,6 +5,7 @@ import { Link } from "react-router";
 import type { Client } from "../api/client.js";
 import { THEME_COLORS } from "../design/navigation.js";
 import { AppPreferencesPanel } from "../design/pwa.js";
+import { RetryAlert } from "../design/run-inspection.js";
 import { Keycaps } from "../interaction/Keycaps.js";
 import { formatKeybinding, KEYBINDINGS } from "../interaction/keybindings.js";
 import { useShell } from "../shell/shell-context.js";
@@ -136,14 +137,7 @@ export function GeneralPage({ client }: { client: Client }) {
 				</div>
 				<div className="general__control">
 					{meta.isPending && <p role="status">Reading PanCode details…</p>}
-					{meta.error && (
-						<p role="alert">
-							PanCode details unavailable.{" "}
-							<button type="button" onClick={() => void meta.refetch()}>
-								Try again
-							</button>
-						</p>
-					)}
+					{meta.error && <RetryAlert retry={() => void meta.refetch()}>PanCode details unavailable.</RetryAlert>}
 					<AppPreferencesPanel
 						desktopManaged={meta.data?.desktopManaged ?? false}
 						enabled={meta.data?.pwa ?? false}

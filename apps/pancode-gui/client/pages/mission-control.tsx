@@ -8,12 +8,13 @@ import type { SessionOverviewItem } from "../../contracts/session-overview.js";
 import type { Client } from "../api/client.js";
 import { formatTime } from "../api/clock.js";
 import type { ConnectionState } from "../api/events.js";
+import { FilterChips, InventoryEmpty } from "../design/filter-chips.js";
 import { Icon } from "../design/icons.js";
+import { RetryAlert } from "../design/run-inspection.js";
 import { StatusMark } from "../design/status.js";
 import { setPageTitle } from "../interaction/announcer.js";
 import { InventoryMore } from "../interaction/InventoryMore.js";
 import { useInventoryWindow } from "../interaction/use-inventory-window.js";
-import { PancodeEmptyMark } from "../shell/PancodeMark.js";
 import { useSessionCommands } from "../shell/SessionControls.js";
 import { useShell } from "../shell/shell-context.js";
 import { TopBar } from "../shell/TopBar.js";
@@ -190,28 +191,21 @@ export function MissionControl({ client }: { client: Client }) {
 							</select>
 						</label>
 					</div>
-					<nav className="mission__filters" aria-label="Session activity">
-						{SESSION_FILTERS.map((key) => (
-							<button
-								type="button"
-								key={key}
-								aria-pressed={filter === key}
-								onClick={() => set("status", key === "all" ? "" : key)}
-							>
-								{FILTER_NAMES[key]}
-								<span>{items ? (key === "all" ? items.length : counts[key]) : "—"}</span>
-							</button>
-						))}
-					</nav>
+					<FilterChips
+						className="mission__filters"
+						label="Session activity"
+						filters={SESSION_FILTERS}
+						names={FILTER_NAMES}
+						value={filter}
+						count={(key) => (items ? (key === "all" ? items.length : counts[key]) : null)}
+						onSelect={(key) => set("status", key)}
+					/>
 					{metrics.data ? <OperatorMetrics client={client} {...metrics.data} workspace={project} compact /> : null}
 					{metrics.isPending ? <MetricsPending /> : null}
 					{metrics.error ? (
-						<p role="alert">
-							Recorded metrics unavailable: {metrics.error.message}{" "}
-							<button type="button" disabled={metrics.isFetching} onClick={() => void metrics.refetch()}>
-								Retry metrics
-							</button>
-						</p>
+						<RetryAlert retry={() => void metrics.refetch()} busy={metrics.isFetching} label="Retry metrics">
+							Recorded metrics unavailable: {metrics.error.message}
+						</RetryAlert>
 					) : null}
 					{overview.error ? (
 						<p role="alert">
@@ -244,25 +238,18 @@ export function MissionControl({ client }: { client: Client }) {
 						</div>
 					) : null}
 					{items && shown.length === 0 ? (
-						<div className="mission__empty">
-							<PancodeEmptyMark />
-							<h3>{items.length ? "No sessions match this view" : "No session is open on this server"}</h3>
-							<p>
-								{items.length
-									? "Try another project, search, or activity filter."
-									: "Saved tasks stay in each project's task list and in the sidebar, where you can resume them. A task you start or resume appears here with its progress and agents."}
-							</p>
-							{items.length ? (
-								<button type="button" onClick={() => setSearch({})}>
-									Clear filters
-								</button>
-							) : (
-								<button type="button" className="primary" onClick={startTask}>
-									Start a task
-									<Icon name="plus" />
-								</button>
-							)}
-						</div>
+						<InventoryEmpty
+							className="mission__empty"
+							heading="h3"
+							title={items.length ? "No sessions match this view" : "No session is open on this server"}
+							filtered={items.length > 0}
+							onClear={() => setSearch({})}
+							onStart={startTask}
+						>
+							{items.length
+								? "Try another project, search, or activity filter."
+								: "Saved tasks stay in each project's task list and in the sidebar, where you can resume them. A task you start or resume appears here with its progress and agents."}
+						</InventoryEmpty>
 					) : null}
 					{/* Below the cards only once they are read, so their arrival pushes nothing that was already painted. */}
 					{items || overview.error ? (

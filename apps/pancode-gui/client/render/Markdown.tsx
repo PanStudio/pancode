@@ -166,7 +166,8 @@ function ActionLabel({ full, short }: { full: string; short: string | undefined 
 	);
 }
 
-export function CopyButton({ text, label = "Copy", short }: { text: string; label?: string; short?: string }) {
+/** Copies `text` to the clipboard; the state shows the outcome for a moment, then returns to idle. */
+export function useCopy(text: string): readonly ["idle" | "copied" | "failed", () => void] {
 	const [state, setState] = useState<"idle" | "copied" | "failed">("idle");
 	const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
 	useEffect(
@@ -187,11 +188,16 @@ export function CopyButton({ text, label = "Copy", short }: { text: string; labe
 		if (timer.current !== null) clearTimeout(timer.current);
 		timer.current = setTimeout(() => setState("idle"), 1_600);
 	}
+	return [state, () => void copy()];
+}
+
+export function CopyButton({ text, label = "Copy", short }: { text: string; label?: string; short?: string }) {
+	const [state, copy] = useCopy(text);
 	return (
 		<button
 			type="button"
 			className={`code-block__copy is-${state}`}
-			onClick={() => void copy()}
+			onClick={copy}
 			aria-label={state === "copied" ? "Copied to the clipboard" : state === "failed" ? "Copy failed" : label}
 		>
 			{state === "copied" ? "Copied" : state === "failed" ? "Copy failed" : <ActionLabel full={label} short={short} />}

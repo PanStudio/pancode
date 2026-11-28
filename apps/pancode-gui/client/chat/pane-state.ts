@@ -4,7 +4,9 @@
 // open state is the shell's per-browser preference; as a slide-over on a narrow screen it opens only
 // when asked, for this view.
 
-import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { useCallback, useRef, useState, useSyncExternalStore } from "react";
+import { useMediaQuery } from "../design/use-media-query.js";
+import { readPref, writePref } from "../interaction/prefs.js";
 import { ASIDE_DOCK_QUERY, setAsideExpanded, useAsideExpanded } from "../shell/aside-state.js";
 import { type PaneSection, type PaneTarget, paneTargetParts } from "./pane-context.js";
 import { isPaneView, type PaneView, ROOT_VIEW } from "./pane-model.js";
@@ -12,16 +14,8 @@ import { isPaneView, type PaneView, ROOT_VIEW } from "./pane-model.js";
 const VIEW_KEY = "pancode-gui-pane-view";
 
 function initialView(): PaneView {
-	try {
-		const stored = localStorage.getItem(VIEW_KEY);
-		return isPaneView(stored) ? stored : ROOT_VIEW;
-	} catch {
-		return ROOT_VIEW;
-	}
-}
-
-function docked(): boolean {
-	return typeof matchMedia === "function" && matchMedia(ASIDE_DOCK_QUERY).matches;
+	const stored = readPref(VIEW_KEY);
+	return isPaneView(stored) ? stored : ROOT_VIEW;
 }
 
 // The section the last show asked for, until the drill that holds it has shown it. The page that
@@ -66,18 +60,15 @@ export interface PaneState {
 export function usePaneState(fallbackTrigger: string): PaneState {
 	const [view, setViewState] = useState<PaneView>(initialView);
 	const expanded = useAsideExpanded();
-	const [wide, setWide] = useState(docked);
+	const wide = useMediaQuery(ASIDE_DOCK_QUERY);
 	const [slideOver, setSlideOver] = useState(false);
+	// A slide-over does not outlive a change of layout.
+	const [layout, setLayout] = useState(wide);
+	if (layout !== wide) {
+		setLayout(wide);
+		setSlideOver(false);
+	}
 	const opener = useRef<string | null>(null);
-	useEffect(() => {
-		const query = matchMedia(ASIDE_DOCK_QUERY);
-		const change = () => {
-			setWide(query.matches);
-			setSlideOver(false);
-		};
-		query.addEventListener("change", change);
-		return () => query.removeEventListener("change", change);
-	}, []);
 	const open = wide ? expanded : slideOver;
 	const setOpen = useCallback(
 		(next: boolean) => {
@@ -88,11 +79,7 @@ export function usePaneState(fallbackTrigger: string): PaneState {
 	);
 	const storeView = useCallback((next: PaneView) => {
 		setViewState(next);
-		try {
-			localStorage.setItem(VIEW_KEY, next);
-		} catch {
-			// The preference holds in this tab.
-		}
+		writePref(VIEW_KEY, next);
 	}, []);
 	const setView = useCallback(
 		(next: PaneView) => {

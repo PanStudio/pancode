@@ -8,6 +8,7 @@ import { type Client, emptyInput } from "../api/client.js";
 import { Facts } from "../design/facts.js";
 import { PanelEmpty, PanelHeading } from "../design/panel.js";
 import { emptyState, PANELS } from "../design/panel-model.js";
+import { RetryAlert } from "../design/run-inspection.js";
 import { StatusMark } from "../design/status.js";
 import { useRevealCurrent } from "../interaction/use-reveal-current.js";
 import { liveSearchWith, useSearchDraft } from "../shell/use-search-draft.js";
@@ -295,14 +296,7 @@ export function HubPage({
 				{source.isPending && hubCollectionRead(active, !!id, resolved) && (
 					<p role="status">Reading {active.toLowerCase()}…</p>
 				)}
-				{source.error && (
-					<p role="alert">
-						{source.error.message}{" "}
-						<button type="button" onClick={() => void source.refetch()}>
-							Try again
-						</button>
-					</p>
-				)}
+				{source.error && <RetryAlert retry={() => void source.refetch()}>{source.error.message}</RetryAlert>}
 				{inventory.data && Object.values(inventory.data.truncated).some(Boolean) && (
 					<PanelEmpty>
 						This inventory is incomplete. Search and filters cover only the records returned by the server.
