@@ -676,7 +676,7 @@ const CONTENT_PARTS = {
 				["Task worktree root", settings.fleet.worktrees.root],
 				["Trust project imports", settings.integrations.projectResources.trustProjectImports ? "trusted" : "untrusted"],
 				["External ACP agents", String(settings.integrations.externalAgents.entries.length)],
-				["Runtime plugins", listOr(settings.integrations.runtimePlugins)],
+				["Provider packages", listOr(settings.integrations.providerPackages)],
 				["Hub remote sync", onOff(settings.integrations.hub.sync)],
 				["Git commit attribution", onOff(settings.integrations.git.commitAttribution)],
 				["Autonomous commit author", settings.integrations.git.commitAuthor],

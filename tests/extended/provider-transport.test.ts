@@ -679,7 +679,7 @@ describe("provider transport boundary", () => {
 			);
 			ensurePancodeState();
 			updateSettings((settings) => {
-				settings.integrations.runtimePlugins = [packageFile];
+				settings.integrations.providerPackages = [packageFile];
 			});
 			const registry = createRuntimeRegistry();
 			deepStrictEqual(await loadPluginRuntimes(registry, readSettings()), ["contract-package"]);

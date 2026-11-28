@@ -240,7 +240,7 @@ export const SETTINGS_FIELD_NAMES = [
 	"routeCooldownMs",
 	"runTimeoutMs",
 	"runtime",
-	"runtimePlugins",
+	"providerPackages",
 	"s3",
 	"safety",
 	"sandbox",

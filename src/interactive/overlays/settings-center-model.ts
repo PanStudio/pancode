@@ -76,7 +76,7 @@ export const SHIPPED_RESILIENCE_COOLDOWN_MS = DEFAULT_SETTINGS.fleet.retry.route
 type SettingScope = "live" | "restart";
 const RESTART_REQUIRED_IDS = new Set<string>([
 	"fleet.concurrency",
-	"integrations.runtimePlugins",
+	"integrations.providerPackages",
 	"interface.mode",
 	"interface.fullscreenScrollbar",
 	// The consult tool is registered once, at startup, with the engine chosen then.

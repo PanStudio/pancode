@@ -997,7 +997,7 @@ type ModelSettings = Record<string, { tier?: ModelTier }>;
 interface IntegrationsSettings {
 	projectResources: ProjectResourcesSettings;
 	externalAgents: ExternalAgentsSettings;
-	runtimePlugins: string[];
+	providerPackages: string[];
 	hub: {
 		catalog: string | null;
 		remote: string | null;
@@ -1222,7 +1222,7 @@ export const DEFAULT_SETTINGS = {
 				toolGovernance: "pancode-policy" as DelegationToolGovernance,
 			},
 		} as ExternalAgentsSettings,
-		runtimePlugins: [] as string[],
+		providerPackages: [] as string[],
 		hub: {
 			catalog: null as string | null,
 			remote: null as string | null,

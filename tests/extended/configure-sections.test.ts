@@ -86,7 +86,7 @@ integrations:
     commitAttribution: true
   externalAgents:
     entries: []
-  runtimePlugins: []
+  providerPackages: []
   hub:
     sync: false
 `;

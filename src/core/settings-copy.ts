@@ -87,7 +87,7 @@ export const SETTINGS_LABELS_BY_ID = {
 	"safety.review.enabled": "Review changed work",
 	"safety.review.target": "Review connection",
 	"safety.review.cadenceToolCalls": "Tools between reviews",
-	"integrations.runtimePlugins": "Startup plugins",
+	"integrations.providerPackages": "Provider packages",
 	"context.compaction.model": "Compaction model",
 	"context.compaction.systemPrompt": "Compaction prompt",
 	"integrations.externalAgents.defaults.connectTimeoutMs": "Time for agent to connect",
@@ -198,8 +198,8 @@ export const SETTINGS_DESCRIPTIONS_BY_ID = {
 	"safety.review.target": "Connection used for the review. Leave blank to use the chat connection.",
 	"safety.review.cadenceToolCalls":
 		"Also review during a long turn after this many tool uses; leave blank for an end-of-turn review only.",
-	"integrations.runtimePlugins":
-		"Additional runtime plugin packages loaded when PanCode starts. Install and enable only packages you trust.",
+	"integrations.providerPackages":
+		"Additional provider runtime packages loaded when PanCode starts. Install and enable only packages you trust.",
 	"context.compaction.model": "Model used to summarize older conversation. Leave blank to use the chat model.",
 	"context.compaction.systemPrompt":
 		"Optional file with custom summarizing instructions. Leave blank for PanCode's built-in instructions.",
@@ -301,7 +301,7 @@ export const SETTINGS_HELP_BY_ID: Partial<Record<string, string>> = {
 		"PanCode permissions check external agent tools. Agent permissions let that agent decide. Deny all tools blocks every tool request.",
 	"chat.modelPicker.cycleSet":
 		"Choose connections or specific models. The model switch shortcut cycles through this list.",
-	"integrations.runtimePlugins": "Comma-separated package names, loaded at startup. Restart PanCode after changing.",
+	"integrations.providerPackages": "Comma-separated package names, loaded at startup. Restart PanCode after changing.",
 	"interface.desktopNotifications":
 		"Supported terminals show a brief desktop alert. Alerts never include your prompt, file paths, or model output.",
 	"safety.review.enabled":

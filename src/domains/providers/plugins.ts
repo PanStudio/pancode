@@ -7,7 +7,7 @@ import { writeDiagnostic } from "../../core/diagnostics.js";
  *   1. `~/.config/pancode/runtimes/`: any `.js` file whose default export is a valid
  *      RuntimeDescriptor. Resolved from `pancodeConfigDir()` so PANCODE_HOME /
  *      PANCODE_CONFIG_DIR overrides flow through.
- *   2. npm packages listed under `settings.integrations.runtimePlugins`.
+ *   2. npm packages listed under `settings.integrations.providerPackages`.
  *      Each package must export a `pancodeRuntimes: RuntimeDescriptor[]` array.
  *
  * Missing directories, import failures, and descriptor conflicts are logged
@@ -29,7 +29,7 @@ export async function loadPluginRuntimes(
 	const loaded: string[] = [];
 
 	const pluginDir = join(pancodeConfigDir(), "runtimes");
-	const packages = settings?.integrations.runtimePlugins ?? [];
+	const packages = settings?.integrations.providerPackages ?? [];
 	try {
 		const ids = await registry.loadFromDir(pluginDir, activateExternalPluginApiBridge);
 		loaded.push(...ids);

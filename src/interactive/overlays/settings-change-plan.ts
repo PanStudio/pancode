@@ -186,8 +186,8 @@ function applySettingChange(settings: PancodeSettings, id: string, value: string
 		case "interface.smoothStreaming":
 			if (value === "off" || value === "auto" || value === "on") settings.interface.smoothStreaming = value;
 			return;
-		case "integrations.runtimePlugins":
-			settings.integrations.runtimePlugins = value
+		case "integrations.providerPackages":
+			settings.integrations.providerPackages = value
 				.split(",")
 				.map((entry) => entry.trim())
 				.filter(Boolean);

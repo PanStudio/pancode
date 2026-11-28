@@ -190,8 +190,8 @@ export function settingsPlacementForRow(id: string, path: string): SettingsPlace
 		case "integrations.externalAgents.defaults.turnTimeoutMs":
 		case "integrations.externalAgents.defaults.permissionTimeoutMs":
 			return place("advanced", "External agent timing");
-		case "integrations.runtimePlugins":
-			return place("workspace", "Plugins");
+		case "integrations.providerPackages":
+			return place("workspace", "Provider packages");
 		case "context.toolResultMaxBytes":
 		case "safety.limits.readBytesPerCall":
 		case "safety.limits.observationBytesPerTurn":

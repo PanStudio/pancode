@@ -453,10 +453,10 @@ export function buildSettingItems(
 			},
 		),
 		settingItem(
-			"integrations.runtimePlugins",
-			settings.integrations.runtimePlugins.length > 0 ? settings.integrations.runtimePlugins.join(", ") : "(none)",
+			"integrations.providerPackages",
+			settings.integrations.providerPackages.length > 0 ? settings.integrations.providerPackages.join(", ") : "(none)",
 			{
-				submenu: editTextSubmenu("Edit runtime plugins comma-separated list", "Restart PanCode to load changes."),
+				submenu: editTextSubmenu("Edit provider packages comma-separated list", "Restart PanCode to load changes."),
 				affordance: "free text",
 			},
 		),

@@ -882,9 +882,9 @@ function stripProjectWidening(
 	if (isRecord(blob.integrations)) {
 		const integrations: Record<string, unknown> = { ...blob.integrations };
 		let changed = false;
-		if (Object.hasOwn(integrations, "runtimePlugins")) {
-			drop("integrations.runtimePlugins", "runtime plugins are loaded only from user settings; project value ignored");
-			delete integrations.runtimePlugins;
+		if (Object.hasOwn(integrations, "providerPackages")) {
+			drop("integrations.providerPackages", "provider packages are loaded only from user settings; project value ignored");
+			delete integrations.providerPackages;
 			changed = true;
 		}
 		if (isRecord(integrations.projectResources) && Object.hasOwn(integrations.projectResources, "trustProjectImports")) {

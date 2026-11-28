@@ -158,7 +158,7 @@ const RESTART_REQUIRED_FIELDS = new Set<string>([
 	"systemOne.use",
 	"interface.mode",
 	"interface.fullscreenScrollbar",
-	"integrations.runtimePlugins",
+	"integrations.providerPackages",
 	// Store paths read the roots once per process, so admission, grants and the write agree for a whole session.
 	"store",
 ]);

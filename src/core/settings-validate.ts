@@ -1350,7 +1350,7 @@ function validateIntegrations(issues: Issues, value: unknown, settings: PancodeS
 		issues.unknownKeys("integrations", integrations, [
 			"projectResources",
 			"externalAgents",
-			"runtimePlugins",
+			"providerPackages",
 			"hub",
 			"git",
 		]);
@@ -1369,9 +1369,9 @@ function validateIntegrations(issues: Issues, value: unknown, settings: PancodeS
 				}
 			}
 		}
-		if ("runtimePlugins" in integrations) {
-			const parsed = expectStringArray(issues, "integrations.runtimePlugins", integrations.runtimePlugins);
-			if (parsed !== undefined) settings.integrations.runtimePlugins = parsed;
+		if ("providerPackages" in integrations) {
+			const parsed = expectStringArray(issues, "integrations.providerPackages", integrations.providerPackages);
+			if (parsed !== undefined) settings.integrations.providerPackages = parsed;
 		}
 		if ("hub" in integrations) {
 			if (!isRecord(integrations.hub)) issues.add("integrations.hub", `expected a map, got ${describe(integrations.hub)}`);

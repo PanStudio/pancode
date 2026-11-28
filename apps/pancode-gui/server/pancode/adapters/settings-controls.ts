@@ -81,7 +81,7 @@ const CONFIRM: Record<string, string> = {
 		"Runs that leave the history ring also lose their event journal directory. Lowering this deletes journals that PanCode on the desktop shows.",
 	"integrations.projectResources.trustProjectImports":
 		"Enabling this exposes this project's .claude/skills, .codex/skills and .github resource roots to the model.",
-	"integrations.runtimePlugins":
+	"integrations.providerPackages":
 		"These package names are loaded as code when the next session starts. Only name packages you trust.",
 };
 /** A confirmation that applies only to writes of one value; other values save without it. */
