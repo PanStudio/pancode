@@ -15,8 +15,9 @@ import { PROFILE_IDS } from "../domains/system-one/profiles.js";
 import type { PancodeSettings } from "./config.js";
 import { STORE_BACKEND_KINDS, type StoreS3Setting, type StoreSharedSetting, THINKING_LEVELS } from "./defaults.js";
 import { MODEL_TIERS } from "./model-tier.js";
+import { parseEgressAllowEntry, upstreamProxyProblem } from "./sandbox/egress/policy.js";
 import { homeReadRootProblem } from "./sandbox/home-read-roots.js";
-import { HOME_READ_MODES, HOME_READ_TOOLCHAINS } from "./sandbox/types.js";
+import { EGRESS_MODES, EGRESS_PRESET_NAMES, HOME_READ_MODES, HOME_READ_TOOLCHAINS } from "./sandbox/types.js";
 import {
 	describe,
 	expectBoolean,
@@ -343,6 +344,66 @@ export function validateHomeReads(issues: Issues, raw: unknown, settings: Pancod
 					}),
 				),
 			];
+		}
+	}
+}
+
+/** `safety.egress`: per-caller shell egress and the upstream proxy. */
+export function validateEgress(issues: Issues, raw: unknown, settings: PancodeSettings): void {
+	if (!isRecord(raw)) {
+		issues.add("safety.egress", `expected a map, got ${describe(raw)}`);
+		return;
+	}
+	issues.unknownKeys("safety.egress", raw, ["main", "workers", "upstreamProxy"]);
+	for (const caller of ["main", "workers"] as const) {
+		if (!(caller in raw)) continue;
+		const path = `safety.egress.${caller}`;
+		const value = raw[caller];
+		if (!isRecord(value)) {
+			issues.add(path, `expected a map, got ${describe(value)}`);
+			continue;
+		}
+		issues.unknownKeys(path, value, ["mode", "allow", "presets"]);
+		const next = settings.safety.egress[caller];
+		if ("mode" in value) {
+			const parsed = expectEnum(issues, `${path}.mode`, value.mode, EGRESS_MODES);
+			if (parsed !== undefined) next.mode = parsed;
+		}
+		if ("allow" in value) {
+			const parsed = expectStringArray(issues, `${path}.allow`, value.allow);
+			if (parsed !== undefined) {
+				next.allow = parsed.filter((entry) => {
+					const origin = parseEgressAllowEntry(entry);
+					if (typeof origin === "string") issues.add(`${path}.allow`, `${JSON.stringify(entry)}: ${origin}`);
+					return typeof origin !== "string";
+				});
+			}
+		}
+		if ("presets" in value) {
+			const parsed = expectStringArray(issues, `${path}.presets`, value.presets);
+			if (parsed !== undefined) {
+				next.presets = [
+					...new Set(
+						parsed.filter((name): name is (typeof EGRESS_PRESET_NAMES)[number] => {
+							const known = (EGRESS_PRESET_NAMES as readonly string[]).includes(name);
+							if (!known) issues.add(`${path}.presets`, `${name}: unknown preset (known: ${EGRESS_PRESET_NAMES.join(", ")})`);
+							return known;
+						}),
+					),
+				];
+			}
+		}
+	}
+	if ("upstreamProxy" in raw) {
+		if (raw.upstreamProxy === null) settings.safety.egress.upstreamProxy = null;
+		else {
+			const parsed = expectString(issues, "safety.egress.upstreamProxy", raw.upstreamProxy);
+			if (parsed !== undefined) {
+				// The value may carry credentials, so the diagnostic never repeats it.
+				const problem = upstreamProxyProblem(parsed);
+				if (problem !== null) issues.add("safety.egress.upstreamProxy", problem);
+				else settings.safety.egress.upstreamProxy = parsed;
+			}
 		}
 	}
 }

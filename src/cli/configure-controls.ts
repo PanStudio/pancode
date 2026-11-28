@@ -7,6 +7,7 @@ import {
 	applyControlValue,
 	controlInstructions,
 	formatControlValue,
+	hasRedactedControlCredentials,
 	type SettingControl,
 } from "../core/settings-controls.js";
 import { SettingsValidationError } from "../core/settings-issues.js";
@@ -17,6 +18,7 @@ import { createLifecyclePresenter } from "./lifecycle-presenter.js";
 
 function editText(control: SettingControl, value: unknown): string {
 	if (value === null || value === undefined) return "";
+	if (hasRedactedControlCredentials(control.path, value)) return "";
 	return control.kind === "list"
 		? (value as string[]).join(", ")
 		: control.kind === "json"
@@ -64,8 +66,8 @@ export async function editSettingControl(prompts: ConfigurePrompts, control: Set
 	const current = getAtPath(readSettings(), control.path);
 	presenter.fields([
 		["Setting", control.path],
-		["Current", formatControlValue(current)],
-		["Shipped default", formatControlValue(getAtPath(DEFAULT_SETTINGS, control.path))],
+		["Current", formatControlValue(current, control.path)],
+		["Shipped default", formatControlValue(getAtPath(DEFAULT_SETTINGS, control.path), control.path)],
 		["Save scope", "Global default; current sessions follow their reload rules"],
 	]);
 	if (control.readOnly) {

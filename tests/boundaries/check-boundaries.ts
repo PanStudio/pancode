@@ -783,7 +783,7 @@ const FUNCTION_LINE_EXEMPTIONS: ReadonlyMap<string, number> = new Map([
 	["src/cli/modes/print.ts#runHeadlessMainAgent", 856],
 	["src/cli/uninstall.ts#runUninstallCommand", 543],
 	["src/cli/upgrade.ts#runUpgradeCommand", 568],
-	["src/core/settings-validate.ts#validateSettings", 1292],
+	["src/core/settings-validate.ts#validateSettings", 1288],
 	["src/domains/dispatch/admission.ts#createCapacityAdmissionController", 547],
 	["src/domains/dispatch/execution-scheduler.ts#executePlan", 662],
 	["src/domains/dispatch/fleet-run.ts#runFleetHoldingWorkspace", 1043],
@@ -806,7 +806,7 @@ const FUNCTION_LINE_EXEMPTIONS: ReadonlyMap<string, number> = new Map([
 	["src/engine/acp/server.ts#servePancodeAcpAgent", 3780],
 	["src/engine/loop-guard.ts#createLoopGuardRegistration", 1490],
 	["src/engine/worker-runtime.ts#startWorkerRun", 2346],
-	["src/entry/orchestrator.ts#bootOrchestrator", 3677],
+	["src/entry/orchestrator.ts#bootOrchestrator", 3676],
 	["src/interactive/chat-panel.ts#createChatPanel", 2064],
 	["src/interactive/chat-panel.ts#createChatPanel.applyEvent", 534],
 	["src/interactive/editor-submit.ts#createEditorSubmitController", 668],
@@ -838,7 +838,7 @@ const FUNCTION_LINE_EXEMPTIONS: ReadonlyMap<string, number> = new Map([
 	["src/tools/dispatch-runner.ts#runDispatchTool", 550],
 	["src/tools/gateway/index.ts#createGatewayTool", 875],
 	["src/tools/gateway/mcp-capabilities.ts#createMcpCapabilitySource", 1680],
-	["src/tools/registry.ts#createRegistry", 2329],
+	["src/tools/registry.ts#createRegistry", 2340],
 ]);
 
 function memberNameText(name: ts.PropertyName | ts.BindingName, tree: ts.SourceFile): string {

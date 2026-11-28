@@ -585,6 +585,59 @@ function projectJudgeRoute(
 	return Object.keys(route).length === 0 ? undefined : route;
 }
 
+const EGRESS_RANK: Record<string, number> = { off: 0, proxied: 1, open: 2 };
+
+/**
+ * A trusted project's `safety.egress`, cut to modes that lower the operator's.
+ * Which origins a shell may reach, and the upstream proxy it goes through, are
+ * the operator's alone, so a repository can never grant its own commands a host.
+ */
+function projectEgressModes(
+	egress: unknown,
+	origin: SettingsOrigin,
+	issues: SettingsLayerIssue[],
+	userBlob: Record<string, unknown> | undefined,
+): Record<string, unknown> | undefined {
+	const drop = (path: string, message: string) => issues.push({ origin, path, message });
+	if (!isRecord(egress)) {
+		drop("safety.egress", "a project sets only lower shell network modes, as a map; project value ignored");
+		return undefined;
+	}
+	const userSafety = isRecord(userBlob?.safety) ? userBlob.safety : {};
+	const userEgress = isRecord(userSafety.egress) ? userSafety.egress : {};
+	const kept: Record<string, unknown> = {};
+	for (const [key, value] of Object.entries(egress)) {
+		if (key !== "main" && key !== "workers") {
+			drop(`safety.egress.${key}`, "the upstream proxy is set only in user settings; project value ignored");
+			continue;
+		}
+		if (!isRecord(value)) {
+			drop(`safety.egress.${key}`, "a project sets only a lower shell network mode, as a map; project value ignored");
+			continue;
+		}
+		for (const field of Object.keys(value)) {
+			if (field !== "mode")
+				drop(
+					`safety.egress.${key}.${field}`,
+					"shell network hosts are granted only in user settings; project value ignored",
+				);
+		}
+		if (!Object.hasOwn(value, "mode")) continue;
+		const userCaller = isRecord(userEgress[key]) ? userEgress[key] : {};
+		const operator = EGRESS_RANK[String(userCaller.mode)] ?? EGRESS_RANK[DEFAULT_SETTINGS.safety.egress[key].mode] ?? 0;
+		const requested = EGRESS_RANK[String(value.mode)];
+		if (requested === undefined || requested > operator) {
+			drop(
+				`safety.egress.${key}.mode`,
+				"a project may only lower a shell network mode from user settings; project value ignored",
+			);
+			continue;
+		}
+		kept[key] = { mode: value.mode };
+	}
+	return Object.keys(kept).length === 0 ? undefined : kept;
+}
+
 function stripProjectOperatorSafety(
 	blob: Record<string, unknown>,
 	origin: SettingsOrigin,
@@ -599,6 +652,14 @@ function stripProjectOperatorSafety(
 		issues.push({ origin, path: `safety.${key}`, message });
 		delete safety[key];
 		stripped = true;
+	}
+	if (Object.hasOwn(safety, "egress")) {
+		const modes = projectEgressModes(safety.egress, origin, issues, userBlob);
+		if (!isDeepStrictEqual(modes, safety.egress)) {
+			stripped = true;
+			if (modes === undefined) delete safety.egress;
+			else safety.egress = modes;
+		}
 	}
 	if (Object.hasOwn(safety, "judge")) {
 		const route = projectJudgeRoute(safety.judge, origin, issues, userBlob);
@@ -645,7 +706,7 @@ const FLEET_MODE_RANK: Record<string, number> = { deny: 0, fail: 0, escalate: 1,
 
 /**
  * Trusted project settings may tighten containment, never widen it: the
- * sandbox, its network, home reads, snapshots and the fleet ask route only move toward the
+ * sandbox, home reads, snapshots and the fleet ask route only move toward the
  * stricter side of the operator's value, and project layers cannot load code
  * into PanCode or trust their own imports.
  */
@@ -669,11 +730,6 @@ function stripProjectWidening(
 				delete safety.sandbox;
 				changed = true;
 			}
-		}
-		if (Object.hasOwn(safety, "sandboxNetwork") && safety.sandboxNetwork !== false) {
-			drop("safety.sandboxNetwork", "sandbox network access is enabled only in user settings; project value ignored");
-			delete safety.sandboxNetwork;
-			changed = true;
 		}
 		if (Object.hasOwn(safety, "homeReads")) {
 			const homeReads = projectHomeReads(safety.homeReads, drop);

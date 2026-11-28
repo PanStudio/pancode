@@ -274,9 +274,10 @@ Approval-required calls pause for one operator confirmation, which grants only t
 Workspace edits run without asking, and so do shell commands (bash and
 run_script), inside an OS sandbox: the workspace, the scratch roots (TMPDIR,
 /tmp, /var/tmp and safety.scratchRoots), package caches and the repository's
-git data are writable; the network is on; credentials, the SSH agent, secret
-files such as .env and private keys, and local Unix sockets are hidden. Reads
-run anywhere but secret paths.
+git data are writable; network goes through a proxy that names any host it
+refuses, and a server started here is unreachable from outside; credentials,
+the SSH agent, secret files such as .env and private keys, and local Unix
+sockets are hidden. Reads run anywhere but secret paths.
 Pushes, publishes, code-host and cloud commands and network writes leave the
 sandbox on their own once PanCode's safety judge allows them; never add
 `unsandboxed: true` to them. Rerun a command the sandbox broke once with

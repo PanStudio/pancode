@@ -8,6 +8,9 @@ import { canonicalizePath } from "../path-canonical.js";
 import { isSameOrDescendant, relativePathEscapes } from "../path-containment.js";
 import { pancodeConfigPath } from "../xdg.js";
 import { sandboxAvailability, sandboxNetworkIsolation, wslKind } from "./availability.js";
+import type { EgressBridgePlan } from "./egress/bridge.js";
+import { egressGrants } from "./egress/policy.js";
+import { EGRESS_PROXY_PORT, egressProxyEnv } from "./egress/setup.js";
 import { planHomeReads } from "./home-reads.js";
 import { buildSandboxInvocation } from "./invocation.js";
 import { withMountAliases } from "./mount-aliases.js";
@@ -115,7 +118,10 @@ export function workerSandboxWritesNothing(): boolean {
 
 /** True when this process is a worker whose children, MCP servers included, start under an OS sandbox. */
 export function workerSandboxApplies(): boolean {
-	return active !== null && withNetworkIsolation(sandboxAvailability(), active.network).available;
+	return (
+		active !== null &&
+		withNetworkIsolation(sandboxAvailability(), active.network && active.egress === undefined).available
+	);
 }
 
 /**
@@ -322,6 +328,8 @@ export function composeWorkerSandboxInvocation(
 	cwd: string,
 	availability: SandboxAvailability,
 	maskedPaths: ReadonlyArray<SandboxMaskedPath> = workerSandboxMasks(),
+	/** Bubblewrap, network off: run the egress setup that hands the proxy its listener. */
+	egressBridge = false,
 	startup: ((writableRoots: ReadonlyArray<string>, backend: SandboxBackend) => StartupPathProtection) | null = null,
 ): SandboxInvocation | null {
 	if (!availability.available || availability.backend === null || availability.executable === null) return null;
@@ -378,10 +386,20 @@ export function composeWorkerSandboxInvocation(
 		...sockets.fields,
 		...(homeReads !== undefined ? { readRestriction: homeReads.restriction } : {}),
 		unsetEnv: SANDBOX_UNSET_ENV,
+		...(egressBridge ? { egressBridge: { execPath: process.execPath, port: EGRESS_PROXY_PORT } } : {}),
 		// Under bubblewrap the private /tmp is the only scratch space outside the
 		// writable roots, and an inherited TMPDIR elsewhere would be read-only.
 		// macOS keeps its per-user TMPDIR, which the seatbelt profile allows.
-		...(availability.backend === "bwrap" ? { setEnv: { TMPDIR: "/tmp", TMP: "/tmp", TEMP: "/tmp" } } : {}),
+		...(availability.backend === "bwrap"
+			? {
+					setEnv: {
+						TMPDIR: "/tmp",
+						TMP: "/tmp",
+						TEMP: "/tmp",
+						...(egressBridge ? egressProxyEnv(EGRESS_PROXY_PORT) : {}),
+					},
+				}
+			: {}),
 	};
 	return buildSandboxInvocation(spec, availability.backend, availability.executable);
 }
@@ -393,6 +411,8 @@ export type SandboxedSpawnPlan =
 			file: string;
 			args: string[];
 			env: SandboxEnvPolicy;
+			/** Proxied: spawn with `egressStdio` and serve the launch with `bridgeEgress`. */
+			egress?: EgressBridgePlan;
 			/** Removes the mount points of absent startup paths once the sandbox has exited. */
 			afterExit: () => void;
 	  }
@@ -548,6 +568,32 @@ function reportSocketFallback(policy: WorkerSandboxSpec, availability: SandboxAv
 	if (state.kind === "masks") process.stderr.write(`[worker] sandbox ${unixSocketStateLine(state)}\n`);
 }
 
+/**
+ * How one worker launch reaches the network. A proxied policy needs
+ * bubblewrap's network namespace and a caller that serves the bridge; under
+ * seatbelt it stays open, as the worker's line says, and a synchronous caller
+ * gets none.
+ */
+function launchNetwork(
+	policy: WorkerSandboxSpec,
+	availability: SandboxAvailability,
+	options: { network?: boolean; bridge?: boolean },
+): "off" | "proxied" | "open" {
+	if (options.network === true) return "open";
+	if (!policy.network) return "off";
+	if (policy.egress === undefined || availability.backend === "seatbelt") return "open";
+	return options.bridge === true ? "proxied" : "off";
+}
+
+/** A proxied worker launch's grants: its sealed origins, with no asks (headless). */
+function workerEgressPlan(policy: WorkerSandboxSpec): EgressBridgePlan {
+	return {
+		grants: egressGrants(policy.egress?.origins ?? [], []),
+		denyHint: "the operator grants it in safety.egress.workers.allow or presets",
+		...(policy.egress?.upstreamProxy !== undefined ? { upstreamProxy: policy.egress.upstreamProxy } : {}),
+	};
+}
+
 /** A network-off command also needs `--unshare-net`; without it the backend counts as unavailable. */
 function withNetworkIsolation(availability: SandboxAvailability, network: boolean): SandboxAvailability {
 	if (network) return availability;
@@ -567,17 +613,28 @@ export function planSandboxedSpawn(
 	command: SandboxCommand,
 	cwd: string,
 	typedGitWritablePaths: ReadonlyArray<string> = [],
-	options: { network?: boolean } = {},
+	options: {
+		/** An attested MCP network grant: this process keeps the host's network. */
+		network?: boolean;
+		/**
+		 * The caller spawns asynchronously and serves a returned `egress` plan.
+		 * Without it a proxied policy runs the command with no network.
+		 */
+		bridge?: boolean;
+	} = {},
 ): SandboxedSpawnPlan {
 	const policy = active;
 	if (policy === null) return { kind: "direct" };
-	const network = policy.network || options.network === true;
-	let availability = withNetworkIsolation(sandboxAvailability(), network);
+	const probe = (): SandboxAvailability => {
+		const found = sandboxAvailability();
+		return withNetworkIsolation(found, launchNetwork(policy, found, options) === "open");
+	};
+	let availability = probe();
 	// The orchestrator saw the backend work here; one failed local probe (a
 	// timeout is not cached) gets one retry before the command is refused.
-	if (!availability.available && policy.backendExpected === true) {
-		availability = withNetworkIsolation(sandboxAvailability(), network);
-	}
+	if (!availability.available && policy.backendExpected === true) availability = probe();
+	const mode = launchNetwork(policy, availability, options);
+	const network = mode === "open";
 	if (policy.mode === "required" && availability.available && availability.degraded !== undefined) {
 		return {
 			kind: "refused",
@@ -597,6 +654,7 @@ export function planSandboxedSpawn(
 			cwd,
 			availability,
 			availability.available ? workerSpawnMasks(policy, availability.backend, cwd) : workerSandboxMasks(),
+			mode === "proxied",
 			(roots, backend) => {
 				startup = startupPathProtection(roots, backend);
 				return startup;
@@ -612,6 +670,7 @@ export function planSandboxedSpawn(
 			file: invocation.file,
 			args: invocation.args,
 			env: { passEnv: policy.passEnv ?? [], secretNames: policy.secretEnv ?? [] },
+			...(mode === "proxied" ? { egress: workerEgressPlan(policy) } : {}),
 			afterExit: holdStartupMountPoints(startup.masks),
 		};
 	}

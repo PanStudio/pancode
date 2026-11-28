@@ -135,7 +135,9 @@ const NEXT_TURN_FIELDS = new Set<string>([
 	// Dispatch reads both into each new WorkerSpec; a running worker keeps the
 	// policy it was spawned with.
 	"safety.sandbox",
-	"safety.sandboxNetwork",
+	// The main registry reads the session shell's egress at each call; dispatch seals the workers' into each new
+	// WorkerSpec. A running command keeps the grants it launched with.
+	"safety.egress",
 	// The main registry reads the session's mode and list for each contained call; dispatch seals the workers' into
 	// each new WorkerSpec. A running command keeps what it launched with.
 	"safety.homeReads",

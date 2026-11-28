@@ -161,6 +161,29 @@ test("settings controls derive from the engine registry, write only the user lay
 		assert.deepEqual(accepted.changed, [{ path: "safety.yoloConfinement", value: "unconfined" }]);
 		const contained = await json(await patch({ path: "safety.yoloConfinement", value: "contained" }), SettingWritten);
 		assert.deepEqual(contained.changed, [{ path: "safety.yoloConfinement", value: "contained" }]);
+
+		// safety.egress.upstreamProxy credentials are stored in user settings and redacted on every read and write response.
+		const savedProxy = await json(
+			await patch({ path: "safety.egress.upstreamProxy", value: "http://alice:first-secret@proxy.corp.test:3128" }),
+			SettingWritten,
+		);
+		assert.deepEqual(savedProxy.changed, [
+			{ path: "safety.egress.upstreamProxy", value: "http://***@proxy.corp.test:3128" },
+		]);
+		assert.equal(JSON.stringify(savedProxy).includes("first-secret"), false);
+		const rotatedProxy = await json(
+			await patch({ path: "safety.egress.upstreamProxy", value: "http://alice:second-secret@proxy.corp.test:3128" }),
+			SettingWritten,
+		);
+		assert.deepEqual(rotatedProxy.changed, [
+			{ path: "safety.egress.upstreamProxy", value: "http://***@proxy.corp.test:3128" },
+		]);
+		assert.equal(JSON.stringify(rotatedProxy).includes("second-secret"), false);
+		const rereadProxy = await json(await h.request(base), SettingsControls);
+		assert.equal(
+			rereadProxy.controls.find((control) => control.path === "safety.egress.upstreamProxy")?.value,
+			"http://***@proxy.corp.test:3128",
+		);
 	} finally {
 		await h.close();
 	}

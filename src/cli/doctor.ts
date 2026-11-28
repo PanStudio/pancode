@@ -2,13 +2,15 @@
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import path from "node:path";
 import { readSettings } from "../core/config.js";
-import { DEFAULT_SETTINGS, type HomeReadsSettings } from "../core/defaults.js";
+import { DEFAULT_SETTINGS, type EgressSettings, type HomeReadsSettings } from "../core/defaults.js";
 import { canonicalizePath } from "../core/path-canonical.js";
 import { proxyEnvSummary } from "../core/proxy-env.js";
-import { sandboxAvailability } from "../core/sandbox/availability.js";
+import { sandboxAvailability, sandboxNetworkIsolation } from "../core/sandbox/availability.js";
+import { egressGrants, redactedUpstreamProxy } from "../core/sandbox/egress/policy.js";
 import { homeReadList } from "../core/sandbox/home-read-roots.js";
 import { homeReadsLine, planHomeReads } from "../core/sandbox/home-reads.js";
 import {
+	type MainSandboxEgressFacts,
 	mainSandboxLine,
 	mainSandboxPolicy,
 	mainSandboxWritableRoots,
@@ -241,6 +243,7 @@ export function shellSandboxFinding(workspaceRoot: string): DoctorFinding {
 				? undefined
 				: { count: secrets.masks.length, capped: secrets.capped, cappedRoots: secrets.cappedRoots, workspace },
 			unixSockets,
+			mainEgressFacts(availability),
 		),
 	};
 }
@@ -280,6 +283,23 @@ function homeReadsFinding(workspaceRoot: string): DoctorFinding {
 			list !== undefined && backend === null
 				? `${homeReadsLine(setting, null)}; the main session's commands are not contained here, so nothing is hidden from them`
 				: homeReadsLine(setting, plan),
+	};
+}
+
+/** The operator's `safety.egress.main` and upstream proxy as the doctor shows them, credentials redacted. */
+function mainEgressFacts(availability: ReturnType<typeof sandboxAvailability>): MainSandboxEgressFacts {
+	let egress: EgressSettings;
+	try {
+		egress = readSettings().safety.egress;
+	} catch {
+		// An unreadable settings file has its own doctor row; judge with the default.
+		egress = DEFAULT_SETTINGS.safety.egress;
+	}
+	return {
+		mode: egress.main.mode,
+		granted: egressGrants(egress.main.allow, egress.main.presets).origins.size,
+		upstreamProxy: egress.upstreamProxy === null ? null : redactedUpstreamProxy(egress.upstreamProxy),
+		isolationFailure: egress.main.mode === "open" ? null : sandboxNetworkIsolation(availability),
 	};
 }
 

@@ -5,6 +5,7 @@
  * sandbox modeled on Codex CLI's workspace-write mode: the filesystem is readable, writes land only in the writable
  * roots and a private /tmp, and network is off unless the run was granted it.
  */
+import type { EgressBridgeSetup } from "./egress/setup.js";
 
 /** `safety.sandbox` setting values. */
 export const SANDBOX_MODES = ["auto", "required", "off"] as const;
@@ -45,6 +46,27 @@ export interface HomeReadList {
 	toolchains: ReadonlyArray<HomeReadToolchain>;
 }
 
+/**
+ * How a sandboxed shell reaches the network (`safety.egress.<caller>.mode`).
+ * `off` isolates it with no network; `proxied` isolates it and gives it only
+ * PanCode's proxy, which admits the caller's granted origins; `open` leaves it
+ * on the host network, unmonitored.
+ */
+export const EGRESS_MODES = ["off", "proxied", "open"] as const;
+export type EgressMode = (typeof EGRESS_MODES)[number];
+
+/** Named exact host/port bundles (`safety.egress.<caller>.presets`); egress/policy.ts lists their origins. */
+export const EGRESS_PRESET_NAMES = ["npm", "pypi", "github", "crates", "go"] as const;
+export type EgressPresetName = (typeof EGRESS_PRESET_NAMES)[number];
+
+/** A worker's proxied shell egress, present only when its network goes through PanCode's proxy. */
+export interface WorkerEgressSpec {
+	/** The exact `host:port` origins the run may reach, presets expanded. */
+	origins: ReadonlyArray<string>;
+	/** The operator's upstream proxy URL, credentials included; never shown. */
+	upstreamProxy?: string;
+}
+
 export const WORKER_SANDBOX_SPEC_VERSION = 1;
 
 /**
@@ -70,6 +92,11 @@ export interface WorkerSandboxSpec {
 	readableRoots: ReadonlyArray<string>;
 	/** False isolates the command in an empty network namespace. */
 	network: boolean;
+	/**
+	 * With `network`, the command reaches only PanCode's proxy, which admits these
+	 * origins (`safety.egress.workers.mode: proxied`); absent, `network` is the host's.
+	 */
+	egress?: WorkerEgressSpec;
 	/** `safety.sandboxPassEnv`: variables the environment scrub keeps. Absent when empty. */
 	passEnv?: ReadonlyArray<string>;
 	/** Credential variables PanCode's own targets read, scrubbed whatever their names. Absent when empty. */
@@ -140,7 +167,14 @@ export interface SandboxInvocationSpec {
 	readOnlyPaths?: ReadonlyArray<string>;
 	gitWritablePaths?: ReadonlyArray<string>;
 	readableRoots?: ReadonlyArray<string>;
+	/** True keeps the host's network namespace (egress `open`); false isolates the command. */
 	network: boolean;
+	/**
+	 * Bubblewrap with `network: false` only: run the egress setup ahead of the
+	 * command, which hands a loopback listener in the command's namespace to
+	 * the host proxy over the launch's IPC descriptor (egress/bridge.ts).
+	 */
+	egressBridge?: EgressBridgeSetup;
 	maskedPaths: ReadonlyArray<SandboxMaskedPath>;
 	/** Variables set inside the sandbox, after the spawn environment. */
 	setEnv?: Readonly<Record<string, string>>;
