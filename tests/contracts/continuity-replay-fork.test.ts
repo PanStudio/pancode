@@ -14,9 +14,7 @@ import type {
 	ContinuityCommitData,
 	HandoffEvent,
 	HandoffIdentity,
-	HandoffPolicy,
 } from "../../src/domains/session/continuity/contract.js";
-import { validateContinuityNote } from "../../src/domains/session/continuity/note.js";
 import { HANDOFF_RECOVERY_REQUEST_CUSTOM_TYPE } from "../../src/domains/session/continuity/operator-request.js";
 import {
 	continuityReplayBlocks,
@@ -36,6 +34,7 @@ import {
 	continuityContextFromSession,
 	withContinuityReplay,
 } from "../../src/session-control/model-session-replay.js";
+import { admit, handoffPolicy } from "../harness/continuity-fixture.js";
 import { type IsolatedPancodeEnv, isolatePancodeEnv } from "../harness/scratch-env.js";
 
 /**
@@ -54,26 +53,8 @@ const AT = "2026-09-21T09:00:00.000Z";
 const PREPARED_AT = 1_000_000;
 const NOW = PREPARED_AT + 10_000;
 
-function admit(text: string): AcceptedNote {
-	const result = validateContinuityNote(text);
-	if (!result.ok) throw new Error(`fixture note rejected: ${result.reason}`);
-	return result.accepted;
-}
-
 const NOTE_A = admit("A: finish the parser rewrite; the failing case is a nested fence");
 const NOTE_B = admit("B: the child's own handoff, unrelated to A");
-
-function policy(): HandoffPolicy {
-	return {
-		preparedAtMs: PREPARED_AT,
-		automaticDeadlineAtMs: PREPARED_AT + 600_000,
-		maxAttempts: 2,
-		maxSummaryCallsPerAttempt: 2,
-		additionalSummaryRetriesPerCall: 0,
-		maxSummaryStreamInvocations: 4,
-		flushRetryLimit: 3,
-	};
-}
 
 interface HandoffShape {
 	prefix: string;
@@ -138,7 +119,7 @@ function checkpoint(shape: HandoffShape, note: AcceptedNote, over: Partial<Conti
 		schemaVersion: 1,
 		identity: over.identity ?? identity(shape),
 		accepted: over.accepted ?? note,
-		policy: over.policy ?? policy(),
+		policy: over.policy ?? handoffPolicy(PREPARED_AT),
 		commit,
 		state: over.state ?? { transition: commit.transition, event: { phase: "ready" }, activeResume: null, delivery: null },
 	} as ContinuityCheckpointPayload;
@@ -194,7 +175,9 @@ describe("continuity through real forks, replay and export", () => {
 		contract.append({ id: "m1", parentId: null, at: AT, kind: "user", payload: { text: "first" } });
 		contract.append({ id: "m2", parentId: "m1", at: AT, kind: "assistant", payload: { text: "second" } });
 		const shape: HandoffShape = { prefix: "a", sessionId: meta.id, anchor: "m2", initiating: "m1" };
-		contract.appendEntry(tx(shape, "a-prep", null, 0, 0, { phase: "prepared", accepted: NOTE_A, policy: policy() }));
+		contract.appendEntry(
+			tx(shape, "a-prep", null, 0, 0, { phase: "prepared", accepted: NOTE_A, policy: handoffPolicy(PREPARED_AT) }),
+		);
 		contract.appendEntry(tx(shape, "a-reduce", "a-prep", 1, 1, { phase: "reducing" }));
 		contract.appendEntry(carryingSummary(shape, checkpoint(shape, NOTE_A)));
 		contract.appendEntry(commitEntry(checkpoint(shape, NOTE_A)));
@@ -304,7 +287,9 @@ describe("continuity through real forks, replay and export", () => {
 		const child = contract.fork("m4");
 		contract.append({ id: "c1", parentId: "m4", at: AT, kind: "user", payload: { text: "child work" } });
 		const shapeB: HandoffShape = { prefix: "b", sessionId: child.id, anchor: "c1", initiating: "c1" };
-		contract.appendEntry(tx(shapeB, "b-prep", null, 0, 0, { phase: "prepared", accepted: NOTE_B, policy: policy() }));
+		contract.appendEntry(
+			tx(shapeB, "b-prep", null, 0, 0, { phase: "prepared", accepted: NOTE_B, policy: handoffPolicy(PREPARED_AT) }),
+		);
 		contract.appendEntry(tx(shapeB, "b-reduce", "b-prep", 1, 1, { phase: "reducing" }));
 		contract.appendEntry(carryingSummary(shapeB, checkpoint(shapeB, NOTE_B)));
 		contract.appendEntry(commitEntry(checkpoint(shapeB, NOTE_B)));
@@ -338,7 +323,9 @@ describe("continuity through real forks, replay and export", () => {
 		const b = contract.fork("m4");
 		contract.append({ id: "c1", parentId: "m4", at: AT, kind: "user", payload: { text: "child work" } });
 		const shapeB: HandoffShape = { prefix: "b", sessionId: b.id, anchor: "c1", initiating: "c1" };
-		contract.appendEntry(tx(shapeB, "b-prep", null, 0, 0, { phase: "prepared", accepted: NOTE_B, policy: policy() }));
+		contract.appendEntry(
+			tx(shapeB, "b-prep", null, 0, 0, { phase: "prepared", accepted: NOTE_B, policy: handoffPolicy(PREPARED_AT) }),
+		);
 		contract.appendEntry(tx(shapeB, "b-reduce", "b-prep", 1, 1, { phase: "reducing" }));
 		contract.appendEntry(carryingSummary(shapeB, checkpoint(shapeB, NOTE_B)));
 		contract.appendEntry(commitEntry(checkpoint(shapeB, NOTE_B)));
@@ -420,7 +407,7 @@ describe("continuity through real forks, replay and export", () => {
 				commitEntryId: "a2-commit-entry",
 			},
 			transition: { entryId: "a2-prep", prevEntryId: null, sequence: 0, attempt: 0 },
-			event: { phase: "prepared", accepted: NOTE_B, policy: policy() },
+			event: { phase: "prepared", accepted: NOTE_B, policy: handoffPolicy(PREPARED_AT) },
 		} as unknown as SessionEntryInput);
 
 		const projection = resolveContinuityProjection({
@@ -517,7 +504,9 @@ describe("continuity through real forks, replay and export", () => {
 			tokensAfter: 21_000,
 		};
 		const payload = checkpoint(shape, NOTE_A, { commit: evictedCommit });
-		contract.appendEntry(tx(shape, "a-prep", null, 0, 0, { phase: "prepared", accepted: NOTE_A, policy: policy() }));
+		contract.appendEntry(
+			tx(shape, "a-prep", null, 0, 0, { phase: "prepared", accepted: NOTE_A, policy: handoffPolicy(PREPARED_AT) }),
+		);
 		contract.appendEntry(tx(shape, "a-reduce", "a-prep", 1, 1, { phase: "reducing" }));
 		contract.appendEntry(eviction);
 		contract.appendEntry(commitEntry(payload));
@@ -547,7 +536,9 @@ describe("continuity through real forks, replay and export", () => {
 			tokensBefore: 30_000,
 			tokensAfter: 30_000,
 		};
-		contract.appendEntry(tx(shape, "a-prep", null, 0, 0, { phase: "prepared", accepted: NOTE_A, policy: policy() }));
+		contract.appendEntry(
+			tx(shape, "a-prep", null, 0, 0, { phase: "prepared", accepted: NOTE_A, policy: handoffPolicy(PREPARED_AT) }),
+		);
 		contract.appendEntry(tx(shape, "a-reduce", "a-prep", 1, 1, { phase: "reducing" }));
 		contract.appendEntry(commitEntry(checkpoint(shape, NOTE_A, { commit: onlyCommit })));
 		const render = (entries: ReadonlyArray<SessionEntry>) =>
@@ -579,7 +570,9 @@ describe("continuity through real forks, replay and export", () => {
 			tokensAfter: 21_000,
 		};
 		const payload = checkpoint(shape, NOTE_A, { commit: evictedCommit });
-		contract.appendEntry(tx(shape, "a-prep", null, 0, 0, { phase: "prepared", accepted: NOTE_A, policy: policy() }));
+		contract.appendEntry(
+			tx(shape, "a-prep", null, 0, 0, { phase: "prepared", accepted: NOTE_A, policy: handoffPolicy(PREPARED_AT) }),
+		);
 		contract.appendEntry(tx(shape, "a-reduce", "a-prep", 1, 1, { phase: "reducing" }));
 		contract.appendEntry({
 			kind: "contextEviction",
@@ -614,7 +607,9 @@ describe("continuity through real forks, replay and export", () => {
 		contract.append({ id: "m2", parentId: "m1", at: AT, kind: "assistant", payload: { text: "second" } });
 		const shape: HandoffShape = { prefix: "a", sessionId: meta.id, anchor: "m2", initiating: "m1" };
 		const hostile = admit('note with <script>alert("x")</script>, a ``` fence and a & ampersand');
-		contract.appendEntry(tx(shape, "a-prep", null, 0, 0, { phase: "prepared", accepted: hostile, policy: policy() }));
+		contract.appendEntry(
+			tx(shape, "a-prep", null, 0, 0, { phase: "prepared", accepted: hostile, policy: handoffPolicy(PREPARED_AT) }),
+		);
 		contract.appendEntry(tx(shape, "a-reduce", "a-prep", 1, 1, { phase: "reducing" }));
 		contract.appendEntry(carryingSummary(shape, checkpoint(shape, hostile)));
 		contract.appendEntry(commitEntry(checkpoint(shape, hostile)));

@@ -32,12 +32,18 @@ export {
 	type ExtensionRuntimeHookBridge,
 	type ExtensionRuntimeHookExecutor,
 } from "./runtime-hook-bridge.js";
+export { EXTENSION_SNAPSHOT_DIAGNOSTIC_MESSAGE_CAP } from "./snapshot.js";
 export {
+	assignExtensionModel,
+	auditExtensionInstallRecords,
 	disableExtension,
 	enableExtension,
 	installExtension,
+	installedExtensionClaims,
 	listInstalledExtensions,
+	readExtensionInstallRecord,
 	removeExtension,
+	repairExtensionInstallRecords,
 } from "./state.js";
 export {
 	type ExtensionReloadCandidate,
@@ -60,11 +66,3 @@ export async function syncPackBinaries(
 	const { syncPackBinaries: sync } = await import("./services/binaries.js");
 	return sync(extensionId, cwd, options);
 }
-export { EXTENSION_SNAPSHOT_DIAGNOSTIC_MESSAGE_CAP } from "./snapshot.js";
-export {
-	assignExtensionModel,
-	auditExtensionInstallRecords,
-	installedExtensionClaims,
-	readExtensionInstallRecord,
-	repairExtensionInstallRecords,
-} from "./state.js";

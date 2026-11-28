@@ -31,7 +31,7 @@ Rule ids are checked by `tests/boundaries/check-boundaries.ts`, which `pnpm run 
 - `src/interactive/` is the terminal UI only: `interactive-application.ts`, `chat-panel.ts` and its `chat-*.ts` modules, `overlays/`, `footer/`, `theme/`.
 - `src/cli/` has one lazily imported file per subcommand, listed in `COMMAND_HANDLERS` in `src/cli/index.ts`; headless modes are in `src/cli/modes/`.
 - `src/core/` holds shared leaves: `config.ts` (schema, validation), `defaults.ts`, `tool-names.ts`, `domain-loader.ts`, `telemetry/` (hub, producer, renderer; no I/O).
-- Tests are flat `<topic>-<aspect>.test.ts` files with no source mirroring: `tests/contracts/` and `tests/extended/` import source, `tests/smoke/` and `tests/extended-smoke/` drive the built CLI, `tests/harness/` holds helpers. Find the tests for a module with `grep -rl "<module>.js" tests`.
+- Tests are flat `<topic>-<aspect>.test.ts` files with no source mirroring: `tests/contracts/` and `tests/extended/` import source, `tests/smoke/` drives the built CLI, `tests/harness/` holds helpers. Find the tests for a module with `grep -rl "<module>.js" tests`.
 
 ## Tests
 - `pnpm run test` runs only the curated `coreTests` list in `scripts/ci-tests.mjs`, about one root test file in seven, and `pnpm run test:gui` the curated `guiTests` list. A new test file is added to a list there or no gate runs it.

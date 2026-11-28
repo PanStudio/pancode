@@ -21,6 +21,7 @@ test("check:lane selects changed tests and direct importers, and flags an added 
 		["tests/contracts/new-thing.test.ts", []],
 		["tests/contracts/listed.test.ts", []],
 		["tests/extended/full-only.test.ts", []],
+		["tests/smoke/full-only.test.ts", []],
 	]);
 	const selection = selectLaneTests({
 		changed: [
@@ -28,8 +29,14 @@ test("check:lane selects changed tests and direct importers, and flags an added 
 			"tests/contracts/new-thing.test.ts",
 			"tests/contracts/listed.test.ts",
 			"tests/extended/full-only.test.ts",
+			"tests/smoke/full-only.test.ts",
 		],
-		added: ["tests/contracts/new-thing.test.ts", "tests/contracts/listed.test.ts", "tests/extended/full-only.test.ts"],
+		added: [
+			"tests/contracts/new-thing.test.ts",
+			"tests/contracts/listed.test.ts",
+			"tests/extended/full-only.test.ts",
+			"tests/smoke/full-only.test.ts",
+		],
 		importsOf,
 		lists: { coreTests: ["tests/contracts/listed.test.ts"], guiTests: [], packageTests: [] },
 	});
@@ -39,6 +46,7 @@ test("check:lane selects changed tests and direct importers, and flags an added 
 			"tests/contracts/new-thing.test.ts",
 			"tests/extended/context-map-freshness.test.ts",
 			"tests/extended/full-only.test.ts",
+			"tests/smoke/full-only.test.ts",
 		],
 		unlisted: ["tests/contracts/new-thing.test.ts"],
 	});

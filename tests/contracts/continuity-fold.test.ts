@@ -14,23 +14,16 @@ import {
 	HANDOFF_MAX_WINDOW_MS,
 	type HandoffEvent,
 	type HandoffIdentity,
-	type HandoffPolicy,
 	type OperatorResumeAuthorityEvidence,
 	type TerminalResponseEvidence,
 } from "../../src/domains/session/continuity/contract.js";
 import { foldContinuity } from "../../src/domains/session/continuity/fold.js";
-import { validateContinuityNote } from "../../src/domains/session/continuity/note.js";
+import { admit, handoffPolicy } from "../harness/continuity-fixture.js";
 
 const SESSION = "s-1";
 const PATH = ["u1", "a1", "u2", "a2", "u3"];
 const PREPARED_AT = 1_000_000;
 const NOW = PREPARED_AT + 10_000;
-
-function admit(text: string): AcceptedNote {
-	const result = validateContinuityNote(text);
-	if (!result.ok) throw new Error(`fixture note rejected: ${result.reason}`);
-	return result.accepted;
-}
 
 function identity(over: Partial<HandoffIdentity> = {}): HandoffIdentity {
 	return {
@@ -43,19 +36,6 @@ function identity(over: Partial<HandoffIdentity> = {}): HandoffIdentity {
 		initiatingTurnId: "u1",
 		toolCallId: "tc-1",
 		sourceRevision: "lb-3-0123456789abcdef",
-		...over,
-	};
-}
-
-function policy(over: Partial<HandoffPolicy> = {}): HandoffPolicy {
-	return {
-		preparedAtMs: PREPARED_AT,
-		automaticDeadlineAtMs: PREPARED_AT + 600_000,
-		maxAttempts: 2,
-		maxSummaryCallsPerAttempt: 2,
-		additionalSummaryRetriesPerCall: 0,
-		maxSummaryStreamInvocations: 4,
-		flushRetryLimit: 3,
 		...over,
 	};
 }
@@ -106,7 +86,7 @@ function checkpoint(over: Partial<ContinuityCheckpointPayload> = {}): Continuity
 		schemaVersion: 1,
 		identity: over.identity ?? identity(),
 		accepted: over.accepted ?? NOTE,
-		policy: over.policy ?? policy(),
+		policy: over.policy ?? handoffPolicy(PREPARED_AT),
 		commit,
 		state: over.state ?? { transition: commit.transition, event: { phase: "ready" }, activeResume: null, delivery: null },
 	};
@@ -188,7 +168,7 @@ function hasAnomaly(result: ContinuityFoldResult, kind: ContinuityAnomalyKind): 
 	return result.anomalies.some((anomaly) => anomaly.kind === kind);
 }
 
-const PREPARED = tx("h1-prep", null, 0, 0, { phase: "prepared", accepted: NOTE, policy: policy() });
+const PREPARED = tx("h1-prep", null, 0, 0, { phase: "prepared", accepted: NOTE, policy: handoffPolicy(PREPARED_AT) });
 const REDUCING = tx("h1-reduce", "h1-prep", 1, 1, { phase: "reducing" });
 
 /** prepared -> reducing -> ready, the ordinary successful reduction. */
@@ -546,7 +526,9 @@ describe("continuity fold: chain extension is validated, never inferred from a s
 			commitEntry(),
 			summaryWithCarry(
 				"h1-summary-2",
-				checkpoint({ policy: policy({ maxAttempts: 2, automaticDeadlineAtMs: PREPARED_AT + 800_000 }) }),
+				checkpoint({
+					policy: handoffPolicy(PREPARED_AT, { maxAttempts: 2, automaticDeadlineAtMs: PREPARED_AT + 800_000 }),
+				}),
 			),
 		]);
 		ok(hasAnomaly(mutatedPolicy, "policy_conflict"), "a carry may not rewrite the original policy");
@@ -1144,7 +1126,7 @@ describe("continuity fold: explicit resume authority", () => {
 		// Prepared at 1000, request accepted at 10000, renewed deadline 20000, now
 		// 9000. The ledger order is valid and `now` is comfortably past
 		// preparation, so only the renewal base can catch the rollback.
-		const early = policy({ preparedAtMs: 1_000, automaticDeadlineAtMs: 601_000 });
+		const early = handoffPolicy(PREPARED_AT, { preparedAtMs: 1_000, automaticDeadlineAtMs: 601_000 });
 		const prepared = tx("h1-prep", null, 0, 0, { phase: "prepared", accepted: NOTE, policy: early });
 		const renewed = tx("h1-resume", "h1-pause", 2, 0, {
 			phase: "resumed",
@@ -1199,7 +1181,7 @@ describe("continuity fold: deadlines", () => {
 			tx("h1-prep", null, 0, 0, {
 				phase: "prepared",
 				accepted: NOTE,
-				policy: policy({ automaticDeadlineAtMs: PREPARED_AT + 99_000_000 }),
+				policy: handoffPolicy(PREPARED_AT, { automaticDeadlineAtMs: PREPARED_AT + 99_000_000 }),
 			}),
 		];
 		strictEqual(
@@ -1528,7 +1510,7 @@ describe("continuity fold: applicability and successive handoffs", () => {
 			null,
 			0,
 			0,
-			{ phase: "prepared", accepted: NOTE, policy: policy() },
+			{ phase: "prepared", accepted: NOTE, policy: handoffPolicy(PREPARED_AT) },
 			{
 				identity: identity({ handoffId: "x", preparedEntryId: "x-prep", originSessionId: "s-other" }),
 			},
@@ -1538,7 +1520,7 @@ describe("continuity fold: applicability and successive handoffs", () => {
 			null,
 			0,
 			0,
-			{ phase: "prepared", accepted: NOTE, policy: policy() },
+			{ phase: "prepared", accepted: NOTE, policy: handoffPolicy(PREPARED_AT) },
 			{
 				identity: identity({ handoffId: "y", preparedEntryId: "y-prep", branchAnchorTurnId: "sibling-leaf" }),
 			},
@@ -1548,7 +1530,7 @@ describe("continuity fold: applicability and successive handoffs", () => {
 			null,
 			0,
 			0,
-			{ phase: "prepared", accepted: NOTE, policy: policy() },
+			{ phase: "prepared", accepted: NOTE, policy: handoffPolicy(PREPARED_AT) },
 			{
 				identity: identity({ handoffId: "z", preparedEntryId: "z-prep", initiatingTurnId: "not-on-path" }),
 			},
@@ -1584,11 +1566,18 @@ describe("continuity fold: applicability and successive handoffs", () => {
 				null,
 				0,
 				0,
-				{ phase: "prepared", accepted: note, policy: policy() },
+				{ phase: "prepared", accepted: note, policy: handoffPolicy(PREPARED_AT) },
 				{ identity: ids },
 			),
 			entries: [
-				tx(`${handoffId}-prep`, null, 0, 0, { phase: "prepared", accepted: note, policy: policy() }, { identity: ids }),
+				tx(
+					`${handoffId}-prep`,
+					null,
+					0,
+					0,
+					{ phase: "prepared", accepted: note, policy: handoffPolicy(PREPARED_AT) },
+					{ identity: ids },
+				),
 				tx(`${handoffId}-reduce`, `${handoffId}-prep`, 1, 1, { phase: "reducing" }, { identity: ids }),
 				commitEntry(checkpoint({ identity: ids, accepted: note, commit })),
 				ordinarySummary(`${handoffId}-ordinary`),
@@ -1651,7 +1640,14 @@ describe("continuity fold: applicability and successive handoffs", () => {
 		});
 		const result = fold([
 			PREPARED,
-			tx("h1-prep", null, 0, 0, { phase: "prepared", accepted: NOTE, policy: policy() }, { identity: secondIds }),
+			tx(
+				"h1-prep",
+				null,
+				0,
+				0,
+				{ phase: "prepared", accepted: NOTE, policy: handoffPolicy(PREPARED_AT) },
+				{ identity: secondIds },
+			),
 		]);
 		ok(hasAnomaly(result, "entry_id_reused"));
 		strictEqual(result.validated, false);
