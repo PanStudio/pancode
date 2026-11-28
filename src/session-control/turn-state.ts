@@ -772,6 +772,12 @@ export type ChatLoopSessionCommandsState = TurnStateView<
 	"currentTurnConstraints"
 >;
 
+/** chat-loop/machine-turn: reads whether the conversation is idle enough to admit a job's turn. */
+export type ChatLoopMachineTurnState = TurnStateView<
+	"activeUserTurnId" | "currentAskUserPolicy" | "runtime" | "streaming",
+	never
+>;
+
 /**
  * The thinking level argument is ignored: the agent state owns the level and
  * turn state keeps no copy. The parameter stays optional because existing test

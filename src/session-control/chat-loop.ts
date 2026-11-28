@@ -1,17 +1,10 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
-import { enterAutonomousCommitScope } from "../core/git-commit-attribution.js";
-import { JobClockExpired } from "../core/job-types.js";
 import type { SandboxAvailability } from "../core/sandbox/types.js";
 import { createConversationEggs } from "../domains/session/easter-eggs.js";
 import type { AskUserHandler } from "../tools/ask-user.js";
 import type { SealedCompletion } from "../tools/finish.js";
-import type {
-	MachineTurnProjectionAdmission,
-	MachineTurnProjectionHost,
-	MachineTurnRequest,
-	MachineTurnResult,
-} from "./job-turn-types.js";
+import type { MachineTurnProjectionHost, MachineTurnRequest, MachineTurnResult } from "./job-turn-types.js";
 import type { TurnControlRunner } from "./turn-control-runner.js";
 
 export { runOutOfTurnRound } from "./side-question.js";
@@ -37,7 +30,6 @@ import type { MemoryPromptRequest } from "../domains/memory/prompt-cache.js";
  * machine, and the shared ChatTurnState the modules coordinate through.
  */
 
-import { realpathSync } from "node:fs";
 import type { PancodeSettings } from "../core/config.js";
 import { type PendingSkillRequest, type SkillSurfaceChange, skillSurfaceNames } from "../core/skill-activation.js";
 import type { TelemetryHub } from "../core/telemetry/hub.js";
@@ -71,8 +63,10 @@ import type { AutonomyLevel } from "../lib/autonomy/autonomy.js";
 import type { AskUserToolPolicy, ToolInvokeOptions, ToolRegistry } from "../tools/registry-contract.js";
 import type { VisionSidecar } from "../tools/vision-sidecar.js";
 import type { ApprovalRequestView } from "./approval-request-view.js";
+import { createChatLoopAdmission } from "./chat-loop/admission.js";
 import { createChatLoopCancel } from "./chat-loop/cancel.js";
 import { createChatLoopContextCommands } from "./chat-loop/context-commands.js";
+import { createChatLoopMachineTurn } from "./chat-loop/machine-turn.js";
 import { createChatLoopNotices } from "./chat-loop/notices.js";
 import { createTurnPreparation } from "./chat-loop/preparation.js";
 import { createChatLoopRouteMove } from "./chat-loop/route-move.js";
@@ -1011,6 +1005,7 @@ export function createChatLoop(deps: CreateChatLoopDeps): ChatLoop {
 		eggs,
 		sessionResetListeners,
 		operatorToolLimits,
+		preparingSubmits,
 		currentToolInvokeOptions: (toolCallId) => toolInvokeOptions(loop, state, toolCallId),
 		get sessionToolLimits() {
 			return sessionToolLimits;
@@ -1249,9 +1244,6 @@ export function createChatLoop(deps: CreateChatLoopDeps): ChatLoop {
 
 	// --- the state machine --------------------------------------------------
 
-	let machineTurnOwner: object | null = null;
-	let machineProjectionBinding: { host: MachineTurnProjectionHost } | null = null;
-	let machineProjectionRequired = false;
 	const {
 		continueStoppedTurn,
 		interruptRefusalReason,
@@ -1407,268 +1399,8 @@ export function createChatLoop(deps: CreateChatLoopDeps): ChatLoop {
 		...createChatLoopContextCommands(loop, state),
 	};
 
-	const submitInner = api.submit.bind(api);
-	const submitTracked: ChatLoop["submit"] = (text, options) => {
-		loop.priorSubmit = loop.activeSubmit;
-		const preparationToken = options?.machineTurn?.preparationToken;
-		loop.machinePreparation = preparationToken === undefined ? null : { token: preparationToken, runtime: null };
-		// The flag brackets the whole submit, including the early returns an
-		// admission failure takes, so a refused turn does not leave the pre-warm
-		// believing a turn is still running.
-		loop.turnActive = true;
-		const run = submitInner(text, options).finally(() => {
-			if (loop.machinePreparation?.token === preparationToken) loop.machinePreparation = null;
-			loop.turnActive = false;
-			keepalive.cancel();
-		});
-		// A steer during a run is a submit that returns at once. Replacing the record with it forgot the
-		// live run, so an interrupt's wait for the cancel to settle returned early and shutdown could stop the writer
-		// under a persisting turn. The record covers every submit still going.
-		loop.activeSubmit = Promise.all([loop.priorSubmit, run.catch(() => {})]).then(() => {});
-		return run;
-	};
-
-	// FIFO admission gate. Between entry and `state.streaming = true` a fresh
-	// submit awaits the target probe, auto-compaction, and the session prompt
-	// compile; a second submit arriving in that window used to run the same
-	// pipeline concurrently, skip the probe the first one was still awaiting,
-	// append its user turn first, and leave the first to fail on the engine's
-	// active-prompt invariant after its turn was already in the ledger. Each
-	// submit now waits for the previous one to either own the stream or return,
-	// then re-evaluates `state.streaming`, so a prompt typed during boot lands
-	// as the next steer or follow-up in the order it was typed. The gate is
-	// released at admission, not settlement, so steering stays immediate.
-	let admissionTail: Promise<void> | null = null;
-	api.submit = (text, options = {}) => {
-		const constraints = snapshotTurnConstraints(options.constraints);
-		options = { ...options, ...(constraints === undefined ? {} : { constraints }) };
-		// Capture before admission can await. Internal resubmits inherit the
-		// async scope; every independent public submit explicitly starts its own.
-		const hostRun = options.hostRun === undefined ? undefined : structuredClone(options.hostRun);
-		// The operator owns the slot from the keystroke, not from admission. The
-		// prefix the pre-warm already pushed through stays in it either way, so
-		// aborting here costs nothing and stops the real turn from queueing behind
-		// a request nobody is waiting on.
-		prewarm.cancel();
-		keepalive.cancel();
-		const previous = admissionTail;
-		let release: () => void = () => {};
-		const ticket = new Promise<void>((resolve) => {
-			release = resolve;
-		});
-		admissionTail = ticket;
-		const releaseTicket = (): void => {
-			release();
-			if (admissionTail === ticket) admissionTail = null;
-		};
-		// The window opens here, not at admission: the caller has already cleared
-		// the editor and painted the prompt, and a submit that queues behind the
-		// FIFO gate is still a prompt PanCode is holding. It closes once, at
-		// whichever of admission and settlement comes first, so a refused probe
-		// and a blocked overflow preflight close it as reliably as a turn that
-		// reaches the stream.
-		enterPreparation();
-		let leftPreparation = false;
-		const leaveOnce = (): void => {
-			if (leftPreparation) return;
-			leftPreparation = true;
-			leavePreparation();
-		};
-		const start = async (): Promise<void> => {
-			const { onPreparationVisible, ...submitOptions } = options;
-			try {
-				await onPreparationVisible?.();
-			} catch {
-				// A presentation observer cannot refuse a turn after the editor has
-				// consumed it. The ordinary render path can recover on its next tick.
-			}
-			if (options.isAdmissionCurrent?.() === false) {
-				releaseTicket();
-				return;
-			}
-			return hostRunContext
-				.run(hostRun, () =>
-					submitTracked(text, {
-						...submitOptions,
-						onAdmitted: () => {
-							releaseTicket();
-							leaveOnce();
-							options.onAdmitted?.();
-						},
-					}),
-				)
-				.finally(releaseTicket);
-		};
-		const run = previous ? previous.then(start) : start();
-		return run.finally(leaveOnce);
-	};
-
-	api.bindMachineTurnProjection = (host) => {
-		const binding = { host };
-		machineProjectionRequired = true;
-		machineProjectionBinding = binding;
-		return () => {
-			if (machineProjectionBinding === binding) machineProjectionBinding = null;
-		};
-	};
-	api.machineTurnAvailable = () =>
-		!loop.machineHostDisposed &&
-		(!machineProjectionRequired || machineProjectionBinding !== null) &&
-		machineTurnOwner === null &&
-		!state.streaming &&
-		preparingSubmits() === 0 &&
-		!loop.turnActive &&
-		!state.currentAskUserPolicy?.inFlight &&
-		deps.toolRegistry?.hasParkedCalls() !== true &&
-		queues.entries().length === 0;
-	api.submitMachineTurn = async (request) => {
-		const refused = (reason: string): MachineTurnResult => ({ status: "refused", turnId: null, reason });
-		if (machineProjectionRequired && machineProjectionBinding === null)
-			return refused(
-				"The attended turn projection is detached; delivery remains with its job controller until the host is available.",
-			);
-		const paused = deps.autonomy?.halted() ?? null;
-		if (paused !== null)
-			return refused(`Yolo is paused for the operator (${paused.detail}); delivery remains with its job controller.`);
-		if (!api.machineTurnAvailable?.())
-			return refused("The main conversation is busy; delivery remains with its job controller.");
-		const current = (): boolean =>
-			!loop.machineHostDisposed &&
-			!request.signal.aborted &&
-			request.sessionId === api.getSessionId() &&
-			request.isAdmissionCurrent();
-		if (!current()) return refused("The job's originating session or generation is no longer current.");
-		const token = {};
-		machineTurnOwner = token;
-		let settled: MachineTurnResult | null = null;
-		let ownedUserTurnId: string | null = null;
-		let ownedRuntime: AgentRuntime | null = null;
-		let projectionLease: Extract<MachineTurnProjectionAdmission, { status: "ready" }> | null = null;
-		// A scheduled job's turn is autonomous: its commits name PanCode as author under `auto`.
-		const autonomousCommits: { release: (() => void) | null } = { release: null };
-		const cancel = (): void => {
-			if (
-				machineTurnOwner === token &&
-				loop.machinePreparation?.token === token &&
-				!state.streaming &&
-				state.activeUserTurnId === null
-			) {
-				// This preparation still owns the FIFO slot; cancel its ports without aborting a successor runtime (#411).
-				loop.pendingPreTurnRead?.abort();
-				loop.pendingVisionSidecar?.abort();
-				loop.pendingCompactionPaint?.abort();
-				if (loop.machinePreparation.runtime !== null && state.runtime === loop.machinePreparation.runtime)
-					context.cancelCompaction();
-				return;
-			}
-			if (
-				loop.machineTurnRunning === token &&
-				ownedUserTurnId !== null &&
-				state.activeUserTurnId === ownedUserTurnId &&
-				state.runtime === ownedRuntime &&
-				request.sessionId === api.getSessionId()
-			) {
-				loop.pendingMachineCancellation = token;
-				// The controller's abort reason says what ended it; a timed-out occurrence is not a cancelled one (#445).
-				const cause = request.signal.reason;
-				const ended = cause instanceof Error ? cause.message : String(cause);
-				try {
-					api.cancel({
-						reason: `Scheduled job occurrence ended: ${ended}.`,
-						auditReason: `job occurrence ended: ${ended}`,
-						...(cause instanceof JobClockExpired ? { source: "job_clock" as const } : {}),
-					});
-				} finally {
-					loop.pendingMachineCancellation = null;
-				}
-			}
-		};
-		request.signal.addEventListener("abort", cancel, { once: true });
-		try {
-			const binding = machineProjectionBinding;
-			if (binding !== null) {
-				const meta = deps.session?.current();
-				if (!meta || meta.id !== request.sessionId)
-					return refused("The projection's conversation is no longer bound to this machine turn.");
-				const projection = binding.host.acquire({
-					jobId: request.jobId,
-					executionId: request.executionId,
-					text: request.text,
-					origin: request.origin,
-					sessionId: request.sessionId,
-					cwd: realpathSync(meta.cwd),
-					signal: request.signal,
-				});
-				if (projection.status === "deferred") return refused(projection.reason);
-				projectionLease = projection;
-				if (!current() || machineProjectionBinding !== binding)
-					return refused("The attended projection host changed during machine-turn admission.");
-			}
-			await api.submit(request.text, {
-				origin: request.origin,
-				...(request.operatorAuthored === true ? { operatorAuthored: true } : {}),
-				...(request.constraints === undefined ? {} : { constraints: request.constraints }),
-				isAdmissionCurrent: current,
-				machineTurn: {
-					preparationToken: token,
-					onStarting: request.onStarting,
-					onSettled: (result) => {
-						settled = result;
-						if (loop.machineTurnRunning === token) loop.machineTurnRunning = null;
-					},
-				},
-				onAdmitted: () => {
-					if (loop.machinePreparation?.token === token) loop.machinePreparation = null;
-					loop.machineTurnRunning = token;
-					autonomousCommits.release ??= enterAutonomousCommitScope();
-					ownedUserTurnId = state.activeUserTurnId;
-					ownedRuntime = state.runtime;
-					emit({
-						type: "queued_user_turn",
-						text: request.text,
-						kind: "follow-up",
-						origin: request.origin,
-					});
-					if (request.notice !== undefined) emitNotice(request.notice, "warning", "job.clock-resumed");
-					if (request.signal.aborted) cancel();
-				},
-			});
-			return (
-				settled ??
-				refused(
-					request.signal.aborted
-						? "Scheduled delivery cancelled before execution."
-						: "The fresh turn was refused during ordinary admission.",
-				)
-			);
-		} catch (error) {
-			return {
-				status: request.signal.aborted ? "canceled" : "failed",
-				turnId: null,
-				reason: error instanceof Error ? error.message : String(error),
-			};
-		} finally {
-			request.signal.removeEventListener("abort", cancel);
-			autonomousCommits.release?.();
-			if (loop.machineTurnRunning === token) loop.machineTurnRunning = null;
-			try {
-				projectionLease?.release();
-			} catch (error) {
-				emitNotice(
-					`Machine turn projection release failed: ${error instanceof Error ? error.message : String(error)}`,
-					"error",
-				);
-			}
-			if (machineTurnOwner === token) machineTurnOwner = null;
-			// Successor prompts have their own lifetime and must never extend this occurrence (#411).
-			if (settled !== null && !loop.machineHostDisposed)
-				void queues
-					.resubmitStranded()
-					.then(async (submitted) => {
-						if (!submitted) await queues.resubmitRequestContinuation();
-					})
-					.catch((error: unknown) => emitNotice(error instanceof Error ? error.message : String(error), "error"));
-		}
-	};
+	const { submitTracked, submit } = createChatLoopAdmission(loop, api.submit.bind(api));
+	api.submit = submit;
+	Object.assign(api, createChatLoopMachineTurn(loop, state));
 	return api;
 }
