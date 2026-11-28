@@ -40,14 +40,8 @@ import { PROSE_GUTTER_WIDTH } from "./chat-ink.js";
 import { renderTextSegmentLines } from "./chat-markdown.js";
 import { createChatCache, RENDERS_PER_ENTRY } from "./chat-panel/cache.js";
 import type { ChatPanelScope } from "./chat-panel/scope.js";
-import {
-	changeSettledCall,
-	finishedCall,
-	type QueuedRows,
-	queuedRunRows,
-	shownArgs,
-	unplacedTasks,
-} from "./chat-tool-rows.js";
+import { createChatWorkers } from "./chat-panel/workers.js";
+import { changeSettledCall, finishedCall, shownArgs } from "./chat-tool-rows.js";
 import {
 	appendSegmentText,
 	assistantThinkingRedacted,
@@ -77,7 +71,6 @@ import {
 	workerGroupKey,
 } from "./chat-transcript-model.js";
 import { turnEndedWithWorkers } from "./chat-turn-receipt.js";
-import { routeFirstOutput } from "./footer/silence-note.js";
 import { dateLocal } from "./format-time.js";
 import { editPreviewDiff } from "./mutation-preview.js";
 import { renderNoticeRow, renderTranscriptNotice } from "./renderers/notice.js";
@@ -93,8 +86,7 @@ import type { ToolExecutionFinished } from "./renderers/tool-call-model.js";
 import { renderToolExecution, renderToolPreview } from "./renderers/tool-execution.js";
 import { isChangeOrCheckCall } from "./renderers/tool-fold.js";
 import { toolRowTitle } from "./renderers/tool-subline.js";
-import type { WorkerEntryRenderOptions } from "./renderers/worker-entry.js";
-import { renderWorkerEntryLines, workerTelemetryDisplay } from "./renderers/worker-entry.js";
+import { renderWorkerEntryLines } from "./renderers/worker-entry.js";
 import { isGenerationGuardAbort } from "./status/index.js";
 import { GLYPH } from "./theme/index.js";
 import { modelNickname } from "./theme/labels.js";
@@ -337,88 +329,13 @@ export function createChatPanel(options: ChatPanelOptions = {}): ChatPanel {
 	const transcript: TranscriptEntry[] = [];
 	/** Assignment to its placed block, in placement order, so a streaming delta is O(1) to route. */
 	const workerEntries = new Map<string, WorkerTranscriptEntry>();
-	/** A retry rebinds a card to a new run on the same state object, so the run id is part of what it shows. */
-	const telemetryShown = (state: WorkerEntryState, view: TelemetryView | null): string =>
-		`${state.runId}\0${options.fleetOwnsLiveProgress?.() === true ? "1" : "0"}\0${workerTelemetryDisplay(view?.run(state.runId) ?? null)}`;
 	const dispatchGroups = new Map<string, WorkerTranscriptEntry[]>();
-	/** A dispatch call whose every card settled cancelled reads as stopped on its own row too. */
-	const markCancelledDispatch = (toolCallId: string | undefined): void => {
-		if (toolCallId === undefined) return;
-		const cards = dispatchGroups.get(toolCallId) ?? [];
-		if (cards.length === 0 || !cards.every((card) => card.state.result?.outcome === "canceled")) return;
-		const parent = findSpawningCall(toolCallId);
-		if (parent === undefined || parent.segment.cardsCancelled === true) return;
-		parent.segment.cardsCancelled = true;
-		changeSettledCall(parent.segment);
-		invalidateEntryCache(parent.entry);
-	};
-	const workerRenderOptions = (
-		entry: TranscriptEntry,
-	): Pick<
-		WorkerEntryRenderOptions,
-		"siblings" | "showGroupHeader" | "telemetry" | "routeFirstOutput" | "fleetOwnsLiveProgress"
-	> => {
-		if (entry.role !== "worker") return {};
-		const view = options.getTelemetry?.() ?? null;
-		const telemetry = view?.run(entry.state.runId) ?? null;
-		const key = workerGroupKey(entry.state);
-		const siblings = key === undefined ? undefined : dispatchGroups.get(key);
-		const route = entry.state.runtime;
-		const fleetOwns = options.fleetOwnsLiveProgress?.() === true;
-		return {
-			telemetry,
-			...(fleetOwns ? { fleetOwnsLiveProgress: true } : {}),
-			...(entry.state.pending
-				? { routeFirstOutput: routeFirstOutput(view, route.targetId, route.wireModelId, "worker") }
-				: {}),
-			...(siblings ? { siblings: siblings.map((sibling) => sibling.state), showGroupHeader: siblings[0] === entry } : {}),
-		};
-	};
-	/**
-	 * A live dispatch's tasks that no worker has started yet. Compact shows no live worker row (6.2), so they draw at
-	 * standard and detailed only: under the call's row until its first worker is placed, then under its last card.
-	 */
-	const queuedRows: QueuedRows = {
-		call: (seg, width, detail) =>
-			!detail.evidence || (dispatchGroups.get(seg.id)?.length ?? 0) > 0
-				? []
-				: queuedRunRows(unplacedTasks(seg, []), width),
-		card: (entry, width, detail) => {
-			const parent = entry.state.parentToolCallId;
-			if (!detail.evidence || parent === undefined) return [];
-			const group = dispatchGroups.get(parent);
-			if (group === undefined || group[group.length - 1] !== entry) return [];
-			const call = findSpawningCall(parent)?.segment;
-			return call === undefined
-				? []
-				: queuedRunRows(
-						unplacedTasks(
-							call,
-							group.map((card) => card.state),
-						),
-						width,
-					);
-		},
-	};
-	/** A settled dispatch draws no queued rows, so the card that drew them under it renders again. */
-	const settleQueuedRows = (seg: ToolSegment): void => {
-		if (seg.name !== "dispatch") return;
-		for (const card of dispatchGroups.get(seg.id) ?? []) invalidateEntryCache(card);
-	};
 	let runStartedAt: number | undefined;
 	// The prompt that opens the next run: its clock starts here, so a compaction the submit runs before the model
 	// call is inside the turn's duration, as its calls and tokens are.
 	let pendingPrompt: { at: number; status?: () => UserTurnStatus } | undefined;
 	/** Why the current run's prompt cache may be cold, from the chat loop's cache notice. */
 	let runColdReasons: ReadonlyArray<string> = [];
-	/**
-	 * Transcript index where the current run's entries begin. A worker block or
-	 * a mid-turn notice splits one run across several assistant entries, and
-	 * each entry keeps the per-message receipt its last `message_end` gave it;
-	 * `agent_end` clears every one of them except the entry that carries the run
-	 * total, so a receipt never lands in the middle of a turn.
-	 */
-	let runStartIndex: number | undefined;
 	/** The run's last attempt failed and recovery will send another, so nothing has settled yet. */
 	let runAwaitingRetry = false;
 	/** Provider attempts this run sent again, kept until its receipt can state them. */
@@ -496,8 +413,13 @@ export function createChatPanel(options: ChatPanelOptions = {}): ChatPanel {
 		dirty: true,
 		relayout: null,
 		prerender: null,
+		dispatchGroups,
+		runStartIndex: undefined,
 		get cache() {
 			return cache;
+		},
+		get workers() {
+			return workers;
 		},
 	};
 	const cache = createChatCache(scope);
@@ -510,6 +432,16 @@ export function createChatPanel(options: ChatPanelOptions = {}): ChatPanel {
 		unfreezeTail,
 		rememberRender,
 	} = cache;
+	const workers = createChatWorkers(scope);
+	const {
+		telemetryShown,
+		markCancelledDispatch,
+		workerRenderOptions,
+		queuedRows,
+		settleQueuedRows,
+		findSpawningCall,
+		workerInsertionIndex,
+	} = workers;
 	/**
 	 * An edit whose arguments have closed shows the diff it will make before its
 	 * result lands. The file is read off the event path; the frame that shows
@@ -633,28 +565,6 @@ export function createChatPanel(options: ChatPanelOptions = {}): ChatPanel {
 		seg.judging = undefined;
 	};
 
-	/**
-	 * The call a worker card belongs under: the one that spawned it, running or
-	 * settled. A dispatch that returns before its worker's first event (a
-	 * detached batch) has settled by the time the card arrives, and the card is
-	 * still that call's run, so a settled call of the current run takes it too.
-	 * A call from an earlier turn keeps its own row, and the card appends at
-	 * the tail.
-	 */
-	const findSpawningCall = (toolCallId: string): { segment: ToolSegment; entry: TranscriptEntry } | undefined => {
-		const live = findToolSegmentOwner(transcript, toolCallId);
-		if (live !== undefined) return live;
-		const runStart = runStartIndex ?? runStartFallback(transcript, transcript.length);
-		for (let entryIndex = transcript.length - 1; entryIndex >= runStart; entryIndex -= 1) {
-			const entry = transcript[entryIndex];
-			if (entry?.role !== "assistant") continue;
-			for (const segment of entry.segments) {
-				if (segment.kind === "tool" && segment.id === toolCallId) return { segment, entry };
-			}
-		}
-		return undefined;
-	};
-
 	/** The attempts a retry status says went out again. A live run hears of its recovery after its receipt, a replay before. */
 	const noteRunRetries = (status: RetryStatusPayload): void => {
 		const whole = status.phase === "retrying" || status.phase === "recovered" || status.phase === "exhausted";
@@ -746,7 +656,7 @@ export function createChatPanel(options: ChatPanelOptions = {}): ChatPanel {
 			// turn's receipt is not this turn's to overwrite: it closes under its own prompt, after any retry row.
 			const row = turnRetryRow(transcript);
 			const from = Math.max(
-				runStartIndex ?? runStartFallback(transcript, transcript.length),
+				scope.runStartIndex ?? runStartFallback(transcript, transcript.length),
 				row === null ? 0 : transcript.lastIndexOf(row) + 1,
 			);
 			const found = lastAssistantIndex(transcript, { withOutput: true, from }) ?? lastAssistantIndex(transcript, { from });
@@ -832,7 +742,7 @@ export function createChatPanel(options: ChatPanelOptions = {}): ChatPanel {
 				}
 				trackReceipt(target);
 			}
-			const firstRunEntry = runStartIndex ?? runStartFallback(transcript, index);
+			const firstRunEntry = scope.runStartIndex ?? runStartFallback(transcript, index);
 			for (let other = firstRunEntry; other < transcript.length; other += 1) {
 				if (other === index) continue;
 				const sibling = transcript[other];
@@ -842,7 +752,7 @@ export function createChatPanel(options: ChatPanelOptions = {}): ChatPanel {
 				liveReceipts.delete(sibling);
 			}
 		}
-		runStartIndex = undefined;
+		scope.runStartIndex = undefined;
 		runColdReasons = [];
 		runTurnId = undefined;
 		runRetries = 0;
@@ -865,7 +775,7 @@ export function createChatPanel(options: ChatPanelOptions = {}): ChatPanel {
 
 	const insertEntryAt = (at: number, entry: TranscriptEntry): void => {
 		transcript.splice(at, 0, entry);
-		if (runStartIndex !== undefined && at <= runStartIndex) runStartIndex += 1;
+		if (scope.runStartIndex !== undefined && at <= scope.runStartIndex) scope.runStartIndex += 1;
 		// Runs are stretches of indices: the ones behind the cut move up by one, and one it lands inside splits there.
 		runs.insert(at);
 		if (scope.prerender !== null && at < scope.prerender.next) scope.prerender.next = at;
@@ -1083,26 +993,6 @@ export function createChatPanel(options: ChatPanelOptions = {}): ChatPanel {
 		const tail = entry.segments[entry.segments.length - 1];
 		if (tail?.kind === "error" && tail.text === text) return;
 		entry.segments.push({ kind: "error", text, at: stamp(), ...(route !== null ? { route } : {}) });
-	};
-
-	/**
-	 * Where a newly seen worker block belongs. An agent-origin run nests under
-	 * the assistant entry holding the tool call that spawned it, behind any
-	 * sibling blocks the same call already placed, so a fan-out reads top to
-	 * bottom in spawn order. Everything else, including a run whose parent call
-	 * is no longer in the transcript (a detached collect landing turns later),
-	 * appends at the tail. null means "append".
-	 */
-	const workerInsertionIndex = (state: WorkerEntryState): number | null => {
-		const parentToolCallId = state.parentToolCallId;
-		if (parentToolCallId === undefined) return null;
-		const owner = findSpawningCall(parentToolCallId);
-		if (owner === undefined) return null;
-		const parentIndex = transcript.indexOf(owner.entry);
-		if (parentIndex < 0) return null;
-		let index = parentIndex + 1;
-		while (transcript[index]?.role === "worker") index += 1;
-		return index >= transcript.length ? null : index;
 	};
 
 	/**
@@ -1533,7 +1423,7 @@ export function createChatPanel(options: ChatPanelOptions = {}): ChatPanel {
 			// ↑ now recalls this prompt, so the failed receipt above stops offering its own.
 			forgetPromptRecall();
 			// A prompt typed while a run is open waits its turn; only one between runs starts the next clock.
-			if (runStartIndex === undefined && replayStampMs === undefined)
+			if (scope.runStartIndex === undefined && replayStampMs === undefined)
 				pendingPrompt = { at: now(), ...(status ? { status } : {}) };
 			appendRow({
 				role: "user",
@@ -1753,7 +1643,7 @@ export function createChatPanel(options: ChatPanelOptions = {}): ChatPanel {
 			runTurnId = undefined;
 			runStartedAt = undefined;
 			pendingPrompt = undefined;
-			runStartIndex = undefined;
+			scope.runStartIndex = undefined;
 			runAwaitingRetry = false;
 			runRetries = 0;
 			runProviderWaits = 0;
@@ -1796,7 +1686,7 @@ export function createChatPanel(options: ChatPanelOptions = {}): ChatPanel {
 				const prompt = pendingPrompt;
 				pendingPrompt = undefined;
 				runStartedAt = prompt !== undefined && prompt.status?.() !== "refused" ? prompt.at : now();
-				runStartIndex = transcript.length;
+				scope.runStartIndex = transcript.length;
 				runTurnId = (event as { turnId?: string }).turnId;
 				return;
 			}

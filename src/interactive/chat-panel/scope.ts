@@ -13,16 +13,26 @@
 
 import type { OutputStyle } from "../../core/defaults.js";
 import type { ChatPanelOptions } from "../chat-panel.js";
-import type { TranscriptEntry } from "../chat-transcript-model.js";
+import type { TranscriptEntry, WorkerTranscriptEntry } from "../chat-transcript-model.js";
 import type { TranscriptDetailPolicy } from "../transcript-detail.js";
 import type { EntryRun, EntryRuns } from "../transcript-runs.js";
 import type { createChatCache } from "./cache.js";
+import type { createChatWorkers } from "./workers.js";
 
 export interface ChatPanelScope {
 	readonly options: ChatPanelOptions;
 	readonly transcript: TranscriptEntry[];
 	readonly entryRenderCache: Map<TranscriptEntry, Map<string, string[]>>;
 	readonly runs: EntryRuns;
+	readonly dispatchGroups: Map<string, WorkerTranscriptEntry[]>;
+	/**
+	 * Transcript index where the current run's entries begin. A worker block or
+	 * a mid-turn notice splits one run across several assistant entries, and
+	 * each entry keeps the per-message receipt its last `message_end` gave it;
+	 * `agent_end` clears every one of them except the entry that carries the run
+	 * total, so a receipt never lands in the middle of a turn.
+	 */
+	runStartIndex: number | undefined;
 	dirty: boolean;
 	/**
 	 * A viewport-first re-layout under way (`deferRelayout`): runs laid out at an earlier key stay on screen while
@@ -58,4 +68,5 @@ export interface ChatPanelScope {
 	 */
 	prerender: { width: number; terminalRows: number; style: OutputStyle; next: number } | null;
 	readonly cache: ReturnType<typeof createChatCache>;
+	readonly workers: ReturnType<typeof createChatWorkers>;
 }
