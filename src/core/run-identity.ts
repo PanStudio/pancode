@@ -7,7 +7,7 @@
  */
 
 import { hostname, userInfo } from "node:os";
-import type { RunIdentity } from "./types.js";
+import type { RunIdentity } from "../domains/dispatch/types.js";
 
 function nonEmpty(value: string | undefined): string | null {
 	return value !== undefined && value.trim().length > 0 ? value.trim() : null;

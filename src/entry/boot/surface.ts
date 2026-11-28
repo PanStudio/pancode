@@ -71,7 +71,7 @@ import type { parseSlashCommand } from "../../session-control/slash-commands.js"
 import type { AskUserHandler } from "../../tools/ask-user.js";
 import type { ToolBootstrapHandle } from "../../tools/bootstrap.js";
 import type { DispatchBackgroundRegistry } from "../../tools/dispatch-background.js";
-import type { ToolRegistry } from "../../tools/registry-contract.js";
+import type { ToolRegistry } from "../../tools/registry/contract.js";
 import type { BootOptions } from "../boot-options.js";
 import type { ExtensionReloadOutcome } from "../extension-reload.js";
 import type { createFlowLedger } from "../flow-ledger.js";

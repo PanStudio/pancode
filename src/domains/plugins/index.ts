@@ -9,6 +9,20 @@ export {
 	readPluginManifest,
 } from "./discovery.js";
 export { passDerived, withPluginDiscoveryPass } from "./discovery-pass.js";
+export {
+	clipAtWord,
+	type HubAuditState,
+	type HubCategory,
+	type HubComponentKind,
+	type HubEntryKind,
+	type HubPackageEntry,
+	type HubProvidedResource,
+	type HubRequirementRef,
+	type HubTier,
+	isHubAuditState,
+	isHubComponentKind,
+	isHubKind,
+} from "./hub-types.js";
 export { pluginContentDigest } from "./integrity.js";
 export { pluginDataDir } from "./paths.js";
 export { pluginPromptNames } from "./prompt-names.js";

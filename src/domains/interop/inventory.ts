@@ -4,8 +4,8 @@ import { lstatSync, readdirSync, readFileSync, readlinkSync } from "node:fs";
 import path from "node:path";
 import { parse as parseToml } from "smol-toml";
 import { parse as parseYaml } from "yaml";
+import { interopAgentUserDir } from "../../core/interop-agents.js";
 import { isRecord } from "../../core/type-guards.js";
-import { interopAgentUserDir } from "./registry.js";
 import type { InteropAgentKind, InteropInventory, InteropInventoryItem, InteropResourceKind } from "./types.js";
 
 const MAX_FILES = 4096;

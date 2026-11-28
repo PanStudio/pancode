@@ -4,7 +4,7 @@ import { TURN_CONTINUATION_CAP } from "../../core/job-types.js";
 import type { PendingSkillToolPolicy } from "../../core/skill-activation.js";
 import { reduceTurnOutcome } from "../../lib/turn-control/index.js";
 import { finalizeAskUserInterviewForHost } from "../../tools/ask-user.js";
-import type { AskUserToolPolicy } from "../../tools/registry-contract.js";
+import type { AskUserToolPolicy } from "../../tools/registry/contract.js";
 import type { ChatSubmitOptions, StepPipelineEnd } from "../chat-loop.js";
 import {
 	classifyTurnEnding,

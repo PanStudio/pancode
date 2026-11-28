@@ -30,8 +30,8 @@ import { toolSignatureFromState } from "../../src/session-control/chat-loop-mess
 import { resolveAgentTools } from "../../src/tools/agent-tools.js";
 import { buildExtensionRuntimeToolSpecs } from "../../src/tools/extension-runtime-tools.js";
 import { createGatewayTool } from "../../src/tools/gateway/index.js";
+import type { ToolRegistry } from "../../src/tools/registry/contract.js";
 import { createRegistry } from "../../src/tools/registry.js";
-import type { ToolRegistry } from "../../src/tools/registry-contract.js";
 import type { ToolSpec } from "../../src/tools/tool-spec.js";
 import { middlewareOwner } from "../harness/middleware-owner.js";
 import { isolatePancodeEnv } from "../harness/scratch-env.js";

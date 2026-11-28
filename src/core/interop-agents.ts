@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import path from "node:path";
-import { relativePathEscapes } from "../../core/path-containment.js";
-import { explicitAgentHome, interopUserHome } from "../../core/xdg.js";
-import type { InteropAgentId, InteropAgentKind, InteropInventoryLayout } from "./types.js";
+import type { InteropAgentId, InteropAgentKind, InteropInventoryLayout } from "../domains/interop/types.js";
+import { relativePathEscapes } from "./path-containment.js";
+import { explicitAgentHome, interopUserHome } from "./xdg.js";
 
 const MARKDOWN_ROOTS: InteropInventoryLayout["roots"] = [
 	{ path: "skills", kind: "skill", extensions: [".md"] },

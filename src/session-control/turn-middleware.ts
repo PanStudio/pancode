@@ -48,7 +48,7 @@ import type {
 } from "../domains/session/entries.js";
 import type { AgentMessage } from "../engine/types.js";
 import { sealCompletion } from "../tools/finish.js";
-import type { ToolBoundaryReminder, ToolRegistry } from "../tools/registry-contract.js";
+import type { ToolBoundaryReminder, ToolRegistry } from "../tools/registry/contract.js";
 import { extractText, hasStructuredToolCall, toolNamesFromAgentState } from "./chat-loop-messages.js";
 import type { HostInserts } from "./host-inserts.js";
 import type { NoticeSource } from "./notice-source.js";

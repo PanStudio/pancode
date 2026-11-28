@@ -37,7 +37,7 @@ import {
 } from "../../src/tools/finish.js";
 import { LIMITATION_REASONS, limitationTool } from "../../src/tools/limitation.js";
 import { validateBuiltinToolPolicy } from "../../src/tools/policy.js";
-import { prepareToolArgs } from "../../src/tools/registry-call-prep.js";
+import { prepareToolArgs } from "../../src/tools/registry/call-prep.js";
 import { verifyTool } from "../../src/tools/verify/index.js";
 
 const SOURCE = { source: "builtin" } as never;

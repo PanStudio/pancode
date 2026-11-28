@@ -19,6 +19,7 @@ import { type HubRevocation, parseHubRevocations } from "../../core/hub-revocati
 import { safeResourceWrite } from "../../core/safe-resource-write.js";
 import { pancodeStateDir } from "../../core/xdg.js";
 import { parseHubIndexRows } from "../plugins/catalog.js";
+import type { HubPackageEntry } from "../plugins/hub-types.js";
 import { HUB_ROOT_PUBLIC_KEYS } from "./hub-keys.js";
 import {
 	type HubKeyCertificate,
@@ -26,7 +27,6 @@ import {
 	verifyIndexStatement,
 	verifyKeyCertificate,
 } from "./hub-signature.js";
-import type { HubPackageEntry } from "./hub-types.js";
 
 export const HUB_CERTIFICATE_ASSET = "signing.json";
 export const HUB_ENVELOPE_ASSET = "index.envelope.json";

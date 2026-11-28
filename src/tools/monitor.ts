@@ -25,7 +25,7 @@ import { collectDetachedBatch, collectRuns, durableRunEvidence } from "./monitor
 import { monitorFleetRoot } from "./monitor-fleet.js";
 import { listJobMonitor, runJobMonitor } from "./monitor-jobs.js";
 import { monitorToolSurface } from "./monitor-surface.js";
-import type { ToolInvokeOptions } from "./registry-contract.js";
+import type { ToolInvokeOptions } from "./registry/contract.js";
 import type { ToolResult, ToolSpec } from "./tool-spec.js";
 import { truncateUtf8 } from "./truncate-utf8.js";
 import type { FinishedRun } from "./worker-evidence.js";

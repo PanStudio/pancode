@@ -13,6 +13,7 @@ import { createAgentsBundle } from "../../src/domains/agents/extension.js";
 import type { ConfigContract } from "../../src/domains/config/index.js";
 import { clearPluginSnapshots, disablePlugin, installPlugin, removePlugin } from "../../src/domains/plugins/index.js";
 import { createPromptsBundle } from "../../src/domains/prompts/extension.js";
+import { loadSkills } from "../../src/domains/resources/skills/loader.js";
 import { reloadPluginResourcesAndNotify } from "../../src/entry/plugin-reload.js";
 import { isolatePancodeEnv } from "../harness/scratch-env.js";
 
@@ -37,7 +38,7 @@ it("refreshes agent recipes and prompt inputs only on plugin resource reload", a
 			return undefined;
 		},
 	};
-	const agents = createAgentsBundle(context);
+	const agents = createAgentsBundle(context, { loadSkills });
 	const prompts = createPromptsBundle(context, { noContextFiles: true });
 	try {
 		const cwd = join(env.dir, "workspace");
@@ -98,7 +99,7 @@ for (const mutation of ["disable", "remove"] as const) {
 			bus,
 			getContract: (() => config) as DomainContext["getContract"],
 		};
-		const agents = createAgentsBundle(context);
+		const agents = createAgentsBundle(context, { loadSkills });
 		try {
 			const cwd = join(env.dir, "workspace");
 			mkdirSync(cwd);
@@ -161,7 +162,7 @@ it("keeps boot recipes across the first reload only when it commits the projecti
 	const events: PluginsReloadedPayload[] = [];
 	const bundles: ReturnType<typeof createAgentsBundle>[] = [];
 	const boot = async () => {
-		const agents = createAgentsBundle(context);
+		const agents = createAgentsBundle(context, { loadSkills });
 		bundles.push(agents);
 		await agents.extension.start();
 		return agents;

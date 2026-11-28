@@ -11,7 +11,7 @@ import { configureGuardrails } from "../../src/core/guardrails.js";
 import { telemetryHub } from "../../src/core/telemetry/hub.js";
 import { telemetryRunDirectory, telemetrySessionDirectory } from "../../src/core/telemetry/paths.js";
 import { pancodeStateDir } from "../../src/core/xdg.js";
-import { AgentsDomainModule } from "../../src/domains/agents/module.js";
+import { createAgentsDomainModule } from "../../src/domains/agents/module.js";
 import type { ConfigContract } from "../../src/domains/config/index.js";
 import { ConfigDomainModule } from "../../src/domains/config/module.js";
 import { createContextDomainModule } from "../../src/domains/context/module.js";
@@ -25,6 +25,7 @@ import { PluginsDomainModule } from "../../src/domains/plugins/module.js";
 import { createPromptsDomainModule } from "../../src/domains/prompts/module.js";
 import { ProvidersDomainModule } from "../../src/domains/providers/module.js";
 import { ResourcesDomainModule } from "../../src/domains/resources/module.js";
+import { loadSkills } from "../../src/domains/resources/skills/loader.js";
 import { SafetyDomainModule } from "../../src/domains/safety/module.js";
 import { SchedulingDomainModule } from "../../src/domains/scheduling/module.js";
 import { SessionDomainModule } from "../../src/domains/session/module.js";
@@ -87,7 +88,7 @@ test("an open dispatch ledger follows config updates and effective session overr
 		createContextDomainModule({ noContextFiles: true }),
 		ProvidersDomainModule,
 		SafetyDomainModule,
-		AgentsDomainModule,
+		createAgentsDomainModule({ loadSkills }),
 		createPromptsDomainModule({ noContextFiles: true }),
 		createMiddlewareDomain().module,
 		SessionDomainModule,

@@ -41,7 +41,7 @@ import { REVIEW_SINGLE_TASK_MESSAGE, reviewGateResult, runReviewGated } from "./
 import { createDispatchRunEventRegistry } from "./dispatch-run-events.js";
 import { dependencyPlanAuthorityGranted, runDependencyPlan } from "./dispatch-scout.js";
 import type { DispatchToolDeps } from "./dispatch-types.js";
-import type { ToolInvokeOptions } from "./registry-contract.js";
+import type { ToolInvokeOptions } from "./registry/contract.js";
 import type { ToolResult } from "./tool-spec.js";
 
 export type {

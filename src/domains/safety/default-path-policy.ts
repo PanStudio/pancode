@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 
+import { foreignAgentDirs } from "../../core/interop-agents.js";
 import {
 	HOME_AGENT_SECRET_RELATIVE_PATHS,
 	HOME_SECRET_RELATIVE_PATHS,
 	WORKSPACE_SECRET_PATHS,
 } from "../../lib/secrets/secret-paths.js";
-import { foreignAgentDirs } from "../interop/registry.js";
 import type { PathPolicyInput } from "./path-policy.js";
 
 /**

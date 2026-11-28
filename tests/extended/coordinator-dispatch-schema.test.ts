@@ -11,6 +11,7 @@ import { normalizeDispatchIntent } from "../../src/domains/dispatch/intent.js";
 import { compile } from "../../src/domains/prompts/compiler.js";
 import { agentCatalogPurpose, catalogPurpose } from "../../src/domains/prompts/extension.js";
 import { loadFragments } from "../../src/domains/prompts/fragment-loader.js";
+import { loadSkills } from "../../src/domains/resources/skills/loader.js";
 import { validateEngineToolArguments } from "../../src/engine/ai.js";
 import { createWorkerSafety } from "../../src/engine/worker-tools.js";
 import { resolveAgentTools } from "../../src/tools/agent-tools.js";
@@ -28,7 +29,7 @@ import { isolatePancodeEnv } from "../harness/scratch-env.js";
 describe("parallel review routing", () => {
 	it("marks the read-only recipes a parallel review can use in the session catalog", () => {
 		const line = (id: string) => {
-			const recipe = loadRecipesFromDir({
+			const recipe = loadRecipesFromDir(loadSkills, {
 				source: "builtin",
 				dir: join(import.meta.dirname, "../../src/domains/agents/builtins"),
 			}).find((entry) => entry.id === id);

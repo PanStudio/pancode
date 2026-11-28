@@ -16,7 +16,7 @@ import {
 	AGENT_LEDGER_SCOPE_MAX_ENTRIES,
 	parseAgentLedgerBody,
 } from "../lib/worker-wire/protocol.js";
-import { FLOW_RESTRICTIONS_DETAIL } from "./registry-verdicts.js";
+import { FLOW_RESTRICTIONS_DETAIL } from "./registry/verdicts.js";
 import type { ToolResult, ToolSpec } from "./tool-spec.js";
 
 /**

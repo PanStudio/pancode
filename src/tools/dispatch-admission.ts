@@ -16,7 +16,7 @@ import {
 	agentRoleFactsResolver,
 	councilJudgeAgentId,
 	gateDeciderAgentId,
-	reviewDeciderAgentId,
+	reviewerGateSeat,
 	withRunRole,
 } from "../domains/dispatch/execution-role.js";
 import {
@@ -27,7 +27,6 @@ import {
 	councilSeatDownReason,
 	councilTooFewLiveSeats,
 	JUDGE_GATE_PROMPT,
-	REVIEWER_GATE_PROMPT,
 	renderCouncilVoteMemberTask,
 } from "../domains/dispatch/gate-role-prompts.js";
 import { narrowDispatchIntentToReadOnly, normalizeDispatchIntent } from "../domains/dispatch/intent.js";
@@ -84,7 +83,7 @@ import type {
 	DispatchReviewSettings,
 	DispatchToolDeps,
 } from "./dispatch-types.js";
-import type { HostEffectCall } from "./registry-contract.js";
+import type { HostEffectCall } from "./registry/contract.js";
 import { gitCheckoutRoot, gitHeadIsUnborn, WORKTREE_UNBORN_HEAD_MESSAGE } from "./task-worktree.js";
 import { runnableChecksAtRoot } from "./verify/resolve.js";
 import { judgedFileSha256, readJudgedFile } from "./verify/scripts.js";
@@ -957,6 +956,7 @@ export function createDispatchAdmissionController(deps: DispatchToolDeps): Dispa
 			if (reviewResult.review !== undefined) {
 				const base = parsed.requests[0];
 				if (base === undefined) return shapeRejection(args, REVIEW_SINGLE_TASK_MESSAGE);
+				const seat = reviewerGateSeat(reviewResult.review.reviewer, deps.getAgentSpecs());
 				for (let cycle = 1; cycle <= reviewResult.review.maxCycles; cycle += 1) {
 					const subject = { runId: `plan-builder-${cycle}`, digest: null };
 					tasks.push(
@@ -969,14 +969,12 @@ export function createDispatchAdmissionController(deps: DispatchToolDeps): Dispa
 					tasks.push(
 						resolveTask(
 							{
-								agentId: reviewDeciderAgentId(reviewResult.review.reviewer, (id) =>
-									deps.getAgentSpecs().some((spec) => spec.id === id),
-								),
+								agentId: seat.agentId,
 								...(base.budget === undefined ? {} : { budget: base.budget }),
 								...(base.record === undefined ? {} : { record: base.record }),
 								executionRole: "reviewer",
 								task: renderDispatchReviewerTask(base.task, subject.runId, cycle, base.intent),
-								systemPrompt: REVIEWER_GATE_PROMPT,
+								systemPrompt: seat.systemPrompt,
 								readOnly: true,
 								gate: { role: "reviewer", group: "plan-preview", cycle, subjects: [subject] },
 								...(base.cwd !== undefined ? { cwd: base.cwd } : {}),

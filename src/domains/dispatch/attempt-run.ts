@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 
+import { detectRunIdentity } from "../../core/run-identity.js";
 import { compileWorkerFlowPolicy, flowTransferRefusal, resolveModelDestination } from "../safety/information-flow.js";
 import { subscribeAgentLedger } from "./agent-ledger-hub.js";
 import type { AgentLedgerAttribution } from "./agent-ledger-store.js";
@@ -15,7 +16,6 @@ import { withAttemptRole } from "./execution-role.js";
 import { nodeComponentRemedyEvent } from "./failure-classification.js";
 import { runLedgerProjection } from "./path-scope.js";
 import { publishedLineage } from "./run-finish.js";
-import { detectRunIdentity } from "./run-identity.js";
 import { malformedWorkerStdoutLineCount } from "./run-outcome-detail.js";
 import type { RunEnvelope, RunResult } from "./types.js";
 import type { SpawnedWorker, SpawnedWorkerResult } from "./worker-spawn.js";

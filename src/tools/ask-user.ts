@@ -24,7 +24,7 @@ import type {
 	AskUserTranscriptQuestion,
 	ScriptedAnswerSource,
 	ToolInvokeOptions,
-} from "./registry-contract.js";
+} from "./registry/contract.js";
 import type { ToolResult, ToolSpec } from "./tool-spec.js";
 
 const MAX_DECISIONS = 24;
