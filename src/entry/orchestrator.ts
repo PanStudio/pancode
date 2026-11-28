@@ -46,7 +46,6 @@ import { createDispatchDedupRegistration } from "../domains/dispatch/dedup.js";
 import { createWorktreeBootRecovery } from "../domains/dispatch/index.js";
 import { createDispatchDomainModule } from "../domains/dispatch/module.js";
 import { configureRunEventJournal } from "../domains/dispatch/run-event-journal.js";
-import { createExtensionRuntimeHookBridge } from "../domains/extensions/index.js";
 import { ExtensionsDomainModule } from "../domains/extensions/module.js";
 import { describeUpgradeNotice, ensurePancodeState, takeUpgradeNotice } from "../domains/install/index.js";
 import { InteropDomainModule } from "../domains/interop/module.js";
@@ -84,7 +83,6 @@ import { createLocalClockReminderRegistration } from "../domains/middleware/loca
 import { createMiddlewareDomain } from "../domains/middleware/module.js";
 import { createStaleBuildReminderRegistration } from "../domains/middleware/stale-build-reminder.js";
 import { createTaskBoardReminderRegistration } from "../domains/middleware/task-board-reminder.js";
-import { committedPluginSnapshot } from "../domains/plugins/index.js";
 import { PluginsDomainModule } from "../domains/plugins/module.js";
 import { createPromptsDomainModule } from "../domains/prompts/module.js";
 import type { ProvidersContract } from "../domains/providers/index.js";
@@ -109,7 +107,6 @@ import { SafetyDomainModule } from "../domains/safety/module.js";
 import type { ProtectedArtifactState } from "../domains/safety/protected-artifacts.js";
 import { createProtectedArtifactsRegistration } from "../domains/safety/protected-artifacts-registration.js";
 import type { SafetyJudgeSeat } from "../domains/safety/safety-judge.js";
-import { createSessionCodeConsent } from "../domains/safety/session-code-consent.js";
 import { unattendedWindowMs } from "../domains/safety/unattended.js";
 import { createSchedulingDomainModule } from "../domains/scheduling/module.js";
 import type { CompactInput, CompactResult } from "../domains/session/compaction/compact.js";
@@ -164,12 +161,9 @@ import {
 } from "../session-control/model-session-replay.js";
 import { createTurnOutcomeCollector } from "../session-control/turn-outcome-collector.js";
 import type { BootOptions } from "./boot-options.js";
-import { createExtensionReloadCoordinator, extensionHookReceiptSink } from "./extension-reload.js";
 import { closedSessionLessonSource, createFlowLedger, FLOW_RESTRICTION_ENTRY_TYPE } from "./flow-ledger.js";
 import { bindSessionPackageActivity } from "./package-activity.js";
 import { resolvePanesEnablement } from "./panes-activation.js";
-import { reloadPluginResourcesAndNotify } from "./plugin-reload.js";
-import { createReloadClasses } from "./reload-classes.js";
 import { applyRouteOverlay } from "./route-overlay.js";
 import { bindTaskMemoryLifecycle } from "./task-memory-lifecycle.js";
 
@@ -193,11 +187,12 @@ import {
 	parseSlashCommand,
 } from "../session-control/slash-commands.js";
 import { runWatchdogReview } from "../session-control/watchdog-run.js";
-import { createFileMutationObserver, createSkillActivationObserver } from "../tools/observers.js";
+import { createSkillActivationObserver } from "../tools/observers.js";
 import { startToolOffloadSweep } from "../tools/result-shaping.js";
 import { runAcpSurface } from "./boot/acp-surface.js";
 import { buildBootAutonomy } from "./boot/autonomy.js";
 import { startBootChat } from "./boot/chat.js";
+import { wireBootExtensions } from "./boot/extension-reload.js";
 import { runHeadlessSurface } from "./boot/headless-surface.js";
 import { runInteractiveSurface } from "./boot/interactive-surface.js";
 import { buildBootRegistry } from "./boot/registry.js";
@@ -1252,78 +1247,45 @@ export async function bootOrchestrator(options: BootOptions = {}): Promise<BootR
 		for (const off of unsubscribeGuardianWakes) off();
 		disposeMemoryLifecycle();
 	});
-	// The main agent's first test runner in an attended session asks before it
-	// runs repository code, whoever wrote that code (#377 follow-up). The
-	// consent is per session: a park or a resume clears it. A headless run
-	// denies every ask, so it keeps #377's allow.
-	const sessionCodeConsent = createSessionCodeConsent({ headless: options.headless !== undefined });
-	bus.subscribe("session.parked", () => sessionCodeConsent.reset());
-	bus.subscribe("session.reattached", () => sessionCodeConsent.reset());
-	// The codewiki refreshes the written paths when the context domain is loaded.
-	middlewareRegistrar.registerHook(
-		createFileMutationObserver(({ paths }) => {
-			contextDomain?.noteFileChanges(paths);
-		}),
-	);
-	// User-defined hooks: extensions and the project (.pancode/hooks.yaml,
-	// .pancode/hooks.local.yaml) declare a conservative, receipted hook set on the
-	// same effect machinery. A hook may add effects (including request block_tool)
-	// but cannot grant a permission safety would deny. The protected-artifact
-	// guard follows them to consume protect_path before tool execution.
-	// The coordinator is the only writer of the "user-hooks" owner and the only
-	// caller of the extensions reload; it publishes the extension generation
-	// and the hook registrations with two adjacent assignments on one stack
-	// and reloads plugin resources only after both. The boot generation is
-	// published here too (the extensions bundle publishes nothing at start),
-	// so no consumer ever sees extension resources paired with hooks from a
-	// different generation. The owner slot is anchored here, so user hooks
-	// keep evaluating before the protection consumer and assessors below.
-	let bootHookNotices = true;
-	const reloadPlugins = () =>
-		reloadPluginResourcesAndNotify(process.cwd(), (event) => bus.emit("plugin.reloaded", event));
-	const chatIdle = () => !chat.isStreaming() && chat.turnPreparation().phase === "idle";
-	const reloadClasses = createReloadClasses({
-		config,
-		bus,
-		cwd: () => process.cwd(),
-		hub: () => committedPluginSnapshot(process.cwd()),
-		reloadHub: reloadPlugins,
-		extensions: () => extensions?.snapshot()?.packages ?? [],
-		mcp: { source: () => toolBootstrap.mcpCapabilities, idle: chatIdle },
-	});
-	// Every main session hosts api 2 runtimes: the TUI itself, a headless run
-	// and ACP through `startExtensionHost`. Workers never do.
-	const runtimeHooks = createExtensionRuntimeHookBridge({ sessionId: () => session?.current()?.id ?? null });
-	const extensionReload = createExtensionReloadCoordinator({
-		extensions,
-		middleware: middlewareRegistrar,
+	const {
+		chatIdle,
+		commitExtensionHooks,
+		extensionReload,
+		reloadClasses,
+		reloadPlugins,
 		runtimeHooks,
-		// The gateway is registered after this coordinator; the lookup runs at call time.
-		mcpOwner: (tool) => toolBootstrap.mcpCapabilities?.ownerIdOf(tool) ?? null,
-		cwd: () => process.cwd(),
-		...(options.trustCardNotices !== undefined ? { holdBootTrustNotices: true } : {}),
-		recordReceipt: extensionHookReceiptSink(() => session?.current()?.id),
-		report: (line) => {
-			if (reloadClasses.captureIssue(line)) return;
-			if (!bootHookNotices) bus.emit("extension.load_failed", { message: line });
-			else if (interactive) initialNotices.push(line);
-			else process.stderr.write(`${line}\n`);
-		},
-		onCommitted: () => {
-			if (!reloadClasses.active) reloadPlugins();
+		sessionCodeConsent,
+		extensionsState,
+	} = wireBootExtensions({
+		bus,
+		config,
+		contextDomain,
+		extensions,
+		formatExtensionReloadNotice,
+		initialNotices,
+		interactive,
+		middlewareRegistrar,
+		options,
+		session,
+		cells: {
+			get chat() {
+				return chat;
+			},
+			get toolBootstrap() {
+				return toolBootstrap;
+			},
+			get workerHookSource() {
+				return workerHookSource;
+			},
+			set workerHookSource(value) {
+				workerHookSource = value;
+			},
 		},
 	});
-	workerHookSource = extensionReload.workerHooks;
-	const commitExtensionHooks = () => {
-		const outcome = extensionReload.reload();
-		for (const issue of outcome.diagnostics.entries) reloadClasses.captureIssue(`${issue.type}: ${issue.message}`);
-		reloadClasses.captureExtensionCommit(formatExtensionReloadNotice(outcome)[1]);
-		return outcome;
-	};
 	await bootPhaseBoundary?.();
 	extensionReload.applyBoot();
 	middlewareRegistrar.registerHook(protectedArtifactsGuard);
-	bootHookNotices = false;
+	extensionsState.bootHookNotices = false;
 	// The interactive graph loads while Stage 0 takes keys, before the chat loop starts producers whose notices reach
 	// only the built application, so the import that starts the application finds it loaded. Fleet history loads later.
 	if (lease) await import("../interactive/index.js");
