@@ -10,8 +10,8 @@
 
 import { assertSafeId } from "../../core/safe-id.js";
 import { withinStateRoot } from "../../core/state-boundary.js";
+import { telemetryJournalPath, telemetryRunDirectory, telemetrySessionDirectory } from "../../core/telemetry/paths.js";
 import { readCallJournalSync } from "./call-journal.js";
-import { telemetryJournalPath, telemetryRunDirectory, telemetrySessionDirectory } from "./paths.js";
 import { type JournalSource, journalSourceFromRead, withSettledCalls } from "./read-model-sources.js";
 
 /** A journal directory that is a symlink or leaves the state root reads as an absent journal (#434). */

@@ -11,6 +11,7 @@ import {
 import { DEFAULT_SETTINGS } from "../../src/core/defaults.js";
 import { createTelemetryHub } from "../../src/core/telemetry/hub.js";
 import { factKnownValue } from "../../src/core/telemetry/known.js";
+import { telemetryProcessDirectory, telemetrySessionDirectory } from "../../src/core/telemetry/paths.js";
 import { registerProcessTelemetrySink } from "../../src/core/telemetry/producer.js";
 import {
 	acquireCapacityLease,
@@ -33,7 +34,6 @@ import { EMPTY_CAPABILITIES } from "../../src/domains/providers/index.js";
 import { createSessionBundle } from "../../src/domains/session/extension.js";
 import { usageCallsFromAttempts } from "../../src/domains/session/journal-usage.js";
 import { openCallJournal, readCallJournal } from "../../src/domains/telemetry/call-journal.js";
-import { telemetryProcessDirectory, telemetrySessionDirectory } from "../../src/domains/telemetry/paths.js";
 import { createSessionJournals } from "../../src/domains/telemetry/session-journals.js";
 import { completeEngineText } from "../../src/engine/ai.js";
 import {

@@ -125,8 +125,14 @@ function parseUpstreamProxy(value: string | undefined): UpstreamProxy | null {
 	if (value === undefined) return null;
 	const url = new URL(value);
 	const secure = url.protocol === "https:";
-	const user = decodeURIComponent(url.username);
-	const password = decodeURIComponent(url.password);
+	let user: string;
+	let password: string;
+	try {
+		user = decodeURIComponent(url.username);
+		password = decodeURIComponent(url.password);
+	} catch {
+		throw new Error("upstream proxy URL credentials contain invalid percent-encoding");
+	}
 	return {
 		host: url.hostname.replace(/^\[|\]$/gu, ""),
 		port: Number(url.port || (secure ? 443 : 80)),

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import { join } from "node:path";
-import { assertSafeId } from "../../core/safe-id.js";
+import { assertSafeId } from "../safe-id.js";
 
 /**
  * The one module that knows where telemetry lives (#434). Every telemetry file is under `<stateDir>/telemetry/`:

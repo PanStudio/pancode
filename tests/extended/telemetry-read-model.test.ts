@@ -33,12 +33,12 @@ import type { TelemetryRecord } from "../../src/core/telemetry/envelope.js";
 import { makeTelemetryRecord } from "../../src/core/telemetry/envelope.js";
 import type { FactSum } from "../../src/core/telemetry/fact.js";
 import { settingsFingerprintCommitment } from "../../src/core/telemetry/host-schemas.js";
+import { telemetrySessionDirectory } from "../../src/core/telemetry/paths.js";
 import type { PendingTelemetry } from "../../src/core/telemetry/producer.js";
 import type { CallSettled } from "../../src/core/telemetry/schemas.js";
 import { ToolNames } from "../../src/core/tool-names.js";
 import { openCallJournal } from "../../src/domains/telemetry/call-journal.js";
 import { foldEconomy } from "../../src/domains/telemetry/economy-fold.js";
-import { telemetrySessionDirectory } from "../../src/domains/telemetry/paths.js";
 import {
 	continueSource,
 	explain,

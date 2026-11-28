@@ -9,6 +9,7 @@ import { updateSettings } from "../../src/core/config.js";
 import { loadDomains } from "../../src/core/domain-loader.js";
 import { configureGuardrails } from "../../src/core/guardrails.js";
 import { telemetryHub } from "../../src/core/telemetry/hub.js";
+import { telemetryRunDirectory, telemetrySessionDirectory } from "../../src/core/telemetry/paths.js";
 import { pancodeStateDir } from "../../src/core/xdg.js";
 import { AgentsDomainModule } from "../../src/domains/agents/module.js";
 import type { ConfigContract } from "../../src/domains/config/index.js";
@@ -29,7 +30,6 @@ import { SchedulingDomainModule } from "../../src/domains/scheduling/module.js";
 import { SessionDomainModule } from "../../src/domains/session/module.js";
 import { openCallJournal } from "../../src/domains/telemetry/call-journal.js";
 import { TelemetryDomainModule } from "../../src/domains/telemetry/module.js";
-import { telemetryRunDirectory, telemetrySessionDirectory } from "../../src/domains/telemetry/paths.js";
 import { readTelemetryScopeFiles, verifyTelemetryScope } from "../../src/domains/telemetry/seal.js";
 import { type IsolatedPancodeEnv, isolatePancodeEnv } from "../harness/scratch-env.js";
 

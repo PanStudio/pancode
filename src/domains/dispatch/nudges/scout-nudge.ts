@@ -2,16 +2,22 @@
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import { statSync } from "node:fs";
 import { join, sep } from "node:path";
-import { ToolNames } from "../../core/tool-names.js";
-import { dispatchMutatedParentWorkspace } from "../dispatch/workspace-mutation.js";
+import { ToolNames } from "../../../core/tool-names.js";
+import type { MiddlewareHookRegistration } from "../../middleware/index.js";
+import {
+	createReadStreakRegistration,
+	type MiddlewareEffect,
+	type MiddlewareHookInput,
+	metadataString,
+	type ReadStreakClassifiers,
+	type ReadStreakObserver,
+} from "../../middleware/index.js";
+import { dispatchMutatedParentWorkspace } from "../workspace-mutation.js";
 import {
 	createReadOnlyExplorationNudgeRegistration,
 	isReadOnlyExplorationCall,
 	workspaceRelativeTarget,
 } from "./dispatch-nudge.js";
-import { createReadStreakRegistration, type ReadStreakClassifiers, type ReadStreakObserver } from "./read-streak.js";
-import type { MiddlewareHookRegistration } from "./runtime.js";
-import { type MiddlewareEffect, type MiddlewareHookInput, metadataString } from "./types.js";
 
 /**
  * Broad-survey scout nudge (XR-1).

@@ -35,13 +35,13 @@ import {
 import type { planEviction } from "../domains/context/working-set/engine.js";
 import type { ClassifyCall } from "../domains/context/working-set/superseded.js";
 import { type PinnedContextBlock, pinnedContextDelta } from "../domains/extensions/pinned-context.js";
+import type { CompactInput, CompactResult } from "../domains/memory/compaction/compact.js";
 import type { MemoryPromptRequest } from "../domains/memory/prompt-cache.js";
 import type { MemoryRecordStanding } from "../domains/memory/prompt-section.js";
 import type { CompiledSessionPrompt } from "../domains/prompts/compiler.js";
 import type { PromptsContract } from "../domains/prompts/contract.js";
 import type { ProvidersContract } from "../domains/providers/index.js";
 import { AutoCompactionTrigger } from "../domains/session/compaction/auto.js";
-import type { CompactInput, CompactResult } from "../domains/session/compaction/compact.js";
 import type {
 	CaptureContextSnapshotInput,
 	ContextSnapshot,

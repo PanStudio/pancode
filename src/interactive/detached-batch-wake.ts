@@ -26,9 +26,9 @@
  */
 
 import type { DispatchContract } from "../domains/dispatch/contract.js";
+import type { DetachedBatchNudgeView } from "../domains/dispatch/nudges/dispatch-nudge.js";
 import { dispatchOwnerOf, dispatchOwnership } from "../domains/dispatch/ownership.js";
 import { WRITE_ROOTS_GRANT_TOOL } from "../domains/dispatch/write-root-requests.js";
-import type { DetachedBatchNudgeView } from "../domains/middleware/index.js";
 import type { ChatLoop } from "../session-control/chat-loop.js";
 import { grantRequestLines, requestsAwaitingMain } from "../tools/grant-request-text.js";
 

@@ -26,8 +26,8 @@
  */
 
 import type { TelemetryHub } from "../../core/telemetry/hub.js";
-import { TaskMemoryEndpointBusyError, TaskMemoryEndpointPreemptedError } from "../memory/task-memory-policy.js";
-import { registerBackgroundStream } from "../providers/endpoint-capacity.js";
+import { registerBackgroundStream } from "../providers/index.js";
+import { TaskMemoryEndpointBusyError, TaskMemoryEndpointPreemptedError } from "./task-memory-policy.js";
 
 /** What the announcer needs: somewhere to publish, and the route to name. */
 export interface MemoryStepEndpointAnnouncerDeps {

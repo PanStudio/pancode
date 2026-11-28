@@ -144,7 +144,7 @@ const testModules = new Set([
 	"tests/harness/telemetry-view.ts",
 	"tests/harness/telemetry-lies.ts",
 	"src/domains/telemetry/call-journal.ts",
-	"src/domains/telemetry/paths.ts",
+	"src/core/telemetry/paths.ts",
 	"src/core/xdg.ts",
 	"src/domains/evidence/trust-status.ts",
 	"src/core/telemetry/schemas.ts",
