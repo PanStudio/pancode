@@ -19,9 +19,9 @@ import { engineInitialSystemPrompt, setEngineCodexConfiguration } from "../../en
 import type { AgentMessage } from "../../engine/types.js";
 import { extractUserText } from "../chat-loop-messages.js";
 import type { TurnContext } from "../turn-context.js";
-import type { TurnContextScope } from "../turn-context-scope.js";
 import type { AgentRuntime } from "../turn-state.js";
 import { tokenCount } from "./helpers.js";
+import type { TurnContextScope } from "./scope.js";
 
 /** The newest reduction on `path`, in the shape a live commit notes it. */
 function compactionEventOnPath(

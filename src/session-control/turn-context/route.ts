@@ -20,7 +20,7 @@ import {
 import { summaryOutputReserve } from "../../domains/session/compaction/summary-output.js";
 import { resolveSummaryOutputCap, resolveTurnOutputReserve } from "../output-reserve.js";
 import type { CompactionRouteView } from "../turn-context.js";
-import type { TurnContextScope } from "../turn-context-scope.js";
+import type { TurnContextScope } from "./scope.js";
 
 export function createTurnContextRoute(shared: TurnContextScope) {
 	const resolveTargetWithoutRuntime = (): ResolvedRuntimeTarget | null => {

@@ -17,8 +17,8 @@ import { buildContextLedger, type ContextLedger } from "../../domains/session/co
 import { inPrefixRequestRefusal } from "../../engine/in-prefix-summary.js";
 import { resolveFitOutputReserve } from "../output-reserve.js";
 import type { LiveContextUsage, TurnContext } from "../turn-context.js";
-import type { TurnContextScope } from "../turn-context-scope.js";
 import { tokenCount } from "./helpers.js";
+import type { TurnContextScope } from "./scope.js";
 
 const PROMPT_SPLIT_KEYS = [
 	"system",

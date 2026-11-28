@@ -14,9 +14,9 @@ import { toolSignatureFromState } from "../chat-loop-messages.js";
 import type { MessageListDigests } from "../message-list-digest.js";
 import { resolveFitOutputReserve } from "../output-reserve.js";
 import type { LiveContextEstimate } from "../turn-context.js";
-import { sha256Json, type TurnContextScope } from "../turn-context-scope.js";
 import type { AgentRuntime } from "../turn-state.js";
 import { capturedBreakdown, optionalProjection, snapshotWindowSource } from "./helpers.js";
+import { sha256Json, type TurnContextScope } from "./scope.js";
 
 /**
  * The token and route facts of one budget publication, separate from the

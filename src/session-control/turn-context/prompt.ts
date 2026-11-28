@@ -2,46 +2,46 @@
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 
 import { randomUUID } from "node:crypto";
-import { firstChangedSection } from "../core/cache-telemetry.js";
-import { semanticUsable } from "../core/config.js";
-import { operatorCalendar } from "../core/format-time.js";
-import { isHostPolicyMessage } from "../core/host-policy-message.js";
-import { providerFallbackDigests } from "../core/provider-checkpoint-handle.js";
-import { hostFramedTexts, neutralizeFraming } from "../core/reminder-framing.js";
-import { mainSessionShellSandboxed } from "../core/sandbox/main-session.js";
-import { isBuiltinToolName, isHarnessExtensionToolName, ToolNames } from "../core/tool-names.js";
-import type { MemoryPromptRequest } from "../domains/memory/prompt-cache.js";
-import { memoryCarried, memorySectionBlocks, memorySectionDelta } from "../domains/memory/prompt-section.js";
-import type { CompiledSessionPrompt, SessionPromptInputs } from "../domains/prompts/compiler.js";
-import type { ContextWindowSource } from "../domains/providers/index.js";
-import type { LocalModelQuirks } from "../domains/providers/types/local-model-quirks.js";
-import { PROMPT_MANIFEST_VERSION } from "../domains/session/prompt-manifest.js";
-import { activePath, findLastEntry } from "../domains/session/tree/active-path.js";
+import { firstChangedSection } from "../../core/cache-telemetry.js";
+import { semanticUsable } from "../../core/config.js";
+import { operatorCalendar } from "../../core/format-time.js";
+import { isHostPolicyMessage } from "../../core/host-policy-message.js";
+import { providerFallbackDigests } from "../../core/provider-checkpoint-handle.js";
+import { hostFramedTexts, neutralizeFraming } from "../../core/reminder-framing.js";
+import { mainSessionShellSandboxed } from "../../core/sandbox/main-session.js";
+import { isBuiltinToolName, isHarnessExtensionToolName, ToolNames } from "../../core/tool-names.js";
+import type { MemoryPromptRequest } from "../../domains/memory/prompt-cache.js";
+import { memoryCarried, memorySectionBlocks, memorySectionDelta } from "../../domains/memory/prompt-section.js";
+import type { CompiledSessionPrompt, SessionPromptInputs } from "../../domains/prompts/compiler.js";
+import type { ContextWindowSource } from "../../domains/providers/index.js";
+import type { LocalModelQuirks } from "../../domains/providers/types/local-model-quirks.js";
+import { PROMPT_MANIFEST_VERSION } from "../../domains/session/prompt-manifest.js";
+import { activePath, findLastEntry } from "../../domains/session/tree/active-path.js";
 import {
 	appendEnginePolicyMessage,
 	engineInitialSystemPrompt,
 	replaceEngineMessages,
 	setEngineSystemPrompt,
-} from "../engine/agent.js";
-import { providerCheckpointCompatibility } from "../engine/ai.js";
-import { effectiveYoloConfinement } from "../lib/autonomy/autonomy.js";
-import { capabilityArgumentShape, capabilityStarterArgs } from "../tools/gateway/guidance.js";
-import { TOOL_PLANES } from "../tools/policy.js";
-import { declaredCheckIds } from "../tools/verify/resolve.js";
-import { HOST_STATUS_NOTICE_KEY, runtimeSupportsTools, toolNamesFromAgentState } from "./chat-loop-messages.js";
-import { contextOperationAwareness } from "./context-operation-awareness.js";
+} from "../../engine/agent.js";
+import { providerCheckpointCompatibility } from "../../engine/ai.js";
+import { effectiveYoloConfinement } from "../../lib/autonomy/autonomy.js";
+import { capabilityArgumentShape, capabilityStarterArgs } from "../../tools/gateway/guidance.js";
+import { TOOL_PLANES } from "../../tools/policy.js";
+import { declaredCheckIds } from "../../tools/verify/resolve.js";
+import { HOST_STATUS_NOTICE_KEY, runtimeSupportsTools, toolNamesFromAgentState } from "../chat-loop-messages.js";
+import { contextOperationAwareness } from "../context-operation-awareness.js";
 import {
 	effectivePosture,
 	POSTURE_GENERATION,
 	POSTURE_UPDATE,
 	postureCheckpoint,
 	readPostureGeneration,
-} from "./posture-policy.js";
-import { attachedToolSchemasFromState, mainPromptCacheIdentity } from "./prompt-cache-identity.js";
-import type { TurnContext } from "./turn-context.js";
-import { recordedMemorySection } from "./turn-context-memory.js";
-import { sha256Json, type TurnContextScope } from "./turn-context-scope.js";
-import type { AgentRuntime } from "./turn-state.js";
+} from "../posture-policy.js";
+import { attachedToolSchemasFromState, mainPromptCacheIdentity } from "../prompt-cache-identity.js";
+import type { TurnContext } from "../turn-context.js";
+import type { AgentRuntime } from "../turn-state.js";
+import { recordedMemorySection } from "./memory.js";
+import { sha256Json, type TurnContextScope } from "./scope.js";
 
 // #423: five idle minutes warrants a reminder, without claiming a provider cache lifetime.
 const CACHE_REUSE_IDLE_NOTICE_MS = 5 * 60 * 1000;

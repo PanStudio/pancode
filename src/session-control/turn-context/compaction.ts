@@ -2,47 +2,47 @@
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 
 import { randomUUID } from "node:crypto";
-import type { ContextOperationFact } from "../core/context-operation.js";
-import { CONTEXT_OPERATION_CUSTOM_TYPE, createContextOperation } from "../core/context-operation.js";
-import { formatCount } from "../core/format-time.js";
-import { isHostPolicyMessage } from "../core/host-policy-message.js";
-import type { PendingSkillToolPolicy } from "../core/skill-activation.js";
-import type { ContextActivityPhase } from "../core/telemetry/live-events.js";
-import type { CallMessageObserver } from "../core/telemetry/producer.js";
-import type { ContextActivityStatus } from "../core/telemetry/session-vocabulary.js";
-import { supersededStageApplies } from "../domains/context/fold/contract.js";
-import { SMALL_WINDOW_TOKENS } from "../domains/context/fold/pressure.js";
-import { withinRearmBand } from "../domains/context/working-set/checkpoint.js";
-import { foldWorkingSet } from "../domains/context/working-set/fold.js";
-import { resolveWorkingSetPolicy } from "../domains/context/working-set/policies/index.js";
-import { compactionCut } from "../domains/context/working-set/visible.js";
+import type { ContextOperationFact } from "../../core/context-operation.js";
+import { CONTEXT_OPERATION_CUSTOM_TYPE, createContextOperation } from "../../core/context-operation.js";
+import { formatCount } from "../../core/format-time.js";
+import { isHostPolicyMessage } from "../../core/host-policy-message.js";
+import type { PendingSkillToolPolicy } from "../../core/skill-activation.js";
+import type { ContextActivityPhase } from "../../core/telemetry/live-events.js";
+import type { CallMessageObserver } from "../../core/telemetry/producer.js";
+import type { ContextActivityStatus } from "../../core/telemetry/session-vocabulary.js";
+import { supersededStageApplies } from "../../domains/context/fold/contract.js";
+import { SMALL_WINDOW_TOKENS } from "../../domains/context/fold/pressure.js";
+import { withinRearmBand } from "../../domains/context/working-set/checkpoint.js";
+import { foldWorkingSet } from "../../domains/context/working-set/fold.js";
+import { resolveWorkingSetPolicy } from "../../domains/context/working-set/policies/index.js";
+import { compactionCut } from "../../domains/context/working-set/visible.js";
 import {
 	type CompactInput,
 	type CompactResult,
 	checkpointContinuityCarry,
 	checkpointSkillContext,
 	hostCheckpoint,
-} from "../domains/memory/compaction/compact.js";
-import { DEFAULT_KEEP_RECENT_TOKENS } from "../domains/session/compaction/defaults.js";
-import { estimateTokens } from "../domains/session/compaction/tokens.js";
-import type { SessionContract } from "../domains/session/contract.js";
+} from "../../domains/memory/compaction/compact.js";
+import { DEFAULT_KEEP_RECENT_TOKENS } from "../../domains/session/compaction/defaults.js";
+import { estimateTokens } from "../../domains/session/compaction/tokens.js";
+import type { SessionContract } from "../../domains/session/contract.js";
 import {
 	type CompactionSummaryEntry,
 	type CompactionTrigger,
 	mainSkillContextState,
-} from "../domains/session/entries.js";
-import { findLastEntry } from "../domains/session/tree/active-path.js";
-import { compactEngineCodex, engineInitialSystemPrompt } from "../engine/agent.js";
-import { prepareInPrefixSummary } from "../engine/in-prefix-summary.js";
-import { HOST_STATUS_NOTICE_KEY } from "./chat-loop-messages.js";
-import { CONTEXT_STATUS_NOTICE_KEY, renderCompactionSummaryLine } from "./compaction-lines.js";
-import { createContextFold, type FoldDecision, foldCheckpointFor, ledgerHoldsCheckpoint } from "./context-fold.js";
-import type { ContinuityReductionHooks } from "./continuity-controller.js";
-import { buildModelReplayAgentMessagesFromTurns, continuityContextFromSession } from "./model-session-replay.js";
-import { resolveFitOutputReserve, resolveSummaryOutputCap } from "./output-reserve.js";
-import type { LiveContextEstimate, TurnContext } from "./turn-context.js";
-import { sha256Json, type TurnContextScope } from "./turn-context-scope.js";
-import type { AgentRuntime } from "./turn-state.js";
+} from "../../domains/session/entries.js";
+import { findLastEntry } from "../../domains/session/tree/active-path.js";
+import { compactEngineCodex, engineInitialSystemPrompt } from "../../engine/agent.js";
+import { prepareInPrefixSummary } from "../../engine/in-prefix-summary.js";
+import { HOST_STATUS_NOTICE_KEY } from "../chat-loop-messages.js";
+import { CONTEXT_STATUS_NOTICE_KEY, renderCompactionSummaryLine } from "../compaction-lines.js";
+import { createContextFold, type FoldDecision, foldCheckpointFor, ledgerHoldsCheckpoint } from "../context-fold.js";
+import type { ContinuityReductionHooks } from "../continuity-controller.js";
+import { buildModelReplayAgentMessagesFromTurns, continuityContextFromSession } from "../model-session-replay.js";
+import { resolveFitOutputReserve, resolveSummaryOutputCap } from "../output-reserve.js";
+import type { LiveContextEstimate, TurnContext } from "../turn-context.js";
+import type { AgentRuntime } from "../turn-state.js";
+import { sha256Json, type TurnContextScope } from "./scope.js";
 
 const AUTO_COMPACT_FAILURE_LIMIT = 3;
 
