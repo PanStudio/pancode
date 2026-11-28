@@ -95,7 +95,7 @@ in your browser.
 | Extensions: code in its own process, capability envelope, sandbox, hooks, runtime tools, commands, workspaces, and lifecycle | [Extensions](guide/harness-extensions.md) |
 | TUI layout, responsive behavior, colors, and interaction rules | [TUI Design](architecture/tui-design.md) |
 | Terminal panes beside a session and the files pane: install, keys, settings, doctor, troubleshooting | [Panes and the Files Pane](guide/panes-and-files.md) |
-| Focus radio in a Herdr dock: `/music`, cliamp install, the `integrations.music.*` settings, and the opt-in `music` tool | [Music Pane](guide/music.md) |
+| Focus radio in a pane, shipped as the music extension pack; its pane uses the `extension` dock slot | [Music pack](../hub/packs/extensions/music/README.md) |
 | The agent's `browser` tool: pages, Playwright scripts, dev servers, screenshots, host grants and attaching to a running browser | [Browser](guide/tool-usage.md#browser-drive-a-headless-browser-session) |
 | A second terminal on a running session: `/attach observe\|approve\|pair` and `pancode session attach` | [Interactive slash commands](guide/commands-and-modes.md#interactive-slash-commands) |
 | The desktop app: starting it, the background app, the installer option, shell layout, approvals, and what the local server exposes | [PanCode on the desktop](guide/gui.md) (alpha) |

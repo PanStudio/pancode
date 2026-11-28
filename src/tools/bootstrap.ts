@@ -14,7 +14,6 @@ import {
 	DEFAULT_TEARDOWN_BOUND_MS,
 	type McpElicitationHost,
 } from "../domains/gateway/mcp/index.js";
-import type { MusicOperations } from "../domains/mux/music-operations.js";
 import type { PanesOperations } from "../domains/mux/operations.js";
 import type { DecisionLedgerEntry } from "../domains/session/entries.js";
 import type { AutonomyLevel } from "../lib/autonomy/autonomy.js";
@@ -39,7 +38,6 @@ import { createLedgerTool } from "./ledger.js";
 import { createMemoryNoteTool, type MemoryNoteDeps } from "./memory-note.js";
 import { createMemoryRecallTool, type MemoryRecallDeps } from "./memory-recall.js";
 import { monitorToolSurface } from "./monitor-surface.js";
-import { musicToolSurface } from "./music-surface.js";
 import { panesToolSurface } from "./panes-surface.js";
 import type { RegistryDeps, ToolRegistry } from "./registry-contract.js";
 import type { ReportToolDeps } from "./report.js";
@@ -89,11 +87,6 @@ export interface ToolBootstrapDeps extends Omit<CoreToolBootstrapDeps, "mcpCapab
 	 * is what keeps the `panes` tool out of the prompt on a machine with none.
 	 */
 	panes?: PanesOperations;
-	/**
-	 * The music pane. Present only when the operator set
-	 * integrations.music.agentControl and music could play at startup.
-	 */
-	music?: MusicOperations;
 	flow?: RegistryDeps["flow"];
 	/**
 	 * Local MCP servers for the gateway. Absent means one is built for the
@@ -295,15 +288,6 @@ export function registerAllTools(registry: ToolRegistry, deps: ToolBootstrapDeps
 			...builtin(
 				lazyTool(reportToolSurface, async () => (await import("./report.js")).createReportTool(report)),
 				{ path: "src/tools/report.ts", scope: "core" },
-			),
-		});
-	}
-	if (deps.music) {
-		const music = deps.music;
-		registry.register({
-			...builtin(
-				lazyTool(musicToolSurface, async () => (await import("./music.js")).createMusicTool({ music })),
-				{ path: "src/tools/music.ts", scope: "core" },
 			),
 		});
 	}

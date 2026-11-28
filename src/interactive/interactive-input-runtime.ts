@@ -43,7 +43,6 @@ export interface InteractiveInputKeyActionDeps {
 	toggleStatus: () => void;
 	toggleDispatchBoard: () => void;
 	toggleFilesPane: () => void;
-	toggleMusic?: () => void;
 	openTasks: () => void;
 	openDecisions: () => void;
 	backgroundDispatch: () => void;
@@ -104,10 +103,6 @@ export interface InteractiveInputRuntimeDeps {
 		backgroundActiveDispatch(): void;
 		/** Toggle the files pane; the application decides what "inactive" says. */
 		toggleFilesPane(): void;
-		/** Toggle the music pane; the application decides what "inactive" says. */
-		toggleMusic?(): void;
-		/** False while music is off or this session has no pane host: its menu and card rows stay out. */
-		musicAvailable?(): boolean;
 		/** The workers key: the workers dock with a pane host, the Fleet Runs board without one. */
 		toggleWorkersDock?(): void;
 		/** Open the steering queue navigator overlay. */
@@ -231,7 +226,6 @@ export function createInteractiveInputRuntime(deps: InteractiveInputRuntimeDeps)
 		openDecisions: deps.overlay.openDecisionsOverlayState,
 		backgroundDispatch: deps.actions.backgroundActiveDispatch,
 		toggleFilesPane: deps.actions.toggleFilesPane,
-		...(deps.actions.toggleMusic ? { toggleMusic: deps.actions.toggleMusic } : {}),
 		openModelSelector: deps.overlay.openModelOverlayState,
 		openHub: deps.overlay.openSkillsHubState,
 		openTree: deps.overlay.openTreeOverlayState,
@@ -281,14 +275,11 @@ export function createInteractiveInputRuntime(deps: InteractiveInputRuntimeDeps)
 	/** Runs from every scope, as its direct key does (FX-13). */
 	const surfaceAction = (id: Keybinding | undefined): boolean =>
 		(SURFACE_ACTION_ORDER as ReadonlyArray<string>).includes(id ?? "");
-	const omitAction = (id: Keybinding | undefined): boolean =>
-		id === "pancode.music.toggle" && deps.actions.musicAvailable?.() === false;
 	const targets = (): ReadonlyArray<LeaderTarget> => {
 		// Viewport actions work only in the fullscreen layout, so the default layout does not list them.
 		const all = deps.keybindings
 			.leaderTargets()
-			.filter(({ id }) => deps.tui instanceof TuiAltScreen || !id?.startsWith("tui.altScreen."))
-			.filter(({ id }) => !omitAction(id));
+			.filter(({ id }) => deps.tui instanceof TuiAltScreen || !id?.startsWith("tui.altScreen."));
 		const filtered = search()
 			? all.filter(({ id }) => id === "tui.editor.undo" || id === "tui.altScreen.search" || surfaceAction(id))
 			: deps.overlay.getState() === "closed"
@@ -337,7 +328,7 @@ export function createInteractiveInputRuntime(deps: InteractiveInputRuntimeDeps)
 		);
 		return [...builtins, ...extra];
 	};
-	const quickHelp = deps.tui ? createQuickHelp(deps.tui, deps.keybindings, omitAction) : undefined;
+	const quickHelp = deps.tui ? createQuickHelp(deps.tui, deps.keybindings) : undefined;
 	const menu = deps.tui
 		? createLeaderMenu(
 				deps.tui,

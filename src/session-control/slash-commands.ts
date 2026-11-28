@@ -2,7 +2,6 @@
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import type { SettingsAreaId } from "../core/settings-areas.js";
 import { isExtensionCommandToken } from "../domains/extensions/operator-commands.js";
-import { describeMusicResult, type MusicResult, musicResultTone } from "../domains/mux/music-operations.js";
 import {
 	PANE_PEER_IDS,
 	PANES_PRESET_IDS,
@@ -123,14 +122,7 @@ function formatPanesStatus(status: PanesStatus): ReadonlyArray<string> {
 	for (const dock of status.docks) {
 		const share = `${(dock.targetShare * 100).toFixed(0)}% of the window`;
 		const slot = `${dock.slot[0]?.toUpperCase() ?? ""}${dock.slot.slice(1)} dock`;
-		lines.push(
-			row(
-				slot,
-				dock.hidden
-					? `hidden; it takes ${share} when shown${dock.slot === "music" ? " · /music shows it" : ""}`
-					: `shown · ${share}`,
-			),
-		);
+		lines.push(row(slot, dock.hidden ? `hidden; it takes ${share} when shown` : `shown · ${share}`));
 	}
 	if (status.panes.length === 0) lines.push(row("Open now", "none"));
 	else
@@ -465,70 +457,6 @@ export const PANES_SLASH_COMMANDS: ReadonlyArray<BuiltinSlashCommand> = [
 				} else {
 					ctx.notice("warn", result.reason);
 				}
-			});
-		},
-	},
-	{
-		name: "music",
-		rank: 3,
-		acp: false,
-		description: "Show or hide the focus-radio music pane (cliamp in a herdr dock)",
-		group: "PanCode",
-		kinds: ["music", "music-station"],
-		args: {
-			subcommands: {
-				on: {},
-				off: {},
-				pause: {},
-				next: {},
-				status: {},
-				station: { positionals: [{ name: "name-or-url", required: true, rest: true }] },
-			},
-		},
-		subcommandDescriptions: {
-			on: "Play, opening or revealing the music pane first",
-			off: "Stop the music and close the pane",
-			pause: "Silence the music and keep the pane",
-			next: "Skip to the next station",
-			status: "Say what is playing",
-			station: "Play a stream URL or a station by name",
-		},
-		fromArgs(parsed, trimmed) {
-			const action = parsed.subcommand;
-			if (action === undefined) {
-				if (/^\/music\s+toggle$/u.test(trimmed) || !parsed.error) return { kind: "music", action: "toggle" };
-				return usageError("music", parsed.error);
-			}
-			if (action === "station") {
-				const station = parsed.rest?.trim() ?? "";
-				return station.length > 0
-					? { kind: "music-station", station }
-					: usageError("music", "Name a station or paste a stream URL", "station");
-			}
-			if (parsed.error) return usageError("music", parsed.error, action);
-			if (action === "on" || action === "off" || action === "pause" || action === "next" || action === "status") {
-				return { kind: "music", action };
-			}
-			return usageError("music", `Unexpected argument: ${action}`);
-		},
-		handle(command, ctx) {
-			const music = ctx.music;
-			if (!music) {
-				ctx.notice(
-					"info",
-					"music needs the pane layer and this session started without panes: set integrations.music.enabled: true in settings.yaml, install cliamp with `pancode tools install cliamp`, then restart inside herdr with `pancode --with-panes`",
-				);
-				return;
-			}
-			const runLocal = ctx.runLocalOperation ?? ((operation: () => Promise<void>) => void operation());
-			runLocal(async () => {
-				let result: MusicResult;
-				if (command.kind === "music-station") result = await music.station(command.station);
-				else if (command.kind !== "music") return;
-				else if (command.action === "toggle") result = await music.toggle();
-				else result = await music[command.action]();
-				const tone = musicResultTone(result);
-				ctx.notice(tone === "problem" ? "warn" : tone, describeMusicResult(result));
 			});
 		},
 	},

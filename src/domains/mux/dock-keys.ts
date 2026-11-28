@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 /**
- * Tap classification for the dock keys (Alt+E files, Alt+W workers, Alt+A music).
+ * Tap classification for the dock keys (Alt+E files, Alt+W workers, and a key an extension declares).
  *
  * The first tap acts at once: it shows a hidden dock and hides a visible one,
  * with no delay waiting to see whether a second tap follows. A second tap on

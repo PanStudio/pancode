@@ -82,5 +82,5 @@ test("Help prints the terminal's Alt chords and every terminal name the app answ
 	for (const name of ["/btw [question]", "/draft [request]", "/reload", "/view", "/files", "/trust", "/restart"])
 		assert.ok(terms.includes(name), `${name} is missing from the command reference`);
 	const html = renderToStaticMarkup(<HelpEntries match={commands} bundledDocsPath="/installed/pancode/docs" />);
-	assert.match(html, /\/music/u);
+	assert.match(html, /\/panes/u);
 });

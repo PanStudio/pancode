@@ -48,9 +48,6 @@ const HOT_RELOAD_FIELDS = new Set<string>([
 	"interface.panes.notifications",
 	"integrations.git.commitAttribution",
 	"integrations.git.commitAuthor",
-	// `/music` reads both on every invocation.
-	"integrations.music.enabled",
-	"integrations.music.station",
 	// The bridge reads these on every explicit open; no mux re-detection is
 	// needed because the pane layer's rung is settled once at boot.
 	"interface.panes.files",
@@ -161,8 +158,6 @@ const RESTART_REQUIRED_FIELDS = new Set<string>([
 	"integrations.runtimePlugins",
 	// Store paths read the roots once per process, so admission, grants and the write agree for a whole session.
 	"store",
-	// The `music` tool is registered once at startup, like consult.
-	"integrations.music.agentControl",
 ]);
 
 function matchesPrefix(path: string, fields: Set<string>): boolean {

@@ -29,7 +29,6 @@ import type { DispatchSnapshot } from "../domains/dispatch/contract.js";
 import { newestRunFeedRunId } from "../domains/dispatch/run-feed.js";
 import { pancodePaneEnv } from "../domains/mux/child-env.js";
 import type { MuxContract, MuxOpenUtilityPaneRequest, MuxPaneRecord, MuxPaneRef } from "../domains/mux/index.js";
-import type { MusicState } from "../domains/mux/music-operations.js";
 import {
 	PANE_HANDOFF_LABEL_SUFFIX,
 	PANE_INTERRUPT_KEYS,
@@ -73,8 +72,6 @@ export interface PanesRuntimeDeps {
 	stateDir?: () => string;
 	/** Newest run whose display feed exists, for the `logs` preset. */
 	newestFeedRunId?: () => string | null;
-	/** The music pane's live facts. Absent where music cannot run; never gated by agentControl. */
-	musicState?: () => Promise<MusicState>;
 }
 
 /**
@@ -344,15 +341,10 @@ export function createPanesRuntime(deps: PanesRuntimeDeps): PanesOperations {
 		async docks(): Promise<ReadonlyArray<PanesDockReport>> {
 			const settings = deps.getSettings();
 			const reports: PanesDockReport[] = [];
-			for (const slot of ["files", "workers", "music", "extension"] as const) {
+			for (const slot of ["files", "workers", "extension"] as const) {
 				const state = deps.mux.dockVisibility(slot);
 				let detail: string | undefined;
-				if (slot === "music") {
-					const music = state === "closed" ? null : await deps.musicState?.();
-					if (music?.playback === "playing") detail = music.title ? `playing ${music.title}` : "playing";
-					else if (music?.playback === "paused") detail = "paused";
-					else if (!settings.integrations.music.enabled) detail = "integrations.music.enabled is false";
-				} else if (slot === "files" && state === "closed" && !settings.interface.panes.files.enabled) {
+				if (slot === "files" && state === "closed" && !settings.interface.panes.files.enabled) {
 					detail = "interface.panes.files.enabled is false";
 				}
 				reports.push({ slot, state, ...(detail === undefined ? {} : { detail }) });

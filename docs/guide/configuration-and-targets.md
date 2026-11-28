@@ -404,9 +404,6 @@ Inside a container, bubblewrap must be installed in the image, and the container
 | `integrations.hub.index` | `https://github.com/PanStudio/pancode/releases/download/hub-index/` | immediately, at the next refresh; the base URL of the signed PanHub index (`https://`, `file://`, or `http://` on loopback only), or blank to turn the remote index off; unused in 0.9.0, which has no root key |
 | `integrations.git.commitAttribution` | `true` | immediately for subsequent commits |
 | `integrations.git.commitAuthor` | `auto` | immediately for subsequent commits |
-| `integrations.music.enabled` | `false` | immediately, at the next `/music` |
-| `integrations.music.station` | `http://radio.cliamp.stream/lofi/stream` | immediately, at the next `/music` |
-| `integrations.music.agentControl` | `false` | restart |
 
 ### Telemetry
 

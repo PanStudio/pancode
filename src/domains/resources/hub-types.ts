@@ -97,6 +97,8 @@ export interface HubPackageEntry {
 	envelopeDigest?: string;
 	/** Packs with an mcp.json: digest of their MCP declarations. */
 	mcpDigest?: string;
+	/** Bundled first-party rows only: `upgrade --post-install` installs the pack once into the user scope. */
+	default?: true;
 	/** Absolute path of the index file that produced this row. Discovery evidence; never written back. */
 	index?: string;
 }

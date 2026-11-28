@@ -52,7 +52,7 @@ System One is not a loaded domain. The orchestrator builds it with `createSystem
 | lifecycle | `src/domains/lifecycle/**` | Doctor diagnostics, upgrade mechanics, Claude Agent SDK install, uninstallation. |
 | memory | `src/domains/memory/**` | Approved long-term memory, task bank, proactive task intervention, and the memory runtime contract the inline domain module publishes. |
 | middleware | `src/domains/middleware/**` | Declarative and programmatic lifecycle hooks and budgets. |
-| mux | `src/domains/mux/**` | Optional interactive pane-host integration: Herdr guest mode, the Yazi file pane, and the cliamp music dock. |
+| mux | `src/domains/mux/**` | Optional interactive pane-host integration: Herdr guest mode, the Yazi file pane, and the `extension` dock slot that extension panes open in. |
 | telemetry | `src/domains/telemetry/**` | Per-scope journals, content-addressed objects, seals and bundles, the read model and its folds (route history included), share, import, verify and retention. See [Telemetry](telemetry.md). |
 | plugins | `src/domains/plugins/**` | Plugin packages, which are Agent Plugins carrying content: discovery, catalog, and lifecycle. Installing one never runs code; the MCP servers its `mcp.json` declares run only after the operator trusts them. |
 | prompts | `src/domains/prompts/**` | Prompt fragments, system prompt compiler, template hashing. |
@@ -69,7 +69,7 @@ System One is not a loaded domain. The orchestrator builds it with `createSystem
 | share | `src/domains/share/**` | Portable workspace and resource archive export/import. |
 | store | `src/domains/store/**` | The project store behind the `store` tool and `pancode store`: tags and blobs outside the working tree, their records and provenance, cross-process locks, and the local backend. See [the store guide](../guide/panstore.md). |
 | system-one | `src/domains/system-one/**` | The opt-in decision layer: typed questions about one object, pluggable engines and the runner. See [System One](system-one.md). |
-| toolchain | `src/domains/toolchain/**` | Pinned external-tool discovery, installation, and resolution (`asciinema`, `herdr`, `yazi`, `croc`, `cliamp`). |
+| toolchain | `src/domains/toolchain/**` | Pinned external-tool discovery, installation, and resolution (`asciinema`, `herdr`, `yazi`, `croc`). |
 | turn-control | `src/domains/turn-control/**` | Pure turn facts, the detached-collection decision and turn outcome reduction. |
 | user-tasks | `src/domains/user-tasks/**` | Library and CLI-owned durable user task list plus board handoff state. |
 | workspace-snapshots | `src/domains/workspace-snapshots/**` | Git snapshots of the worktree taken before mutating calls, built in a private per-session index under `refs/pancode/snapshots/`, and the `/rewind` plan and restore. |
@@ -236,7 +236,7 @@ argument hooks, source provenance, and policy metadata in lightweight surface
 modules. [core-bootstrap.ts](../../src/tools/core-bootstrap.ts) registers `context`, `code_nav`,
 `verify`, `data`, `store`, `web_fetch`, `web_read`, `run_script`, `pancode_docs`,
 `pancode_hub`, and `configure_pancode`. [bootstrap.ts](../../src/tools/bootstrap.ts) registers `ledger`, `monitor`,
-`steer`, `panes`, `report`, `music`, and `browser`. `registerAllTools` registers those surfaces in
+`steer`, `panes`, `report`, and `browser`. `registerAllTools` registers those surfaces in
 the same order as every other built-in; capability discovery, worker
 attestation, provider schema serialization, safety classification, autonomy and
 permission admission, and `before_tool` middleware therefore run without
@@ -247,9 +247,7 @@ runners. The orchestrator-side registration adds `dispatch` after the core
 tools, `monitor` and `steer` when dispatch is composed, with `ledger` behind the
 gateway unless an agent ledger is supplied, the job `monitor` when a job host
 exists without dispatch, `panes` when
-a pane host exists, `report` when the session's report host is bound, and `music` when `integrations.music.agentControl` is on and
-the music pane could play at startup (`integrations.music.enabled`, a live pane
-host, and a resolved cliamp). `browser` registers, like `web_fetch` and
+a pane host exists, and `report` when the session's report host is bound. `browser` registers, like `web_fetch` and
 `web_read`, unless `PANCODE_DISABLE_RETRIEVE_TOOLS=1` disables the network tools.
 
 Dispatch is the one stateful lazy boundary. Its synchronous admission controller
