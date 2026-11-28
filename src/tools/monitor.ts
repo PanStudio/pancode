@@ -1,14 +1,15 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
-import { renderFactField, renderPricing } from "../core/telemetry/render.js";
-import { pancodeStateDir } from "../core/xdg.js";
+
 import {
 	cloneRunToolBudgetEnvelope,
 	formatBudgetPolicy,
 	formatBudgetReasons,
 	formatBudgetRequest,
 	formatEffectiveBudget,
-} from "../domains/dispatch/budget-envelope.js";
+} from "../core/run-budget-envelope.js";
+import { renderFactField, renderPricing } from "../core/telemetry/render.js";
+import { pancodeStateDir } from "../core/xdg.js";
 import type { DispatchContract } from "../domains/dispatch/contract.js";
 import { sealedAnswerBudgetBytes } from "../domains/dispatch/handback.js";
 import { type DispatchOwnership, dispatchOwnerOf, dispatchOwnership } from "../domains/dispatch/ownership.js";

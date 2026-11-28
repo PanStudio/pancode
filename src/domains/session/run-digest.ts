@@ -10,10 +10,10 @@ import type { ExtensionRunDigest } from "@pancode/sdk/extension";
 import type { TelemetryRecord } from "../../core/telemetry/envelope.js";
 import { resetXdgCache } from "../../core/xdg.js";
 import { isSessionJsonlHeader, readSessionFileEntries } from "../../engine/session.js";
+import { loadSessionTelemetrySource } from "../telemetry/index.js";
 import { collectSessionEntries } from "./compaction/session-entries.js";
 import type { SessionEntry } from "./entries.js";
 import { payloadObject } from "./message-projection.js";
-import { loadSessionTelemetrySource } from "./telemetry-source.js";
 import { loadTokenSourcesReport, type TokenSourcesReportV1 } from "./token-sources.js";
 
 /** The loop guard's middleware registration id (`LOOP_GUARD_REGISTRATION_ID` in src/engine/loop-guard.ts). */

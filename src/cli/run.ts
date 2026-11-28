@@ -876,7 +876,8 @@ async function runDispatch(
 	const { SafetyDomainModule } = await import("../domains/safety/module.js");
 	const { SchedulingDomainModule } = await import("../domains/scheduling/module.js");
 	const { SessionDomainModule } = await import("../domains/session/module.js");
-	const { TelemetryDomainModule } = await import("../domains/telemetry/module.js");
+	const { createTelemetryDomainModule } = await import("../domains/telemetry/module.js");
+	const { retentionPruners } = await import("../entry/retention-pruners.js");
 	const { assistantTextFromEvent } = await import("../tools/dispatch-event-text.js");
 	const { createJsonCredentialScrub, projectDispatchJsonEvent } = await import("./modes/json-stream.js");
 	const { agentRunCompletion, dispatchAnswerText, formatDispatchHumanOutput, verifierVerdict } = await import(
@@ -911,7 +912,7 @@ async function runDispatch(
 		// run auto-builds its forensic evidence bundle and sidecar index, the same
 		// as an interactive session. It depends only on providers + session, both
 		// loaded above.
-		TelemetryDomainModule,
+		createTelemetryDomainModule({ retention: retentionPruners }),
 		SchedulingDomainModule,
 		createDispatchDomainModule({
 			getSettings: () => effectiveSettings,

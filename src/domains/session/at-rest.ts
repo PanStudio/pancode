@@ -17,9 +17,9 @@ import {
 	SESSION_FILE_MODE,
 	sessionPaths,
 } from "../../engine/session.js";
+import { sessionLiveOwner } from "../../lib/heartbeat/live-owner.js";
 import type { SessionMeta } from "./contract.js";
 import type { SessionInfoEntry } from "./entries.js";
-import { sessionLiveOwner } from "./live-owner.js";
 import { newTurnId } from "./manager.js";
 import { appendEntryToSessionFile, removeSessionDirectory } from "./tree/manager.js";
 

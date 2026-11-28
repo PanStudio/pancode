@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
+
+import type { RunToolBudgetEnvelope } from "../../core/run-budget-envelope.js";
 import type { FactSum } from "../../core/telemetry/fact.js";
 import type { TelemetryHub } from "../../core/telemetry/hub.js";
 import type { PricingSum } from "../../core/telemetry/pricing.js";
@@ -25,7 +27,6 @@ import type {
 import type { AssignmentId, DispatchAssignment } from "./assignment.js";
 import type { DurableAssignmentRecord } from "./assignment-store.js";
 import type { DetachedBatchRecord, RegisterDetachedBatchInput } from "./batch-store.js";
-import type { RunToolBudgetEnvelope } from "./budget-envelope.js";
 import type { DispatchResultSummaryAllowance, ExecutionRole } from "./execution-role.js";
 import type { GrantState } from "./grant-broker.js";
 import type { DispatchOwner } from "./ownership.js";

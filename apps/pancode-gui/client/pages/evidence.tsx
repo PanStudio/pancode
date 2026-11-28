@@ -10,16 +10,17 @@ import { RequestRecovery, useOperationRequest } from "../api/operation-request.j
 import { Facts } from "../design/facts.js";
 import { PanelEmpty, PanelHeading } from "../design/panel.js";
 import { emptyState, PANELS } from "../design/panel-model.js";
-import { InspectionError, InspectionSummary } from "../design/run-inspection.js";
+import { InspectionError, InspectionSummary, LoadOlder } from "../design/run-inspection.js";
 import { StatusMark } from "../design/status.js";
 import { Explained } from "../telemetry/Explained.js";
 import { explainable } from "../telemetry/quantity-model.js";
 import { ARTIFACT_MAX_PAGES, ARTIFACT_PAGE_SIZE, admittedPages, retainedLinksLive } from "./artifact-pagination.js";
 import {
+	evidenceVerdictTally,
 	evidenceVerdictTone,
 	inspectionSort,
 	listDestination,
-	matchesText,
+	matchesEvidence,
 	sortInspectionRecords,
 } from "./run-inspection-model.js";
 import "./run-inspection.css";
@@ -163,11 +164,7 @@ function EvidenceActions({
 								Start work from a conversation.
 							</PanelEmpty>
 						)}
-						{dispatches.hasNextPage && !dispatches.isRefetchError && (
-							<button type="button" disabled={dispatches.isFetching} onClick={() => void dispatches.fetchNextPage()}>
-								Load older dispatches
-							</button>
-						)}
+						<LoadOlder pages={dispatches} label="Load older dispatches" />
 						<p className="panel-note">
 							The list covers installation history. Confirm the chosen workspace matches the run you intend to inspect.
 						</p>
@@ -268,11 +265,7 @@ export function EvidencePage({ client }: { client: Client }) {
 	const bundles = useMemo(
 		() =>
 			sortInspectionRecords(
-				loaded.filter(
-					(item) =>
-						(!verdict || item.verdict === verdict) &&
-						matchesText(q, [item.run.runId, item.run.agentId ?? "", item.run.wireModelId ?? "", ...item.run.tags]),
-				),
+				loaded.filter((item) => matchesEvidence(item, verdict, q)),
 				sort,
 				(item) => ({
 					name: runLabel(item.run),
@@ -282,6 +275,7 @@ export function EvidencePage({ client }: { client: Client }) {
 			),
 		[loaded, verdict, q, sort],
 	);
+	const tally = evidenceVerdictTally(loaded);
 	return (
 		<section className="run-inspection">
 			<PanelHeading panel={PANELS.evidenceInventory} level={1} />
@@ -370,11 +364,8 @@ export function EvidencePage({ client }: { client: Client }) {
 			<InspectionSummary
 				figures={[
 					{ label: "Runs matching / loaded", value: `${bundles.length} / ${loaded.length}` },
-					{
-						label: "Reviewed or grounded · loaded",
-						value: loaded.filter((item) => item.verdict === "reviewed" || item.verdict === "grounded").length,
-					},
-					{ label: "Compromised · loaded", value: loaded.filter((item) => item.verdict === "compromised").length },
+					{ label: "Reviewed or grounded · loaded", value: tally.supported },
+					{ label: "Compromised · loaded", value: tally.compromised },
 				]}
 			/>
 			<div className="inspection-inventory">
@@ -408,14 +399,8 @@ export function EvidencePage({ client }: { client: Client }) {
 					</article>
 				))}
 			</div>
-			{inventory.hasNextPage && !inventory.isRefetchError && (
-				<>
-					<PanelEmpty>{emptyState.bounded("runs")}</PanelEmpty>
-					<button type="button" disabled={inventory.isFetching} onClick={() => void inventory.fetchNextPage()}>
-						{inventory.isFetchingNextPage ? "Loading evidence…" : "Load older evidence"}
-					</button>
-				</>
-			)}
+			{inventory.hasNextPage && !inventory.isRefetchError && <PanelEmpty>{emptyState.bounded("runs")}</PanelEmpty>}
+			<LoadOlder pages={inventory} label="Load older evidence" loading="Loading evidence…" />
 		</section>
 	);
 }

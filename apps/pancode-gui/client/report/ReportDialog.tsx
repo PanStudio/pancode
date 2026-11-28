@@ -13,10 +13,13 @@ import {
 	attachView,
 	hasUnplannedEdits,
 	INITIAL_REPORT_STATE,
+	REPORT_TABS,
 	type ReportFields,
 	reportControls,
 	reportReducer,
+	reportTabLabel,
 	sendChoices,
+	unmaskedAfterToggle,
 } from "./report-model.js";
 import "./report.css";
 
@@ -116,7 +119,6 @@ export function ReportDialog({
 	const controls = reportControls(state);
 	const attach = attachView(state);
 	const value = (field: keyof ReportFields) => state.edits[field] ?? view?.fields[field] ?? "";
-	const steps = ["review", "attach", "send"] as const;
 
 	return (
 		<Dialog title="Report a problem" eyebrow="PanCode" size="wide" initialFocus={titleRef} onClose={onClose}>
@@ -187,7 +189,7 @@ export function ReportDialog({
 				) : (
 					<>
 						<div className="report-dialog__steps" role="tablist" aria-label="Report steps">
-							{steps.map((step) => (
+							{REPORT_TABS.map((step) => (
 								<button
 									key={step}
 									type="button"
@@ -196,7 +198,7 @@ export function ReportDialog({
 									disabled={!controls.stepsEnabled}
 									onClick={() => dispatch({ type: "go", step })}
 								>
-									{step === "review" ? "Review" : step === "attach" ? "Attach" : "Send"}
+									{reportTabLabel(step)}
 								</button>
 							))}
 						</div>
@@ -235,14 +237,7 @@ export function ReportDialog({
 											aria-pressed={mask.masked}
 											disabled={mask.locked || state.busy !== null}
 											title={mask.locked ? "always masked" : mask.masked ? "masked" : "sent as written"}
-											onClick={() =>
-												update({
-													unmasked: view.masks
-														.filter((other) => (other.id === mask.id ? other.masked : !other.masked))
-														.filter((other) => !other.locked)
-														.map((other) => other.id),
-												})
-											}
+											onClick={() => update({ unmasked: unmaskedAfterToggle(view.masks, mask.id) })}
 										>
 											{mask.kind} × {mask.count}: {mask.masked ? "masked" : "sent as written"}
 										</button>

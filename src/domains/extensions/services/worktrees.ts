@@ -31,7 +31,6 @@ import type { ExtensionRequestScope } from "./scope.js";
 export interface ExtensionWorktreeServiceDeps {
 	extensionId: string;
 	workspace: string;
-	gitTimeoutMs?: number;
 	readOnly?: () => boolean;
 }
 
@@ -173,7 +172,7 @@ function exactPattern(entry: string): string {
 }
 
 export function createExtensionWorktreeService(deps: ExtensionWorktreeServiceDeps): ExtensionWorktreeService {
-	const timeout = deps.gitTimeoutMs ?? 60_000;
+	const timeout = 60_000;
 	const refPrefix = `refs/heads/pancode/${deps.extensionId}/`;
 	const identity = `pancode-${deps.extensionId}`;
 	const owned = new Set<string>();

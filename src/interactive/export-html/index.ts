@@ -78,6 +78,3 @@ function* sessionHtmlSteps(input: HtmlSessionExportInput): Generator<void, strin
 	}
 	return html;
 }
-
-export { ansiLinesToHtml } from "./ansi-to-html.js";
-export { renderTranscriptHtml } from "./tool-renderer.js";

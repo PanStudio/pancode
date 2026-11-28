@@ -9,7 +9,16 @@ import { ProblemAlert, reportProblem } from "../design/notifications.js";
 import { StatusMark } from "../design/status.js";
 import { Dialog } from "../interaction/Dialog.js";
 import { searchWith } from "../shell/use-search-draft.js";
-import { catalogKinds, desktopManaged, TERMINAL_NOTE, terminalSteps } from "./hub-extension-model.js";
+import {
+	applyLabel,
+	catalogFacets,
+	catalogKind,
+	catalogKinds,
+	catalogView,
+	desktopManaged,
+	TERMINAL_NOTE,
+	terminalSteps,
+} from "./hub-extension-model.js";
 import {
 	type Applied,
 	componentSentence,
@@ -17,7 +26,6 @@ import {
 	copyState,
 	diskSentence,
 	effectSentence,
-	matchesPackage,
 	missingScopes,
 	needsRequirements,
 	type Operation,
@@ -384,9 +392,7 @@ function PlanDialog({
 			<div className="actions">
 				{plan && !applying.data && plan.applicable && (
 					<button type="button" className="primary" disabled={busy} onClick={() => applying.mutate(plan.id)}>
-						{applying.isPending
-							? "Applying…"
-							: `Apply ${plan.steps.length === 1 ? "this change" : `${plan.steps.length} changes`}`}
+						{applyLabel(plan.steps.length, applying.isPending)}
 					</button>
 				)}
 				{plan && !applying.data && needsRequirements(plan) && (
@@ -435,7 +441,7 @@ export function HubCatalog({
 	const [localDiscovery, setLocalDiscovery] = useState<Record<string, string>>({});
 	const valueFor = (key: string) => (compact ? localDiscovery[key] : search.get(key));
 	const kinds = catalogKinds(packages);
-	const kind = kinds.find((candidate) => candidate === valueFor("kind")) ?? "all";
+	const kind = catalogKind(kinds, valueFor("kind"));
 	const installedOnly = valueFor("installed") === "true",
 		selected = valueFor("package");
 	const discover = (key: string, value: string | null) => {
@@ -457,34 +463,30 @@ export function HubCatalog({
 		onReview?.();
 		setRequest(input);
 	};
-	const visible = packages.filter(
-		(pkg) =>
-			(kind === "all" || pkg.kind === kind) && (!installedOnly || pkg.copies.length > 0) && matchesPackage(pkg, filter),
-	);
-	const installed = packages.filter((pkg) => pkg.copies.length > 0).length;
-	const displayed = visible.slice(0, limit),
-		selectedPackage = visible.find((pkg) => pkg.ref === selected);
-	if (selectedPackage && !displayed.includes(selectedPackage)) displayed.unshift(selectedPackage);
+	const { visible, installed, displayed, selectionHidden } = catalogView(packages, {
+		kind,
+		installedOnly,
+		filter,
+		selected,
+		limit,
+	});
 	return (
 		<>
 			<fieldset className="hub-facets">
 				<legend>Show</legend>
-				{(["all", ...kinds] as const)
-					.filter((name) => name === "all" || packages.some((pkg) => pkg.kind === name))
-					.map((name) => (
-						<button
-							type="button"
-							key={name}
-							aria-pressed={kind === name}
-							onClick={() => {
-								discover("kind", name === "all" ? null : name);
-								setLimit(40);
-							}}
-						>
-							{name === "all" ? "All kinds" : `${name[0]?.toUpperCase()}${name.slice(1)} packs`} ·{" "}
-							{name === "all" ? packages.length : packages.filter((pkg) => pkg.kind === name).length}
-						</button>
-					))}
+				{catalogFacets(packages, kinds).map((facet) => (
+					<button
+						type="button"
+						key={facet.name}
+						aria-pressed={kind === facet.name}
+						onClick={() => {
+							discover("kind", facet.name === "all" ? null : facet.name);
+							setLimit(40);
+						}}
+					>
+						{facet.label} · {facet.count}
+					</button>
+				))}
 				<button
 					type="button"
 					aria-pressed={installedOnly}
@@ -525,7 +527,7 @@ export function HubCatalog({
 			<p className="hub-result-count" role="status">
 				{visible.length} of {packages.length} packs · {installed} installed
 			</p>
-			{selected && !visible.some((pkg) => pkg.ref === selected) && (
+			{selectionHidden && (
 				<p className="panel-note">
 					The selected pack is outside these filters or is no longer available.{" "}
 					<button type="button" onClick={() => discover("package", null)}>

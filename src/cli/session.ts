@@ -5,7 +5,7 @@
  * state dir from any node (#439). The persisted-session leaves
  * (`history|show|export|artifacts|rename|fork|rm|compact`) live in session-history.ts.
  *
- * Every open session keeps `live/<id>.json` fresh (domains/session/heartbeat.ts).
+ * Every open session keeps `live/<id>.json` fresh (lib/heartbeat/heartbeat.ts).
  * A terminate request is a file the owner reads on its next beat; a signal is
  * sent only to a process on this host whose birth token still matches, because
  * a pid means nothing on another node. `--force` releases a session whose
@@ -26,6 +26,8 @@ import { releaseStateLocksOwnedBy, type StateLockOwner } from "../core/state-fil
 import { pancodeStateDir } from "../core/xdg.js";
 import { releaseCapacityLeasesOwnedBy } from "../domains/dispatch/capacity-lease.js";
 import { expireDispatchReservationsOwnedBy } from "../domains/dispatch/reservation-store.js";
+import { endAbandonedSession } from "../domains/session/history.js";
+import { cwdHash, type PancodeSessionMeta } from "../engine/session.js";
 import {
 	currentRequester,
 	HEARTBEAT_INTERVAL_MS,
@@ -44,9 +46,7 @@ import {
 	stateDirClockOffsetMs,
 	type TerminateRequest,
 	terminateRequestPath,
-} from "../domains/session/heartbeat.js";
-import { endAbandonedSession } from "../domains/session/history.js";
-import { cwdHash, type PancodeSessionMeta } from "../engine/session.js";
+} from "../lib/heartbeat/heartbeat.js";
 import { jsonFailure, writeJson } from "./kit/json-out.js";
 import type { ErrorSlug } from "./kit/slugs.js";
 import type { SessionHistoryVerb } from "./session-history.js";

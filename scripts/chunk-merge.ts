@@ -93,6 +93,8 @@ const SESSION_STAGES: ReadonlyArray<readonly [name: string, roots: ReadonlyArray
  * `help` keeps `help --json` to the kit and the command specs: without it the
  * kit shared a file with the import() namespace stub of
  * src/domains/prompts/preload.ts, whose imports load the session stage.
+ * `fleetHelp` does the same for `fleet --help`, whose file otherwise folded in
+ * the import() namespace stub of src/domains/session/tree/active-path.ts.
  * `fleetStatus` keeps `fleet status` off the providers stage, and
  * `fleetStatusRows` keeps the ledger rows it loads by `import()` off the
  * domain barrels (src/domains/store/index.ts, src/domains/agents/index.ts,
@@ -140,6 +142,7 @@ const EXACT_PATHS: ReadonlyArray<
 	],
 	["runHelp", ["src/cli/index.ts", "src/cli/run-help.ts"]],
 	["help", ["src/cli/index.ts", "src/cli/help-command.ts"]],
+	["fleetHelp", ["src/cli/index.ts", "src/cli/fleet-help.ts"]],
 	["fleetStatus", ["src/cli/index.ts", "src/cli/fleet-status.ts"]],
 	["fleetStatusRows", ["src/cli/index.ts"], ["src/cli/fleet-status.ts"]],
 ];

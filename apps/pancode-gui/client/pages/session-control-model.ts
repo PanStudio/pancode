@@ -82,3 +82,62 @@ export function createSessionControlStore() {
 		remove: (key: string) => publish(records.filter((row) => row.key !== key || row.stage === "sending")),
 	};
 }
+
+export type SessionControlNoticeView = Readonly<{
+	/** Anything to show: a request on record or a notice. */
+	shown: boolean;
+	needsReview: boolean;
+	sending: boolean;
+	/** Every request has settled with nothing left to review, so the banner may clear itself. */
+	settled: boolean;
+	/** The settled requests' keys, joined; a change restarts the clearing wait. */
+	completedKeys: string;
+	state: "unresolved" | "sending" | "complete";
+	tone: "warn" | "running" | "neutral" | "success";
+	label: string;
+	summary: string;
+}>;
+
+/** The task bar's control banner, from the retained requests and the controls' notice. */
+export function sessionControlNotice(
+	records: readonly SessionControlRequest[],
+	notice: string | null,
+): SessionControlNoticeView {
+	const unresolved = records.filter((row) => row.stage === "unresolved");
+	const pending = records.filter((row) => row.stage === "sending");
+	const latest = pending.at(-1) ?? records.at(-1);
+	const needsReview = unresolved.length > 0 || notice !== null;
+	const sending = pending.length > 0;
+	const idle = !needsReview && !sending && latest?.nothingStopped === true;
+	// A settled request is titled by what happened, so a stop reads "Stopped" rather than a generic check.
+	const label = needsReview
+		? "Check session"
+		: sending
+			? "Request in progress"
+			: latest?.action === "close"
+				? "Closed"
+				: idle
+					? "Nothing to stop"
+					: "Stopped";
+	const summary = needsReview
+		? `${unresolved.length || 1} session ${unresolved.length > 1 ? "requests need" : "request needs"} your review.`
+		: pending.length > 1
+			? `${pending.length} session requests in progress…`
+			: latest?.action === "close"
+				? `${sending ? "Close request" : "Closed"} · ${latest.title}`
+				: `${sending ? "Stop request" : idle ? "Nothing stopped" : "Stop confirmed"} · ${latest?.title ?? "Session"}`;
+	return {
+		shown: latest !== undefined || notice !== null,
+		needsReview,
+		sending,
+		settled: latest?.stage === "complete" && unresolved.length === 0 && pending.length === 0 && notice === null,
+		completedKeys: records
+			.filter((row) => row.stage === "complete")
+			.map((row) => row.key)
+			.join(" "),
+		state: needsReview ? "unresolved" : sending ? "sending" : "complete",
+		tone: needsReview ? "warn" : sending ? "running" : idle ? "neutral" : "success",
+		label,
+		summary,
+	};
+}

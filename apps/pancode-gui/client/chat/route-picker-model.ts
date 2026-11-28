@@ -5,7 +5,8 @@ import type {
 	AcpSafeSettings as SafeSettings,
 	AcpSafeSettingsPatch as SafeSettingsPatch,
 } from "../../contracts/wire.js";
-import type { ModelOption } from "../pages/model-picker-model.js";
+import { formatTime } from "../api/clock.js";
+import { ACP_TARGET_MODEL_LIMIT, catalogMayBeCut, type ModelOption } from "../pages/model-picker-model.js";
 
 export type RouteScope = "conversation" | "every-project";
 export type RouteDraft = { target: string; model: string; thinking: string };
@@ -152,4 +153,34 @@ export function thinkingChoices(draft: RouteDraft, levels: readonly string[]): M
 export function catalogFallbackNote(target: string, reason: string | null | undefined): string {
 	if (reason === "unsupported") return `${target} cannot list its models. These are the models PanCode knows for it.`;
 	return `${target} did not answer (${reason ?? "no reason reported"}). These are the models PanCode last knew for it.`;
+}
+
+/**
+ * The line under the picker's fields: where the chosen connection's models came from and how many there are. Its
+ * wording differs from the settings page's catalog note, so the two do not share code.
+ */
+export function catalogNote(input: {
+	/** The chosen connection; empty when none is chosen. */
+	readonly target: string;
+	readonly models: readonly string[] | null;
+	readonly asking: boolean;
+	readonly answer: { readonly healthy: boolean; readonly reason?: string | null } | undefined;
+	readonly answeredAt: number;
+	/** The failed check's message, or null when it did not fail. */
+	readonly error: string | null;
+}): string {
+	const { target, models, answer } = input;
+	if (target === "") return "Select a connection before applying a model to this conversation.";
+	if (input.asking) return `Asking ${target} for its models…`;
+	const cut =
+		models !== null && catalogMayBeCut(models)
+			? ` PanCode lists at most ${ACP_TARGET_MODEL_LIMIT} models per connection.`
+			: "";
+	const count = models === null ? "" : ` ${models.length} ${models.length === 1 ? "model" : "models"}.`;
+	if (answer?.healthy)
+		return `${target} answered at ${formatTime(new Date(input.answeredAt).toISOString())}.${count}${cut}`;
+	if (answer) return `${catalogFallbackNote(target, answer.reason)}${cut}`;
+	if (input.error !== null)
+		return `The check failed: ${input.error} These are the models PanCode last knew for it.${cut}`;
+	return `The models PanCode knows for ${target}.${count}${cut}`;
 }

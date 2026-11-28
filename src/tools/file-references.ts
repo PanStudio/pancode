@@ -28,7 +28,6 @@ interface FileReferenceOptions {
 	cwd?: string;
 	missing?: "error" | "leave";
 	includeImages?: boolean;
-	autoResizeImages?: boolean;
 	signal?: AbortSignal;
 	/** Called before a PDF's text extraction starts, the one read slow enough to need a cancel hint. */
 	onExtract?: (filePath: string) => void;
@@ -306,9 +305,6 @@ async function readFileReferenceAsync(fileArg: string, options: FileReferenceOpt
 				mimeType: imageMimeType,
 				data: bytes.toString("base64"),
 			};
-			if (options.autoResizeImages === false) {
-				return result(renderImageFile(filePath), [], [originalImage], [filePath]);
-			}
 
 			const resized = await resizeImage(originalImage);
 			if (!resized) {

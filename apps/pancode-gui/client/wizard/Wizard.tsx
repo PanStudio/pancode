@@ -34,15 +34,22 @@ import {
 import { useSetupSession } from "./use-setup.js";
 import {
 	backAnswer,
+	displayedView,
 	readMessages,
 	STAGE_LABELS,
 	type StageId,
+	type StageKey,
 	type StepView,
 	selectAnswer,
+	showsProbe,
 	stagesFor,
+	stageWorkingLabel,
+	stepStates,
 	viewFor,
+	viewTitle,
 	type WizardMode,
 	type WizardView,
+	wizardFrame,
 } from "./wizard-model.js";
 import "./wizard.css";
 import { workspacesQuery } from "../api/queries.js";
@@ -50,7 +57,7 @@ import { workspacesQuery } from "../api/queries.js";
 /** Where the wizard hands the window back: home, the page it was opened from, or (first run) the pages that need no model. */
 export type WizardExit = "home" | "back" | "explore";
 
-const CAPTIONS: Readonly<Record<StageId | "welcome" | "saved", string>> = {
+const CAPTIONS: Readonly<Record<StageKey, string>> = {
 	welcome:
 		"PanCode is systems software for coding agents. Panos, the agent you talk to, works in the folders you choose.",
 	provider: "Choose what you already use.",
@@ -69,11 +76,11 @@ const CAPTION_TEST = "PanCode sends the model one short test message before it s
 const WORKING_DELAY_MS = 350;
 
 function Stepper({ stages, current, done }: { stages: readonly StageId[]; current: StageId | null; done: boolean }) {
-	const at = current === null ? -1 : stages.indexOf(current);
+	const states = stepStates(stages, current, done);
 	return (
 		<ol className="wizard-stepper" aria-label="Setup progress">
 			{stages.map((stage, index) => {
-				const state = done || index < at ? "done" : index === at ? "current" : "next";
+				const state = states[index];
 				return (
 					<li key={stage} data-state={state} {...(state === "current" ? { "aria-current": "step" as const } : {})}>
 						<span className="wizard-stepper__mark" aria-hidden="true">
@@ -86,16 +93,6 @@ function Stepper({ stages, current, done }: { stages: readonly StageId[]; curren
 			})}
 		</ol>
 	);
-}
-
-function titleOf(view: WizardView): string {
-	if (view.kind === "welcome") return "Welcome to PanCode";
-	if (view.kind === "starting") return "Starting setup";
-	if (view.kind === "working") return view.label;
-	if (view.kind === "saved") return "Connection saved";
-	if (view.kind === "failed") return "Setup stopped";
-	if (view.kind === "cancelled") return "Setup cancelled";
-	return view.prompt.heading[0] || "Continue setup";
 }
 
 export default function Wizard({
@@ -139,15 +136,7 @@ export default function Wizard({
 		const timer = setTimeout(() => setWorkingShown(true), WORKING_DELAY_MS);
 		return () => clearTimeout(timer);
 	}, [raw.kind]);
-	const holding = raw.kind === "working" && !workingShown && lastStep.current !== null;
-	const view: WizardView =
-		intro === "booting"
-			? { kind: "starting" }
-			: intro === "welcome" && raw.kind !== "failed"
-				? { kind: "welcome" }
-				: holding && lastStep.current
-					? lastStep.current
-					: raw;
+	const view: WizardView = displayedView(intro, raw, lastStep.current, workingShown);
 	const busy = session.busy || raw.kind === "working";
 
 	useEffect(() => {
@@ -195,7 +184,7 @@ export default function Wizard({
 		setPageTitle("Set up PanCode");
 		return () => setPageTitle(null);
 	}, []);
-	const spoken = phase === "workspace" ? "Open your first workspace" : titleOf(view);
+	const spoken = phase === "workspace" ? "Open your first workspace" : viewTitle(view);
 	useEffect(() => {
 		announce(spoken);
 	}, [spoken]);
@@ -222,34 +211,14 @@ export default function Wizard({
 		} else if ((status !== null && status !== "working") || session.error !== null) setIntro("welcome");
 	}, [intro, status, session.error, needsWorkspace, read.chat, finish]);
 	const stages = stagesFor(mode, needsWorkspace === true);
-	const current: StageId | null =
-		phase === "workspace" ? "workspace" : "stage" in view ? view.stage : view.kind === "welcome" ? null : null;
 	const saved = raw.kind === "saved";
-	const scene = phase === "workspace" ? "read" : "scene" in view ? view.scene : "read";
-	const stageKey: StageId | "welcome" | "saved" =
-		phase === "workspace"
-			? "workspace"
-			: view.kind === "welcome" || view.kind === "starting"
-				? "welcome"
-				: saved
-					? "saved"
-					: (current ?? "provider");
-	// While the card shows what is being waited on, the card carries the spinner. The stage carries it before
-	// the first step exists and while the first run has no card yet.
-	const workingLabel = view.kind === "starting" || (session.busy && session.state === null) ? "Starting setup" : null;
+	const { current, scene, stageKey } = wizardFrame(phase, view, saved);
+	const workingLabel = stageWorkingLabel(view, session.busy && session.state === null);
 
 	const send = session.answer;
 	const problem = session.state?.problem ?? session.error;
 	const common = { busy, problem, send };
-	const showProbe =
-		read.probe !== null &&
-		(view.kind === "model" ||
-			view.kind === "model-missing" ||
-			view.kind === "detected" ||
-			view.kind === "credential-source" ||
-			view.kind === "credential-key" ||
-			view.kind === "credential-env" ||
-			view.kind === "review");
+	const showProbe = read.probe !== null && showsProbe(view);
 
 	let content: React.ReactNode;
 	if (phase === "workspace") content = <WorkspaceStep client={client} onOpened={() => onExit("home")} />;

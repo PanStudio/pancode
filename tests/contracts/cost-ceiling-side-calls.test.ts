@@ -13,7 +13,6 @@ import type { PromptsContract } from "../../src/domains/prompts/contract.js";
 import type { ProvidersContract } from "../../src/domains/providers/contract.js";
 import llamacpp from "../../src/domains/providers/runtimes/local-native/llamacpp.js";
 import type { RuntimeDescriptor } from "../../src/domains/providers/types/runtime-descriptor.js";
-import { createVisionSidecar } from "../../src/domains/providers/vision-sidecar.js";
 import type { SchedulingContract } from "../../src/domains/scheduling/contract.js";
 import { admitCompactionSummaryCall } from "../../src/domains/session/compaction/flow.js";
 import type { SessionContract } from "../../src/domains/session/contract.js";
@@ -28,6 +27,7 @@ import { registerEngineFauxProvider } from "../../src/engine/api-registry.js";
 import { createSideRequestAdmission } from "../../src/entry/side-request-admission.js";
 import type { CreateChatLoopDeps } from "../../src/session-control/chat-loop.js";
 import { createChatLoop } from "../../src/session-control/chat-loop.js";
+import { createVisionSidecar } from "../../src/tools/vision-sidecar.js";
 import { isolatePancodeEnv } from "../harness/scratch-env.js";
 
 type FauxSteps = Parameters<ReturnType<typeof registerEngineFauxProvider>["setResponses"]>[0];

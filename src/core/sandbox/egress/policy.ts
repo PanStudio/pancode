@@ -13,7 +13,7 @@ export interface EgressOrigin {
  * Named exact host/port bundles an operator can grant by name. Exact hosts
  * only: a preset never matches a subdomain it does not list.
  */
-export const EGRESS_PRESETS: Readonly<Record<EgressPresetName, readonly string[]>> = {
+const EGRESS_PRESETS: Readonly<Record<EgressPresetName, readonly string[]>> = {
 	npm: ["registry.npmjs.org:443"],
 	pypi: ["pypi.org:443", "files.pythonhosted.org:443"],
 	github: [
@@ -226,6 +226,12 @@ export function upstreamProxyProblem(value: string): string | null {
 	if (url.hostname.length === 0) return "the URL names no proxy host";
 	if ((url.pathname !== "/" && url.pathname !== "") || url.search !== "" || url.hash !== "")
 		return "a proxy URL takes no path, query or fragment";
+	try {
+		decodeURIComponent(url.username);
+		decodeURIComponent(url.password);
+	} catch {
+		return "proxy URL credentials contain invalid percent-encoding";
+	}
 	return null;
 }
 

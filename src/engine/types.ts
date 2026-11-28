@@ -53,15 +53,6 @@ import type { Api as PiApi, Model as PiModel, Usage as PiUsage } from "@earendil
  * `as unknown as` casts it forced are banned.
  */
 export type EngineModel = PiModel<PiApi>;
-export type {
-	EditorTheme,
-	SelectItem,
-	SelectListLayoutOptions,
-	SelectListTheme,
-	SettingItem,
-	SettingsListTheme,
-	TUI,
-} from "@earendil-works/pi-tui";
 
 /** Sanitized same-request Codex plan windows. No credential or raw account identity. */
 export interface CodexQuotaObservation {

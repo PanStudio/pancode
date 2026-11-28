@@ -2,17 +2,16 @@
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import { deepStrictEqual, equal, match, ok } from "node:assert/strict";
 import { describe, it } from "node:test";
-
+import {
+	cloneRunToolBudgetEnvelope,
+	formatEffectiveBudget,
+	resolveToolBudgetEnvelope,
+} from "../../src/core/run-budget-envelope.js";
 import { discoverAgentRecipes } from "../../src/domains/agents/registry.js";
 import { validateResultContract } from "../../src/domains/agents/result-contract.js";
 import { nodeResultContractFilesystem } from "../../src/domains/agents/result-contract-filesystem.js";
 import { normalizeAgentSpec, resolveAgentToolCompatibility } from "../../src/domains/agents/spec.js";
 import { classifyAgentTask } from "../../src/domains/dispatch/agent-candidates.js";
-import {
-	cloneRunToolBudgetEnvelope,
-	formatEffectiveBudget,
-	resolveToolBudgetEnvelope,
-} from "../../src/domains/dispatch/budget-envelope.js";
 import { budgetEnforcementForRuntime } from "../../src/domains/dispatch/worker-spec.js";
 
 function worldResult(discovery: "performed" | "caller-supplied-only" | "unavailable") {

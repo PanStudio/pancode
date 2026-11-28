@@ -2,12 +2,22 @@
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import { randomUUID } from "node:crypto";
 import { mkdir, readdir, readFile, realpath, rename, unlink, writeFile } from "node:fs/promises";
-import { isAbsolute, join, relative, sep } from "node:path";
+import { join, relative } from "node:path";
 import { setTimeout } from "node:timers/promises";
-import { processAlive, processBirthToken } from "../pancode/http-shims.js";
+import { ownerIdentity, ownerState, relativePathEscapes } from "../pancode/http-shims.js";
 import { AppProblem } from "../services/problem.js";
 
-type Owner = { id: string; pid: number; birth: string | null; choosing: boolean; ticket: number };
+/** A bakery claim. `host`, `pidNs` and `bootId` are absent on claims from before they were recorded. */
+type Owner = {
+	id: string;
+	pid: number;
+	birth: string | null;
+	choosing: boolean;
+	ticket: number;
+	host?: string;
+	pidNs?: string | null;
+	bootId?: string | null;
+};
 function owner(value: unknown): value is Owner {
 	if (!value || typeof value !== "object") return false;
 	const row = value as Record<string, unknown>;
@@ -20,13 +30,24 @@ function owner(value: unknown): value is Owner {
 		Number.isInteger(row.pid) &&
 		typeof row.pid === "number" &&
 		row.pid > 0 &&
-		(typeof row.birth === "string" || row.birth === null)
+		(typeof row.birth === "string" || row.birth === null) &&
+		(row.host === undefined || typeof row.host === "string") &&
+		(row.pidNs === undefined || row.pidNs === null || typeof row.pidNs === "string") &&
+		(row.bootId === undefined || row.bootId === null || typeof row.bootId === "string")
 	);
 }
-export function ownerDead(pid: number, birth: string | null) {
-	if (!processAlive(pid)) return true;
-	const current = processBirthToken(pid);
-	return birth !== null && current !== null && birth !== current;
+/**
+ * Whether a recorded owner has provably exited, by the engine's rule: another host or a pid namespace not visible here
+ * is never judged by a local pid, so a peer sharing the state root from a container keeps its claim.
+ */
+export function ownerDead(owner: {
+	pid: number;
+	birth: string | null;
+	host?: string;
+	pidNs?: string | null;
+	bootId?: string | null;
+}) {
+	return ownerState({ ...owner, host: owner.host ?? null, birthToken: owner.birth }) === "gone";
 }
 export class AppFiles {
 	constructor(private readonly state: string) {}
@@ -42,7 +63,7 @@ export class AppFiles {
 		await mkdir(path, { recursive: true });
 		const root = await realpath(path),
 			part = relative(state, root);
-		if (part === ".." || part.startsWith(`..${sep}`) || isAbsolute(part))
+		if (relativePathEscapes(part))
 			throw new AppProblem("validation", "Application state directory escapes its configured root.");
 		return root;
 	}
@@ -51,8 +72,7 @@ export class AppFiles {
 		try {
 			const file = await realpath(join(root, `${name}.json`)),
 				part = relative(root, file);
-			if (part === ".." || part.startsWith(`..${sep}`) || isAbsolute(part))
-				throw new AppProblem("validation", "Web state file escapes its directory.");
+			if (relativePathEscapes(part)) throw new AppProblem("validation", "Web state file escapes its directory.");
 			return JSON.parse(await readFile(file, "utf8")) as unknown;
 		} catch (error) {
 			if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
@@ -69,7 +89,17 @@ export class AppFiles {
 		await mkdir(lockDirectory, { recursive: true });
 		if ((await realpath(lockDirectory)) !== lockDirectory)
 			throw new AppProblem("validation", "Web lock directory must not be a symlink.");
-		const token: Owner = { id: randomUUID(), pid: process.pid, birth: processBirthToken(), choosing: true, ticket: 0 };
+		const { host, birthToken, pidNs, bootId } = ownerIdentity();
+		const token: Owner = {
+			id: randomUUID(),
+			pid: process.pid,
+			birth: birthToken,
+			choosing: true,
+			ticket: 0,
+			host,
+			pidNs,
+			bootId,
+		};
 		const candidate = join(lockDirectory, `${token.id}.json`),
 			staging = join(lockDirectory, `.${token.id}.tmp`);
 		const publish = async () => {
@@ -90,7 +120,7 @@ export class AppFiles {
 				if (!owner(value)) throw new AppProblem("unavailable", "Web state lock is invalid.");
 				// Each contender has a unique filename, never reused. Dead-owner cleanup
 				// cannot unlink a new owner's claim (unlike replacing one shared lock file).
-				if (ownerDead(value.pid, value.birth)) {
+				if (ownerDead(value)) {
 					await unlink(join(lockDirectory, file)).catch(() => undefined);
 					continue;
 				}

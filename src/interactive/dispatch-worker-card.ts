@@ -4,6 +4,7 @@
 /** The worker card body: progress, answer, trust and evidence lines for one selected run. */
 import type { OutputStyle } from "../core/defaults.js";
 import { tierPolicy } from "../core/presentation-tier.js";
+import { budgetLimitWords } from "../core/run-budget-envelope.js";
 import {
 	USAGE_NOT_MEASURED,
 	usageFigure,
@@ -11,7 +12,6 @@ import {
 	usageLineFigure,
 	usageSaysNothing,
 } from "../core/views/usage-words.js";
-import { budgetLimitWords } from "../domains/dispatch/budget-envelope.js";
 import { reviewFindingsWords, workerFailureHeadline } from "../domains/dispatch/failure-headline.js";
 import { describeWriteBoundaryAttributionDowngrade } from "../domains/dispatch/write-boundary.js";
 import { plainTrustVerdict } from "../domains/evidence/trust-projection.js";

@@ -318,6 +318,8 @@ export const fleetRunNote = (run: FleetRun): string | null => (run.node === null
 export const fleetSummaryLabel = (runs: readonly FleetRun[]): string =>
 	`Fleet · ${runs.filter(isLiveRun).length} running of ${runs.length}`;
 
+export const workerCount = (count: number): string => (count === 1 ? "1 worker" : `${count} workers`);
+
 // ---- the closed fact taxonomy ----------------------------------------------------------------
 
 export interface FleetFactPresentation {

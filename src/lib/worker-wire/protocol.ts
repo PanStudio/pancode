@@ -61,7 +61,7 @@ export const CONTROL_FRAME_PREFIX = "@pancode-control/1 ";
  * bounding a single allocation. The stdin ceilings bound what an orchestrator
  * may queue toward a worker that stopped reading.
  */
-export const WORKER_CONTROL_FRAME_MAX_BYTES = 16 * 1024;
+const WORKER_CONTROL_FRAME_MAX_BYTES = 16 * 1024;
 export const WORKER_BULK_FRAME_MAX_BYTES = 4 * 1024 * 1024;
 export const WORKER_STDIN_FRAME_MAX_BYTES = 1024 * 1024;
 export const WORKER_STDIN_QUEUE_MAX_BYTES = 4 * 1024 * 1024;
@@ -237,7 +237,7 @@ export const AGENT_LEDGER_PATH_MAX_CHARS = 400;
 const AGENT_LEDGER_ENTRY_ID = /^e[1-9][0-9]*$/;
 
 /** True when a string has the shape of a ledger entry id. */
-export function isAgentLedgerEntryId(value: unknown): value is string {
+function isAgentLedgerEntryId(value: unknown): value is string {
 	return typeof value === "string" && AGENT_LEDGER_ENTRY_ID.test(value);
 }
 
@@ -415,12 +415,6 @@ export function parseAgentLedgerEntry(value: unknown): AgentLedgerEntry | null {
 			: { flowRestrictions: structuredClone(record.flowRestrictions as FlowRestrictionSet) }),
 		...(conflicts === undefined ? {} : { conflictsWith: [...(conflicts as string[])] }),
 	};
-}
-
-/** Stdin frame that pushes newly admitted entries toward one worker's mirror. */
-export interface AgentLedgerDeltaFrame {
-	type: "ledger_delta";
-	entries: ReadonlyArray<AgentLedgerEntry>;
 }
 
 /**
