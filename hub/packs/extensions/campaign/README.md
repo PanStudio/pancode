@@ -68,9 +68,9 @@ Entries run one at a time, and `--repeat <N>` runs the whole roster N times, one
 copy of the fixture under `<out>/<NN>-<label>/project` and its own empty PanCode data, state and cache under
 `<out>/<NN>-<label>/home`, so entries share no sessions or memory. `<NN>` is the entry's position from `01`, and the
 label's characters other than letters, digits, `.`, `_` and `-` become `-` in the directory name. With `--repeat` above
-1, the directory also ends in `-r<K>`, the pass number from 1. Secret files in a fixture that lies inside the directory
-you run `pancode campaign` from (`.env`, private keys, token files) are copied empty, as an extension never reads them;
-keep a fixture that needs one outside it.
+1, the directory also ends in `-r<K>`, the pass number from 1. Secret files in the fixture (`.env`, private keys, token
+files) are copied empty, as an extension never reads them; an entry's run reaches your targets through your config
+directory instead.
 
 Each entry uses your config directory as it is (targets, credentials, installed extensions and MCP configuration), the
 way your own `pancode run` would: nothing secret is copied under `--out`, and a login an entry refreshes is saved to your

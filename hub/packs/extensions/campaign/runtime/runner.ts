@@ -1,4 +1,14 @@
-import { closeSync, cpSync, mkdirSync, openSync, readFileSync, renameSync, writeFileSync, writeSync } from "node:fs";
+import {
+	closeSync,
+	cpSync,
+	lstatSync,
+	mkdirSync,
+	openSync,
+	readFileSync,
+	renameSync,
+	writeFileSync,
+	writeSync,
+} from "node:fs";
 import { join } from "node:path";
 import type {
 	ExtensionContextV2,
@@ -125,6 +135,21 @@ export function readProbe(probe: CampaignProbe, result: ExtensionRunCommandResul
 }
 
 /** Write `entry.json` whole, so a reader never sees half of it. */
+/** Copies the fixture whole. The sandbox masks a secret file as a device, which is copied as an empty file. */
+export function copyFixture(fixture: string, project: string): void {
+	const masked: string[] = [];
+	cpSync(fixture, project, {
+		recursive: true,
+		filter: (source, destination) => {
+			const stat = lstatSync(source);
+			if (stat.isFile() || stat.isDirectory() || stat.isSymbolicLink()) return true;
+			masked.push(destination);
+			return false;
+		},
+	});
+	for (const destination of masked) writeFileSync(destination, "");
+}
+
 function saveEntry(result: CampaignEntryResult): void {
 	const path = join(result.dir, "entry.json");
 	writeFileSync(`${path}.tmp`, `${JSON.stringify(result, null, 2)}\n`);
@@ -189,7 +214,7 @@ async function runEntry(
 		return result;
 	}
 	try {
-		cpSync(input.fixture, project, { recursive: true });
+		copyFixture(input.fixture, project);
 		mkdirSync(home, { mode: 0o700 });
 		result.startedAt = new Date().toISOString();
 		const started = Date.now();

@@ -7,6 +7,7 @@ import { join } from "node:path";
 import { after, before, describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
 import type { CampaignResult } from "../../hub/packs/extensions/campaign/runtime/types.ts";
+import { sandboxAvailability } from "../../src/core/sandbox/availability.js";
 import { type HeadlessScratch, headlessScratch } from "../harness/headless-run.js";
 import {
 	closeServer,
@@ -92,6 +93,7 @@ describe("the campaign pack folds one fixture across a roster", { timeout: 300_0
 		mkdirSync(join(fixture, ".planning"), { recursive: true });
 		writeFileSync(join(fixture, ".planning", "state.json"), '{"phase":"outline"}\n');
 		writeFileSync(join(fixture, "README.md"), "# paper\n");
+		writeFileSync(join(fixture, ".env"), "FIXTURE_SECRET=hunter2\n");
 		writeFileSync(
 			join(scratch.root, "roster.yaml"),
 			"roster:\n  - target: mock-chat\n    model: mock-model\n    label: mock\n  - target: absent-target\n    model: nope\n    thinking: low\n",
@@ -173,10 +175,15 @@ describe("the campaign pack folds one fixture across a roster", { timeout: 300_0
 			const saved = JSON.parse(readFileSync(join(entry.dir, "entry.json"), "utf8")) as { label: string; status: string };
 			deepStrictEqual([saved.label, saved.status], [entry.label, entry.status]);
 			ok(existsSync(join(entry.dir, "project", "README.md")), "each entry works in its own fixture copy");
+			// Under an OS sandbox the pack reads a secret file as masked, and copies it empty.
+			strictEqual(
+				readFileSync(join(entry.dir, "project", ".env"), "utf8"),
+				sandboxAvailability().available ? "" : "FIXTURE_SECRET=hunter2\n",
+			);
 			ok(!existsSync(join(entry.dir, "home", "config")), "no copy of the operator's config is kept under --out");
 		}
 		deepStrictEqual(readdirSync(out).sort(), ["01-mock", "02-absent-target-nope-low"]);
-		deepStrictEqual(readdirSync(fixture).sort(), [".planning", "README.md"]);
+		deepStrictEqual(readdirSync(fixture).sort(), [".env", ".planning", "README.md"]);
 		strictEqual(readCredentials(), credentials);
 		const operatorSessions = existsSync(join(scratch.stateDir, "sessions"))
 			? readdirSync(join(scratch.stateDir, "sessions"), { recursive: true }).filter((name) =>

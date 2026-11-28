@@ -1,7 +1,7 @@
 {
 	"source": {
 		"path": "hub/index.yaml",
-		"sha256": "fe9fe37487c076095ea000540704e466d9376b24aa706fc41630a46038c93376",
+		"sha256": "3b1cf1f9b41de09b4c91567ffa9874bb68a9a9178c2e52d24cf590182f1a20c9",
 		"rows": 47,
 		"revoked": 0
 	},
@@ -33,7 +33,7 @@
 			"source": {
 				"path": "hub/packs/extensions/campaign"
 			},
-			"sha256": "ceab66b3bbfcee8708cc3be763baa81b92c470369ea0522e16d6463a49b891b7",
+			"sha256": "153c7a14284ee8e653cb08643b1928dd84e61319a787e014e6105e6adbbf8c34",
 			"install": "pancode hub install extension:campaign"
 		},
 		{

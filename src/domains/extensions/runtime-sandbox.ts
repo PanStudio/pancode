@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
-import { lstatSync, mkdirSync, rmdirSync } from "node:fs";
+import { lstatSync, mkdirSync, rmdirSync, statSync } from "node:fs";
 import path from "node:path";
 import type { ExtensionRuntimeDeclarationV2 } from "@pancode/sdk/pack";
 import { canonicalizeExistingPath } from "../../core/path-canonical.js";
@@ -262,11 +262,16 @@ function workspaceSecretMasks(
 	declaration: ExtensionRuntimeDeclarationV2,
 	workspace: string,
 	base: ReadonlyArray<SandboxMaskedPath>,
+	grants: ReadonlyArray<ResolvedPathGrant>,
 ): SandboxMaskedPath[] {
 	const workspaceRoots = [workspace];
 	for (const entry of declaration.permissions.fs.read)
 		if (entry !== "workspace" && entry !== "home")
 			workspaceRoots.push(path.isAbsolute(entry) ? entry : path.join(workspace, entry));
+	// A granted file is the operator's explicit choice; a granted directory is scanned as the workspace is.
+	for (const grant of grants)
+		if (statSync(grant.canonical, { throwIfNoEntry: false })?.isDirectory() === true)
+			workspaceRoots.push(grant.canonical);
 	return discoverSecretMasks({ workspaceRoots }, base).masks;
 }
 
@@ -357,7 +362,7 @@ function planLaunch(input: {
 			{ argv },
 			workspace,
 			availability,
-			[...base, ...workspaceSecretMasks(declaration, workspace, base)],
+			[...base, ...workspaceSecretMasks(declaration, workspace, base, grants)],
 		);
 	} catch (error) {
 		return {
