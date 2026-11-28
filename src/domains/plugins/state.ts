@@ -281,7 +281,7 @@ function packageNamespace(kind: HubEntryKind | undefined): "extension" | "plugin
  * A project copy the operator has not approved sits out, so it neither loads
  * nor shadows a user copy. Copies compete only inside their own namespace.
  */
-export function resolvePluginPrecedence(entries: InstalledPlugin[]): void {
+function resolvePluginPrecedence(entries: InstalledPlugin[]): void {
 	for (const entry of entries) {
 		const winner = entries
 			.filter(

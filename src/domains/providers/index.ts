@@ -1,17 +1,11 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 export type {
-	ApiKeyCredential,
-	AuthCredential,
 	AuthResolution,
 	AuthStatus,
-	AuthTarget,
-	OAuthCredential,
 } from "./auth/index.js";
 export {
 	applyTargetCredentialPlan,
-	authNotRequiredStatus,
-	openAuthStorage,
 	planTargetCredentialRemoval,
 	resolveAuthTarget,
 	resolveRuntimeAuthTarget,
@@ -25,44 +19,24 @@ export {
 } from "./cache-deployment.js";
 export { AGENT_ROLE_TOOLS_REQUIRED_REASON, mergeCapabilities, supportsAgentRoleTools } from "./capabilities.js";
 export type { ProvidersContract, TargetHealth, TargetHealthStatus, TargetStatus } from "./contract.js";
-export { credentialsPresent } from "./credentials.js";
 export { isOrchestratorEligibleRuntime, isTargetEligibleRuntime } from "./eligibility.js";
 export {
 	backgroundMemoryAdmissionLimit,
 	backgroundSlotKey,
 	canonicalEndpointKey,
 	type EndpointCapacity,
-	type EndpointCapacityInput,
-	type EndpointCapacitySource,
-	type EndpointRuntimeIdentity,
-	type EndpointSlotPriors,
 	endpointCapacitiesForStatuses,
 	endpointCapacityFor,
 	endpointCapacityForStatus,
-	endpointLabel,
 	foregroundStreamUsage,
 	gatewayEndpointKey,
 	modelEndpointKey,
 	modelStreamUsage,
-	recordEndpointSlotsFromStatus,
-	registerBackgroundStream,
 	registerForegroundStream,
 	resolveEndpointCapacities,
 } from "./endpoint-capacity.js";
-export {
-	DEFAULT_ENDPOINT_SLOTS_TTL_MS,
-	type DiscoveredEndpointSlots,
-	ENDPOINT_SLOTS_TTL_ENV_VAR,
-	endpointSlotsPath,
-	endpointSlotsTtlMs,
-	readDiscoveredEndpointSlots,
-	recordDiscoveredEndpointSlots,
-} from "./endpoint-slots-store.js";
-export { type EndpointThroughput, endpointThroughput, recordEndpointThroughput } from "./endpoint-throughput.js";
-export type { ProvidersBundleOptions } from "./extension.js";
+export { endpointThroughput, recordEndpointThroughput } from "./endpoint-throughput.js";
 export { acceptsImageInput } from "./image-input.js";
-export { ProvidersManifest } from "./manifest.js";
-export type { ModelCapabilityPatchTarget } from "./model-capabilities.js";
 export {
 	applyModelCapabilityPatch,
 	probeCapabilitiesForModel,
@@ -71,69 +45,35 @@ export {
 export {
 	canonicalizeWireModelId,
 	chatModelCandidatesForStatus,
-	contextSlotsForModel,
 	hasLiveModelCatalog,
-	loadedContextWindowForModel,
-	type ModelOffer,
-	type ModelResidency,
 	modelCandidatesForStatus,
 	modelIdsForStatus,
 	modelListNoteForStatus,
 	modelOfferForStatus,
 	modelResidencyForStatus,
 	offeredAsChatModel,
-	type ProviderModelCandidate,
 	type ProviderModelSource,
 	probedModelOffer,
 	runtimeListsModelsLive,
-	type UnverifiedModelListOrigin,
 	unverifiedModelListNote,
 } from "./model-discovery.js";
-export {
-	inferLocalModelFamily,
-	isHarmonyModelId,
-	type LocalModelFamily,
-	normalizeModelIdForFamily,
-} from "./model-family.js";
 export { modelLineage } from "./model-lineage.js";
 export { newerModelNotice } from "./model-recency.js";
 export {
 	type AppliedThinking,
-	type AppliedThinkingNoticeKind,
-	applyThinkingMechanism,
-	effectiveThinkingLevel,
-	harmonyReasoningEffort,
-	inferThinkingMechanism,
-	isHarmonyThinkingFormat,
-	type ResolvedModelRuntimeCapabilities,
-	type ResolvedRequestCapability,
-	type ResolvedResponseCapability,
 	type ResolvedThinkingCapability,
-	type ResponseParserKind,
-	resolveModelRuntimeCapabilities,
 	resolveModelRuntimeCapabilitiesForModel,
 	resolveModelRuntimeCapabilitiesForProviders,
-	resolveModelRuntimeCapabilitiesForStatus,
-	resolveTargetRuntimeCapabilities,
-	restrictThinkingLevelsByMechanism,
-	type ThinkingBudgetEnforcement,
 	thinkingEffectNote,
 	thinkingLevelDisplayWord,
 	thinkingLevelFromChoiceLabel,
 } from "./model-runtime-capabilities.js";
-export { createRuntimeRegistry, getRuntimeRegistry } from "./registry.js";
-export type { ResolveModelOptions } from "./resolver.js";
+export { getRuntimeRegistry } from "./registry.js";
 export {
 	type ResolvedModelRef,
-	type ResolveModelResult,
 	resolveModelReference,
-	splitThinkingSuffix,
 } from "./resolver.js";
-export {
-	readOnlyWorkAdmitted,
-	runtimeEnforcement,
-	UNMEDIATED_ENFORCEMENT,
-} from "./runtime-enforcement.js";
+export { runtimeEnforcement } from "./runtime-enforcement.js";
 export {
 	type ContextWindowDetails,
 	type ContextWindowSource,
@@ -141,9 +81,6 @@ export {
 	type ResolvedRuntimeTarget,
 	type RuntimeCapabilityDecision,
 	type RuntimeResolutionDiagnostic,
-	type RuntimeResolutionSeverity,
-	type RuntimeResolutionUse,
-	type RuntimeTargetResolution,
 	type RuntimeTargetSnapshot,
 	refineRuntimeTargetWithModelHints,
 	resolveRuntimeTarget,
@@ -155,47 +92,32 @@ export {
 export { isCopilotTransientFailure } from "./runtimes/copilot/transient-failure.js";
 export {
 	buildProviderSupportEntry,
-	compareProviderSupportEntries,
 	configuredTargetsForRuntime,
 	describeRuntimeModels,
 	listKnownModelsForRuntime,
 	listProviderSupportEntries,
 	type ProviderSupportEntry,
-	type ProviderSupportGroup,
 	type ResolvedProviderReference,
-	type RuntimeModelListSource,
 	resolveProviderReference,
-	runtimeModelListSource,
 	supportGroupLabel,
 } from "./support.js";
-export { readTargetCheck, recordTargetCheck } from "./target-check-record.js";
+export { recordTargetCheck } from "./target-check-record.js";
 export {
 	readTargetModelSnapshot,
 	recordProbedModelSnapshot,
 	recordTargetModelSnapshot,
-	TARGET_MODEL_CACHE_TTL_MS,
-	type TargetModelSnapshot,
 	targetModelSnapshotPath,
 } from "./target-model-cache.js";
 export type {
 	CapabilityFlags,
-	StructuredOutputMode,
-	ThinkingFormat,
 	ThinkingLevel,
-	ToolCallFormat,
 } from "./types/capability-flags.js";
 export {
-	availableThinkingLevels,
 	EMPTY_CAPABILITIES,
 	THINKING_LEVELS,
 } from "./types/capability-flags.js";
 export { type ContextWindowSlots, formatContextWindowSlots } from "./types/context-window-slots.js";
-export type { KnowledgeBase, KnowledgeBaseEntry, KnowledgeBaseHit } from "./types/knowledge-base.js";
 export type {
-	ProbeContext,
-	ProbeModelLoadState,
-	ProbeModelStatus,
-	ProbeResult,
 	RuntimeApiFamily,
 	RuntimeAuth,
 	RuntimeDescriptor,
@@ -203,10 +125,5 @@ export type {
 	RuntimeKind,
 	RuntimeTier,
 } from "./types/runtime-descriptor.js";
-export type {
-	CopilotContextTier,
-	TargetAuth,
-	TargetDescriptor,
-	TargetPricing,
-} from "./types/target-descriptor.js";
+export type { TargetDescriptor } from "./types/target-descriptor.js";
 export { copilotContextTierLabel, copilotContextTierOf } from "./types/target-descriptor.js";

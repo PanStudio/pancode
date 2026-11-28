@@ -3,18 +3,16 @@
 export { bundledPluginCatalog } from "./catalog.js";
 export {
 	PLUGIN_EXTENSION_KEY,
-	PLUGIN_RESOURCE_KINDS,
 	PLUGIN_SCHEMA,
 	parsePluginManifest,
 	pluginResourcePath,
 	readPluginManifest,
 } from "./discovery.js";
 export { passDerived, withPluginDiscoveryPass } from "./discovery-pass.js";
-export { pluginContentDigest, pluginContentDigestWithCapture } from "./integrity.js";
+export { pluginContentDigest } from "./integrity.js";
 export { pluginDataDir } from "./paths.js";
 export { pluginPromptNames } from "./prompt-names.js";
 export {
-	buildPluginSnapshot,
 	clearPluginSnapshots,
 	committedPluginResourceRoots,
 	committedPluginSnapshot,
@@ -39,36 +37,21 @@ export {
 	readPluginInstallRecord,
 	removePlugin,
 	repairPluginInstallRecords,
-	resolvePluginPrecedence,
 	updatePlugin,
 	withPluginScopeLock,
 } from "./state.js";
 export type {
-	ForeignPackageFormat,
-	HubPackageInstallInput,
 	InstalledPlugin,
-	PackageTrust,
-	PancodePluginConfiguration,
 	PluginCandidate,
-	PluginComponent,
-	PluginComponentKind,
 	PluginDiagnostic,
-	PluginDiagnosticCode,
 	PluginExpectedCopy,
 	PluginExpectedState,
-	PluginInstallOptions,
 	PluginInstallRecord,
 	PluginListOptions,
 	PluginManifest,
-	PluginMutationOptions,
 	PluginMutationResult,
-	PluginOrigin,
-	PluginProvenance,
 	PluginResourceKind,
-	PluginResourceRoot,
-	PluginResources,
 	PluginScope,
 	PluginSnapshot,
 	PluginState,
 } from "./types.js";
-export { isForeignPluginOrigin } from "./types.js";

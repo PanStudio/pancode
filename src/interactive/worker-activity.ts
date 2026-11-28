@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 
-import { formatCountdown } from "../core/format-time.js";
+import { formatCountdown, formatWaitClock } from "../core/format-time.js";
 import { UNICODE_GLYPH } from "../core/glyphs.js";
 import type { CompletedRunCaveat } from "../domains/dispatch/failure-headline.js";
 import { DEFAULT_HEARTBEAT_SPEC } from "../domains/dispatch/heartbeat.js";
@@ -13,7 +13,7 @@ import type {
 import { type RouteFirstOutput, usualFirstOutput } from "./footer/silence-note.js";
 import { TIER_THRESHOLDS_MS } from "./status/watchdog.js";
 import type { PancodeToken } from "./theme/index.js";
-import { formatWaitClock, GLYPH } from "./theme/index.js";
+import { GLYPH } from "./theme/index.js";
 
 /**
  * What a running worker is doing when no call is in flight, by the phase its

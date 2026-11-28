@@ -5,7 +5,7 @@
  * once keyed by the bare word in the session overrides, which wrote a
  * top-level key nothing reads, so a one-run raise in a home saved at the
  * lower level compiled and admitted at the saved level. Moved here from
- * tests/extended-smoke/cli-core.test.ts so CI guards it; the mock endpoint
+ * tests/smoke/cli-core.test.ts so CI guards it; the mock endpoint
  * needs no live model.
  */
 import { match, ok, strictEqual } from "node:assert/strict";

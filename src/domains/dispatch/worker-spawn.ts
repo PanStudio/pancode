@@ -51,36 +51,38 @@ import {
 	SAFE_EXEC_PIPE_DRAIN_BOUND_MS,
 } from "../../core/safe-exec.js";
 import { WORKER_STDOUT_FAILURES } from "../../core/telemetry/run-vocabulary.js";
-import type { WorkerSpec } from "../../worker/spec-contract.js";
-import type { HeartbeatStamp } from "./heartbeat.js";
 import {
 	type AgentLedgerBody,
-	type ApprovedWorkerIdentity,
-	approvedIdentityForSpec,
-	createBoundedEventQueue,
 	isControlLine,
 	isReceiptBearingFrame,
 	parseBulkFrame,
 	parseControlFrame,
 	parseWorkerHookRequest,
-	verifyWorkerAttestation,
 	WORKER_ANNOUNCE_DEADLINE_MS,
 	WORKER_BULK_FRAME_MAX_BYTES,
-	WORKER_EVENT_QUEUE_HARD_BYTES,
-	WORKER_EVENT_QUEUE_HARD_FRAMES,
 	WORKER_HOOK_REQUEST_EVENT,
-	WORKER_QUARANTINE_MAX_BYTES,
-	WORKER_QUARANTINE_MAX_FRAMES,
 	WORKER_STDIN_FRAME_MAX_BYTES,
 	WORKER_STDIN_QUEUE_MAX_BYTES,
 	WORKER_STDOUT_FAILURE_MARKER,
 	WORKER_STDOUT_INCOMPLETE_MARKER,
 	type WorkerAdmitFrame,
 	type WorkerAttestation,
-	WorkerChannelFailure,
 	type WorkerGrantRequestFrame,
 	type WorkerHookRequest,
 	type WorkerModelLoad,
+} from "../../worker/protocol.js";
+import type { WorkerSpec } from "../../worker/spec-contract.js";
+import type { HeartbeatStamp } from "./heartbeat.js";
+import {
+	type ApprovedWorkerIdentity,
+	approvedIdentityForSpec,
+	createBoundedEventQueue,
+	verifyWorkerAttestation,
+	WORKER_EVENT_QUEUE_HARD_BYTES,
+	WORKER_EVENT_QUEUE_HARD_FRAMES,
+	WORKER_QUARANTINE_MAX_BYTES,
+	WORKER_QUARANTINE_MAX_FRAMES,
+	WorkerChannelFailure,
 } from "./worker-protocol.js";
 
 export type { WorkerSpec } from "../../worker/spec-contract.js";

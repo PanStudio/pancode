@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import { type ContextOperation, factRow } from "../../core/context-operation.js";
+import { formatCount, formatElapsed } from "../../core/format-time.js";
 import { tierPolicy } from "../../core/presentation-tier.js";
 import { wrapTextWithAnsi } from "../../engine/tui.js";
 import { COMPACTION_LINE_LEAD } from "../../session-control/compaction-lines.js";
@@ -13,7 +14,7 @@ import {
 	plain,
 	splitWarnings,
 } from "../context-operation-view.js";
-import { fitSides, formatCount, formatElapsed, GLYPH, pancodeTheme, type SideUnit } from "../theme/index.js";
+import { fitSides, GLYPH, pancodeTheme, type SideUnit } from "../theme/index.js";
 import { presentProviderError } from "./provider-error.js";
 
 /** Drop ranks of the card row, first to go first: the elapsed time, then the percent, then an automatic run's reason. */

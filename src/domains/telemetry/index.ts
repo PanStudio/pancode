@@ -4,46 +4,28 @@
 export { withinStateRoot } from "../../core/state-boundary.js";
 export type { AccountabilitySummary } from "./accountability.js";
 export { summarizeRunAccountability } from "./accountability.js";
-export { workspaceTelemetryCapture } from "./consent.js";
 export type {
 	TelemetryContract,
 	TelemetryRunReaderBinder,
-	TelemetryRunSummary,
 	TelemetrySnapshot,
 	TokenThroughputSnapshot,
 } from "./contract.js";
-export type { TelemetryDomain } from "./extension.js";
-export type {
-	DecisionRow,
-	DecisionsFold,
-} from "./fact-folds.js";
-export { decisionRow, foldDecisions } from "./fact-folds.js";
+export { foldDecisions } from "./fact-folds.js";
 export { publishGateDecision } from "./gate-publication.js";
-export { TelemetryManifest } from "./manifest.js";
 export { readTaskMemorySpendSummary } from "./memory-spend.js";
 export {
 	isTelemetryJournalFile,
-	TELEMETRY_JOURNAL_FILE,
 	telemetryBundlePath,
-	telemetryConsentPath,
 	telemetryInstallPath,
 	telemetryJournalFiles,
 	telemetryJournalPath,
-	telemetryObjectsDirectory,
 	telemetryProcessDirectory,
 	telemetryProcessesDirectory,
-	telemetryRoot,
 	telemetryRunDirectory,
 	telemetryRunsDirectory,
 	telemetrySessionDirectory,
 	telemetrySessionsDirectory,
 } from "./paths.js";
-export type { ProjectionReadModel, TelemetryProjection } from "./projection.js";
-export {
-	createTelemetryProjection,
-	MAX_PROJECTION_RUNS,
-	PROJECTION_FLUSH_DEBOUNCE_MS,
-} from "./projection.js";
 export { explain, READ_MODEL_FOLD } from "./read-model.js";
 export { cacheReport } from "./read-model-cache.js";
 export { costReport, runCostReport } from "./read-model-cost.js";
@@ -51,7 +33,6 @@ export { callsReport, sessionTelemetry } from "./read-model-reports.js";
 export { type EnqueuedRun, runRowTelemetry, runTelemetry } from "./read-model-runs.js";
 export {
 	emptyTaskMemorySpendSummary,
-	foldSideSurfaces,
 	type TaskMemorySpendSummary,
 } from "./read-model-side-surfaces.js";
 export { runTimeline, timeline } from "./read-model-timeline.js";
@@ -62,13 +43,9 @@ export { readJournaledContent } from "./research-content.js";
 export type {
 	RouteHistoryEntry,
 	RouteHistoryFold,
-	RouteHistoryIdentity,
-	RouteHistoryRead,
-	RouteReliabilityOutcome,
 	SettledRunFacts,
 } from "./route-history.js";
 export { createRouteHistoryFold, routeSettledLabel } from "./route-history.js";
-export { runSettledDigest } from "./run-digest.js";
 export {
 	readDispatchHistory,
 	readFleetHistory,
@@ -93,8 +70,6 @@ export {
 	packShare,
 	planShare,
 	resolveShareScopes,
-	type ShareInventory,
-	type SharePlan,
 	verifyShareArchive,
 } from "./share.js";
 export { packTelemetryArchive, type ShareArchiveEntry, unpackTelemetryArchive } from "./share-archive.js";

@@ -7,15 +7,11 @@ import { afterEach, beforeEach, it } from "node:test";
 // The orchestrator registers Ollama's exit release when its providers domain loads this API module.
 import "../../src/engine/apis/ollama-native.js";
 import { DEFAULT_SETTINGS } from "../../src/core/defaults.js";
-import {
-	approvedIdentityForSpec,
-	CONTROL_FRAME_PREFIX,
-	parseControlFrame,
-	WORKER_PROTOCOL_VERSION,
-} from "../../src/domains/dispatch/worker-protocol.js";
+import { approvedIdentityForSpec } from "../../src/domains/dispatch/worker-protocol.js";
 import { type SpawnedWorker, spawnWorkerProcess } from "../../src/domains/dispatch/worker-spawn.js";
 import ollamaRuntime from "../../src/domains/providers/runtimes/local-native/ollama.js";
 import { releasePancodeLoadedModelsOnExit } from "../../src/engine/apis/residency.js";
+import { CONTROL_FRAME_PREFIX, parseControlFrame, WORKER_PROTOCOL_VERSION } from "../../src/worker/protocol.js";
 import { isolateDispatchState, makeDispatchBundle, restoreDispatchState } from "../harness/dispatch.js";
 import { dispatchStubContext } from "../harness/dispatch-stub-context.js";
 import { closeServer, readRequestBody } from "../harness/openai-compat-fixture.js";

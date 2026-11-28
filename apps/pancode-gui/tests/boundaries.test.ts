@@ -87,7 +87,7 @@ const adapters = new Set([
 	"src/domains/lifecycle/setup-status.ts",
 	"src/domains/resources/hub-inventory.ts",
 	"src/domains/resources/hub-actions.ts",
-	"src/domains/extensions/manager.ts",
+	"src/domains/extensions/state.ts",
 	"src/domains/evidence/provenance.ts",
 	"src/domains/evidence/trust-projection.ts",
 	"src/domains/evidence/types.ts",
@@ -128,7 +128,7 @@ const adapters = new Set([
 const testModules = new Set([
 	// Tests that compare with the canonical CLI run the checkout's source, not a build (tests/fixtures/source-cli.mjs).
 	"src/cli/index.ts",
-	"src/domains/extensions/manager.ts",
+	"src/domains/extensions/state.ts",
 	"src/engine/session.ts",
 	"src/domains/session/entries.ts",
 	"tests/harness/receipt.ts",

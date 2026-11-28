@@ -8,36 +8,15 @@
  * parser asked any unknown flag for a value before naming it as unknown.
  */
 import { deepEqual, equal, match, ok } from "node:assert/strict";
-import { spawn } from "node:child_process";
 import { after, describe, it } from "node:test";
-import { fileURLToPath } from "node:url";
+import { type CliResult, runSourceCli } from "../harness/headless-run.js";
 import { makeScratchHome } from "../harness/scratch-env.js";
 
-const ENTRY = fileURLToPath(new URL("../../src/cli/index.ts", import.meta.url));
 const home = makeScratchHome("pancode-leaf-help-");
 after(() => home.cleanup());
 
-function cli(
-	args: ReadonlyArray<string>,
-	at: { dir: string; env: NodeJS.ProcessEnv } = home,
-): Promise<{ status: number | null; stdout: string; stderr: string }> {
-	return new Promise((resolve, reject) => {
-		const child = spawn(process.execPath, ["--import", import.meta.resolve("tsx"), ENTRY, ...args], {
-			cwd: at.dir,
-			env: { ...process.env, ...at.env, NO_COLOR: "1" },
-			stdio: ["ignore", "pipe", "pipe"],
-		});
-		let stdout = "";
-		let stderr = "";
-		child.stdout.setEncoding("utf8").on("data", (chunk: string) => {
-			stdout += chunk;
-		});
-		child.stderr.setEncoding("utf8").on("data", (chunk: string) => {
-			stderr += chunk;
-		});
-		child.on("error", reject);
-		child.on("close", (status) => resolve({ status, stdout, stderr }));
-	});
+function cli(args: ReadonlyArray<string>, at: { dir: string; env: NodeJS.ProcessEnv } = home): Promise<CliResult> {
+	return runSourceCli(args, { cwd: at.dir, env: { ...process.env, ...at.env, NO_COLOR: "1" } });
 }
 
 // The interop router answers --help before naming the leaf, so one row covers it.
@@ -70,21 +49,21 @@ describe("leaf commands answer --help", { concurrency: 4 }, () => {
 		it(`pancode ${args.join(" ")} prints its usage and exits 0`, async () => {
 			const result = await cli(args);
 			equal(result.stderr, "", `${args.join(" ")} wrote to stderr`);
-			equal(result.status, 0, result.stdout);
+			equal(result.code, 0, result.stdout);
 			match(result.stdout, usage);
 		});
 	}
 	it("pancode context --help lists every context init form that context init --help does", async () => {
 		const [summary, init] = await Promise.all([cli(["context", "--help"]), cli(["context", "init", "--help"])]);
-		equal(summary.status, 0, summary.stderr);
-		equal(init.status, 0, init.stderr);
+		equal(summary.code, 0, summary.stderr);
+		equal(init.code, 0, init.stderr);
 		const forms = init.stdout.split("\n").filter((line) => line.startsWith("  pancode context init "));
 		match(forms.join("\n"), /--verify[\s\S]*--accept/);
 		for (const form of forms) ok(summary.stdout.includes(`${form}\n`), `context --help omits: ${form.trim()}`);
 	});
 	it("pancode gui --help names in its usage every flag its prose explains (bt-deep 17)", async () => {
 		const result = await cli(["gui", "--help"]);
-		equal(result.status, 0, result.stderr);
+		equal(result.code, 0, result.stderr);
 		const [, usage = "", prose = ""] = result.stdout.match(/Usage:\n([\s\S]*?)\n\n([\s\S]*)/u) ?? [];
 		const flags = new Set(prose.match(/--[a-z][a-z-]*/gu));
 		ok(flags.has("--token-stdin"), prose);
@@ -96,7 +75,7 @@ describe("leaf commands answer --help", { concurrency: 4 }, () => {
 			cli(["--help", "--all"]),
 			cli(["help", "--json"]),
 		]);
-		for (const result of [hub, all, manifest]) equal(result.status, 0, result.stderr);
+		for (const result of [hub, all, manifest]) equal(result.code, 0, result.stderr);
 		const forms = hub.stdout.split("\n").filter((line) => line.startsWith("  pancode hub "));
 		match(forms.join("\n"), /pancode hub refresh [\s\S]*pancode hub status /);
 		// --help --all wraps a long synopsis onto indented lines.
@@ -112,7 +91,7 @@ describe("leaf commands answer --help", { concurrency: 4 }, () => {
 	});
 	it("pancode help --json is one compact manifest that names the nested leaves, and schema prints each schema", async () => {
 		const manifest = await cli(["help", "--json"]);
-		equal(manifest.status, 0, manifest.stderr);
+		equal(manifest.code, 0, manifest.stderr);
 		equal(manifest.stdout.trimEnd().split("\n").length, 1, "help --json printed more than one line");
 		const doc = JSON.parse(manifest.stdout) as {
 			version: number;
@@ -155,10 +134,10 @@ describe("leaf commands answer --help", { concurrency: 4 }, () => {
 		equal(flagRows("config trust")["--hash"]?.value, "string");
 		for (const name of ["run-result", "run-events", "task", "help", "fleet-result"]) {
 			const schema = await cli(["schema", name]);
-			equal(schema.status, 0, schema.stderr);
+			equal(schema.code, 0, schema.stderr);
 			match((JSON.parse(schema.stdout) as { $id: string }).$id, new RegExp(`^urn:pancode:schema:${name}:`));
 		}
-		equal((await cli(["schema", "nope"])).status, 1);
+		equal((await cli(["schema", "nope"])).code, 1);
 	});
 });
 
@@ -169,7 +148,7 @@ describe("telemetry share names the flag it refuses", { concurrency: 2 }, () => 
 	] as const) {
 		it(`pancode ${args.join(" ")} exits 2 naming it`, async () => {
 			const result = await cli(args);
-			equal(result.status, 2, result.stderr);
+			equal(result.code, 2, result.stderr);
 			match(result.stderr, refusal);
 		});
 	}
@@ -190,7 +169,7 @@ describe("config and version refuse what they do not take", { concurrency: 2 }, 
 	] as const) {
 		it(`pancode ${args.join(" ")} exits 2 naming it`, async () => {
 			const result = await cli(args);
-			equal(result.status, 2, result.stdout);
+			equal(result.code, 2, result.stdout);
 			equal(result.stdout, "");
 			match(result.stderr, refusal);
 		});
@@ -214,7 +193,7 @@ describe("lifecycle leaves refuse with one diagnostic and, under --json, one fai
 	] as const) {
 		it(`pancode ${args.join(" ")} exits 2 with ${slug}`, async () => {
 			const result = await cli(args);
-			equal(result.status, 2, result.stderr);
+			equal(result.code, 2, result.stderr);
 			const docs = result.stdout.trim().split("\n");
 			equal(docs.length, 1, result.stdout);
 			equal(JSON.parse(docs[0] as string).error.code, slug);
@@ -224,7 +203,7 @@ describe("lifecycle leaves refuse with one diagnostic and, under --json, one fai
 
 	it("pancode version --json prints one version document", async () => {
 		const result = await cli(["version", "--json"]);
-		equal(result.status, 0, result.stderr);
+		equal(result.code, 0, result.stderr);
 		const doc = JSON.parse(result.stdout) as { version: number; pancodeVersion: string; workerSpecs: unknown[] };
 		equal(doc.version, 1);
 		ok(doc.pancodeVersion.length > 0);
@@ -233,7 +212,7 @@ describe("lifecycle leaves refuse with one diagnostic and, under --json, one fai
 
 	it("pancode tools reset-profile names an unknown tool as not_found, exit 1", async () => {
 		const result = await cli(["tools", "reset-profile", "nope", "--json"]);
-		equal(result.status, 1, result.stderr);
+		equal(result.code, 1, result.stderr);
 		equal(JSON.parse(result.stdout).error.code, "not_found");
 	});
 });
@@ -242,7 +221,7 @@ describe("lifecycle leaves refuse with one diagnostic and, under --json, one fai
 describe("root help and unknown commands", { concurrency: 4 }, () => {
 	it("root --help is at most 45 lines and names the core commands", async () => {
 		const result = await cli(["--help"]);
-		equal(result.status, 0, result.stderr);
+		equal(result.code, 0, result.stderr);
 		ok(result.stdout.trimEnd().split("\n").length <= 45, result.stdout);
 		for (const name of ["run", "acp", "session", "fleet", "config", "help"]) {
 			match(result.stdout, new RegExp(`^  pancode ${name}\\b`, "mu"), name);
@@ -252,7 +231,7 @@ describe("root help and unknown commands", { concurrency: 4 }, () => {
 
 	it("--help --all lists every command path and no removed spelling", async () => {
 		const result = await cli(["--help", "--all"]);
-		equal(result.status, 0, result.stderr);
+		equal(result.code, 0, result.stderr);
 		for (const path of [
 			"pancode fleet list",
 			"pancode fleet admission",
@@ -270,7 +249,7 @@ describe("root help and unknown commands", { concurrency: 4 }, () => {
 
 	it("help run --topics prints the run prose that run --help no longer carries", async () => {
 		const [topics, help] = await Promise.all([cli(["help", "run", "--topics"]), cli(["run", "--help"])]);
-		equal(topics.status, 0, topics.stderr);
+		equal(topics.code, 0, topics.stderr);
 		match(topics.stdout, /^--cwd enters <dir>/u);
 		ok(!help.stdout.includes("--cwd enters <dir>"), help.stdout);
 		ok(help.stdout.includes("help run --topics"));
@@ -278,7 +257,7 @@ describe("root help and unknown commands", { concurrency: 4 }, () => {
 
 	it("words a removed or unknown command as an ordinary usage error with no deprecation notice", async () => {
 		for (const result of await Promise.all([cli(["context-init", "--help"]), cli(["fleet", "inspect"])])) {
-			equal(result.status, 2, result.stderr);
+			equal(result.code, 2, result.stderr);
 			match(result.stderr, /unknown/iu);
 			ok(!/deprecated|was removed|\nuse: /u.test(result.stderr), result.stderr);
 		}

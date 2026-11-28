@@ -71,12 +71,12 @@ interface EndpointSlotsFile {
 	endpoints: Record<string, DiscoveredEndpointSlots>;
 }
 
-export function endpointSlotsPath(): string {
+function endpointSlotsPath(): string {
 	return join(pancodeStateDir(), "endpoint-slots.json");
 }
 
 /** env override > built-in default, mirroring core/guardrails.ts resolution order. */
-export function endpointSlotsTtlMs(env: NodeJS.ProcessEnv = process.env): number {
+function endpointSlotsTtlMs(env: NodeJS.ProcessEnv = process.env): number {
 	const raw = env[ENDPOINT_SLOTS_TTL_ENV_VAR]?.trim();
 	if (raw !== undefined && /^[1-9]\d*$/.test(raw)) {
 		const parsed = Number(raw);

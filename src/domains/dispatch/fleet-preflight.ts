@@ -25,6 +25,7 @@ import type { SandboxAvailability, SandboxBackend } from "../../core/sandbox/typ
 import { shellQuote } from "../../core/shell-quote.js";
 import { withStateFileLockSync } from "../../core/state-file-lock.js";
 import { resolvePancodeDirs } from "../../core/xdg.js";
+import { endpointIdentityHash } from "../../worker/protocol.js";
 import { WORKER_SPEC_HOOKLESS_VERSION, WORKER_SPEC_VERSION, WORKER_SPEC_VERSIONS } from "../../worker/spec-contract.js";
 import type { FleetProjectVerification } from "./fleet-project-verification.js";
 import {
@@ -37,7 +38,6 @@ import {
 	type RouteFactVerdict,
 } from "./route-facts.js";
 import { buildSshArgs, type SshNodeEndpoint } from "./transport.js";
-import { endpointIdentityHash } from "./worker-protocol.js";
 
 export interface FleetPreflightChecks {
 	reachable: boolean;

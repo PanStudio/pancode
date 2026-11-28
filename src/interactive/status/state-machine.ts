@@ -328,7 +328,7 @@ function isAwaitingDispatch(prev: AgentStatus): boolean {
  * The next step belongs to a person: an approval card or an interview is open. Silence here is not evidence about the
  * agent, so it never reaches the watchdog, and the time it takes is the operator's rather than the turn's work.
  */
-export function isWaitingForOperator(status: AgentStatus): boolean {
+function isWaitingForOperator(status: AgentStatus): boolean {
 	if (!isActive(status.phase)) return false;
 	if (status.phase === "tool_blocked" || status.activePhases?.has("tool_blocked")) return true;
 	if ((status.overlayStack ?? []).some((frame) => frame.phase === "tool_blocked")) return true;

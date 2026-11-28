@@ -14,6 +14,7 @@
  * uses `GLYPH.sep` and `GLYPH.rail` for ASCII parity, and memoizes by width x tier x revision.
  */
 
+import { formatElapsed, formatWaitClock } from "../../core/format-time.js";
 import type { JobRecord } from "../../core/job-types.js";
 import { presentationTier, type TierPolicy, tierPolicy, tierRevision } from "../../core/presentation-tier.js";
 import { asciiOnly, motionEnabled } from "../../core/terminal-preferences.js";
@@ -33,8 +34,6 @@ import type { AgentStatus } from "../status/index.js";
 import { retryCountLabel, spinnerFrame } from "../status/index.js";
 import {
 	brandMark,
-	formatElapsed,
-	formatWaitClock,
 	GLYPH,
 	onRaisedTheme,
 	type PancodeTheme,

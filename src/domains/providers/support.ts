@@ -138,7 +138,7 @@ function getRuntimeIfRegistered(runtimeId: string): RuntimeDescriptor | null {
  * decision about openai. Which of the two lists should win for those runtimes
  * is a separate question.
  */
-export function runtimeModelListSource(runtime: RuntimeDescriptor): RuntimeModelListSource {
+function runtimeModelListSource(runtime: RuntimeDescriptor): RuntimeModelListSource {
 	if (runtime.knownModels && runtime.knownModels.length > 0) return "runtime";
 	if (listCatalogModelsForRuntime(runtime.id).length > 0) return "catalog";
 	return "none";
@@ -199,7 +199,7 @@ export function buildProviderSupportEntry(runtime: RuntimeDescriptor): ProviderS
 	};
 }
 
-export function compareProviderSupportEntries(a: ProviderSupportEntry, b: ProviderSupportEntry): number {
+function compareProviderSupportEntries(a: ProviderSupportEntry, b: ProviderSupportEntry): number {
 	return (
 		groupPriority(a.group) - groupPriority(b.group) ||
 		(a.featured === b.featured ? 0 : a.featured ? -1 : 1) ||

@@ -10,9 +10,10 @@
  * reach anything.
  */
 
+import { formatWaitClock } from "../core/format-time.js";
 import type { AgentStatus } from "../session-control/status-types.js";
 import { renderNoticeRow } from "./renderers/notice.js";
-import { formatWaitClock, GLYPH } from "./theme/index.js";
+import { GLYPH } from "./theme/index.js";
 
 /** The first escalation the transcript records; the rail's own `no bytes yet` and `Esc stops` come before it. */
 export const SILENCE_ROW_AFTER_MS = 60_000;
