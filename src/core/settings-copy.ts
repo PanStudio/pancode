@@ -446,9 +446,9 @@ export const EXTRA_HELP: Record<string, [string, string]> = {
 		"Provider compaction",
 		"Use private native checkpoints on compatible Codex routes. Off uses portable PanCode summaries; switching routes generates a portable summary from the retained history.",
 	],
-	"safety.limits.workerResponseSeconds": [
+	"safety.limits.workerResponseTimeoutMs": [
 		"Worker response time",
-		"Seconds one native worker model response may run, including locked synthesis rounds.",
+		"Milliseconds one native worker model response may run, including locked synthesis rounds.",
 	],
 	"safety.limits.templateToolCallsPerTurnMax": [
 		"Template tool calls ceiling",
@@ -474,9 +474,9 @@ export const EXTRA_HELP: Record<string, [string, string]> = {
 		"Worker run time",
 		"Milliseconds one dispatched worker run may take, time queued for a slot included. At 85% it is told to hand back its report; at the limit it stops as timed out. A recipe or a dispatch's timeout_ms can only lower it.",
 	],
-	"safety.limits.bashIdleSeconds": [
+	"safety.limits.bashIdleTimeoutMs": [
 		"Bash idle timeout",
-		"Seconds a foreground bash command may run with no output and no CPU use before it is stopped as idle; 0 turns this off.",
+		"Milliseconds a foreground bash command may run with no output and no CPU use before it is stopped as idle; 0 turns this off.",
 	],
 	"context.semantic.enabled": [
 		"Semantic search",
@@ -574,9 +574,9 @@ export const EXTRA_HELP: Record<string, [string, string]> = {
 		"Workspace snapshots",
 		"Before PanCode first changes files in a turn, and before every destructive command, save the Git work tree as a private snapshot so /rewind can restore the files. Ignored files and untracked files over 16 MiB are left out. Your index, HEAD and branches are never touched. Off takes no snapshots.",
 	],
-	"safety.unattendedAfterSeconds": [
+	"safety.unattendedAfterMs": [
 		"Unattended timeout",
-		"Seconds a permission card or ask_user question waits for you before PanCode resolves it and keeps working: the parked call is denied, each unanswered question takes its recommended option unless that option leaves the workspace, and the session summary counts both. Any key on the card or question holds it. 0 waits forever, except that a yolo question waits 300 s at most, and after one lapses with no key pressed since, later questions wait at most 30 s. User settings only.",
+		"Milliseconds a permission card or ask_user question waits for you before PanCode resolves it and keeps working: the parked call is denied, each unanswered question takes its recommended option unless that option leaves the workspace, and the session summary counts both. Any key on the card or question holds it. 0 waits forever, except that a YOLO question waits 300 s at most, and after one lapses with no key pressed since, later questions wait at most 30 s. User settings only.",
 	],
 	"safety.yoloAccepted": [
 		"YOLO accepted",

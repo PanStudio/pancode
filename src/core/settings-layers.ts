@@ -369,11 +369,11 @@ const PROJECT_LIMIT_KEYS: ReadonlyArray<{
 	// A ceiling a template budget may raise a turn to; with no operator value a project cannot set one.
 	{ block: "safety", key: "templateToolCallsPerTurnMax", zeroIsOff: false, nullIsTightest: true },
 	{ block: "safety", key: "templateObservationBytesPerTurnMax", zeroIsOff: false, nullIsTightest: true },
-	{ block: "safety", key: "workerResponseSeconds", zeroIsOff: false },
+	{ block: "safety", key: "workerResponseTimeoutMs", zeroIsOff: false },
 	{ block: "safety", key: "autonomousToolCalls", zeroIsOff: true },
 	{ block: "safety", key: "autonomousMinutes", zeroIsOff: true },
 	{ block: "safety", key: "autonomousTokens", zeroIsOff: true },
-	{ block: "safety", key: "bashIdleSeconds", zeroIsOff: true },
+	{ block: "safety", key: "bashIdleTimeoutMs", zeroIsOff: true },
 	{ block: "fleet", key: "toolCallsPerRun", zeroIsOff: false },
 	{ block: "fleet", key: "runTimeoutMs", zeroIsOff: false },
 	{ block: "fleet", key: "internalRunTimeoutMs", zeroIsOff: false },
@@ -587,7 +587,7 @@ const OPERATOR_ONLY_SAFETY_KEYS: ReadonlyArray<{ key: string; message: string }>
 		message: "the sandbox cache cap is set only in user settings; project value ignored",
 	},
 	{
-		key: "unattendedAfterSeconds",
+		key: "unattendedAfterMs",
 		message: "the unattended timeout is set only in user settings; project value ignored",
 	},
 	// Acceptance of yolo is the operator's own, never a repository's (#407).

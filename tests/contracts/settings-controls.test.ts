@@ -175,19 +175,19 @@ test("layout-preserving YAML edits round-trip tagged values and structural chang
 	}
 });
 
-for (const [seconds, shown] of [
-	[600, "10 min"],
-	[61, "61 sec"],
+for (const [ms, shown] of [
+	[600_000, "10 min"],
+	[61_000, "61 sec"],
 ] as const) {
-	test(`worker response time renders ${seconds} seconds with a duration unit`, () => {
+	test(`worker response time renders ${ms} ms with a duration unit`, () => {
 		const settings = fixture();
-		settings.safety.limits.workerResponseSeconds = seconds;
+		settings.safety.limits.workerResponseTimeoutMs = ms;
 		const items = buildSettingItems(settings);
 		const section = buildSettingsSections(items).find((section) =>
-			section.items.some((row) => row.configPath === "safety.limits.workerResponseSeconds"),
+			section.items.some((row) => row.configPath === "safety.limits.workerResponseTimeoutMs"),
 		);
 		assert.ok(section);
-		const index = section.items.findIndex((row) => row.configPath === "safety.limits.workerResponseSeconds");
+		const index = section.items.findIndex((row) => row.configPath === "safety.limits.workerResponseTimeoutMs");
 		const center = new SettingsCenter(items, {
 			getBodyHeight: () => 30,
 			prepareChange: () => null,

@@ -394,7 +394,7 @@ function bashTimeoutStatus(
 		return `bash: ${deadline} had passed before this command started, so it did not run (${timeoutWords(requestedMs)} requested). The run's time is spent, so no further command can run in it.`;
 	let status =
 		limit.by === "idle"
-			? `bash: this command printed nothing and used no CPU for ${timeoutWords(limit.ms)} and was stopped as idle (safety.limits.bashIdleSeconds), before the ${timeoutWords(requestedMs)} timeout ran out.`
+			? `bash: this command printed nothing and used no CPU for ${timeoutWords(limit.ms)} and was stopped as idle (safety.limits.bashIdleTimeoutMs), before the ${timeoutWords(requestedMs)} timeout ran out.`
 			: limit.by === "timeout"
 				? `bash: this command ran past its own ${timeoutWords(limit.ms)} timeout and was stopped.`
 				: `bash: this command was stopped at ${deadline}, before the ${timeoutWords(requestedMs)} requested ran out.`;

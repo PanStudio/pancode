@@ -382,7 +382,7 @@ export function createRoutePreview(rt: DispatchRuntime) {
 				outputBoundTokens,
 				budget,
 				nativeWorker: target.runtime.kind === "http",
-				responseSeconds: (settings ?? DEFAULT_SETTINGS).safety.limits.workerResponseSeconds,
+				responseSeconds: (settings ?? DEFAULT_SETTINGS).safety.limits.workerResponseTimeoutMs / 1000,
 				wallMs: resolveRunWall({
 					capMs: runWallCapMs((settings ?? DEFAULT_SETTINGS).fleet.limits, req.requestOrigin),
 					...(agentSpec.budget?.timeoutMs !== undefined ? { recipeMs: agentSpec.budget.timeoutMs } : {}),

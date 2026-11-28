@@ -2598,7 +2598,7 @@ export function createChatLoop(deps: CreateChatLoopDeps): ChatLoop {
 function toolLimitOptions(safety: PancodeSettings["safety"]): Pick<ToolInvokeOptions, "bashIdleMs" | "resourceLimits"> {
 	const resourceLimits = resourceLimitsFromSettings(safety.resources.main);
 	return {
-		...(safety.limits.bashIdleSeconds > 0 ? { bashIdleMs: safety.limits.bashIdleSeconds * 1000 } : {}),
+		...(safety.limits.bashIdleTimeoutMs > 0 ? { bashIdleMs: safety.limits.bashIdleTimeoutMs } : {}),
 		...(resourceLimits === undefined ? {} : { resourceLimits }),
 	};
 }

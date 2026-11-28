@@ -419,8 +419,8 @@ export function createInteractivePresentation(deps: InteractivePresentationDeps)
 	const settings = deps.getSettings?.() ?? structuredClone(DEFAULT_SETTINGS);
 	// Read per render, so a limit changed in /settings is the one a silent worker's words name.
 	bindWorkerResponseLimit(() => {
-		const seconds = (deps.getSettings?.() ?? settings).safety.limits.workerResponseSeconds;
-		return Number.isFinite(seconds) && seconds > 0 ? seconds * 1000 : null;
+		const ms = (deps.getSettings?.() ?? settings).safety.limits.workerResponseTimeoutMs;
+		return Number.isFinite(ms) && ms > 0 ? ms : null;
 	});
 	const keybindings = deps.keybindings ?? factories.createKeybindings(settings);
 	const { getExtensionStats, getLiveWorkspaceSnapshot, refreshLiveWorkspaceGit } = deps.workspaceFacts;

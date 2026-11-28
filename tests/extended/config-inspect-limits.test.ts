@@ -21,11 +21,11 @@ test("config inspection includes effective safety limits for defaults and config
 		deepStrictEqual(defaults.detail, DEFAULT_SETTINGS.safety.limits);
 		strictEqual(defaults.reloadClass, "next-turn");
 		updateSettings((settings) => {
-			settings.safety.limits.workerResponseSeconds = 321;
+			settings.safety.limits.workerResponseTimeoutMs = 321_000;
 			return settings;
 		});
 		const configured = JSON.parse(JSON.stringify(limits()));
-		strictEqual(configured.detail.workerResponseSeconds, 321);
+		strictEqual(configured.detail.workerResponseTimeoutMs, 321_000);
 		strictEqual(configured.detail.readBytesPerCall, DEFAULT_SETTINGS.safety.limits.readBytesPerCall);
 	} finally {
 		scratch.restore();

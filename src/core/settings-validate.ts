@@ -1069,7 +1069,7 @@ function validateSafety(issues: Issues, value: unknown, settings: PancodeSetting
 			"homeReads",
 			"snapshots",
 			"validationWrappers",
-			"unattendedAfterSeconds",
+			"unattendedAfterMs",
 			"yoloAccepted",
 			"yoloConfinement",
 			"yoloUnconfinedAccepted",
@@ -1150,9 +1150,9 @@ function validateSafety(issues: Issues, value: unknown, settings: PancodeSetting
 			const parsed = expectBoolean(issues, "safety.yoloUnconfinedAccepted", safety.yoloUnconfinedAccepted);
 			if (parsed !== undefined) settings.safety.yoloUnconfinedAccepted = parsed;
 		}
-		if ("unattendedAfterSeconds" in safety) {
-			const parsed = expectInteger(issues, "safety.unattendedAfterSeconds", safety.unattendedAfterSeconds, { min: 0 });
-			if (parsed !== undefined) settings.safety.unattendedAfterSeconds = parsed;
+		if ("unattendedAfterMs" in safety) {
+			const parsed = expectInteger(issues, "safety.unattendedAfterMs", safety.unattendedAfterMs, { min: 0 });
+			if (parsed !== undefined) settings.safety.unattendedAfterMs = parsed;
 		}
 		if ("judge" in safety) {
 			if (!isRecord(safety.judge)) issues.add("safety.judge", `expected a map, got ${describe(safety.judge)}`);
@@ -1191,11 +1191,11 @@ function validateSafety(issues: Issues, value: unknown, settings: PancodeSetting
 					"observationBytesPerTurn",
 					"templateToolCallsPerTurnMax",
 					"templateObservationBytesPerTurnMax",
-					"workerResponseSeconds",
+					"workerResponseTimeoutMs",
 					"autonomousToolCalls",
 					"autonomousMinutes",
 					"autonomousTokens",
-					"bashIdleSeconds",
+					"bashIdleTimeoutMs",
 				]);
 				if ("sessionCostUsd" in limits) {
 					const parsed = expectNumber(issues, "safety.limits.sessionCostUsd", limits.sessionCostUsd, { min: 0 });
@@ -1205,13 +1205,13 @@ function validateSafety(issues: Issues, value: unknown, settings: PancodeSetting
 					"chatToolCallsPerTurn",
 					"readBytesPerCall",
 					"observationBytesPerTurn",
-					"workerResponseSeconds",
+					"workerResponseTimeoutMs",
 				] as const) {
 					if (!(key in limits)) continue;
 					const parsed = expectInteger(issues, `safety.limits.${key}`, limits[key], { min: 1 });
 					if (parsed !== undefined) settings.safety.limits[key] = parsed;
 				}
-				for (const key of ["autonomousToolCalls", "autonomousMinutes", "autonomousTokens", "bashIdleSeconds"] as const) {
+				for (const key of ["autonomousToolCalls", "autonomousMinutes", "autonomousTokens", "bashIdleTimeoutMs"] as const) {
 					if (!(key in limits)) continue;
 					const parsed = expectInteger(issues, `safety.limits.${key}`, limits[key], { min: 0 });
 					if (parsed !== undefined) settings.safety.limits[key] = parsed;

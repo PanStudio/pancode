@@ -841,15 +841,15 @@ describe("ask_user: who answered, and how long a round waits", () => {
 	});
 
 	it("bounds a yolo round's window, and shortens it once the operator was seen away", () => {
-		strictEqual(askUserWindowMs(300, { yolo: false, away: false }), 300_000);
+		strictEqual(askUserWindowMs(300_000, { yolo: false, away: false }), 300_000);
 		strictEqual(askUserWindowMs(0, { yolo: false, away: false }), 0, "default honors wait-forever");
 		strictEqual(askUserWindowMs(0, { yolo: true, away: false }), YOLO_ASK_WINDOW_FLOOR_SECONDS * 1000);
-		strictEqual(askUserWindowMs(300, { yolo: true, away: true }), AWAY_ASK_WINDOW_MS);
-		strictEqual(askUserWindowMs(10, { yolo: false, away: true }), 10_000);
+		strictEqual(askUserWindowMs(300_000, { yolo: true, away: true }), AWAY_ASK_WINDOW_MS);
+		strictEqual(askUserWindowMs(10_000, { yolo: false, away: true }), 10_000);
 		strictEqual(askUserWindowMs(0, { yolo: false, away: true }), 0);
 		// F-C1: an operator_only question stays open past the unattended window at every autonomy level.
 		for (const yolo of [false, true])
 			for (const away of [false, true])
-				strictEqual(askUserWindowMs(300, { yolo, away, operatorOnly: true }), 0, `yolo ${yolo}, away ${away}`);
+				strictEqual(askUserWindowMs(300_000, { yolo, away, operatorOnly: true }), 0, `yolo ${yolo}, away ${away}`);
 	});
 });

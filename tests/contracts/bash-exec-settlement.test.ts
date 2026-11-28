@@ -260,7 +260,7 @@ describe("bash abort settlement (#445)", () => {
 		strictEqual(idle.details?.timedOutBy, "idle");
 		match(
 			idle.message,
-			/started[\s\S]*stopped as idle \(safety\.limits\.bashIdleSeconds\)[\s\S]*next call runs normally/u,
+			/started[\s\S]*stopped as idle \(safety\.limits\.bashIdleTimeoutMs\)[\s\S]*next call runs normally/u,
 		);
 		if (process.platform !== "linux") return;
 		// Silent for five idle windows, but busy: CPU in the process tree counts as activity.

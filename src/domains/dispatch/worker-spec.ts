@@ -336,7 +336,7 @@ export function buildDispatchWorkerSpec(input: DispatchWorkerSpecInput, config?:
 		role: input.role,
 		wallMs: wall.wallMs,
 		deadlineAt: wall.deadlineAt,
-		responseSeconds: limitSettings.safety.limits.workerResponseSeconds,
+		responseSeconds: limitSettings.safety.limits.workerResponseTimeoutMs / 1000,
 		toolCeiling: input.budget.ceiling ?? input.budget.hardCap,
 		maxRetries: limitSettings.fleet.retry.maxRetries,
 		refusals: WORKER_REFUSAL_LIMIT,

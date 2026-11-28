@@ -792,7 +792,7 @@ export interface SafetySettings {
 		templateToolCallsPerTurnMax: number | null;
 		/** The same ceiling for a template's `budget.observationBytes` over `observationBytesPerTurn`. */
 		templateObservationBytesPerTurnMax: number | null;
-		workerResponseSeconds: number;
+		workerResponseTimeoutMs: number;
 		/** Tool calls one yolo stretch runs before it pauses for the operator; 0 is off. */
 		autonomousToolCalls: number;
 		/** Minutes of active turn time one yolo stretch runs before it pauses; 0 is off. */
@@ -800,10 +800,10 @@ export interface SafetySettings {
 		/** Tokens one yolo stretch spends before it pauses; 0 is off. */
 		autonomousTokens: number;
 		/**
-		 * Seconds a main-session foreground bash call may go with no output and no CPU in its process tree before it
+		 * Milliseconds a main-session foreground bash call may go with no output and no CPU in its process tree before it
 		 * ends as an idle timeout (FX-32); 0 is off.
 		 */
-		bashIdleSeconds: number;
+		bashIdleTimeoutMs: number;
 	};
 	review: ReviewSettings;
 	/**
@@ -905,13 +905,13 @@ export interface SafetySettings {
 	 */
 	validationWrappers: string[];
 	/**
-	 * Seconds an attended permission card or ask_user round waits for the
+	 * Milliseconds an attended permission card or ask_user round waits for the
 	 * operator before PanCode resolves it and the turn continues: a parked call is
 	 * denied, an unanswered question takes its recommended option unless that
 	 * option leaves the workspace. 0 waits forever. Read only from the
 	 * operator's own settings file.
 	 */
-	unattendedAfterSeconds: number;
+	unattendedAfterMs: number;
 	/**
 	 * The operator accepted what yolo does, once, through the acceptance card
 	 * of its first interactive activation (#407). Read only from the operator's
@@ -1140,11 +1140,11 @@ export const DEFAULT_SETTINGS = {
 			observationBytesPerTurn: GUARDRAIL_DEFAULTS.observationTurnBudgetBytes,
 			templateToolCallsPerTurnMax: null as number | null,
 			templateObservationBytesPerTurnMax: null as number | null,
-			workerResponseSeconds: 600,
+			workerResponseTimeoutMs: 600_000,
 			autonomousToolCalls: 600,
 			autonomousMinutes: 120,
 			autonomousTokens: 5_000_000,
-			bashIdleSeconds: 0,
+			bashIdleTimeoutMs: 0,
 		},
 		review: { enabled: false } as ReviewSettings,
 		sandbox: "auto" as SandboxMode,
@@ -1173,7 +1173,7 @@ export const DEFAULT_SETTINGS = {
 		} as HomeReadsSettings,
 		snapshots: "auto" as WorkspaceSnapshotMode,
 		validationWrappers: [] as string[],
-		unattendedAfterSeconds: 300,
+		unattendedAfterMs: 300_000,
 		yoloAccepted: false,
 		yoloConfinement: "contained" as YoloConfinement,
 		yoloUnconfinedAccepted: false,

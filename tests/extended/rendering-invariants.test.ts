@@ -3883,7 +3883,7 @@ describe("tool classes", () => {
 		// An idle stop states the idle figure, never the timeout budget it stopped short of (FX-40). The status is the
 		// text bash writes for an idle stop; the row states it, so the body does not repeat it.
 		const idleStatus =
-			"bash: this command printed nothing and used no CPU for 20 s and was stopped as idle (safety.limits.bashIdleSeconds), before the 650 s timeout ran out. The bash tool still works; the next call runs normally. Validation did not finish. Narrow the test selection or enable verbose test names before another bounded run.";
+			"bash: this command printed nothing and used no CPU for 20 s and was stopped as idle (safety.limits.bashIdleTimeoutMs), before the 650 s timeout ran out. The bash tool still works; the next call runs normally. Validation did not finish. Narrow the test selection or enable verbose test names before another bounded run.";
 		const idleResult = (details?: Record<string, unknown>) => ({
 			content: [{ type: "text", text: `> jest\n\n${idleStatus}` }],
 			...(details !== undefined ? { details } : {}),

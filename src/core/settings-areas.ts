@@ -174,7 +174,7 @@ export function settingsPlacementForRow(id: string, path: string): SettingsPlace
 		case "fleet.retry.maxRetries":
 			return place("workers", "Limits & retries");
 		case "fleet.limits.internalRunTimeoutMs":
-		case "safety.limits.workerResponseSeconds":
+		case "safety.limits.workerResponseTimeoutMs":
 		case "fleet.retry.routeCooldownMs":
 		case "fleet.retry.breakerThreshold":
 			return place("advanced", "Worker timing");
@@ -232,7 +232,7 @@ export function settingsPlacementForRow(id: string, path: string): SettingsPlace
 			return place("context", "Semantic search");
 		case "safety.autonomy":
 		case "safety.snapshots":
-		case "safety.unattendedAfterSeconds":
+		case "safety.unattendedAfterMs":
 		case "safety.yoloAccepted":
 		case "safety.yoloConfinement":
 		case "safety.yoloUnconfinedAccepted":
@@ -245,7 +245,7 @@ export function settingsPlacementForRow(id: string, path: string): SettingsPlace
 		case "safety.limits.autonomousToolCalls":
 		case "safety.limits.autonomousMinutes":
 		case "safety.limits.autonomousTokens":
-		case "safety.limits.bashIdleSeconds":
+		case "safety.limits.bashIdleTimeoutMs":
 			return place("safety", "Spending & tool limits");
 		case "safety.sandbox":
 		case "safety.sandboxPassEnv":

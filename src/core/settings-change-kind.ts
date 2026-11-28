@@ -21,7 +21,7 @@ const HOT_RELOAD_FIELDS = new Set<string>([
 	// reads it per call, so a raise lifts a live wait (#424).
 	"safety.limits.sessionCostUsd",
 	// The main session reads it on every foreground bash call, so the next one observes a change (FX-32).
-	"safety.limits.bashIdleSeconds",
+	"safety.limits.bashIdleTimeoutMs",
 	"chat.modelPicker",
 	// The keepalive reads it before every refresh, so a change applies to the next one (#423).
 	"chat.cacheKeepalive",
@@ -77,7 +77,7 @@ const HOT_RELOAD_FIELDS = new Set<string>([
 	"safety.validationWrappers",
 	// Each permission card and ask_user round reads it when it starts waiting,
 	// so the next one observes a change; a running countdown keeps its window.
-	"safety.unattendedAfterSeconds",
+	"safety.unattendedAfterMs",
 	// Read at each interactive yolo activation, so the next toggle observes it (#407).
 	"safety.yoloAccepted",
 	// The main registry and dispatch read it at every admission and permit, so
@@ -127,7 +127,7 @@ const NEXT_TURN_FIELDS = new Set<string>([
 	"fleet.keepPeerInstructionFiles",
 	"context",
 	"safety.limits",
-	"safety.limits.workerResponseSeconds",
+	"safety.limits.workerResponseTimeoutMs",
 	// Dispatch reads both into each new WorkerSpec; a running worker keeps the
 	// policy it was spawned with.
 	"safety.sandbox",
