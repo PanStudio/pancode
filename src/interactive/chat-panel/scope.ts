@@ -20,6 +20,7 @@ import type { EntryRun, EntryRuns } from "../transcript-runs.js";
 import type { createChatCache } from "./cache.js";
 import type { createChatReceipts } from "./receipts.js";
 import type { createChatSegments } from "./segments.js";
+import type { createChatToolEvents } from "./tool-events.js";
 import type { createChatWorkers } from "./workers.js";
 
 export interface ChatPanelScope {
@@ -83,10 +84,13 @@ export interface ChatPanelScope {
 	replayStampMs: number | undefined;
 	replayTarget: string | null;
 	readonly messageTarget: () => string | null;
+	/** The model the newest assistant message came from: the requester of the calls that follow it. */
+	requestingModel: string | undefined;
 	readonly stamp: () => number;
 	readonly currentDetail: () => TranscriptDetailPolicy;
 	readonly cache: ReturnType<typeof createChatCache>;
 	readonly workers: ReturnType<typeof createChatWorkers>;
 	readonly receipts: ReturnType<typeof createChatReceipts>;
 	readonly segments: ReturnType<typeof createChatSegments>;
+	readonly toolEvents: ReturnType<typeof createChatToolEvents>;
 }
