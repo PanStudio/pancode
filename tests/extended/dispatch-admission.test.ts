@@ -33,7 +33,11 @@ import {
 	releaseMainCacheLanes,
 } from "../../src/domains/dispatch/capacity-lease.js";
 import type { AgentRoleFacts } from "../../src/domains/dispatch/execution-role.js";
-import { isBoundedGateRolePrompt, REVIEWER_GATE_PROMPT } from "../../src/domains/dispatch/gate-role-prompts.js";
+import {
+	isBoundedGateRolePrompt,
+	REVIEWER_GATE_PROMPT,
+	reviewerGatePrompt,
+} from "../../src/domains/dispatch/gate-role-prompts.js";
 import { normalizeDispatchIntent } from "../../src/domains/dispatch/intent.js";
 import {
 	architectPlanOutsideWriteRoots,
@@ -1614,6 +1618,22 @@ describe("dispatch admission boundary", () => {
 			false,
 		);
 		strictEqual(isBoundedGateRolePrompt({ role: "reviewer", readOnly: true, systemPrompt: "caller persona" }), false);
+		strictEqual(reviewerGatePrompt({ source: "builtin", body: "# Reviewer" }), REVIEWER_GATE_PROMPT);
+		strictEqual(reviewerGatePrompt({ source: "custom", body: "External ACP delegation." }), REVIEWER_GATE_PROMPT);
+		const recipe = { source: "project", body: "# Strict\nAlso check that every hunk is necessary." };
+		const composed = reviewerGatePrompt(recipe);
+		ok(composed.startsWith(`${recipe.body}\n\n## Review gate\n`));
+		strictEqual(isBoundedGateRolePrompt({ role: "reviewer", readOnly: true, systemPrompt: composed, recipe }), true);
+		strictEqual(isBoundedGateRolePrompt({ role: "reviewer", readOnly: true, systemPrompt: composed }), false);
+		strictEqual(
+			isBoundedGateRolePrompt({
+				role: "reviewer",
+				readOnly: true,
+				systemPrompt: composed,
+				recipe: { source: "project", body: "# Other" },
+			}),
+			false,
+		);
 	});
 
 	it("admits a budget-declaring recipe on a Claude CLI target as an external one-shot budget", async (t) => {
