@@ -1,11 +1,21 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
-import { ok, strictEqual, throws } from "node:assert/strict";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { ok, rejects, strictEqual, throws } from "node:assert/strict";
+import {
+	closeSync,
+	existsSync,
+	mkdirSync,
+	mkdtempSync,
+	openSync,
+	readFileSync,
+	rmdirSync,
+	rmSync,
+	writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
-import { safeResourceWrite } from "../../src/core/safe-resource-write.js";
+import { safeResourceWrite, safeResourceWriteAsync } from "../../src/core/safe-resource-write.js";
 
 describe("contracts/safe-resource-write", () => {
 	let scratch: string;
@@ -72,5 +82,22 @@ describe("contracts/safe-resource-write", () => {
 		strictEqual(result.backupPath, `${target}.bak`);
 		strictEqual(readFileSync(target, "utf8"), "new\n");
 		strictEqual(readFileSync(`${target}.bak`, "utf8"), "old\n");
+	});
+
+	it("fails a write below a removed directory instead of retrying mkdir forever", {
+		skip: process.platform !== "linux",
+	}, async () => {
+		// The open descriptor keeps the removed directory reachable by path, as a bind mount whose source was deleted does.
+		const removed = path.join(scratch, "removed");
+		mkdirSync(removed);
+		const fd = openSync(removed, "r");
+		try {
+			rmdirSync(removed);
+			const target = `/proc/self/fd/${fd}/nested/resource.txt`;
+			throws(() => safeResourceWrite(target, "x"), { code: "ENOENT" });
+			await rejects(safeResourceWriteAsync(target, "x"), { code: "ENOENT" });
+		} finally {
+			closeSync(fd);
+		}
 	});
 });

@@ -8,15 +8,15 @@ import {
 	copyFileSync,
 	existsSync,
 	fsyncSync,
-	mkdirSync,
 	openSync,
 	renameSync,
 	rmSync,
 	statSync,
 	writeSync,
 } from "node:fs";
-import { chmod, copyFile, mkdir, open, rename, rm, stat } from "node:fs/promises";
+import { chmod, copyFile, open, rename, rm, stat } from "node:fs/promises";
 import path from "node:path";
+import { makeDirectory, makeDirectorySync } from "./make-directory.js";
 
 interface SafeResourceBackupOptions {
 	path?: string;
@@ -121,7 +121,7 @@ export function safeResourceWrite(
 	options: SafeResourceWriteOptions = {},
 ): SafeResourceWriteResult {
 	const dir = path.dirname(targetPath);
-	mkdirSync(dir, { recursive: true });
+	makeDirectorySync(dir);
 	const tempPath = tempPathFor(targetPath);
 	const buffer = bufferFrom(contents, options.encoding);
 	let tempExists = false;
@@ -140,7 +140,7 @@ export function safeResourceWrite(
 		const backup = backupOptions(options.backup);
 		if (backup && existsSync(targetPath)) {
 			backupPath = backup.path ?? safeResourceBackupPath(targetPath, backup.suffix ?? ".bak");
-			mkdirSync(path.dirname(backupPath), { recursive: true });
+			makeDirectorySync(path.dirname(backupPath));
 			copyFileSync(targetPath, backupPath);
 			// A backup of a file being tightened must not keep the old, wider
 			// mode: the settings.yaml backups carry the same auth headers.
@@ -195,7 +195,7 @@ export async function safeResourceWriteAsync(
 ): Promise<SafeResourceWriteResult> {
 	const dir = path.dirname(targetPath);
 	const buffer = bufferFrom(contents, options.encoding);
-	await mkdir(dir, { recursive: true });
+	await makeDirectory(dir);
 	const tempPath = tempPathFor(targetPath);
 	let mode = options.mode;
 	if (mode === undefined) {
@@ -228,7 +228,7 @@ export async function safeResourceWriteAsync(
 		}
 		if (backup && targetStat) {
 			backupPath = backup.path ?? safeResourceBackupPath(targetPath, backup.suffix ?? ".bak");
-			await mkdir(path.dirname(backupPath), { recursive: true });
+			await makeDirectory(path.dirname(backupPath));
 			await copyFile(targetPath, backupPath);
 			if (options.mode !== undefined) await chmod(backupPath, targetStat.mode & 0o777 & options.mode);
 			const backupFd = await open(backupPath, process.platform === "win32" ? "r+" : "r");
