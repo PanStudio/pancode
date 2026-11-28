@@ -27,8 +27,9 @@ onFailure: stop
 
 This is one chain with several authors. Do only the step you were given.
 
-Diagnose. Find the cause of the failure the request describes and name it with the evidence: the file and line,
-the input that triggers it, and what happens instead of what should. Change nothing.
+Diagnose. Investigate the failure the request describes: read the code it reaches and trace it to its cause.
+Name the cause with the evidence: the file and line, the input that triggers it, and what happens instead of what
+should. Change nothing.
 
 Fix. Fix the cause the diagnosis names (it is attached as input data) with the smallest change, and nothing beside
 it. Add the smallest reproduction test: one case that fails before the fix and passes after it.
