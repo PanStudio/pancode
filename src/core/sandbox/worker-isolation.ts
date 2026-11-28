@@ -5,11 +5,11 @@ import type net from "node:net";
 import { sandboxAvailability, sandboxNetworkIsolation } from "./availability.js";
 import { egressGrants } from "./egress/policy.js";
 import type { EgressProxy, EgressReceipt } from "./egress/proxy.js";
-import { EGRESS_PROXY_PORT, MODEL_ROUTE_PORT } from "./egress/setup.js";
+import { EGRESS_PROXY_PORT, MODEL_ROUTE_PORT, WEB_FETCH_PROXY_PORT } from "./egress/setup.js";
 import { scrubSandboxEnv } from "./env-scrub.js";
 import { sandboxFilterFile, sandboxFilterProgram } from "./seccomp.js";
 import type { SandboxAvailability, WorkerSandboxSpec } from "./types.js";
-import { composeWorkerSandboxInvocation, workerSpawnMasks } from "./worker-process.js";
+import { admitPublicOrigin, composeWorkerSandboxInvocation, workerSpawnMasks } from "./worker-process.js";
 import { readTaskWorktreeGitLayout, taskWorktreeGitWritablePaths } from "./worktree-git.js";
 
 /**
@@ -35,10 +35,11 @@ export interface IsolatedWorkerLaunchInput {
 }
 
 export type IsolatedWorkerLaunch =
-	| { kind: "isolated"; file: string; args: string[]; env: NodeJS.ProcessEnv; ports: number[] }
+	| { kind: "isolated"; file: string; args: string[]; env: NodeJS.ProcessEnv; ports: number[]; executable: string }
 	| { kind: "refused"; message: string };
 
 const PROXY_ENV = /^(?:https?|all|no)_proxy$/iu;
+const ISOLATED_PORTS = [EGRESS_PROXY_PORT, MODEL_ROUTE_PORT, WEB_FETCH_PROXY_PORT] as const;
 
 function refused(reason: string): IsolatedWorkerLaunch {
 	return {
@@ -90,7 +91,7 @@ export function planIsolatedWorkerLaunch(input: IsolatedWorkerLaunchInput): Isol
 			workerSpawnMasks(masked, "bwrap", input.cwd),
 			true,
 			null,
-			{ extraPorts: [MODEL_ROUTE_PORT] },
+			{ extraPorts: [MODEL_ROUTE_PORT, WEB_FETCH_PROXY_PORT] },
 		);
 	} catch (error) {
 		return refused(message(error));
@@ -108,7 +109,26 @@ export function planIsolatedWorkerLaunch(input: IsolatedWorkerLaunchInput): Isol
 		file: invocation.file,
 		args: invocation.args,
 		env,
-		ports: [EGRESS_PROXY_PORT, MODEL_ROUTE_PORT],
+		ports: [...ISOLATED_PORTS],
+		executable: availability.executable,
+	};
+}
+
+/**
+ * The child policy the isolated worker itself applies. Its children's egress goes through the worker's proxy to the
+ * host's on 3128, which enforces the run's grants and alone holds the operator's upstream proxy. An `open` run keeps
+ * reaching every public origin, but through its own namespace, so no child shares the worker's and its model route.
+ */
+export function isolatedChildPolicy(policy: WorkerSandboxSpec): WorkerSandboxSpec {
+	const { egress, ...rest } = policy;
+	if (!policy.network) return rest;
+	return {
+		...rest,
+		egress: {
+			origins: egress?.origins ?? [],
+			...(egress === undefined ? { open: true as const } : {}),
+			upstreamProxy: `http://127.0.0.1:${EGRESS_PROXY_PORT}`,
+		},
 	};
 }
 
@@ -121,26 +141,32 @@ export interface IsolatedWorkerSession {
 
 /**
  * Takes the listeners the in-sandbox setup hands over: the model route's goes to `serveModelRoute`, the egress
- * proxy's to a host proxy holding the run's sealed child grants. Once both are served the setup is told to finish
- * and execs the worker; a launch the host never answers fails on its own.
+ * proxy's to a host proxy holding the run's sealed child grants, and typed web_fetch's to one admitting public
+ * origins. Once all three are served the setup is told to finish and execs the worker; a launch the host never
+ * answers fails on its own.
  */
 export function serveIsolatedWorker(
 	child: ChildProcess,
 	policy: WorkerSandboxSpec,
 	serveModelRoute: (listener: net.Server) => void,
 ): IsolatedWorkerSession {
-	let proxy: EgressProxy | null = null;
+	const proxies: EgressProxy[] = [];
 	let closed = false;
 	const loading = import("./egress/proxy.js").then(({ createEgressProxy }) => {
-		proxy = createEgressProxy({
+		const children = createEgressProxy({
 			grants: egressGrants(policy.network ? (policy.egress?.origins ?? []) : [], []),
+			...(policy.network && policy.egress === undefined ? { ask: admitPublicOrigin } : {}),
 			denyHint: "the operator grants it in safety.egress.workers.allow or presets",
 			...(policy.egress?.upstreamProxy !== undefined ? { upstreamProxy: policy.egress.upstreamProxy } : {}),
 		});
-		if (closed) proxy.close();
-		return proxy;
+		// Typed web_fetch reaches public addresses only, as it does outside isolation, and never a private opt-in.
+		const webFetch = createEgressProxy({ grants: egressGrants([], []), ask: admitPublicOrigin });
+		proxies.push(children, webFetch);
+		if (closed) for (const proxy of proxies) proxy.close();
+		return { [EGRESS_PROXY_PORT]: children, [WEB_FETCH_PROXY_PORT]: webFetch } as Record<number, EgressProxy>;
 	});
-	const pending = new Set([EGRESS_PROXY_PORT, MODEL_ROUTE_PORT]);
+	const pending = new Set<number>(ISOLATED_PORTS);
+	let unserved = pending.size;
 	const onMessage = (value: unknown, handle: unknown): void => {
 		if (typeof value !== "object" || value === null || handle === undefined) return;
 		const { t, port } = value as { t?: unknown; port?: unknown };
@@ -149,10 +175,11 @@ export function serveIsolatedWorker(
 		const served =
 			port === MODEL_ROUTE_PORT
 				? Promise.resolve(serveModelRoute(listener))
-				: loading.then((egress) => egress.serve(listener));
+				: loading.then((byPort) => byPort[port]?.serve(listener));
 		served.then(
 			() => {
-				if (pending.size === 0 && !closed && child.connected) child.send({ t: "pancode-egress-ready" });
+				unserved -= 1;
+				if (unserved === 0 && !closed && child.connected) child.send({ t: "pancode-egress-ready" });
 			},
 			() => listener.close(),
 		);
@@ -162,9 +189,9 @@ export function serveIsolatedWorker(
 		if (closed) return;
 		closed = true;
 		child.removeListener("message", onMessage);
-		proxy?.close();
+		for (const proxy of proxies) proxy.close();
 	};
 	child.once("exit", close);
 	child.once("error", close);
-	return { egressReceipts: () => proxy?.receipts() ?? [], close };
+	return { egressReceipts: () => proxies.flatMap((proxy) => proxy.receipts()), close };
 }

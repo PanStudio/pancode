@@ -286,6 +286,15 @@ export function sandboxAvailability(
 	return detected.availability;
 }
 
+/**
+ * An isolated worker's answer, from the host's probe (D14). Inside the worker's user namespace the root-owned bwrap
+ * reads as owned by nobody, so the process's own probe would refuse the bwrap its host launched it under.
+ */
+export function adoptHostSandboxAvailability(executable: string): void {
+	cached = { available: true, backend: "bwrap", executable, reason: null };
+	cachedNetIsolation = null;
+}
+
 /** The host answer once a probe has landed, else null. Never probes, so a render path can read it. */
 export function probedSandboxAvailability(): SandboxAvailability | null {
 	return cached;

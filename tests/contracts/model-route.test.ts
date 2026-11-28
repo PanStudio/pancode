@@ -5,7 +5,7 @@
  * gets a per-launch surrogate and a dispatcher that sends its model origin to a host route; the route admits only that
  * surrogate, swaps in the real credential, and relays bytes (SSE, WebSocket) unchanged.
  */
-import { deepEqual, equal, match, ok, rejects } from "node:assert/strict";
+import { deepEqual, equal, match, ok, rejects, throws } from "node:assert/strict";
 import { execFile, spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
@@ -19,7 +19,11 @@ import { DEFAULT_SETTINGS } from "../../src/core/defaults.js";
 import { sandboxAvailability, sandboxNetworkIsolation } from "../../src/core/sandbox/availability.js";
 import { createModelRoute, type ModelRoute, modelRouteSurrogate } from "../../src/core/sandbox/egress/model-route.js";
 import { WORKER_SANDBOX_SPEC_VERSION, type WorkerSandboxSpec } from "../../src/core/sandbox/types.js";
-import { planIsolatedWorkerLaunch, serveIsolatedWorker } from "../../src/core/sandbox/worker-isolation.js";
+import {
+	isolatedChildPolicy,
+	planIsolatedWorkerLaunch,
+	serveIsolatedWorker,
+} from "../../src/core/sandbox/worker-isolation.js";
 import { pancodeConfigPath } from "../../src/core/xdg.js";
 import { workerIsolationRefusal } from "../../src/domains/dispatch/model-route-binding.js";
 import type { SpawnedWorker, SpawnOptions } from "../../src/domains/dispatch/worker-spawn.js";
@@ -27,9 +31,11 @@ import type { ProvidersContract, RuntimeDescriptor } from "../../src/domains/pro
 import { EMPTY_CAPABILITIES } from "../../src/domains/providers/index.js";
 import type { TargetDescriptor } from "../../src/domains/providers/types/target-descriptor.js";
 import { parseWorkerSpec } from "../../src/lib/worker-wire/spec-contract.js";
+import { fetchWebUrl, routeWebFetchThroughHost } from "../../src/tools/web-fetch-network.js";
 import { isolateDispatchState, makeDispatchBundle, restoreDispatchState } from "../harness/dispatch.js";
 import { dispatchStubContext } from "../harness/dispatch-stub-context.js";
 
+const UPSTREAM_PROXY = "http://proxy.corp.test:8080";
 const REAL_KEY = "sk-real-provider-key";
 
 interface Upstream {
@@ -446,6 +452,7 @@ describe("isolated worker launch", () => {
 			"  out.route = await get('http://127.0.0.1:3129/v1/responses');",
 			`  out.direct = await get('http://127.0.0.1:${hostPort}/');`,
 			"  out.proxy = await get('http://127.0.0.1:3128/', { method: 'CONNECT', path: 'example.com:443', headers: { host: 'example.com:443' } });",
+			"  out.fetchProxy = await get('http://127.0.0.1:3130/', { method: 'CONNECT', path: '10.0.0.1:80', headers: { host: '10.0.0.1:80' } });",
 			"  out.env = Object.keys(process.env).filter((k) => /api_key|channel/i.test(k));",
 			"  out.proxyEnv = process.env.HTTPS_PROXY;",
 			`  try { out.settings = fs.readFileSync(${JSON.stringify(settingsFile)}, 'utf8'); } catch (e) { out.settings = e.code; }`,
@@ -478,7 +485,8 @@ describe("isolated worker launch", () => {
 		});
 		equal(launch.kind, "isolated", launch.kind === "refused" ? launch.message : "");
 		if (launch.kind !== "isolated") return;
-		deepEqual(launch.ports, [3128, 3129]);
+		deepEqual(launch.ports, [3128, 3129, 3130]);
+		equal(launch.executable, availability.executable);
 		const child = spawn(launch.file, launch.args, {
 			cwd: workspace,
 			env: launch.env,
@@ -502,6 +510,7 @@ describe("isolated worker launch", () => {
 		equal(out.route, "200 route /v1/responses");
 		equal(out.direct, "error ECONNREFUSED");
 		match(String(out.proxy), /^403 /u);
+		match(String(out.fetchProxy), /^403 /u);
 		deepEqual(out.env, []);
 		equal(out.proxyEnv, "http://127.0.0.1:3128");
 		ok(out.settings !== "version: 2\n# settings-secret\n", "the settings file is masked");
@@ -510,12 +519,59 @@ describe("isolated worker launch", () => {
 	});
 });
 
+describe("typed web_fetch under process isolation", () => {
+	it("tunnels every hop by name through the host's fetch proxy and refuses a private literal itself", async (t) => {
+		const origin = http.createServer((request, response) => {
+			if (request.url === "/start") response.writeHead(302, { location: "/end" }).end();
+			else response.end(`fetched ${request.headers.host}`);
+		});
+		await new Promise<void>((resolve) => origin.listen(0, "127.0.0.1", resolve));
+		t.after(() => origin.close());
+		const originPort = (origin.address() as AddressInfo).port;
+		const connects: string[] = [];
+		const proxy = http.createServer();
+		proxy.on("connect", (request: http.IncomingMessage, socket: import("node:net").Socket, head: Buffer) => {
+			connects.push(request.url ?? "");
+			if (request.url?.startsWith("denied.test")) {
+				socket.end("HTTP/1.1 403 Forbidden\r\n\r\n");
+				return;
+			}
+			const upstream = connect(originPort, "127.0.0.1", () => {
+				socket.write("HTTP/1.1 200 Connection Established\r\n\r\n");
+				upstream.write(head);
+				upstream.pipe(socket);
+				socket.pipe(upstream);
+			});
+		});
+		await new Promise<void>((resolve) => proxy.listen(0, "127.0.0.1", resolve));
+		t.after(() => proxy.close());
+		t.after(() => routeWebFetchThroughHost(null));
+		routeWebFetchThroughHost((proxy.address() as AddressInfo).port);
+		// fetch.test resolves nowhere: only the proxy, given the name, can reach it.
+		const response = await fetchWebUrl(`http://fetch.test:${originPort}/start`);
+		equal(await response.text(), `fetched fetch.test:${originPort}`);
+		deepEqual(connects, [`fetch.test:${originPort}`, `fetch.test:${originPort}`]);
+		await rejects(fetchWebUrl("http://10.0.0.1/"), /WEB_FETCH_PRIVATE_NETWORK: .*public addresses only/u);
+		await rejects(
+			fetchWebUrl(`http://denied.test:${originPort}/`),
+			/WEB_FETCH_PRIVATE_NETWORK: the host refused denied\.test/u,
+		);
+		equal(connects.length, 3);
+		throws(() => routeWebFetchThroughHost(0), /invalid fetch proxy port/u);
+	});
+});
+
 describe("dispatch under process isolation", () => {
 	beforeEach(() => isolateDispatchState());
 	afterEach(() => restoreDispatchState());
 
-	function bundleWith(runtime: RuntimeDescriptor, spawned: (spec: unknown, options?: SpawnOptions) => SpawnedWorker) {
+	function bundleWith(
+		runtime: RuntimeDescriptor,
+		spawned: (spec: unknown, options?: SpawnOptions) => SpawnedWorker,
+		tweak: (settings: typeof DEFAULT_SETTINGS) => void = () => {},
+	) {
 		const settings = structuredClone(DEFAULT_SETTINGS);
+		tweak(settings);
 		settings.fleet.retry.maxRetries = 0;
 		settings.safety.workerIsolation = "process";
 		settings.targets = [
@@ -551,22 +607,29 @@ describe("dispatch under process isolation", () => {
 		let spec: Record<string, unknown> | null = null;
 		let isolation: SpawnOptions["isolation"];
 		let exit: (value: { exitCode: number; signal: null }) => void = () => {};
-		const bundle = bundleWith(cloudRuntime(), (built, options) => {
-			spec = JSON.parse(JSON.stringify(built)) as Record<string, unknown>;
-			isolation = options?.isolation;
-			return {
-				pid: null,
-				promise: new Promise((resolve) => {
-					exit = resolve;
-				}),
-				heartbeatAt: { current: Date.now(), monotonic: performance.now() },
-				abort: () => {},
-				send: () => true,
-				events: (async function* () {
-					yield { type: "message_end", message: { role: "assistant", stopReason: "stop", content: "done" } };
-				})(),
-			};
-		});
+		const bundle = bundleWith(
+			cloudRuntime(),
+			(built, options) => {
+				spec = JSON.parse(JSON.stringify(built)) as Record<string, unknown>;
+				isolation = options?.isolation;
+				return {
+					pid: null,
+					promise: new Promise((resolve) => {
+						exit = resolve;
+					}),
+					heartbeatAt: { current: Date.now(), monotonic: performance.now() },
+					abort: () => {},
+					send: () => true,
+					events: (async function* () {
+						yield { type: "message_end", message: { role: "assistant", stopReason: "stop", content: "done" } };
+					})(),
+				};
+			},
+			(settings) => {
+				settings.safety.egress.workers = { mode: "proxied", allow: ["a.test:443"], presets: [] };
+				settings.safety.egress.upstreamProxy = UPSTREAM_PROXY;
+			},
+		);
 		await bundle.extension.start();
 		try {
 			const run = await bundle.contract.dispatch({
@@ -590,6 +653,22 @@ describe("dispatch under process isolation", () => {
 			// The launch runs under bwrap with the run's child policy; the route is served on the listener it hands over.
 			ok(isolation);
 			equal(isolation.policy.network, parsed.sandbox?.network);
+			// What the worker itself receives: its children chained to the host's proxy, which alone holds the operator's.
+			deepEqual(isolation.policy.egress, { origins: ["a.test:443"], upstreamProxy: UPSTREAM_PROXY });
+			const chained = isolatedChildPolicy(isolation.policy);
+			const { egress: _egress, ...ungranted } = isolation.policy;
+			const open = isolatedChildPolicy(ungranted);
+			deepEqual(chained.egress, { origins: ["a.test:443"], upstreamProxy: "http://127.0.0.1:3128" });
+			deepEqual(open.egress, { origins: [], open: true, upstreamProxy: "http://127.0.0.1:3128" });
+			equal(isolatedChildPolicy({ ...isolation.policy, network: false }).egress, undefined);
+			for (const sandbox of [chained, open]) {
+				const routed = parseWorkerSpec({ ...launched, sandbox, isolatedSandbox: { executable: "/usr/bin/bwrap" } });
+				equal(routed.isolatedSandbox?.executable, "/usr/bin/bwrap");
+				ok(!JSON.stringify(routed).includes("proxy-secret"));
+			}
+			const { modelRoute: _route, ...unrouted } = launched;
+			const unroutedSpec = { ...unrouted, isolatedSandbox: { executable: "/usr/bin/bwrap" } };
+			throws(() => parseWorkerSpec(unroutedSpec), /isolatedSandbox needs WorkerSpec.modelRoute/u);
 			const listener = createServer().listen(0, "127.0.0.1");
 			await new Promise((resolve) => listener.once("listening", resolve));
 			isolation.serveModelRoute(listener);

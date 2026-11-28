@@ -862,6 +862,21 @@ function managedHooksDirectory(): string | null {
 	return directory;
 }
 
+/**
+ * Install the managed hooks and git shim ahead of a launch that sees them read-only (an isolated worker), whose own
+ * install would fail. Best effort: a failure leaves the in-sandbox attribution to report it.
+ */
+export function prepareManagedGitAttribution(): string {
+	const root = join(pancodeStateDir(), "git-hooks");
+	try {
+		managedHooksDirectory();
+		managedGitShimDirectory();
+	} catch {
+		// Reported by withManagedGitCommitAttributionEnvironment where the commit runs.
+	}
+	return root;
+}
+
 /** Where the managed git shim lives: a sibling of the hooks directory, so Git never reads it as a hook. */
 const MANAGED_SHIM_DIRECTORY_PATTERN = /[\\/]git-hooks[\\/]v\d+-shim[\\/]?$/iu;
 

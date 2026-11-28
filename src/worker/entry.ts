@@ -32,7 +32,9 @@ import {
 	withManagedGitCommitAttributionEnvironment,
 } from "../core/git-commit-attribution.js";
 import { installProxyFromEnv } from "../core/proxy-env.js";
+import { adoptHostSandboxAvailability } from "../core/sandbox/availability.js";
 import { installModelRouteDispatcher } from "../core/sandbox/egress/model-route-client.js";
+import { WEB_FETCH_PROXY_PORT } from "../core/sandbox/egress/setup.js";
 import { withWorkerGitHookPaths } from "../core/sandbox/git-hooks-fingerprint.js";
 import { configureWorkerResourceLimits } from "../core/sandbox/resource-limits.js";
 import { configureWorkerProcessSandbox } from "../core/sandbox/worker-process.js";
@@ -76,6 +78,7 @@ import {
 	type WorkerSpec,
 	workerSpecToolNames,
 } from "../lib/worker-wire/spec-contract.js";
+import { routeWebFetchThroughHost } from "../tools/web-fetch-network.js";
 import { emitControlFrame, guardControlLane } from "./control-lane.js";
 import { projectWorkerEventForStdout } from "./event-projection.js";
 import { startWorkerHeartbeat } from "./heartbeat.js";
@@ -225,6 +228,10 @@ async function main(): Promise<number> {
 	configureGitCommitAttribution({ commitAttribution: attributionEnabled, commitAuthor: spec.gitCommitAuthor ?? "auto" });
 	// A dispatched worker is autonomous: under `auto` its commits name PanCode as author.
 	setAutonomousCommitProcess(true);
+	if (spec.isolatedSandbox !== undefined) {
+		adoptHostSandboxAvailability(spec.isolatedSandbox.executable);
+		routeWebFetchThroughHost(WEB_FETCH_PROXY_PORT);
+	}
 	// Every child this worker spawns through bash-exec or safe-exec runs under
 	// the dispatch-chosen OS sandbox from here on (decision Q8).
 	configureWorkerProcessSandbox(

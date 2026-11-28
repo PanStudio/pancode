@@ -3,9 +3,10 @@
 import { lookup } from "node:dns/promises";
 import { request as httpRequest } from "node:http";
 import { request as httpsRequest } from "node:https";
-import { BlockList, isIP } from "node:net";
+import { BlockList, connect as connectTcp, isIP, type Socket } from "node:net";
 import type { Transform } from "node:stream";
 import { Readable } from "node:stream";
+import { connect as connectTls } from "node:tls";
 import { createBrotliDecompress, createGunzip, createInflate } from "node:zlib";
 import { WEB_FETCH_ALLOW_PRIVATE_NETWORK_ENV } from "./network-policy.js";
 
@@ -69,7 +70,85 @@ export interface WebFetchNetworkDependencies {
 /** Pin the checked address in the socket lookup while retaining the URL host
  * for Host, TLS SNI and certificate verification. No second DNS resolution,
  * proxy, pooled socket, or automatic redirect can bypass admission. */
-async function requestPinnedWebUrl(url: URL, init: RequestInit, address: Address): Promise<Response> {
+function requestPinnedWebUrl(url: URL, init: RequestInit, address: Address): Promise<Response> {
+	return requestWebUrl(url, init, {
+		agent: false,
+		lookup: (_hostname, options, callback) => {
+			if (options.all) callback(null, [address]);
+			else callback(null, address.address, address.family);
+		},
+	});
+}
+
+/** A CONNECT tunnel by name; the proxy resolves, screens and pins the address. */
+async function tunnel(proxy: { host: string; port: number }, url: URL, signal?: AbortSignal | null): Promise<Socket> {
+	const port = url.port !== "" ? url.port : url.protocol === "https:" ? "443" : "80";
+	const authority = `${url.hostname}:${port}`;
+	const socket = connectTcp(proxy.port, proxy.host);
+	let settle: { resolve: (head: string) => void; reject: (error: Error) => void } | null = null;
+	let buffered = Buffer.alloc(0);
+	const onData = (chunk: Buffer): void => {
+		buffered = Buffer.concat([buffered, chunk]);
+		const end = buffered.indexOf("\r\n\r\n");
+		if (end < 0) {
+			if (buffered.length > 16_384) settle?.reject(new Error("web_fetch: oversized proxy reply"));
+			return;
+		}
+		const rest = buffered.subarray(end + 4);
+		socket.off("data", onData);
+		// HTTP and TLS speak first, so nothing follows the reply before the request is written.
+		if (rest.length > 0) settle?.reject(new Error("web_fetch: the fetch proxy sent data before the request"));
+		else settle?.resolve(buffered.subarray(0, end).toString("latin1"));
+	};
+	const onError = (error: Error): void => settle?.reject(error);
+	const onClose = (): void => settle?.reject(new Error("web_fetch: the fetch proxy closed the connection"));
+	const onAbort = (): void => settle?.reject(signal?.reason instanceof Error ? signal.reason : new Error("aborted"));
+	try {
+		const head = await new Promise<string>((resolve, reject) => {
+			settle = { resolve, reject };
+			if (signal?.aborted) return onAbort();
+			signal?.addEventListener("abort", onAbort, { once: true });
+			socket.on("data", onData);
+			socket.on("error", onError);
+			socket.on("close", onClose);
+			socket.once("connect", () => socket.write(`CONNECT ${authority} HTTP/1.1\r\nHost: ${authority}\r\n\r\n`));
+		});
+		const status = /^HTTP\/1\.[01] (\d{3})/u.exec(head)?.[1];
+		if (status !== "200")
+			throw new WebFetchNetworkError(`the host refused ${authority} (${head.split("\r\n")[0] ?? "no reply"})`);
+		return socket;
+	} catch (error) {
+		socket.destroy();
+		throw error;
+	} finally {
+		settle = null;
+		signal?.removeEventListener("abort", onAbort);
+		socket.off("data", onData);
+		socket.off("error", onError);
+		socket.off("close", onClose);
+	}
+}
+
+/** One hop through the host's typed-fetch proxy; TLS and certificate checks stay end to end in this process. */
+async function requestProxiedWebUrl(
+	url: URL,
+	init: RequestInit,
+	proxy: { host: string; port: number },
+): Promise<Response> {
+	const socket = await tunnel(proxy, url, init.signal);
+	const hostname = url.hostname.replace(/^\[|\]$/g, "");
+	const connection =
+		url.protocol === "https:"
+			? connectTls({ socket, host: hostname, ...(isIP(hostname) === 0 ? { servername: hostname } : {}) })
+			: socket;
+	return requestWebUrl(url, init, { createConnection: () => connection });
+}
+
+async function requestWebUrl(
+	url: URL,
+	init: RequestInit,
+	connection: Pick<import("node:http").RequestOptions, "agent" | "lookup" | "createConnection">,
+): Promise<Response> {
 	return new Promise((resolve, reject) => {
 		const headers = new Headers(init.headers);
 		headers.delete("host");
@@ -78,12 +157,8 @@ async function requestPinnedWebUrl(url: URL, init: RequestInit, address: Address
 			{
 				method: init.method ?? "GET",
 				headers: Object.fromEntries(headers),
-				agent: false,
+				...connection,
 				...(init.signal ? { signal: init.signal } : {}),
-				lookup: (_hostname, options, callback) => {
-					if (options.all) callback(null, [address]);
-					else callback(null, address.address, address.family);
-				},
 			},
 			(response) => {
 				let decoder: Transform | null = null;
@@ -146,6 +221,18 @@ async function abortableLookup(
 	});
 }
 
+let hostFetchProxy: { host: string; port: number } | null = null;
+
+/**
+ * Sends every typed fetch through the host's loopback fetch proxy (D14): the isolated worker has no DNS and no route
+ * out, so the host resolves, screens and pins each hop. Null restores direct pinned fetches.
+ */
+export function routeWebFetchThroughHost(port: number | null): void {
+	if (port !== null && (!Number.isInteger(port) || port < 1 || port > 65_535))
+		throw new Error(`web_fetch: invalid fetch proxy port ${port}`);
+	hostFetchProxy = port === null ? null : { host: "127.0.0.1", port };
+}
+
 /** Every hop, including helper URLs, resolves and validates before connecting. */
 export async function fetchWebUrl(
 	input: string | URL,
@@ -155,6 +242,8 @@ export async function fetchWebUrl(
 	let url = new URL(input);
 	const init = { ...initial, headers: new Headers(initial.headers) };
 	const allowPrivate = dependencies.allowPrivateNetwork ?? process.env[WEB_FETCH_ALLOW_PRIVATE_NETWORK_ENV] === "1";
+	// An isolated worker has no DNS and no route out; the host resolves and screens each hop instead.
+	const proxy = dependencies.resolve === undefined && dependencies.request === undefined ? hostFetchProxy : null;
 	for (let hop = 0; hop <= 10; hop++) {
 		init.signal?.throwIfAborted();
 		if (!["http:", "https:"].includes(url.protocol) || url.username || url.password)
@@ -162,17 +251,14 @@ export async function fetchWebUrl(
 		const hopViolation = dependencies.admitHop?.(url) ?? null;
 		if (hopViolation !== null) throw new WebFetchNetworkError(hopViolation);
 		const hostname = url.hostname.replace(/^\[|\]$/g, "");
-		const addresses = isIP(hostname)
-			? [{ address: hostname, family: isIP(hostname) }]
-			: await abortableLookup((dependencies.resolve ?? ((host) => lookup(host, { all: true })))(hostname), init.signal);
-		init.signal?.throwIfAborted();
-		const address = addresses[0];
-		if (address === undefined) throw new Error("web_fetch: DNS returned no addresses");
-		if (!allowPrivate && addresses.some((address) => !isPublicWebAddress(address.address)))
+		if (proxy !== null && isIP(hostname) !== 0 && !isPublicWebAddress(hostname))
 			throw new WebFetchNetworkError(
-				`destination ${url.hostname} is not public; operator opt-in ${WEB_FETCH_ALLOW_PRIVATE_NETWORK_ENV}=1 is required`,
+				`destination ${url.hostname} is not public; an isolated worker reaches public addresses only`,
 			);
-		const response = await (dependencies.request ?? requestPinnedWebUrl)(url, init, address);
+		const response =
+			proxy !== null
+				? await requestProxiedWebUrl(url, init, proxy)
+				: await fetchPinnedHop(url, init, hostname, allowPrivate, dependencies);
 		const location = response.headers.get("location");
 		if (![301, 302, 303, 307, 308].includes(response.status) || location === null) return response;
 		await response.body?.cancel();
@@ -195,4 +281,24 @@ export async function fetchWebUrl(
 		url = next;
 	}
 	throw new Error("web_fetch: too many redirects");
+}
+
+async function fetchPinnedHop(
+	url: URL,
+	init: RequestInit,
+	hostname: string,
+	allowPrivate: boolean,
+	dependencies: WebFetchNetworkDependencies,
+): Promise<Response> {
+	const addresses = isIP(hostname)
+		? [{ address: hostname, family: isIP(hostname) }]
+		: await abortableLookup((dependencies.resolve ?? ((host) => lookup(host, { all: true })))(hostname), init.signal);
+	init.signal?.throwIfAborted();
+	const address = addresses[0];
+	if (address === undefined) throw new Error("web_fetch: DNS returned no addresses");
+	if (!allowPrivate && addresses.some((address) => !isPublicWebAddress(address.address)))
+		throw new WebFetchNetworkError(
+			`destination ${url.hostname} is not public; operator opt-in ${WEB_FETCH_ALLOW_PRIVATE_NETWORK_ENV}=1 is required`,
+		);
+	return await (dependencies.request ?? requestPinnedWebUrl)(url, init, address);
 }

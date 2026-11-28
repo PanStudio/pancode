@@ -71,6 +71,11 @@ export type EgressPresetName = (typeof EGRESS_PRESET_NAMES)[number];
 export interface WorkerEgressSpec {
 	/** The exact `host:port` origins the run may reach, presets expanded. */
 	origins: ReadonlyArray<string>;
+	/**
+	 * Every public origin, for an `open` run under worker isolation: the children still get their own namespace,
+	 * and the host's proxy on the other side of `upstreamProxy` applies the private-range deny.
+	 */
+	open?: true;
 	/** The operator's upstream proxy URL, credentials included; never shown. */
 	upstreamProxy?: string;
 }

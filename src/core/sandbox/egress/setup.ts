@@ -10,6 +10,12 @@ export const EGRESS_PROXY_PORT = 3128;
 /** The loopback port an isolated worker reaches its provider on: the host's model route (D14). */
 export const MODEL_ROUTE_PORT = 3129;
 
+/**
+ * The loopback port an isolated worker's typed web_fetch tunnels through: a host proxy admitting public origins
+ * only, apart from the children's grants on `EGRESS_PROXY_PORT`.
+ */
+export const WEB_FETCH_PROXY_PORT = 3130;
+
 /** How long the in-sandbox setup may take to bind and hand over its listener before it gives up. */
 const SETUP_TIMEOUT_MS = 15_000;
 

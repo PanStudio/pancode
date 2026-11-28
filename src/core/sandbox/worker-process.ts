@@ -603,10 +603,17 @@ function launchNetwork(
 	return options.bridge === true ? "proxied" : "off";
 }
 
-/** A proxied worker launch's grants: its sealed origins, with no asks (headless). */
+/**
+ * The `open` worker egress admission: any origin by name. The proxy still refuses a local or private literal and a
+ * name resolving to one; behind an upstream proxy the upstream screens what it resolves.
+ */
+export const admitPublicOrigin = async (): Promise<boolean> => true;
+
+/** A proxied worker launch's grants: its sealed origins, with no asks (headless), or every public origin when open. */
 function workerEgressPlan(policy: WorkerSandboxSpec): EgressBridgePlan {
 	return {
 		grants: egressGrants(policy.egress?.origins ?? [], []),
+		...(policy.egress?.open === true ? { ask: admitPublicOrigin } : {}),
 		denyHint: "the operator grants it in safety.egress.workers.allow or presets",
 		...(policy.egress?.upstreamProxy !== undefined ? { upstreamProxy: policy.egress.upstreamProxy } : {}),
 	};

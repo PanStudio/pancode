@@ -44,6 +44,7 @@ import {
 	publishPancodeCompileCache,
 	workerCompileCacheEnvironment,
 } from "../../core/compile-cache.js";
+import { prepareManagedGitAttribution } from "../../core/git-commit-attribution.js";
 import { resolvePackageRoot } from "../../core/package-root.js";
 import type { ProcessGroupCleanupStatus } from "../../core/safe-exec.js";
 import {
@@ -53,7 +54,11 @@ import {
 } from "../../core/safe-exec.js";
 import { signalSandboxPayload } from "../../core/sandbox/signal.js";
 import type { WorkerSandboxSpec } from "../../core/sandbox/types.js";
-import { planIsolatedWorkerLaunch, serveIsolatedWorker } from "../../core/sandbox/worker-isolation.js";
+import {
+	isolatedChildPolicy,
+	planIsolatedWorkerLaunch,
+	serveIsolatedWorker,
+} from "../../core/sandbox/worker-isolation.js";
 import { WORKER_STDOUT_FAILURES } from "../../core/telemetry/run-vocabulary.js";
 import { pancodeStateDir } from "../../core/xdg.js";
 import {
@@ -1230,14 +1235,31 @@ export function spawnNativeWorker(spec: WorkerSpec, opts?: SpawnOptions): Spawne
 		cwd,
 		env: withPancodeAgentEnvironment(env),
 		// Node and the PanCode package are shown to every sandbox already.
-		exposed: [join(pancodeStateDir(), "sandbox"), ...(compileCache ? [compileCache] : [])],
+		exposed: [
+			join(pancodeStateDir(), "sandbox"),
+			prepareManagedGitAttribution(),
+			...(compileCache ? [compileCache] : []),
+		],
 		...(isolation.taskWorktree !== undefined ? { taskWorktree: isolation.taskWorktree } : {}),
 		...(isolation.credentialEnv !== undefined ? { credentialEnv: isolation.credentialEnv } : {}),
 	});
 	if (launch.kind === "refused") throw new Error(`dispatch: ${launch.message}`);
 	const child = launchWorkerChild(launch.file, launch.args, { cwd, env: launch.env }, true);
 	serveIsolatedWorker(child, isolation.policy, isolation.serveModelRoute);
-	return attachWorkerChannel(child, launch.file, launch.args, spec, { ...processOptions, cwd, env: launch.env }, true);
+	// The worker's children chain to the host's proxy; the operator's upstream proxy stays on the host.
+	const isolated: WorkerSpec = {
+		...spec,
+		sandbox: isolatedChildPolicy(isolation.policy),
+		isolatedSandbox: { executable: launch.executable },
+	};
+	return attachWorkerChannel(
+		child,
+		launch.file,
+		launch.args,
+		isolated,
+		{ ...processOptions, cwd, env: launch.env },
+		true,
+	);
 }
 
 /**

@@ -189,6 +189,11 @@ interface WorkerSpecFields {
 	 * holds the credential. Exclusive with `apiKey`, `authProfile`, `credentialExpiresAt` and `target.auth.headers`.
 	 */
 	modelRoute?: ModelRouteBinding;
+	/**
+	 * With `modelRoute`, the bubblewrap the host probed, which the worker adopts for its children: inside the
+	 * worker's user namespace a root-owned bwrap reads as owned by nobody and fails the trust check.
+	 */
+	isolatedSandbox?: { executable: string };
 	thinkingLevel?: ThinkingLevel;
 	/** JSON Schema enforced on the llama.cpp chat-completions request. */
 	responseSchema?: Record<string, unknown>;
@@ -1293,7 +1298,8 @@ function validateWorkerHomeReads(value: unknown): void {
 function validateWorkerEgress(value: unknown): void {
 	const source = "WorkerSpec.sandbox.egress";
 	const egress = readRecord(value, source);
-	exactKeys(egress, ["origins", "upstreamProxy"], source);
+	exactKeys(egress, ["origins", "open", "upstreamProxy"], source);
+	if (egress.open !== undefined && egress.open !== true) throw new Error(`${source}.open must be true when present`);
 	for (const [index, entry] of readStringArray(egress.origins, `${source}.origins`).entries()) {
 		const parsed = parseEgressAllowEntry(entry);
 		if (typeof parsed === "string" || originKey(parsed) !== entry)
@@ -1392,6 +1398,14 @@ export function parseWorkerSpec(value: unknown): WorkerSpec {
 	readOptionalString(spec, "authProfile", "WorkerSpec");
 	readOptionalNumber(spec, "credentialExpiresAt", "WorkerSpec");
 	if (spec.modelRoute !== undefined) validateModelRoute(spec);
+	if (spec.isolatedSandbox !== undefined) {
+		const isolated = readRecord(spec.isolatedSandbox, "WorkerSpec.isolatedSandbox");
+		exactKeys(isolated, ["executable"], "WorkerSpec.isolatedSandbox");
+		if (typeof isolated.executable !== "string" || !isolated.executable.startsWith("/"))
+			throw new Error("WorkerSpec.isolatedSandbox.executable must be an absolute path");
+		if (spec.modelRoute === undefined || spec.sandbox === undefined)
+			throw new Error("WorkerSpec.isolatedSandbox needs WorkerSpec.modelRoute and WorkerSpec.sandbox");
+	}
 	readOptionalEnum(spec, "thinkingLevel", "WorkerSpec", THINKING_LEVELS);
 	// A misspelled sampling policy must not silently restore the server defaults that varied handbooks.
 	readOptionalEnum(spec, "sampling", "WorkerSpec", ["deterministic"] as const);
