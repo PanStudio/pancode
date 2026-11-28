@@ -38,6 +38,7 @@ import {
 	taskRows,
 	taskTitle,
 	wizardModeFor,
+	workspacesByRecency,
 } from "./shell/shell-model.js";
 import { staleBundle } from "./shell/stale-bundle-model.js";
 import { TaskSidebar } from "./shell/TaskSidebar.js";
@@ -213,7 +214,7 @@ function Workbench({ client, local }: { client: Client; local: Client }) {
 		const known = new Set(workspaces.data?.map((workspace) => workspace.id));
 		for (const candidate of [snapshot?.workspaceId, routeWorkspace, remembered])
 			if (candidate && known.has(candidate)) return candidate;
-		return [...(workspaces.data ?? [])].sort((a, b) => b.openedAt.localeCompare(a.openedAt))[0]?.id ?? null;
+		return workspacesByRecency(workspaces.data ?? [])[0]?.id ?? null;
 	}, [snapshot?.workspaceId, routeWorkspace, remembered, workspaces.data]);
 	useEffect(() => {
 		if (snapshot?.workspaceId) rememberWorkspace(snapshot.workspaceId);

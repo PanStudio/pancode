@@ -228,6 +228,31 @@ export function taskRows(
 	return rows.sort((a, b) => parsed(b.at) - parsed(a.at) || a.id.localeCompare(b.id));
 }
 
+/** Workspaces most recently opened first; the active one, when named, leads the list. */
+export function workspacesByRecency<T extends { readonly id: string; readonly openedAt: string }>(
+	workspaces: readonly T[],
+	activeId: string | null = null,
+): T[] {
+	return [...workspaces].sort(
+		(a, b) => Number(b.id === activeId) - Number(a.id === activeId) || b.openedAt.localeCompare(a.openedAt),
+	);
+}
+
+/** How many of a project's task rows show: its page, stretched so the selected task stays visible. */
+export function visibleTaskCount(limit: number, rows: readonly { id: string }[], activeTask: string | null): number {
+	return Math.max(limit, rows.findIndex((row) => row.id === activeTask) + 1);
+}
+
+/** A task row's tooltip: its title, then where else it runs, else its state word. */
+export function taskRowTitle(title: string, elsewhere: string | null, label: string): string {
+	return `${title}${elsewhere ? ` · ${elsewhere}` : label ? ` · ${label}` : ""}`;
+}
+
+/** The runtime button's tooltip; `lastChecked` is the already formatted time of the last check. */
+export function systemDetail(platform: string | undefined, detail: string, lastChecked: string | null): string {
+	return `PanCode runtime · ${platform ?? "Local"}\n${detail}${lastChecked !== null ? `\nLast checked ${lastChecked}` : ""}`;
+}
+
 /** Compact age for a sidebar row: "now", "5m", "3h", "2d", "6w". Empty when no time is known. */
 export function shortAge(iso: string | undefined, nowMs: number): string {
 	const then = parsed(iso);
