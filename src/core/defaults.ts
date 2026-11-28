@@ -24,6 +24,7 @@ import type {
 	ResourceLimitSettings,
 	SandboxMode,
 	UnixSocketMode,
+	WorkerIsolationMode,
 } from "./sandbox/types.js";
 import type { TelemetrySettings } from "./telemetry/capture.js";
 import { ROUTING_POSTURES, type RoutingPosture } from "./telemetry/run-vocabulary.js";
@@ -863,6 +864,12 @@ export interface SafetySettings {
 	 */
 	sandboxUnconfinedLocalWorkers: boolean;
 	/**
+	 * How much of a native HTTP worker this host isolates. children (default) sandboxes its commands; process also
+	 * sends its model calls through a per-launch route on this host that holds the credential, so the worker holds
+	 * none, and refuses SDK, CLI, ACP, SSH and other launches that cannot. Read only from the operator's own settings.
+	 */
+	workerIsolation: WorkerIsolationMode;
+	/**
 	 * Cap in GiB on the main-session sandbox's tool cache (`<cache dir>/sandbox-cache`). Once a day at startup, and
 	 * on `doctor --fix`, its least recently used top-level tool directories are removed until it fits, unless a
 	 * running process may still use it; 0 is no cap. Read only from the operator's own settings file.
@@ -1155,6 +1162,7 @@ export const DEFAULT_SETTINGS = {
 		liveCheckTargets: [] as string[],
 		sandboxUnixSockets: "block" as UnixSocketMode,
 		sandboxUnconfinedLocalWorkers: false,
+		workerIsolation: "children" as WorkerIsolationMode,
 		sandboxCacheMaxGiB: 4,
 		confine: [] as string[],
 		homeReads: {

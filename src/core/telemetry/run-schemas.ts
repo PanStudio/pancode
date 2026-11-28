@@ -502,7 +502,12 @@ function runSettledSchema<const R extends readonly string[]>(roles: R) {
 						),
 						approval: Type.Object({ autonomy: ExistingId, asks: ExistingId }, closed),
 						sandbox: Type.Object(
-							{ backend: ExistingId, confinesWrites: Type.Boolean(), unconfined: Type.Optional(Type.Literal(true)) },
+							{
+								backend: ExistingId,
+								confinesWrites: Type.Boolean(),
+								unconfined: Type.Optional(Type.Literal(true)),
+								workerIsolation: Type.Optional(Type.Literal("process")),
+							},
 							closed,
 						),
 						withheld: Type.Array(

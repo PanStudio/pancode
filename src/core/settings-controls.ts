@@ -164,6 +164,7 @@ const CHOICES: Record<string, readonly string[]> = {
 	"safety.egress.main.mode": ["proxied", "off", "open"],
 	"safety.egress.workers.mode": ["off", "proxied", "open"],
 	"safety.sandboxUnixSockets": ["block", "owned", "allow"],
+	"safety.workerIsolation": ["children", "process"],
 	"safety.homeReads.main": ["open", "listed"],
 	"safety.homeReads.workers": ["open", "listed"],
 	"safety.snapshots": ["auto", "off"],

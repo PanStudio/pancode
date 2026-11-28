@@ -19,10 +19,12 @@ import { mainSandboxPolicy, planMainSandboxSpawn } from "../../src/core/sandbox/
 import { withMountAliases } from "../../src/core/sandbox/mount-aliases.js";
 import { discoverSecretMasks } from "../../src/core/sandbox/secret-files.js";
 import { signalSandboxPayload } from "../../src/core/sandbox/signal.js";
+import { workerSandboxMasks } from "../../src/core/sandbox/worker-process.js";
 import { validateSettings } from "../../src/core/settings-validate.js";
 import { ToolNames } from "../../src/core/tool-names.js";
 import { createSafetyPolicyEngine } from "../../src/domains/safety/policy-engine.js";
 import { createWorkerSafety } from "../../src/engine/worker-tools.js";
+import { workerSecretPaths } from "../../src/lib/secrets/secret-paths.js";
 import { bashTool } from "../../src/tools/bash.js";
 import { createRegistry } from "../../src/tools/registry.js";
 import { verifyTool } from "../../src/tools/verify/index.js";
@@ -562,4 +564,84 @@ test("typed read and grep refuse PanCode's settings and MCP files while they hol
 	writeFileSync(backup, secretSettings);
 	writeFileSync(mcp, 'version: 1\nservers:\n  - id: gh\n    command: gh-mcp\n    args: ["--token", "MCP_ARG_MARKER"]\n');
 	deepStrictEqual(verdicts(), ["allow", "allow", "block", "block", "block", "block"]);
+});
+
+test("relocating PANCODE_CONFIG_DIR still masks the default XDG credentials path and its mount aliases", async (t) => {
+	const isolated = await isolatePancodeEnv("pancode-default-xdg-creds-");
+	t.after(() => isolated.restore());
+	const scratchHome = realpathSync(mkdtempSync(join(tmpdir(), "pancode-fake-home-")));
+	const prevHome = process.env.HOME;
+	const prevXdgConfig = process.env.XDG_CONFIG_HOME;
+	process.env.HOME = scratchHome;
+	delete process.env.XDG_CONFIG_HOME;
+	t.after(() => {
+		if (prevHome === undefined) delete process.env.HOME;
+		else process.env.HOME = prevHome;
+		if (prevXdgConfig === undefined) delete process.env.XDG_CONFIG_HOME;
+		else process.env.XDG_CONFIG_HOME = prevXdgConfig;
+	});
+	// PANCODE_CONFIG_DIR points to isolated.dir/config while the default XDG store lives under scratchHome/.config/pancode.
+	const defaultCreds =
+		process.platform === "darwin"
+			? join(scratchHome, "Library", "Application Support", "pancode", "config", "credentials.yaml")
+			: process.platform === "win32"
+				? join(scratchHome, "AppData", "Roaming", "pancode", "config", "credentials.yaml")
+				: join(scratchHome, ".config", "pancode", "credentials.yaml");
+	mkdirSync(join(defaultCreds, ".."), { recursive: true });
+	writeFileSync(defaultCreds, "anthropic:\n  apiKey: CANARY_DEFAULT_XDG_SECRET\n", { mode: 0o600 });
+
+	ok(workerSecretPaths(scratchHome).includes(defaultCreds), "workerSecretPaths includes default XDG credentials.yaml");
+	const masks = workerSandboxMasks();
+	ok(
+		masks.some((m) => m.path === defaultCreds && m.kind === "file"),
+		"workerSandboxMasks masks default XDG credentials.yaml",
+	);
+
+	// A second mount exposing the same default credentials path gains an alias mask too.
+	const mirror = join(scratchHome, "mirror");
+	const aliasedCreds = join(mirror, ".config", "pancode", "credentials.yaml");
+	mkdirSync(join(aliasedCreds, ".."), { recursive: true });
+	writeFileSync(aliasedCreds, "canary\n");
+	const mountinfo = join(scratchHome, "mountinfo");
+	writeFileSync(
+		mountinfo,
+		[`30 1 8:1 /x ${scratchHome} rw - ext4 /dev/sda rw`, `31 1 8:1 /x ${mirror} rw - ext4 /dev/sda rw`].join("\n"),
+	);
+	const aliased = withMountAliases(
+		masks.filter((m) => m.path === defaultCreds),
+		mountinfo,
+		[mirror],
+	);
+	ok(!(aliased instanceof Error));
+	if (!(aliased instanceof Error) && process.platform === "linux") {
+		ok(
+			aliased.some((m) => m.path === aliasedCreds && m.kind === "file"),
+			"mount alias of default XDG credentials.yaml is also masked",
+		);
+	}
+
+	const availability = sandboxAvailability();
+	if (availability.available && availability.backend === "bwrap") {
+		const workspace = realpathSync(mkdtempSync(join(tmpdir(), "pancode-default-xdg-ws-")));
+		const plan = planMainSandboxSpawn(
+			mainSandboxPolicy({ workspace, scratchRoots: [] }),
+			{ argv: ["/bin/sh", "-c", `cat ${JSON.stringify(defaultCreds)}`] },
+			workspace,
+			availability,
+		);
+		strictEqual(plan.kind, "sandboxed");
+		if (plan.kind === "sandboxed") {
+			const maskIdx = plan.args.indexOf(defaultCreds);
+			ok(
+				maskIdx >= 2 && plan.args[maskIdx - 2] === "--ro-bind-try" && plan.args[maskIdx - 1] === "/dev/null",
+				"bwrap binds /dev/null over the default XDG credentials.yaml",
+			);
+			const res = spawnSync(plan.file, plan.args, { encoding: "utf8" });
+			ok(!res.stdout.includes("CANARY_DEFAULT_XDG_SECRET"), "canary must not leak from default XDG credentials.yaml");
+			ok(
+				(res.status === 0 && res.stdout === "") || (res.status !== 0 && /Permission denied/u.test(res.stderr)),
+				`expected /dev/null mask (empty or EACCES on nodev), got status=${res.status} stdout=${JSON.stringify(res.stdout)} stderr=${JSON.stringify(res.stderr)}`,
+			);
+		}
+	}
 });

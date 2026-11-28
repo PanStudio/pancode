@@ -349,6 +349,20 @@ export function xdgBaseDir(value: string | undefined, fallback: string): string 
 	return trimmed && isAbsolute(trimmed) ? trimmed : fallback;
 }
 
+/** Platform default config roots for `home`, ignoring `PANCODE_HOME` and `PANCODE_CONFIG_DIR`. */
+export function defaultPancodeConfigDirs(home: string = homedir()): string[] {
+	const p = platform();
+	if (p === "win32") {
+		const fallback = join(home, "AppData", "Roaming");
+		const appData = envOrNull("APPDATA") ?? fallback;
+		return [...new Set([join(appData, "pancode", "config"), join(fallback, "pancode", "config")])];
+	}
+	if (p === "darwin") return [join(home, "Library", "Application Support", "pancode", "config")];
+	const fallback = join(home, ".config");
+	const xdgConfig = xdgBaseDir(process.env.XDG_CONFIG_HOME, fallback);
+	return [...new Set([join(xdgConfig, "pancode"), join(fallback, "pancode")])];
+}
+
 function platformDefaults(): PancodeDirs {
 	const p = platform();
 	const h = homedir();
