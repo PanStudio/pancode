@@ -11,6 +11,7 @@ import { providerHistory } from "../engine/agent.js";
 import { withLockedSynthesisDirective } from "../engine/loop-guard-synthesis.js";
 import { createRequestStructures } from "../engine/request-structure.js";
 import type { EngineModel } from "../engine/types.js";
+import { LLM_MESSAGE_ROLES } from "../engine/types.js";
 import { codexEffortGeneration, codexEffortUpdates } from "./codex-effort.js";
 import { type ContinuityReplayContext, renderModelReplay, throughHwm } from "./model-session-replay.js";
 
@@ -36,7 +37,6 @@ const FOLD_RECORD_KINDS: ReadonlySet<SessionEntry["kind"]> = new Set([
 	"compactionSummary",
 ]);
 const DECISION_RECORD_KINDS: ReadonlySet<SessionEntry["kind"]> = new Set(["contextEviction", "compactionSummary"]);
-const LLM_ROLES: ReadonlySet<string> = new Set(["system", "user", "assistant", "toolResult"]);
 const short = (digest: string) => digest.slice(0, 16);
 type Context = Parameters<ReturnType<typeof createRequestStructures>>[1];
 type Message = Parameters<typeof providerHistory>[0][number];
@@ -149,7 +149,7 @@ function renderedElements(
 				}
 			: {}),
 	});
-	const converted = render.messages.filter((message) => LLM_ROLES.has(message.role)) as Message[];
+	const converted = render.messages.filter((message) => LLM_MESSAGE_ROLES.has(message.role)) as Message[];
 	const history = providerHistory(converted, receipt.route.images);
 	// The declarations are not on the ledger; a placeholder head keeps the transcript where the send path put it.
 	let context: Context = { systemPrompt: "-", messages: history };

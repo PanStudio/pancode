@@ -28,6 +28,7 @@ import { pancodeStateDir, resolvePancodeDirs } from "../core/xdg.js";
 import type { DispatchSnapshot } from "../domains/dispatch/contract.js";
 import { newestRunFeedRunId } from "../domains/dispatch/run-feed.js";
 import { pancodePaneEnv } from "../domains/mux/child-env.js";
+import { DOCK_SLOTS } from "../domains/mux/dock-controller.js";
 import type { MuxContract, MuxOpenUtilityPaneRequest, MuxPaneRecord, MuxPaneRef } from "../domains/mux/index.js";
 import type { MusicState } from "../domains/mux/music-operations.js";
 import {
@@ -344,7 +345,7 @@ export function createPanesRuntime(deps: PanesRuntimeDeps): PanesOperations {
 		async docks(): Promise<ReadonlyArray<PanesDockReport>> {
 			const settings = deps.getSettings();
 			const reports: PanesDockReport[] = [];
-			for (const slot of ["files", "workers", "music", "extension"] as const) {
+			for (const slot of DOCK_SLOTS) {
 				const state = deps.mux.dockVisibility(slot);
 				let detail: string | undefined;
 				if (slot === "music") {

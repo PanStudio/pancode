@@ -7,6 +7,7 @@
 
 import { Type } from "typebox";
 import { literalUnion } from "../../core/telemetry/enums.js";
+import { DRAFT_LABELS } from "../../core/views/draft-words.js";
 import { NOTICE_LEVELS, type NoticeLevel } from "../../core/views/notice-words.js";
 import type { ViewArtifactCategory, ViewArtifactFormat } from "../../domains/session/view-artifacts.js";
 import type { UserTask } from "../../domains/user-tasks/store.js";
@@ -305,7 +306,7 @@ const wireAsideAnswer = Type.String({ maxLength: 66000 });
 
 const wireAsideReason = Type.String({ maxLength: 1100 });
 
-const wireAsideLabel = Type.Union([Type.Literal("A"), Type.Literal("B"), Type.Literal("C"), Type.Literal("D")]);
+const wireAsideLabel = literalUnion(DRAFT_LABELS);
 
 const wireAsideRefusedOrFailed = Type.Object(
 	{ status: Type.Union([Type.Literal("refused"), Type.Literal("failed")]), reason: wireAsideReason },

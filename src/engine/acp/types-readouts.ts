@@ -6,6 +6,8 @@
  */
 import type { Static } from "typebox";
 import { Type } from "typebox";
+import { literalUnion } from "../../core/telemetry/enums.js";
+import { RETRY_STATUS_PHASES } from "../../core/telemetry/session-vocabulary.js";
 import { closed, sessionId } from "./types.js";
 
 /**
@@ -71,15 +73,7 @@ const AcpSkillsReadout = Type.Object(
 );
 const AcpRetryReadout = Type.Object(
 	{
-		phase: Type.Union([
-			Type.Literal("scheduled"),
-			Type.Literal("waiting"),
-			Type.Literal("retrying"),
-			Type.Literal("moved"),
-			Type.Literal("cancelled"),
-			Type.Literal("exhausted"),
-			Type.Literal("recovered"),
-		]),
+		phase: literalUnion(RETRY_STATUS_PHASES),
 		active: Type.Boolean(),
 		display: Type.String({ maxLength: 512 }),
 	},

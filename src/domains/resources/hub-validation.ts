@@ -13,6 +13,7 @@ import { loadPluginMcpFile } from "../gateway/mcp/config.js";
 import { pluginResourcePath } from "../plugins/discovery.js";
 import type { PluginCandidate, PluginManifest } from "../plugins/types.js";
 import { readHubManifest } from "./hub-packages.js";
+import { isHubComponentKind } from "./hub-types.js";
 import { resolvePackageReferences } from "./package-references.js";
 import { loadPromptTemplates, type PromptTemplateRoot } from "./prompts/loader.js";
 import { skillAuthoringDiagnostics } from "./skills/authoring-check.js";
@@ -580,7 +581,7 @@ export function validateHubPackage(
 
 		const normalizedCompPath = normalizePathRel(resolved, fullCompPath);
 
-		if (["agent", "playbook", "skill", "prompt"].includes(comp.kind)) {
+		if (isHubComponentKind(comp.kind)) {
 			if (comp.kind === "agent") {
 				const agentsDir = declaredResources.agents ? pluginResourcePath(resolved, declaredResources.agents) : null;
 				if (agentsDir && path.dirname(fullCompPath) !== agentsDir) {

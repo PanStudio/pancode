@@ -88,3 +88,19 @@ export type DeclaredCheckKind = (typeof DECLARED_CHECK_KINDS)[number];
 /** Where one context activity (a compaction, a summary, a PANCODE.md generation) stands. */
 export const CONTEXT_ACTIVITY_STATUSES = ["started", "running", "completed", "failed"] as const;
 export type ContextActivityStatus = (typeof CONTEXT_ACTIVITY_STATUSES)[number];
+
+/** Who asked for an artifact to be protected from edits during a session. */
+export const PROTECTED_ARTIFACT_SOURCES = ["validation", "middleware", "user", "session"] as const;
+export type ProtectedArtifactSource = (typeof PROTECTED_ARTIFACT_SOURCES)[number];
+
+/** Where a provider retry stands, as the status row and the readouts report it. */
+export const RETRY_STATUS_PHASES = [
+	"scheduled",
+	"waiting",
+	"retrying",
+	"moved",
+	"cancelled",
+	"exhausted",
+	"recovered",
+] as const;
+export type RetryStatusPhase = (typeof RETRY_STATUS_PHASES)[number];

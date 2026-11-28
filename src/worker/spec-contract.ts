@@ -15,7 +15,7 @@ import { WORKER_SANDBOX_SPEC_VERSION, type WorkerSandboxSpec } from "../core/san
 import type { SharedStoreGrant } from "../core/store-shared-grant.js";
 import type { WorkerTelemetryContext } from "../core/telemetry/context.js";
 import { isWorkerTelemetryContext } from "../core/telemetry/context.js";
-import { MIDDLEWARE_HOOKS } from "../core/telemetry/session-vocabulary.js";
+import { MIDDLEWARE_HOOKS, PROTECTED_ARTIFACT_SOURCES } from "../core/telemetry/session-vocabulary.js";
 import { isMcpToolName, mcpToolName, type ToolName } from "../core/tool-names.js";
 import { snapshotTurnConstraints, type TurnConstraints } from "../core/turn-constraints.js";
 import { RUN_ROLES, type RunRole } from "../core/views/run-roles.js";
@@ -928,14 +928,13 @@ function validateProtectedArtifactState(value: unknown): void {
 	if (!Array.isArray(state.artifacts)) {
 		throw new Error("WorkerSpec.protectedArtifactState.artifacts must be an array");
 	}
-	const sources = ["validation", "middleware", "user", "session"] as const;
 	for (let index = 0; index < state.artifacts.length; index += 1) {
 		const source = `WorkerSpec.protectedArtifactState.artifacts[${index}]`;
 		const artifact = readRecord(state.artifacts[index], source);
 		readString(artifact.path, `${source}.path`);
 		readString(artifact.protectedAt, `${source}.protectedAt`);
 		readString(artifact.reason, `${source}.reason`);
-		readEnum(artifact.source, `${source}.source`, sources);
+		readEnum(artifact.source, `${source}.source`, PROTECTED_ARTIFACT_SOURCES);
 		readOptionalString(artifact, "validationCommand", source);
 		readOptionalNumber(artifact, "validationExitCode", source);
 	}

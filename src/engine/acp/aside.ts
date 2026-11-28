@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
+
+import { DRAFT_LABELS } from "../../core/views/draft-words.js";
 import { redactFinalUrlCredentials, redactUrlCredentials } from "../../domains/safety/redaction.js";
 import type { AcpAsideAnswer, AcpDraftOutcome } from "./types-views.js";
 
@@ -20,7 +22,6 @@ export const ACP_ASIDE_DRAFT_COUNTS = { min: 1, max: 4, default: 3 } as const;
 export const ACP_ASIDE_QUESTION_MAX_CHARS = 8_000;
 const MAX_ANSWER_BYTES = 64 * 1024;
 const MAX_REASON_BYTES = 1024;
-const LABELS = ["A", "B", "C", "D"] as const;
 
 /** The host's two rounds. Each takes the signal `_pancode/aside/cancel` aborts. */
 export interface AcpAsideControl {
@@ -61,8 +62,8 @@ export function projectDraftOutcome(outcome: AcpDraftOutcome, diagnostics?: (lin
 	return {
 		status: "drafted" as const,
 		aborted: outcome.aborted,
-		candidates: outcome.candidates.slice(0, LABELS.length).map((candidate, index) => {
-			const label = LABELS[index] ?? "A";
+		candidates: outcome.candidates.slice(0, DRAFT_LABELS.length).map((candidate, index) => {
+			const label = DRAFT_LABELS[index] ?? "A";
 			if (candidate.status === "failed") {
 				diagnostics?.(`draft ${label} failed: ${reasonText(candidate.reason)}`);
 				return { label, status: "failed" as const, reason: ROUND_FAILED };

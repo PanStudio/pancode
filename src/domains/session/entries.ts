@@ -28,6 +28,7 @@ import { isMemoryConsumptionReceipt } from "../memory/observations.js";
 import { sha256Hex } from "../../core/hash.js";
 import { isProviderCheckpointHandle } from "../../core/provider-checkpoint-handle.js";
 import { isSkillActivation, type PendingSkillToolPolicy, type SkillActivation } from "../../core/skill-activation.js";
+import { PROTECTED_ARTIFACT_SOURCES, type ProtectedArtifactSource } from "../../core/telemetry/session-vocabulary.js";
 import type { PancodeTurnRecord } from "../../engine/session.js";
 import type { AgentMessage, ProviderCheckpointHandle } from "../../engine/types.js";
 import { AUTONOMY_EXPOSURES, type AutonomyExposure } from "../safety/autonomy.js";
@@ -544,15 +545,13 @@ export interface LabelEntry extends BaseSessionEntry {
 	label?: string;
 }
 
-export type ProtectedArtifactEntrySource = "validation" | "middleware" | "user" | "session";
-
 export interface ProtectedArtifactEntryArtifact {
 	path: string;
 	protectedAt: string;
 	reason: string;
 	validationCommand?: string;
 	validationExitCode?: number;
-	source: ProtectedArtifactEntrySource;
+	source: ProtectedArtifactSource;
 }
 
 export interface ProtectedArtifactEntry extends BaseSessionEntry {
@@ -940,12 +939,6 @@ function hasBaseSessionEntryFields(v: Record<string, unknown>): boolean {
 const MESSAGE_ROLES = ["user", "assistant", "tool_call", "tool_result", "system", "checkpoint"] as const;
 const FILE_OPERATIONS = ["read", "write", "edit", "create", "delete"] as const;
 const COMPACTION_TRIGGERS: readonly CompactionTrigger[] = ["auto", "force", "overflow", "step"];
-const PROTECTED_ARTIFACT_SOURCES: readonly ProtectedArtifactEntrySource[] = [
-	"validation",
-	"middleware",
-	"user",
-	"session",
-];
 const TASK_LEDGER_STATUSES: readonly TaskLedgerStatus[] = ["pending", "active", "completed", "blocked", "cancelled"];
 const TASK_LEDGER_EVIDENCE_STATUSES: readonly TaskLedgerEvidenceStatus[] = [
 	"required",

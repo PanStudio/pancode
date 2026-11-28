@@ -27,6 +27,7 @@ import type { DurableAssignmentRecord } from "./assignment-store.js";
 import type { DetachedBatchRecord, RegisterDetachedBatchInput } from "./batch-store.js";
 import type { RunToolBudgetEnvelope } from "./budget-envelope.js";
 import type { DispatchResultSummaryAllowance, ExecutionRole } from "./execution-role.js";
+import type { GrantState } from "./grant-broker.js";
 import type { DispatchOwner } from "./ownership.js";
 import type { DispatchReservationRecord, ReservationTopology } from "./reservation-store.js";
 import type { ApprovedAssignmentRoute } from "./route-approval.js";
@@ -214,7 +215,7 @@ export interface WorkerGrantView {
 	tool: string;
 	actionClass: string;
 	approvalAuthority: ApprovalAuthority;
-	state: "pending" | "authorized" | "executing" | "completed" | "denied" | "expired" | "canceled";
+	state: GrantState;
 	execution: GrantExecution;
 	issuer?: "main" | "operator";
 	summary: string;

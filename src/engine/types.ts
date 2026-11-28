@@ -179,3 +179,6 @@ export interface CodexTransportObservation {
 		outcome: CacheRecoveryOutcome;
 	};
 }
+
+/** The Pi message roles a provider request carries; the agent keeps other roles in its own list. */
+export const LLM_MESSAGE_ROLES: ReadonlySet<string> = new Set(["system", "user", "assistant", "toolResult"]);
