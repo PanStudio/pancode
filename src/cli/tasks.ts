@@ -9,12 +9,12 @@ import type { ErrorSlug } from "./lib/slugs.js";
 const USAGE = `Usage:
   pancode tasks [list] [--json]
   pancode tasks add [--expect <path>] [--verify <checkId>[:<duration>]] [--json] <text>
-  pancode tasks hand|done|drop <uN> [--json]
+  pancode tasks hand|done|remove <uN> [--json]
 `;
 
 const HELP = `${USAGE}
 --expect and --verify are repeatable. Check ids must be declared in package.json or .pancode/verifiers.yaml.
-Every verb prints lines for a person by default. With --json, list prints the task array, hand, done and drop
+Every verb prints lines for a person by default. With --json, list prints the task array, hand, done and remove
 print the task record, and add prints {"version":1,"task":{...}}.`;
 
 /** One task as `pancode tasks` lists it: id, state, title, and what it is linked to. */
@@ -26,7 +26,7 @@ function taskLine(task: UserTask): string {
 	return `${task.id}  ${task.status}  ${task.title}${links.length > 0 ? `  (${links.join(", ")})` : ""}`;
 }
 
-const VERBS = new Set(["add", "list", "hand", "done", "drop"]);
+const VERBS = new Set(["add", "list", "hand", "done", "remove"]);
 
 class TasksUsageError extends Error {
 	constructor(
@@ -84,14 +84,14 @@ export function runTasksCommand(argv: string[]): number {
 			if (json) console.log(JSON.stringify(tasks, null, 2));
 			else if (tasks.length === 0) console.log("no operator tasks in this project; add one: pancode tasks add <text>");
 			else for (const task of tasks) console.log(taskLine(task));
-		} else if (action === "hand" || action === "done" || action === "drop") {
+		} else if (action === "hand" || action === "done" || action === "remove") {
 			const [id, extra] = rest;
 			if (id === undefined) throw new TasksUsageError(`tasks ${action} requires a task id (uN)`);
 			if (id.startsWith("-")) throw unexpected(id);
 			if (extra !== undefined) throw unexpected(extra);
-			let task: ReturnType<(typeof store)[typeof action]>;
+			let task: UserTask;
 			try {
-				task = store[action](id);
+				task = action === "remove" ? store.drop(id) : store[action](id);
 			} catch (error) {
 				writeCliFailure({ path, slug: "not_found", message: error instanceof Error ? error.message : String(error), json });
 				return 1;

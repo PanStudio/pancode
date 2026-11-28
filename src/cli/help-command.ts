@@ -109,7 +109,7 @@ const READ_VERBS = new Set([
 	"view",
 	"search",
 	"stat",
-	"ls",
+
 	"tags",
 	"history",
 	"where",
@@ -147,17 +147,7 @@ const READ_VERBS = new Set([
 	"help",
 	"schema",
 ]);
-const DESTRUCTIVE_VERBS = new Set([
-	"remove",
-	"rm",
-	"rm-tag",
-	"reset",
-	"uninstall",
-	"forget",
-	"prune",
-	"terminate",
-	"drop",
-]);
+const DESTRUCTIVE_VERBS = new Set(["remove", "remove-tag", "reset", "uninstall", "forget", "prune", "terminate"]);
 const NETWORK_VERBS = new Set([
 	"send",
 	"sweep",

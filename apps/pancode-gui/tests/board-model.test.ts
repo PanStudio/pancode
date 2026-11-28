@@ -53,9 +53,9 @@ test("operator tasks carry exactly the actions their state admits", () => {
 	assert.deepEqual(
 		view.tasks.map((task) => [task.id, task.word, task.actions, task.acceptance]),
 		[
-			["u1", "Open", ["hand", "done", "drop"], "expects report.md · 2 declared checks"],
+			["u1", "Open", ["hand", "done", "remove"], "expects report.md · 2 declared checks"],
 			["u2", "Dropped", [], ""],
-			["u3", "In PanCode's plan", ["done", "drop"], ""],
+			["u3", "In PanCode's plan", ["done", "remove"], ""],
 		],
 	);
 });

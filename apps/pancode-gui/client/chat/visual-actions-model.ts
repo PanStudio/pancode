@@ -70,7 +70,7 @@ const COMMAND_TITLES: Readonly<Record<string, string>> = {
 	"tasks add": "Add a task",
 	"tasks hand": "Assign a task",
 	"tasks done": "Complete a task",
-	"tasks drop": "Remove a task",
+	"tasks remove": "Remove a task",
 };
 const ACTION_ICONS: Readonly<Record<string, IconName>> = {
 	tree: "branch",

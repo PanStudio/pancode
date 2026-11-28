@@ -85,9 +85,9 @@ async function verb(context: StoreCliContext, argv: string[]): Promise<unknown> 
 
 const VERBS = [
 	["tags"],
-	["ls", "sim"],
-	["ls", "sim", "a\\..*"],
-	["ls", "empty"],
+	["list", "sim"],
+	["list", "sim", "a\\..*"],
+	["list", "empty"],
 	["history", "sim:a.dat"],
 	["history", "sim:nope"],
 ];
@@ -117,7 +117,7 @@ describe("store index", () => {
 		const history = (await verb(indexed, ["history", "sim:a.dat"])) as { records: unknown[]; skipped: number };
 		strictEqual(history.records.length, 3);
 		strictEqual(history.skipped, 1);
-		const listed = (await verb(indexed, ["ls", "sim"])) as { blobs: Array<{ blob: string; recorded: boolean }> };
+		const listed = (await verb(indexed, ["list", "sim"])) as { blobs: Array<{ blob: string; recorded: boolean }> };
 		deepStrictEqual(
 			listed.blobs.map((b) => [b.blob, b.recorded]),
 			[
@@ -128,7 +128,7 @@ describe("store index", () => {
 		);
 		// A tag the store does not have is refused the same way, by the store, with or without the index.
 		for (const context of [indexed, scanned]) {
-			await rejects(storeCliResult(["ls", "missing"], context), (error) => error instanceof StoreRefusal);
+			await rejects(storeCliResult(["list", "missing"], context), (error) => error instanceof StoreRefusal);
 		}
 	});
 

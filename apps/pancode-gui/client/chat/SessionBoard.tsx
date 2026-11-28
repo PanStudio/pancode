@@ -202,9 +202,9 @@ export const SessionBoardPanel = memo(function SessionBoardPanel({
 															change.isPending || (action === "hand" && (running || capabilities?.commands?.promptTurns !== true))
 														}
 														onClick={() => act(task.id, action)}
-														aria-label={`${action === "hand" ? "Hand to PanCode" : action === "done" ? "Mark done" : "Drop"}: ${task.title}`}
+														aria-label={`${action === "hand" ? "Hand to PanCode" : action === "done" ? "Mark done" : "Remove"}: ${task.title}`}
 													>
-														{action === "hand" ? "Hand" : action === "done" ? "Done" : "Drop"}
+														{action === "hand" ? "Hand" : action === "done" ? "Done" : "Remove"}
 													</button>
 												))}
 											</span>

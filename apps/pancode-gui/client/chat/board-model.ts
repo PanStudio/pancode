@@ -7,7 +7,7 @@
 import type { DecisionSuperseded, MemoryProposed, SessionBoard } from "../../contracts/board.js";
 import type { StatusTone } from "../design/status.js";
 
-export type OperatorTaskAction = "hand" | "done" | "drop";
+export type OperatorTaskAction = "hand" | "done" | "remove";
 
 export interface OperatorTaskRow {
 	id: string;
@@ -122,10 +122,10 @@ export function boardView(board: SessionBoard): BoardView {
 				// Settled tasks take no action; a live one can be finished or dropped by its owner.
 				actions:
 					task.status === "open"
-						? ["hand", "done", "drop"]
+						? ["hand", "done", "remove"]
 						: task.status === "done" || task.status === "dropped"
 							? []
-							: ["done", "drop"],
+							: ["done", "remove"],
 			};
 		}),
 		plan:

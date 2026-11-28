@@ -451,7 +451,7 @@ test("a read-only ceiling refuses task writes, /oracle, a shell line, a memory p
 	});
 	const refusal = (command: string, argv: string[], limits: TurnConstraints) =>
 		control.ceilingRefusal?.(command, argv, limits);
-	for (const verb of ["add", "hand", "done", "drop"])
+	for (const verb of ["add", "hand", "done", "remove"])
 		assert.notEqual(refusal("tasks", [verb, "t-1"], { readOnly: true }), null, `/tasks ${verb}`);
 	assert.equal(refusal("tasks", ["add", "t-1"], { allowedTools: ["read"] }), null, "a turn-bound ceiling admits it");
 	assert.notEqual(refusal("oracle", ["is", "this", "settled"], { readOnly: true }), null);

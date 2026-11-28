@@ -225,7 +225,7 @@ const COMPLETION_SLOT_MANIFEST: Readonly<Record<string, CompletionSlotName>> = {
 	"fleet/run:pos:playbook": "playbooks",
 	"tasks/hand:pos:id": "tasks",
 	"tasks/done:pos:id": "tasks",
-	"tasks/drop:pos:id": "tasks",
+	"tasks/remove:pos:id": "tasks",
 	"view/verify:pos:runId": "runs",
 	"panes/open:pos:preset-or-argv": "pane-presets",
 	"model:pos:pattern": "models",

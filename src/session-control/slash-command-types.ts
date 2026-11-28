@@ -162,7 +162,7 @@ type SlashCommandVariant =
 	| { kind: "tasks-add"; text: string; expectedOutputs?: string[]; verification?: string[] }
 	| { kind: "tasks-hand"; id: string }
 	| { kind: "tasks-done"; id: string }
-	| { kind: "tasks-drop"; id: string }
+	| { kind: "tasks-remove"; id: string }
 	| { kind: "memory" }
 	| { kind: "memory-seed" }
 	/** `/remember <text>`, `/remember undo|scope|forget ...`: operator-stated memory and its chip actions. */

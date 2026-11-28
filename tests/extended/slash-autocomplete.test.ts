@@ -154,7 +154,7 @@ function presentationProvider(userTasks?: UserTasksStore) {
 	return provider;
 }
 
-for (const action of ["hand", "done", "drop"] as const) {
+for (const action of ["hand", "done", "remove"] as const) {
 	test(`presentation /tasks ${action} completions select the loaded operator inbox task`, async () => {
 		let body: string | undefined;
 		const userTasks = createUserTasksStore({

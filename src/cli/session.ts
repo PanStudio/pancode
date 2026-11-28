@@ -3,7 +3,7 @@
 /**
  * `pancode session list|terminate`: see and end open sessions on a shared
  * state dir from any node (#439). The persisted-session leaves
- * (`history|show|export|artifacts|rename|fork|rm|compact`) live in session-history.ts.
+ * (`history|show|export|artifacts|rename|fork|remove|compact`) live in session-history.ts.
  *
  * Every open session keeps `live/<id>.json` fresh (lib/heartbeat/heartbeat.ts).
  * A terminate request is a file the owner reads on its next beat; a signal is
@@ -60,10 +60,10 @@ const USAGE = `usage: pancode session list [--json] [--stale]
        pancode session artifacts <session> [read <id>] [--all-projects] [--json]
        pancode session rename <session> <name> [--json]
        pancode session fork <session> [--at <turnId>] [--name <name>] [--json]
-       pancode session rm <session> [--yes] [--json]
+       pancode session remove <session> [--yes] [--json]
        pancode session compact <session> [--instructions <text>] [--json]
 <session> is an id, a unique id prefix or a session name in this directory; --all-projects widens reads only.
-rm asks first; --yes skips the question and never removes a session open elsewhere or one with forks.
+remove asks first; --yes skips the question and never removes a session open elsewhere or one with forks.
 compact summarizes older history with the /context compact route and refuses a session open elsewhere.
 `;
 /** Persisted-session leaves, implemented in session-history.ts and loaded only when one runs (SPEC L3, L3c). */
@@ -74,7 +74,7 @@ const HISTORY_VERBS: ReadonlySet<string> = new Set([
 	"artifacts",
 	"rename",
 	"fork",
-	"rm",
+	"remove",
 	"compact",
 ]);
 /** A same-host SIGTERM normally ends the owner well inside this; past it the request still stands. */
