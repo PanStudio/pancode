@@ -1166,7 +1166,11 @@ describe("smoke/installed package", { concurrency: false }, () => {
 				authored.entries.map((entry) => `${entry.kind}:${entry.name}`).sort(),
 				"the installed marketplace must expose every bundled package",
 			);
-			strictEqual(authored.entries.length, 44, "catalog contains 39 bundled packages and five remote packages");
+			strictEqual(
+				authored.entries.filter((entry) => entry.source).length,
+				5,
+				"catalog carries five remote packages; the bundled rows are proven by the comparison above",
+			);
 
 			const standaloneSkill = authored.entries.find((entry) => entry.kind === "skill");
 			ok(standaloneSkill);
