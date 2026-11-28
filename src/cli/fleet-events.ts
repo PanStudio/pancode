@@ -110,7 +110,7 @@ export async function runFleetEvents(args: ReadonlyArray<string>, io: FleetEvent
 			io.out(HELP);
 			return 0;
 		}
-		if (arg === "--follow" || arg === "-f") follow = true;
+		if (arg === "--follow") follow = true;
 		else if (arg === "--json") json = true;
 		else if (arg === "--all") all = true;
 		else if (arg.startsWith("-") || rootId !== undefined) {

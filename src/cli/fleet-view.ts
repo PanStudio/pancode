@@ -144,7 +144,7 @@ function parseViewArgs(args: ReadonlyArray<string>): ParsedViewArgs | string {
 	for (let i = 0; i < args.length; i += 1) {
 		const arg = args[i];
 		if (arg === undefined) continue;
-		if (arg === "--follow" || arg === "-f") {
+		if (arg === "--follow") {
 			parsed.follow = true;
 			continue;
 		}
