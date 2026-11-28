@@ -9,7 +9,7 @@
  * blocked admissions, and parallel-batch tool calls all flow through one
  * code path that unit tests can pin.
  *
- * Invariants (pinned by tests/contracts/dispatch.test.ts):
+ * Invariants (pinned by tests/extended/dispatch-failure-classification.test.ts):
  *   - Each recognized outcome (ok|error|blocked) increments its own bucket and
  *     count, so count == ok + errors + blocked + withheld whenever every recorded
  *     finish carried an outcome. An `ok` finish the spent observation pool
