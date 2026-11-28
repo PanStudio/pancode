@@ -1,14 +1,17 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
-import { createServer, isIP } from "node:net";
+import { isIP, type Server } from "node:net";
 import { isLoopbackUrl } from "../../core/project-target-urls.js";
 import type { ModelRouteBinding } from "../../core/sandbox/egress/model-route-client.js";
 import { isDeniedEgressAddress } from "../../core/sandbox/egress/policy.js";
+import { MODEL_ROUTE_PORT } from "../../core/sandbox/egress/setup.js";
 import type { WorkerIsolationMode } from "../../core/sandbox/types.js";
+import type { WorkerSpec } from "../../lib/worker-wire/spec-contract.js";
 import type { ProvidersContract } from "../providers/index.js";
 import { targetRequiresAuth } from "../providers/index.js";
 import type { TargetDescriptor } from "../providers/types/target-descriptor.js";
 import type { ResolvedTarget } from "./target-resolution.js";
+import type { WorkerIsolationOptions } from "./worker-spawn.js";
 
 /**
  * `safety.workerIsolation: process` (D14): which launches can run with the credential on the host, behind a model
@@ -34,6 +37,8 @@ interface IsolationFacts {
 	target: Pick<ResolvedTarget, "target" | "runtime" | "wireModelId">;
 	/** Null or a local node. */
 	localPlacement: boolean;
+	/** The backend the run's sandbox placement resolved, and why its seccomp baseline is missing, if it is. */
+	sandbox?: { backend: "bwrap" | "seatbelt" | "none"; degraded?: string };
 	platform?: NodeJS.Platform;
 }
 
@@ -58,6 +63,12 @@ export function workerIsolationRefusal(facts: IsolationFacts): string | null {
 	if (runtime.kind !== "http") return unsupported(`${runtime.id} is a CLI peer that owns its process and login`);
 	if (!facts.localPlacement)
 		return unsupported("this worker is placed on a fleet node, and only workers on this host are routed");
+	if (facts.sandbox !== undefined && facts.sandbox.backend !== "bwrap")
+		return unsupported(
+			`${SETTING} runs the worker under bwrap, and this launch has none (safety.sandbox is off or no backend is available)`,
+		);
+	if (facts.sandbox?.degraded !== undefined)
+		return unsupported(`${SETTING} needs the seccomp baseline (${facts.sandbox.degraded})`);
 	if (runtime.tier === "local-native")
 		return unsupported(`${runtime.id} is a local model server whose residency control needs host loopback`);
 	if (!targetRequiresAuth(target, runtime))
@@ -85,9 +96,10 @@ export function assertAcpWorkerIsolationAdmitted(mode: WorkerIsolationMode | und
 		throw new Error(`dispatch: ${unsupported(`ACP agent ${agentId} runs its own process with its own login`)}`);
 }
 
-/** One launch's route, open on host loopback until the worker exits. */
+/** One launch's route, served on the listener the worker's sandbox hands over, until the worker exits. */
 export interface OpenWorkerModelRoute {
 	binding: ModelRouteBinding;
+	serve(listener: Server): void;
 	receipts(): ReturnType<import("../../core/sandbox/egress/model-route.js").ModelRoute["receipts"]>;
 	close(): void;
 }
@@ -99,7 +111,7 @@ function noCredential(target: TargetDescriptor, detail: string | null): Error {
 }
 
 /**
- * Opens the route for one launch and shapes its surrogate from the credential resolved now. The route re-resolves
+ * Builds the route for one launch and shapes its surrogate from the credential resolved now. The route re-resolves
  * on every request, so an OAuth key refreshed meanwhile is the one sent.
  */
 export async function openWorkerModelRoute(
@@ -128,24 +140,31 @@ export async function openWorkerModelRoute(
 			`dispatch: worker isolation needs the ChatGPT account in the ${target.runtime.id} login of target ${target.target.id}; sign in again with /login ${target.runtime.id}`,
 		);
 	const route = createModelRoute({ origin: upstream.origin, surrogate, resolve });
-	// Step 1 of D14: the worker still runs on the host, so the route listens on host loopback.
-	const listener = createServer().listen(0, "127.0.0.1");
-	const port = await new Promise<number>((resolvePort, reject) => {
-		listener.once("listening", () => {
-			const address = listener.address();
-			if (address !== null && typeof address === "object") resolvePort(address.port);
-			else reject(new Error("dispatch: the model route listener has no port"));
-		});
-		listener.once("error", reject);
-	}).catch((error: unknown) => {
-		route.close();
-		listener.close();
-		throw error;
-	});
-	route.serve(listener);
 	return {
-		binding: { origin: upstream.origin, route: `http://127.0.0.1:${port}`, surrogate },
+		binding: { origin: upstream.origin, route: `http://127.0.0.1:${MODEL_ROUTE_PORT}`, surrogate },
+		serve: (listener) => route.serve(listener),
 		receipts: () => route.receipts(),
 		close: () => route.close(),
+	};
+}
+
+/** The spawn options that run this launch's worker under bwrap behind its route. */
+export function workerIsolationSpawn(
+	route: OpenWorkerModelRoute,
+	spec: Pick<WorkerSpec, "sandbox" | "taskWorktree">,
+	target: IsolationFacts["target"],
+): WorkerIsolationOptions {
+	if (spec.sandbox === undefined)
+		throw new Error(`dispatch: ${unsupported(`${SETTING} runs the worker under bwrap, and safety.sandbox is off`)}`);
+	const credentialEnv = [target.target.auth?.apiKeyEnvVar, target.runtime.credentialsEnvVar].filter(
+		(name): name is string => typeof name === "string" && name.length > 0,
+	);
+	return {
+		policy: spec.sandbox,
+		serveModelRoute: route.serve,
+		...(spec.taskWorktree !== undefined
+			? { taskWorktree: { path: spec.taskWorktree.path, branch: spec.taskWorktree.branch } }
+			: {}),
+		credentialEnv,
 	};
 }

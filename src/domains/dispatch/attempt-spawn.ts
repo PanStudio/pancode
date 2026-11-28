@@ -21,6 +21,7 @@ import { reportDispatchDiagnostic } from "./dispatch-diagnostic.js";
 import { createWorkerOutputCapture, workerOutputCaptureBytes } from "./event-pump.js";
 import { dispatchResultContract } from "./execution-role.js";
 import { prepareFleetChangeReturn } from "./fleet-change-return.js";
+import { workerIsolationSpawn } from "./model-route-binding.js";
 import {
 	claimSharedPrefix,
 	claimWorkerCacheLane,
@@ -100,6 +101,9 @@ export async function spawnAttemptWorker(rt: DispatchRuntime, attempt: PreparedA
 			...(agentLedgerId !== null ? { onLedgerPost } : {}),
 			...(grantAttempt !== undefined ? { onGrantRequest } : {}),
 			...(attempt.spec.extensionHooks !== undefined ? { onHookRequest } : {}),
+			...(attempt.modelRoute !== null
+				? { isolation: workerIsolationSpawn(attempt.modelRoute, attempt.spec, lifecycle.target) }
+				: {}),
 		};
 		const prefixClaim = claimSharedPrefix(
 			preparation?.prefixGroups,

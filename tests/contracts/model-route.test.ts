@@ -6,18 +6,23 @@
  * surrogate, swaps in the real credential, and relays bytes (SSE, WebSocket) unchanged.
  */
 import { deepEqual, equal, match, ok, rejects } from "node:assert/strict";
-import { execFile } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import http from "node:http";
-import { type AddressInfo, connect, createServer } from "node:net";
-import { join } from "node:path";
+import { type AddressInfo, connect, createServer, type Server } from "node:net";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
 import { codexAccountScope } from "../../src/core/codex-account.js";
 import { DEFAULT_SETTINGS } from "../../src/core/defaults.js";
+import { sandboxAvailability, sandboxNetworkIsolation } from "../../src/core/sandbox/availability.js";
 import { createModelRoute, type ModelRoute, modelRouteSurrogate } from "../../src/core/sandbox/egress/model-route.js";
+import { WORKER_SANDBOX_SPEC_VERSION, type WorkerSandboxSpec } from "../../src/core/sandbox/types.js";
+import { planIsolatedWorkerLaunch, serveIsolatedWorker } from "../../src/core/sandbox/worker-isolation.js";
+import { pancodeConfigPath } from "../../src/core/xdg.js";
 import { workerIsolationRefusal } from "../../src/domains/dispatch/model-route-binding.js";
-import type { SpawnedWorker } from "../../src/domains/dispatch/worker-spawn.js";
+import type { SpawnedWorker, SpawnOptions } from "../../src/domains/dispatch/worker-spawn.js";
 import type { ProvidersContract, RuntimeDescriptor } from "../../src/domains/providers/index.js";
 import { EMPTY_CAPABILITIES } from "../../src/domains/providers/index.js";
 import type { TargetDescriptor } from "../../src/domains/providers/types/target-descriptor.js";
@@ -393,6 +398,115 @@ describe("process isolation admission", () => {
 		match(facts(local) ?? "", /local or private address/u);
 		for (const refusal of [facts(cloudRuntime({ kind: "sdk" })), facts(local)])
 			match(refusal ?? "", /Set safety\.workerIsolation to children/u);
+		const placed = (sandbox: { backend: "bwrap" | "none"; degraded?: string }) =>
+			workerIsolationRefusal({
+				target: { target, runtime: cloudRuntime(), wireModelId: "m" },
+				localPlacement: true,
+				sandbox,
+				platform: "linux",
+			});
+		equal(placed({ backend: "bwrap" }), null);
+		match(placed({ backend: "none" }) ?? "", /runs the worker under bwrap, and this launch has none/u);
+		match(placed({ backend: "bwrap", degraded: "no seccomp" }) ?? "", /needs the seccomp baseline \(no seccomp\)/u);
+	});
+});
+
+describe("isolated worker launch", () => {
+	it("runs the worker under bwrap with only the route and the host proxy, no credential, and room to sandbox its children", async (t) => {
+		const availability = sandboxAvailability();
+		if (
+			!availability.available ||
+			availability.backend !== "bwrap" ||
+			availability.degraded !== undefined ||
+			sandboxNetworkIsolation(availability) !== null
+		) {
+			t.skip("bubblewrap with seccomp and network isolation is not available");
+			return;
+		}
+		const scratch = realpathSync(mkdtempSync(join(tmpdir(), "pancode-isolated-worker-")));
+		t.after(() => rmSync(scratch, { recursive: true, force: true }));
+		const workspace = join(scratch, "workspace");
+		mkdirSync(workspace);
+		mkdirSync(pancodeConfigPath(), { recursive: true });
+		const settingsFile = join(pancodeConfigPath(), "settings.yaml");
+		writeFileSync(settingsFile, "version: 2\n# settings-secret\n");
+		t.after(() => rmSync(settingsFile, { force: true }));
+		const host = http.createServer((_request, response) => response.end("host-direct"));
+		await new Promise<void>((resolve) => host.listen(0, "127.0.0.1", resolve));
+		t.after(() => host.close());
+		const hostPort = (host.address() as AddressInfo).port;
+		const route = http.createServer((request, response) => response.end(`route ${request.url}`));
+		const script = [
+			"const http = require('node:http');",
+			"const fs = require('node:fs');",
+			"const { spawnSync } = require('node:child_process');",
+			"const get = (url, options = {}) => new Promise((done) => { const q = http.request(url, { timeout: 5000, ...options }, (s) => { let b = ''; s.on('data', (d) => (b += d)); s.on('end', () => done(s.statusCode + ' ' + b)); }); q.on('connect', (s, socket) => { socket.destroy(); done(s.statusCode + ' connect'); }); q.on('error', (e) => done('error ' + e.code)); q.on('timeout', () => { q.destroy(); done('timeout'); }); q.end(); });",
+			"(async () => {",
+			"  const out = {};",
+			"  out.route = await get('http://127.0.0.1:3129/v1/responses');",
+			`  out.direct = await get('http://127.0.0.1:${hostPort}/');`,
+			"  out.proxy = await get('http://127.0.0.1:3128/', { method: 'CONNECT', path: 'example.com:443', headers: { host: 'example.com:443' } });",
+			"  out.env = Object.keys(process.env).filter((k) => /api_key|channel/i.test(k));",
+			"  out.proxyEnv = process.env.HTTPS_PROXY;",
+			`  try { out.settings = fs.readFileSync(${JSON.stringify(settingsFile)}, 'utf8'); } catch (e) { out.settings = e.code; }`,
+			"  const nested = spawnSync('bwrap', ['--unshare-all', '--die-with-parent', '--ro-bind', '/', '/', '--dev', '/dev', '--proc', '/proc', '/bin/echo', 'nested-ok']);",
+			"  out.nested = String(nested.stdout).trim() || String(nested.stderr).trim();",
+			"  process.stdout.write(JSON.stringify(out));",
+			"})();",
+		].join("\n");
+		const policy: WorkerSandboxSpec = {
+			version: WORKER_SANDBOX_SPEC_VERSION,
+			mode: "required",
+			writableRoots: [workspace],
+			readOnlyPaths: [],
+			gitWritablePaths: [],
+			readableRoots: [workspace, pancodeConfigPath()],
+			network: false,
+		};
+		const launch = planIsolatedWorkerLaunch({
+			policy,
+			command: [process.execPath, "-e", script],
+			cwd: workspace,
+			env: {
+				...process.env,
+				OPENAI_API_KEY: "sk-leak",
+				HTTPS_PROXY: "http://proxy.corp.test:8080",
+			},
+			exposed: [dirname(dirname(process.execPath))],
+			credentialEnv: ["OPENAI_API_KEY"],
+			availability,
+		});
+		equal(launch.kind, "isolated", launch.kind === "refused" ? launch.message : "");
+		if (launch.kind !== "isolated") return;
+		deepEqual(launch.ports, [3128, 3129]);
+		const child = spawn(launch.file, launch.args, {
+			cwd: workspace,
+			env: launch.env,
+			stdio: ["ignore", "pipe", "pipe", "ipc"],
+			detached: true,
+		});
+		const handed: Server[] = [];
+		const session = serveIsolatedWorker(child, policy, (listener) => {
+			handed.push(listener);
+			listener.on("connection", (socket) => route.emit("connection", socket));
+		});
+		let stdout = "";
+		let stderr = "";
+		child.stdout?.on("data", (chunk) => (stdout += chunk));
+		child.stderr?.on("data", (chunk) => (stderr += chunk));
+		const code = await new Promise((resolve) => child.once("close", resolve));
+		for (const listener of handed) listener.close();
+		route.close();
+		equal(code, 0, stderr);
+		const out = JSON.parse(stdout) as Record<string, unknown>;
+		equal(out.route, "200 route /v1/responses");
+		equal(out.direct, "error ECONNREFUSED");
+		match(String(out.proxy), /^403 /u);
+		deepEqual(out.env, []);
+		equal(out.proxyEnv, "http://127.0.0.1:3128");
+		ok(out.settings !== "version: 2\n# settings-secret\n", "the settings file is masked");
+		equal(out.nested, "nested-ok");
+		equal(session.egressReceipts().length > 0, true);
 	});
 });
 
@@ -400,7 +514,7 @@ describe("dispatch under process isolation", () => {
 	beforeEach(() => isolateDispatchState());
 	afterEach(() => restoreDispatchState());
 
-	function bundleWith(runtime: RuntimeDescriptor, spawned: (spec: unknown) => SpawnedWorker) {
+	function bundleWith(runtime: RuntimeDescriptor, spawned: (spec: unknown, options?: SpawnOptions) => SpawnedWorker) {
 		const settings = structuredClone(DEFAULT_SETTINGS);
 		settings.fleet.retry.maxRetries = 0;
 		settings.safety.workerIsolation = "process";
@@ -435,9 +549,11 @@ describe("dispatch under process isolation", () => {
 
 	it("launches with a route and a surrogate, no credential, and closes the route when the worker exits", async () => {
 		let spec: Record<string, unknown> | null = null;
+		let isolation: SpawnOptions["isolation"];
 		let exit: (value: { exitCode: number; signal: null }) => void = () => {};
-		const bundle = bundleWith(cloudRuntime(), (built) => {
+		const bundle = bundleWith(cloudRuntime(), (built, options) => {
 			spec = JSON.parse(JSON.stringify(built)) as Record<string, unknown>;
+			isolation = options?.isolation;
 			return {
 				pid: null,
 				promise: new Promise((resolve) => {
@@ -465,13 +581,19 @@ describe("dispatch under process isolation", () => {
 			const parsed = parseWorkerSpec(launched);
 			ok(parsed.modelRoute);
 			equal(parsed.modelRoute.origin, "https://api.example.test");
-			match(parsed.modelRoute.route, /^http:\/\/127\.0\.0\.1:\d+$/u);
+			equal(parsed.modelRoute.route, "http://127.0.0.1:3129");
 			equal(parsed.apiKey, undefined);
 			equal(parsed.authProfile, undefined);
 			equal(parsed.target.auth?.headers, undefined);
 			const serialized = JSON.stringify(launched);
 			ok(!serialized.includes(REAL_KEY) && !serialized.includes("org-secret"), "no credential crosses to the worker");
-			const port = Number(new URL(parsed.modelRoute.route).port);
+			// The launch runs under bwrap with the run's child policy; the route is served on the listener it hands over.
+			ok(isolation);
+			equal(isolation.policy.network, parsed.sandbox?.network);
+			const listener = createServer().listen(0, "127.0.0.1");
+			await new Promise((resolve) => listener.once("listening", resolve));
+			isolation.serveModelRoute(listener);
+			const port = (listener.address() as AddressInfo).port;
 			equal((await call(port, { headers: { authorization: "Bearer wrong" } })).status, 401);
 			exit({ exitCode: 0, signal: null });
 			await run.finalPromise;

@@ -152,6 +152,10 @@ export function resolveDispatchEnvelopeStage(input: {
 	assertWorkerIsolationAdmitted(input.settings?.safety.workerIsolation, {
 		target,
 		localPlacement: input.placement.node.kind === "local",
+		sandbox: {
+			backend: sandbox.applies ? sandbox.backend : "none",
+			...(placedAvailability.degraded !== undefined ? { degraded: placedAvailability.degraded } : {}),
+		},
 	});
 	const facts: Parameters<typeof resolveWriteMode>[0] = {
 		writeNone,
