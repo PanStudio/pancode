@@ -21,6 +21,7 @@ import {
 	PANE_VIEWS,
 	type PaneView,
 	paneGate,
+	paneTitle,
 	paneViewLabel,
 	ROOT_VIEW,
 	selectPaneSession,
@@ -30,6 +31,7 @@ import { openRoutePicker } from "./RoutePicker.js";
 import type { RouteFacts } from "./route.js";
 import { needsTrustReview } from "./session-facts-model.js";
 import { selectSessionPanel } from "./session-panel-model.js";
+import { settledTurns } from "./session-telemetry.js";
 import "./pane.css";
 import "./pane-inspection.css";
 import { sessionCapabilitiesQuery } from "../api/queries.js";
@@ -243,7 +245,7 @@ export const SessionPane = memo(function SessionPane({
 								sessionId={pane.id}
 								sessionOpen={pane.state === "open"}
 								capabilities={capabilities.data}
-								settledTurns={pane.turns.filter((turn) => turn.status !== "running").length}
+								settledTurns={settledTurns(pane.turns)}
 								running={pane.turns.at(-1)?.status === "running"}
 							/>
 						</Suspense>
@@ -257,7 +259,7 @@ export const SessionPane = memo(function SessionPane({
 						sessionId={pane.id}
 						open={open && pane.state === "open" && view === "artifacts"}
 						capabilities={capabilities.data}
-						settled={pane.turns.filter((turn) => turn.status !== "running").length}
+						settled={settledTurns(pane.turns)}
 					/>
 				);
 			case "changes":
@@ -275,7 +277,7 @@ export const SessionPane = memo(function SessionPane({
 					sessionId: pane.id,
 					sessionOpen: pane.state === "open",
 					capabilities: capabilities.data,
-					settledTurns: pane.turns.filter((turn) => turn.status !== "running").length,
+					settledTurns: settledTurns(pane.turns),
 				};
 				if (id === "context")
 					return (
@@ -323,7 +325,7 @@ export const SessionPane = memo(function SessionPane({
 				) : null}
 				<h2 className="pane__title" id={`${headId}-title`} tabIndex={-1}>
 					<Icon name={PANE_VIEWS.find((entry) => entry.id === view)?.icon ?? "sessions"} />
-					{view === ROOT_VIEW ? "Task details" : view === "artifacts" ? "Task files" : paneViewLabel(view)}
+					{paneTitle(view, "Task details")}
 				</h2>
 				<button
 					type="button"
@@ -342,7 +344,7 @@ export const SessionPane = memo(function SessionPane({
 						<optgroup key={group.label} label={group.label}>
 							{group.views.map((id) => (
 								<option key={id} value={id}>
-									{id === ROOT_VIEW ? "Task overview" : id === "artifacts" ? "Task files" : paneViewLabel(id)}
+									{paneTitle(id, "Task overview")}
 								</option>
 							))}
 						</optgroup>
