@@ -70,7 +70,10 @@ test("targets HTTP: real CLI use/remove, typed follow-up reads, redaction and of
 			const admitted = await h.post(`${path}/connections/fixture-target/${action}`, {}, key);
 			assert.equal(admitted.status, 202);
 			const accepted = await json(admitted, Accepted);
-			assert.deepEqual(await json(await h.post(`${path}/connections/fixture-target/${action}`, {}, key), Accepted), accepted);
+			assert.deepEqual(
+				await json(await h.post(`${path}/connections/fixture-target/${action}`, {}, key), Accepted),
+				accepted,
+			);
 			const op = await finished(h, accepted.operationId);
 			assert.equal(op.status, "succeeded", JSON.stringify(op));
 			assert.ok(op.status === "succeeded" && "kind" in op.result && op.result.kind === "targets");

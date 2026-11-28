@@ -29,8 +29,12 @@ import {
 	sessionIdFromPath,
 	shortAge,
 	showsSettingsRail,
+	systemDetail,
 	type TaskRow,
 	taskRows,
+	taskRowTitle,
+	visibleTaskCount,
+	workspacesByRecency,
 } from "./shell-model.js";
 import { type TaskActions, useDeleteTask, useMinuteClock, useRenameTask, useSessionOverview } from "./tasks.js";
 import { setThemeChoice, themeSwitchLabel, useTheme } from "./theme.js";
@@ -124,14 +128,10 @@ export function TaskSidebar({
 	const shownPlatform = platform ?? recalled?.platform;
 	const platformName = platformLabel(shownPlatform);
 	const checkedAt = system.data?.checkedAt ?? recalled?.checkedAt;
-	const systemDetail = `PanCode runtime · ${shownPlatform ?? "Local"}\n${status.detail}${checkedAt ? `\nLast checked ${formatTime(checkedAt)}` : ""}`;
+	const runtimeDetail = systemDetail(shownPlatform, status.detail, checkedAt ? formatTime(checkedAt) : null);
 	const activeTask = sessionIdFromPath(location.pathname);
 	const ordered = useMemo(
-		() =>
-			[...(workspaces.data ?? [])].sort(
-				(a, b) =>
-					Number(b.id === activeWorkspaceId) - Number(a.id === activeWorkspaceId) || b.openedAt.localeCompare(a.openedAt),
-			),
+		() => workspacesByRecency(workspaces.data ?? [], activeWorkspaceId),
 		[workspaces.data, activeWorkspaceId],
 	);
 	return (
@@ -280,7 +280,7 @@ export function TaskSidebar({
 					to="/system"
 					onClick={onNavigate}
 					aria-label={`System health: ${status.label}. Open system details`}
-					title={systemDetail}
+					title={runtimeDetail}
 				>
 					<Icon name="system" />
 					<span className="wb-runtime__identity">
@@ -348,7 +348,7 @@ function ProjectGroup({
 		[workspace.id, sessions, history.data],
 	);
 	// Keep the selected task visible even when it is older than the page of rows shown.
-	const visible = Math.max(limit, rows.findIndex((row) => row.id === activeTask) + 1);
+	const visible = visibleTaskCount(limit, rows, activeTask);
 	useEffect(() => {
 		if (current) setOpen((value) => value ?? true);
 	}, [current]);
@@ -491,7 +491,7 @@ function TaskItem({
 	const elsewhere = row.liveElsewhere
 		? liveElsewhereLabel(row.liveElsewhere, formatTime(row.liveElsewhere.since))
 		: null;
-	const title = `${row.title}${elsewhere ? ` · ${elsewhere}` : label ? ` · ${label}` : ""}`;
+	const title = taskRowTitle(row.title, elsewhere, label);
 	const working = row.state === "working" || row.state === "starting";
 	if (confirming)
 		return (

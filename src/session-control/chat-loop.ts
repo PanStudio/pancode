@@ -74,6 +74,7 @@ import type { NotificationLevel } from "../core/views/notice-words.js";
 import type { BudgetInspection } from "../domains/context/budget/inspection.js";
 import type { DispatchContract } from "../domains/dispatch/index.js";
 import type { PinnedContextBlock } from "../domains/extensions/pinned-context.js";
+import type { CompactInput, CompactResult } from "../domains/memory/compaction/compact.js";
 import {
 	type CompletionFact,
 	createMiddlewareToolChoiceControl,
@@ -84,11 +85,9 @@ import {
 import type { PromptsContract } from "../domains/prompts/contract.js";
 import type { ProvidersContract } from "../domains/providers/index.js";
 import { acceptsImageInput, modelCandidatesForStatus, resolveModelCapabilities } from "../domains/providers/index.js";
-import type { VisionSidecar } from "../domains/providers/vision-sidecar.js";
 import type { AutonomyHalt, AutonomyStatus } from "../domains/safety/autonomy-window.js";
 import type { ProtectedArtifactState } from "../domains/safety/protected-artifacts.js";
 import type { SchedulingContract } from "../domains/scheduling/contract.js";
-import type { CompactInput, CompactResult } from "../domains/session/compaction/compact.js";
 import type { ContextLedger } from "../domains/session/context-ledger.js";
 import type { SessionContract } from "../domains/session/contract.js";
 import {
@@ -109,6 +108,7 @@ import type { AutonomyLevel } from "../lib/autonomy/autonomy.js";
 import { ensureDetailLedgerForSession } from "../tools/extension-runtime-tools.js";
 import { createHeadlessObservationPool } from "../tools/observation.js";
 import type { AskUserToolPolicy, ToolInvokeOptions, ToolRegistry } from "../tools/registry-contract.js";
+import type { VisionSidecar } from "../tools/vision-sidecar.js";
 import type { ApprovalRequestView } from "./approval-request-view.js";
 import { createChatLoopBus } from "./chat-loop-bus.js";
 import { createChatLoopComposition } from "./chat-loop-composition.js";

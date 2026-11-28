@@ -4,7 +4,6 @@
 import type { Static } from "typebox";
 import type { AgentAudience } from "../../domains/agents/spec.js";
 import type { ConfigDiff } from "../../domains/config/classify.js";
-import type { RunToolBudgetEnvelope } from "../../domains/dispatch/budget-envelope.js";
 import type {
 	DispatchRequestOrigin,
 	RunKind,
@@ -17,6 +16,7 @@ import type { TargetStatus } from "../../domains/providers/contract.js";
 import type { PancodeSettings } from "../config.js";
 import type { ContextOperation } from "../context-operation.js";
 import type { TurnContinuationCause } from "../job-types.js";
+import type { RunToolBudgetEnvelope } from "../run-budget-envelope.js";
 import type { SkillActivation } from "../skill-activation.js";
 import type { ContextFoldSchema, ContextPrunedSchema, ContextRecalledSchema } from "./context-schemas.js";
 import type { EvidenceAssessed } from "./evidence-schemas.js";

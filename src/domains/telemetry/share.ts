@@ -16,16 +16,6 @@ import type { ContentClass, Tier } from "../../core/telemetry/enums.js";
 import type { SegmentHeader, TelemetryRecord } from "../../core/telemetry/envelope.js";
 import { makeTelemetryRecord } from "../../core/telemetry/envelope.js";
 import { ShareProfileSchema } from "../../core/telemetry/host-schemas.js";
-import type { TelemetryChain } from "../../core/telemetry/segment.js";
-import {
-	chainTelemetryLine,
-	EMPTY_TELEMETRY_CHAIN,
-	encodeTelemetryLine,
-	scanTelemetrySegment,
-	telemetryChainHead,
-} from "../../core/telemetry/segment.js";
-import { createRedactionTally } from "../../lib/secrets/redact.js";
-import { CONTENT_SUBJECTS, collectRefs, redactTelemetryValue } from "./objects.js";
 import {
 	isTelemetryJournalFile,
 	TELEMETRY_BUNDLE_FILE,
@@ -38,7 +28,17 @@ import {
 	telemetryRunsDirectory,
 	telemetrySessionDirectory,
 	telemetrySessionsDirectory,
-} from "./paths.js";
+} from "../../core/telemetry/paths.js";
+import type { TelemetryChain } from "../../core/telemetry/segment.js";
+import {
+	chainTelemetryLine,
+	EMPTY_TELEMETRY_CHAIN,
+	encodeTelemetryLine,
+	scanTelemetrySegment,
+	telemetryChainHead,
+} from "../../core/telemetry/segment.js";
+import { createRedactionTally } from "../../lib/secrets/redact.js";
+import { CONTENT_SUBJECTS, collectRefs, redactTelemetryValue } from "./objects.js";
 import type { ScopeBundleManifest, ScopeObjectEntry, SealVerdict, TelemetryScopeFiles } from "./seal.js";
 import {
 	describeSealMismatch,

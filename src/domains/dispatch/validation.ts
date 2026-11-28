@@ -12,13 +12,13 @@ import path from "node:path";
 import { THINKING_LEVELS, type ThinkingLevel } from "../../core/defaults.js";
 import { asDirectoryPathBoundary, resolvePathBoundary } from "../../core/path-boundary.js";
 import { cloneValidatedResponseSchema } from "../../core/response-schema.js";
+import { cloneDispatchBudgetRequest, type DispatchBudgetRequest } from "../../core/run-budget-envelope.js";
 import { validateTagName } from "../../core/store-paths.js";
 import { DISPATCH_REQUEST_ORIGINS } from "../../core/telemetry/run-vocabulary.js";
 import { isRecord } from "../../core/type-guards.js";
 import { isToolProfileName, type ToolProfileName } from "../../tools/profiles.js";
 import type { AgentProduct } from "../agents/spec.js";
 import { parseWorkerContextPolicy, type WorkerContextPolicy } from "../context/worker/contract.js";
-import { cloneDispatchBudgetRequest, type DispatchBudgetRequest } from "./budget-envelope.js";
 import {
 	EXECUTION_HANDOFF_MAX_ITEMS,
 	EXECUTION_HANDOFF_MAX_TEXT_BYTES,

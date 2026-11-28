@@ -6,6 +6,7 @@
 
 import { useLayoutEffect, useSyncExternalStore } from "react";
 import { THEME_COLORS } from "../design/navigation.js";
+import { readPref, writePref } from "../interaction/prefs.js";
 
 export type Theme = "light" | "dark";
 export type ThemeChoice = Theme | "system";
@@ -18,12 +19,8 @@ const listeners = new Set<() => void>();
 const DEFAULT_CHOICE: ThemeChoice = "dark";
 
 function readChoice(): ThemeChoice {
-	try {
-		const saved = localStorage.getItem(THEME_KEY);
-		return saved === "dark" || saved === "light" || saved === "system" ? saved : DEFAULT_CHOICE;
-	} catch {
-		return DEFAULT_CHOICE;
-	}
+	const saved = readPref(THEME_KEY);
+	return saved === "dark" || saved === "light" || saved === "system" ? saved : DEFAULT_CHOICE;
 }
 
 let choice: ThemeChoice = readChoice();
@@ -53,11 +50,7 @@ function systemTheme(): Theme {
 
 export function setThemeChoice(next: ThemeChoice): void {
 	choice = next;
-	try {
-		localStorage.setItem(THEME_KEY, next);
-	} catch {
-		// The choice holds for this tab.
-	}
+	writePref(THEME_KEY, next);
 	for (const listener of listeners) listener();
 }
 

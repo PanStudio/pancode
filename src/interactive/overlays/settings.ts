@@ -88,8 +88,7 @@ import {
 import { type ChoiceItem, ChoiceList, isSubmenuSurface, SubmenuWrapper } from "./settings-submenus.js";
 
 export { SETTINGS_LABELS_BY_ID } from "../../core/settings-copy.js";
-export { SubmenuWrapper } from "./settings-submenus.js";
-export { SETTINGS_SECTIONS, type SettingsSectionId };
+export type { SettingsSectionId };
 
 export interface SettingsCenterOptions {
 	getBodyHeight: () => number;

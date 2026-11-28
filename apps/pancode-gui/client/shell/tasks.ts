@@ -14,6 +14,7 @@ import { clock } from "../api/clock.js";
 import { advanceSessionReadScope, SESSION_CACHES, sessionBuffer } from "../api/sessions.js";
 import { afterStreamHello } from "../api/stream-gate.js";
 import { discardDraftStore } from "../chat/draft-registry.js";
+import { readPref, writePref } from "../interaction/prefs.js";
 import { homeDraft, updateHomeDraft } from "../pages/home-draft.js";
 import { type ProjectLaunch, useProjectLaunch } from "../pages/project-open.js";
 import type { SessionControlTarget } from "../pages/session-control-model.js";
@@ -25,19 +26,11 @@ import { openAppWindow } from "./windows.js";
 const WORKSPACE_KEY = "pancode-gui-workspace";
 
 export function rememberedWorkspace(): string | null {
-	try {
-		return localStorage.getItem(WORKSPACE_KEY);
-	} catch {
-		return null;
-	}
+	return readPref(WORKSPACE_KEY);
 }
 
 export function rememberWorkspace(id: string): void {
-	try {
-		localStorage.setItem(WORKSPACE_KEY, id);
-	} catch {
-		// The choice holds for this tab; the next visit falls back to the most recent project.
-	}
+	writePref(WORKSPACE_KEY, id);
 }
 
 export interface TaskActions {

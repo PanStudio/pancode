@@ -245,7 +245,7 @@ export async function refreshSemantic(options: SemanticAppOptions, signal?: Abor
 	const stateDir = pancodeStateDir();
 	// The run ledger says which runs ran in this project; what is indexed is each run's sealed evidence (#434).
 	const { openLedger } = await import("../dispatch/state.js");
-	const { telemetryRunDirectory } = await import("../telemetry/paths.js");
+	const { telemetryRunDirectory } = await import("../../core/telemetry/paths.js");
 	for (const row of openLedger().list({ limit: 100 })) {
 		signal?.throwIfAborted();
 		try {
@@ -363,7 +363,7 @@ export async function searchSemantic(
 	}
 	const policy = createSafetyPolicyEngine({ cwd: app.projectId });
 	const records = loadMemoryRecordsSync(pancodeDataDir());
-	const { telemetryRunsDirectory } = await import("../telemetry/paths.js");
+	const { telemetryRunsDirectory } = await import("../../core/telemetry/paths.js");
 	const evidenceRoot = telemetryRunsDirectory(pancodeStateDir());
 	const recordingRoot = join(pancodeStateDir(), "runs");
 	const realRoot = (root: string) => {

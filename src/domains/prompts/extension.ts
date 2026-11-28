@@ -8,6 +8,7 @@ import type { DomainBundle, DomainContext, DomainExtension } from "../../core/do
 import { sha256Hex } from "../../core/hash.js";
 import { resolvePackageRoot } from "../../core/package-root.js";
 import { detectPancodeRepo } from "../../core/pancode-repo.js";
+import { PANE_PEER_IDS } from "../../core/pane-peers.js";
 import { relativePathEscapes } from "../../core/path-containment.js";
 import { isAutonomyLevel } from "../../lib/autonomy/autonomy.js";
 import { headForRedaction } from "../../lib/secrets/redact.js";
@@ -30,7 +31,6 @@ import { interopAgentKind, peerModeCapabilities } from "../interop/index.js";
 import type { InteropAgentRecord } from "../interop/types.js";
 import { loadMcpServerConfig } from "../mcp/config.js";
 import { redactForMemoryRoute } from "../memory/secret-text.js";
-import { PANE_PEER_IDS } from "../mux/operations.js";
 import type { ResourcesContract } from "../resources/contract.js";
 import { suggestableSkills } from "../resources/skills/loader.js";
 import { parseRigorOverride, rigorResolution } from "../safety/rigor.js";

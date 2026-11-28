@@ -28,13 +28,9 @@
  */
 
 import { ToolNames } from "../../core/tool-names.js";
+import { turnCanCallTool } from "../../core/turn-constraints.js";
 import { resolveReadPath } from "../../tools/path-utils.js";
-import {
-	type MiddlewareEffect,
-	type MiddlewareHookInput,
-	type MiddlewareHookRegistration,
-	turnCanCallTool,
-} from "../middleware/index.js";
+import type { MiddlewareEffect, MiddlewareHookInput, MiddlewareHookRegistration } from "../middleware/index.js";
 import { CITATION_CHECK_PREFIX } from "./citation-check-prefix.js";
 import { mutationPathsForTool } from "./finish-mutations.js";
 

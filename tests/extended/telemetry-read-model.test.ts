@@ -33,13 +33,12 @@ import type { TelemetryRecord } from "../../src/core/telemetry/envelope.js";
 import { makeTelemetryRecord } from "../../src/core/telemetry/envelope.js";
 import type { FactSum } from "../../src/core/telemetry/fact.js";
 import { settingsFingerprintCommitment } from "../../src/core/telemetry/host-schemas.js";
+import { telemetrySessionDirectory } from "../../src/core/telemetry/paths.js";
 import type { PendingTelemetry } from "../../src/core/telemetry/producer.js";
 import type { CallSettled } from "../../src/core/telemetry/schemas.js";
 import { ToolNames } from "../../src/core/tool-names.js";
-import { loadSessionTelemetrySource } from "../../src/domains/session/telemetry-source.js";
 import { openCallJournal } from "../../src/domains/telemetry/call-journal.js";
 import { foldEconomy } from "../../src/domains/telemetry/economy-fold.js";
-import { telemetrySessionDirectory } from "../../src/domains/telemetry/paths.js";
 import {
 	continueSource,
 	explain,
@@ -61,6 +60,7 @@ import { sessionOperatorMetrics, usageReport } from "../../src/domains/telemetry
 import { whyStopped } from "../../src/domains/telemetry/read-model-why-stopped.js";
 import { conformingAnonymous, shareEconomy } from "../../src/domains/telemetry/share-projection.js";
 import { createLiveTelemetryModel } from "../../src/domains/telemetry/telemetry-live.js";
+import { loadSessionTelemetrySource } from "../../src/domains/telemetry/telemetry-source.js";
 import {
 	absentRenderedOtherwise,
 	costsOffPolicy,

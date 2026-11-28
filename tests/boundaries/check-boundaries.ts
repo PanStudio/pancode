@@ -150,7 +150,7 @@ export function checkLedgerUsageMutation(file: string, source: string): string[]
 /** A key that counts tokens, prices them or annotates their accounting; the provider's own `usage` is not one. */
 const USAGE_SHAPED_KEY = /^(?:usage.+|tokens?|cost.*|usd|.+(?:Usage|Tokens|TokenCount|Cost|Usd|Accounting))$/;
 /** The modules that build session-ledger message payloads. */
-const LEDGER_PAYLOAD_ROOTS = ["src/session-control/", "src/domains/session/"];
+const LEDGER_PAYLOAD_ROOTS = ["src/session-control/", "src/domains/session/", "src/domains/memory/compaction/"];
 
 /** The ledger is the conversation record and the journal owns usage, so no payload gains a usage-shaped key (#434 §5.1, §5.3). */
 export function checkLedgerUsageKeys(file: string, source: string): string[] {
@@ -326,7 +326,7 @@ export function checkTelemetryProducer(file: string, source: string): string[] {
 
 /**
  * A path under the telemetry root, as a path expression spells it: a literal `telemetry` segment, or a helper from
- * src/domains/telemetry/paths.ts, the one module that builds those paths (`telemetryRoot`, `telemetryRunDirectory`,
+ * src/core/telemetry/paths.ts, the one module that builds those paths (`telemetryRoot`, `telemetryRunDirectory`,
  * `telemetryJournalPath`, ...).
  */
 const TELEMETRY_PATH = /[/"'`](telemetry)(?=[/"'`])|\b(telemetry\w*(?:Root|Directory|Path))\b/;
@@ -645,7 +645,7 @@ export function checkSurfaceTotals(file: string, source: string, used?: Set<stri
  * value import of one of these means feature logic is growing back.
  */
 const COMPOSITION_ROOT_FORBIDDEN_MODULES: ReadonlyArray<string> = [
-	"src/domains/session/compaction/compact.ts",
+	"src/domains/memory/compaction/compact.ts",
 	"src/domains/session/compaction/branch-summary.ts",
 	"src/domains/session/continuity/projection.ts",
 	"src/domains/session/continuity/carry.ts",
@@ -807,25 +807,25 @@ const FUNCTION_LINE_EXEMPTIONS: ReadonlyMap<string, number> = new Map([
 	["src/domains/resources/hub-validation.ts#validateHubPackage", 567],
 	["src/domains/safety/policy-engine.ts#createSafetyPolicyEngine", 1709],
 	["src/domains/scheduling/job-controller.ts#createJobController", 979],
-	["src/domains/session/compaction/compact.ts#compactWithCalls", 738],
+	["src/domains/memory/compaction/compact.ts#compactWithCalls", 738],
 	["src/domains/session/extension.ts#createSessionBundle", 505],
 	["src/domains/telemetry/call-journal.ts#openCallJournal", 554],
 	["src/domains/telemetry/call-journal.ts#openCallJournal.<withStateFileLock callback>", 513],
 	["src/domains/telemetry/telemetry-live.ts#createLiveTelemetryModel", 607],
 	["src/domains/workspace-snapshots/store.ts#createWorkspaceSnapshots", 628],
 	["src/acp/adapter.ts#startAcpDelegationRun", 721],
-	["src/engine/loop-guard.ts#createLoopGuardRegistration", 1490],
+	["src/engine/loop-guard.ts#createLoopGuardRegistration", 1422],
 	["src/entry/orchestrator.ts#bootOrchestrator", 953],
 	["src/interactive/chat-panel.ts#createChatPanel", 2064],
 	["src/interactive/chat-panel.ts#createChatPanel.applyEvent", 534],
 	["src/interactive/editor-submit.ts#createEditorSubmitController", 668],
-	["src/interactive/interactive-application.ts#createInteractiveApplication", 2193],
+	["src/interactive/interactive-application.ts#createInteractiveApplication", 2192],
 	["src/interactive/interactive-presentation.ts#createInteractivePresentation", 1072],
 	["src/interactive/interactive-slash-runtime.ts#createInteractiveSlashRuntime", 793],
 	["src/interactive/overlay-general-openers.ts#createOverlayGeneralOpeners", 730],
-	["src/interactive/overlay-lifecycle.ts#createOverlayLifecycle", 605],
+	["src/interactive/overlay-lifecycle.ts#createOverlayLifecycle", 577],
 	["src/interactive/overlay-permission-lifecycle.ts#createOverlayPermissionLifecycle", 671],
-	["src/interactive/overlays/hub.ts#openHubOverlay", 604],
+	["src/interactive/overlays/hub.ts#openHubOverlay", 603],
 	["src/interactive/overlays/settings-items.ts#buildSettingItems", 523],
 	["src/interactive/panes-runtime.ts#createPanesRuntime", 582],
 	["src/session-control/chat-loop-composition.ts#createChatLoopComposition", 662],

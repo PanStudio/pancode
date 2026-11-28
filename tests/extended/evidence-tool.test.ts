@@ -4,6 +4,7 @@ import { deepStrictEqual, ok, strictEqual } from "node:assert/strict";
 import { copyFile, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
+import { telemetryJournalPath, telemetryRunDirectory } from "../../src/core/telemetry/paths.js";
 import { pancodeStateDir } from "../../src/core/xdg.js";
 import { materializePendingGateDecision, stagePendingGateDecision } from "../../src/domains/dispatch/gate-decisions.js";
 import type { RunResultDraft } from "../../src/domains/dispatch/types.js";
@@ -16,7 +17,6 @@ import {
 } from "../../src/domains/evidence/index.js";
 import { EVIDENCE_INVENTORY_MAX_ARTIFACTS } from "../../src/domains/evidence/inventory.js";
 import { classify } from "../../src/domains/safety/action-classifier.js";
-import { telemetryJournalPath, telemetryRunDirectory } from "../../src/domains/telemetry/paths.js";
 import { EVIDENCE_TOOL_MAX_BYTES, evidenceTool } from "../../src/tools/evidence.js";
 import type { ToolResult } from "../../src/tools/tool-spec.js";
 import { fixtureEnvelope, fixtureReceiptDraft } from "../harness/receipt.js";

@@ -25,6 +25,7 @@ import { resolveSupportedWireModels, validateResolvedModel } from "../../src/cli
 import { isCopilotRefusal } from "../../src/core/copilot-refusal.js";
 import { DEFAULT_SETTINGS } from "../../src/core/defaults.js";
 import { createHostPolicyMessage } from "../../src/core/host-policy-message.js";
+import { telemetrySessionDirectory } from "../../src/core/telemetry/paths.js";
 import type { CallSettled, CallStarted } from "../../src/core/telemetry/schemas.js";
 import { pancodeStateDir, resolvePancodeDirs } from "../../src/core/xdg.js";
 import { createCapacityAdmissionController } from "../../src/domains/dispatch/admission.js";
@@ -52,7 +53,6 @@ import { isRetryableErrorMessage } from "../../src/domains/session/retry.js";
 import { callSettlementFromMessage, reportedModelFromMessage } from "../../src/domains/telemetry/call-facts.js";
 import { readCallJournal } from "../../src/domains/telemetry/call-journal.js";
 import { noteCallStarted, stampCallEconomics } from "../../src/domains/telemetry/economy-settlement.js";
-import { telemetrySessionDirectory } from "../../src/domains/telemetry/paths.js";
 import { createSessionJournals } from "../../src/domains/telemetry/session-journals.js";
 import {
 	copilotSdkAccount,

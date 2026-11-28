@@ -82,6 +82,34 @@ export function taskState(
 	return "idle";
 }
 
+const ACTIVE_STATES: ReadonlySet<TaskState> = new Set<TaskState>([
+	"working",
+	"waiting",
+	"starting",
+	"approval",
+	"question",
+]);
+
+export interface ActiveWork<T> {
+	readonly items: readonly { readonly session: T; readonly state: TaskState }[];
+	readonly working: number;
+	readonly queued: number;
+	readonly approval: number;
+}
+
+/** Work in motion or waiting on the operator, as the home sidebar and the task overview list and count it. */
+export function activeWork<T extends Parameters<typeof taskState>[0]>(sessions: readonly T[]): ActiveWork<T> {
+	const items = sessions
+		.map((session) => ({ session, state: taskState(session) }))
+		.filter(({ state }) => ACTIVE_STATES.has(state));
+	return {
+		items,
+		working: items.filter(({ state }) => state === "working" || state === "starting").length,
+		queued: items.filter(({ state }) => state === "waiting").length,
+		approval: items.filter(({ state }) => state === "approval").length,
+	};
+}
+
 /** A task this server holds: its agent process is running, starting, or parked until a window shows it again. */
 export function isHeld(session: Pick<SessionSnapshot, "state">): boolean {
 	return session.state === "open" || session.state === "starting" || session.state === "parked";
@@ -198,6 +226,31 @@ export function taskRows(
 			),
 	];
 	return rows.sort((a, b) => parsed(b.at) - parsed(a.at) || a.id.localeCompare(b.id));
+}
+
+/** Workspaces most recently opened first; the active one, when named, leads the list. */
+export function workspacesByRecency<T extends { readonly id: string; readonly openedAt: string }>(
+	workspaces: readonly T[],
+	activeId: string | null = null,
+): T[] {
+	return [...workspaces].sort(
+		(a, b) => Number(b.id === activeId) - Number(a.id === activeId) || b.openedAt.localeCompare(a.openedAt),
+	);
+}
+
+/** How many of a project's task rows show: its page, stretched so the selected task stays visible. */
+export function visibleTaskCount(limit: number, rows: readonly { id: string }[], activeTask: string | null): number {
+	return Math.max(limit, rows.findIndex((row) => row.id === activeTask) + 1);
+}
+
+/** A task row's tooltip: its title, then where else it runs, else its state word. */
+export function taskRowTitle(title: string, elsewhere: string | null, label: string): string {
+	return `${title}${elsewhere ? ` · ${elsewhere}` : label ? ` · ${label}` : ""}`;
+}
+
+/** The runtime button's tooltip; `lastChecked` is the already formatted time of the last check. */
+export function systemDetail(platform: string | undefined, detail: string, lastChecked: string | null): string {
+	return `PanCode runtime · ${platform ?? "Local"}\n${detail}${lastChecked !== null ? `\nLast checked ${lastChecked}` : ""}`;
 }
 
 /** Compact age for a sidebar row: "now", "5m", "3h", "2d", "6w". Empty when no time is known. */

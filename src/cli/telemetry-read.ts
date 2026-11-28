@@ -18,6 +18,7 @@ import type {
 import { parseFactRef } from "../core/telemetry/dto.js";
 import type { EconomyProjection, EconomyQuantities } from "../core/telemetry/economy.js";
 import { AgentRole, Disposition } from "../core/telemetry/enums.js";
+import { TELEMETRY_INSTALL_ID, telemetryImportedStateDir, telemetrySessionDirectory } from "../core/telemetry/paths.js";
 import {
 	COST_NOT_MEASURED,
 	renderCount,
@@ -27,17 +28,6 @@ import {
 import { economyTotalKnown } from "../core/views/usage-words.js";
 import { pancodeStateDir } from "../core/xdg.js";
 import { fleetRootStepRunIds } from "../domains/dispatch/fleet-root-seal.js";
-import {
-	loadRunCallsTelemetrySource,
-	loadRunScopeFiles,
-	loadRunTelemetrySource,
-	loadSessionTelemetrySource,
-} from "../domains/session/telemetry-source.js";
-import {
-	TELEMETRY_INSTALL_ID,
-	telemetryImportedStateDir,
-	telemetrySessionDirectory,
-} from "../domains/telemetry/paths.js";
 import { explain } from "../domains/telemetry/read-model.js";
 import { cacheReport } from "../domains/telemetry/read-model-cache.js";
 import {
@@ -53,6 +43,12 @@ import { timeline } from "../domains/telemetry/read-model-timeline.js";
 import { whyStopped } from "../domains/telemetry/read-model-why-stopped.js";
 import type { SealVerdict } from "../domains/telemetry/seal.js";
 import { describeSealMismatch, readTelemetryScopeFilesSync, verifyTelemetryScope } from "../domains/telemetry/seal.js";
+import {
+	loadRunCallsTelemetrySource,
+	loadRunScopeFiles,
+	loadRunTelemetrySource,
+	loadSessionTelemetrySource,
+} from "../domains/telemetry/telemetry-source.js";
 import { explainRepoRef, isRepoRef, usageWindow } from "../domains/telemetry/usage-window.js";
 import { formatColumns, printError } from "./argv.js";
 import { resolveSessionSelector, resolveTelemetryTarget } from "./telemetry-target.js";

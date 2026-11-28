@@ -19,9 +19,8 @@ import {
 	supportGroupLabel,
 } from "../domains/providers/index.js";
 import { getRuntimeRegistry } from "../domains/providers/registry.js";
-import { registerBuiltinRuntimes } from "../domains/providers/runtimes/builtins.js";
-import { registerPancodeOAuthProviders } from "../engine/oauth.js";
 import { columnWidths, formatColumnRow } from "./argv.js";
+import { ensureRegistryPopulated } from "./configure-target-setup.js";
 
 /**
  * What the connectable listing is a listing of.
@@ -51,14 +50,8 @@ export interface ConnectableProviderRow {
 /** Signs in through its own CLI, which `pancode auth login copilot-sdk` drives, so `auth` lists it beside the rest. */
 const OWN_LOGIN_RUNTIME = "copilot-sdk";
 
-function ensureSetupRuntimeRegistry(): void {
-	registerPancodeOAuthProviders();
-	const registry = getRuntimeRegistry();
-	if (registry.list().length === 0) registerBuiltinRuntimes(registry);
-}
-
 export function resolveCliProviderReference(input: string): ResolvedProviderReference | null {
-	ensureSetupRuntimeRegistry();
+	ensureRegistryPopulated();
 	const resolved = resolveProviderReference(input, readSettings(), (runtimeId) => getRuntimeRegistry().get(runtimeId));
 	if (resolved) return resolved;
 	const oauthProvider = openAuthStorage()
@@ -87,7 +80,7 @@ export function resolveCliProviderReference(input: string): ResolvedProviderRefe
 }
 
 export function listConnectableProviderRows(): ConnectableProviderRow[] {
-	ensureSetupRuntimeRegistry();
+	ensureRegistryPopulated();
 	const settings = readSettings();
 	const auth = openAuthStorage();
 	return listProviderSupportEntries(getRuntimeRegistry().list())
@@ -123,7 +116,7 @@ export const RUNTIME_LOGOUT_PREFIX = "runtime:";
  */
 export function resolveLogoutReference(input: string): ResolvedProviderReference | null {
 	if (!input.startsWith(RUNTIME_LOGOUT_PREFIX)) return resolveCliProviderReference(input);
-	ensureSetupRuntimeRegistry();
+	ensureRegistryPopulated();
 	const runtime = getRuntimeRegistry().get(input.slice(RUNTIME_LOGOUT_PREFIX.length));
 	if (!runtime) return null;
 	return { input, target: null, runtime, authTarget: resolveRuntimeAuthTarget(runtime) };
@@ -148,7 +141,7 @@ export interface LogoutChoice {
  * use it, because removing it signs all of them out.
  */
 export function listLogoutChoices(): LogoutChoice[] {
-	ensureSetupRuntimeRegistry();
+	ensureRegistryPopulated();
 	const settings = readSettings();
 	const auth = openAuthStorage();
 	const targetIds = new Set(settings.targets.map((target) => target.id));

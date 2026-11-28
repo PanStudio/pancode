@@ -22,6 +22,12 @@ import type { DispatchContract } from "../../domains/dispatch/contract.js";
 import type { ExtensionsContract } from "../../domains/extensions/contract.js";
 import { isLoadableExtension } from "../../domains/extensions/index.js";
 import type { ExtensionRuntimeHookBridge } from "../../domains/extensions/runtime-hook-bridge.js";
+import type { CompactInput, CompactResult } from "../../domains/memory/compaction/compact.js";
+import type {
+	CompactionFlowAdmission,
+	CompactionFlowBudget,
+	CompactionTelemetry,
+} from "../../domains/memory/compaction/flow.js";
 import type { MemoryGuardian } from "../../domains/memory/guardian.js";
 import { type MemoryRuntime, memoryRecordStanding, renderTaskMemoryHandoffSource } from "../../domains/memory/index.js";
 import type { MemoryInterventionRegistration } from "../../domains/memory/intervention-types.js";
@@ -33,17 +39,10 @@ import type { CompletionFact } from "../../domains/middleware/index.js";
 import type { MiddlewareToolChoiceControl } from "../../domains/middleware/tool-choice-control.js";
 import type { PromptsContract } from "../../domains/prompts/contract.js";
 import { modelEndpointKey, type ProvidersContract, registerForegroundStream } from "../../domains/providers/index.js";
-import type { VisionSidecar } from "../../domains/providers/vision-sidecar.js";
 import type { AutonomyWindow } from "../../domains/safety/autonomy-window.js";
 import type { SafetyContract } from "../../domains/safety/contract.js";
 import type { ProtectedArtifactsRegistration } from "../../domains/safety/protected-artifacts-registration.js";
 import type { SchedulingContract } from "../../domains/scheduling/contract.js";
-import type { CompactInput, CompactResult } from "../../domains/session/compaction/compact.js";
-import type {
-	CompactionFlowAdmission,
-	CompactionFlowBudget,
-	CompactionTelemetry,
-} from "../../domains/session/compaction/flow.js";
 import type { SessionContract } from "../../domains/session/contract.js";
 import type { DecisionBoardStore } from "../../domains/session/decision-board.js";
 import type { CompactionTrigger, SessionEntry } from "../../domains/session/entries.js";
@@ -63,6 +62,7 @@ import type { ToolBootstrapHandle } from "../../tools/bootstrap.js";
 import type { DispatchBackgroundRegistry } from "../../tools/dispatch-background.js";
 import { mcpSubmitReader } from "../../tools/gateway/mcp-submit-reader.js";
 import type { ToolRegistry } from "../../tools/registry-contract.js";
+import type { VisionSidecar } from "../../tools/vision-sidecar.js";
 import type { BootOptions } from "../boot-options.js";
 import type { ExtensionReloadCoordinator } from "../extension-reload.js";
 import type { createFlowLedger } from "../flow-ledger.js";

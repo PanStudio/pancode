@@ -16,6 +16,7 @@ import { join } from "node:path";
 import type { RunEvidenceV1, RunTelemetryV1 } from "../../core/telemetry/dto.js";
 import { TELEMETRY_DTO_VERSION } from "../../core/telemetry/dto.js";
 import type { Fact } from "../../core/telemetry/fact.js";
+import { OBSERVED_COMMAND_PREFIX } from "../../core/telemetry/trust-vocabulary.js";
 import { pancodeStateDir } from "../../core/xdg.js";
 import { reviewFindings } from "../agents/result-contract-gate.js";
 import { type GateReview, readRunGateIndex, readRunTrust } from "../evidence/run-trust.js";
@@ -26,7 +27,6 @@ import { readRunRecord } from "../telemetry/run-record.js";
 import { reviewFindingsWords } from "./failure-headline.js";
 import { hostCheckNotRunNote } from "./host-verification-note.js";
 import { readRunFeed } from "./run-feed.js";
-import { OBSERVED_COMMAND_PREFIX } from "./run-findings.js";
 import { landedMergeText } from "./workspace-mutation.js";
 
 export type RunResultContract = "pass" | "fail" | "not-reached" | "unmeasured";

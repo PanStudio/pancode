@@ -98,7 +98,8 @@ import type { SchedulingContract } from "../domains/scheduling/contract.js";
 import { budgetRemainingText } from "../domains/scheduling/index.js";
 import { SchedulingDomainModule } from "../domains/scheduling/module.js";
 import { SessionDomainModule } from "../domains/session/module.js";
-import { TelemetryDomainModule } from "../domains/telemetry/module.js";
+import { createTelemetryDomainModule } from "../domains/telemetry/module.js";
+import { retentionPruners } from "../entry/retention-pruners.js";
 import { answerFleetHelp, FLEET_HELP as HELP } from "./fleet-help.js";
 import { runFleetWithShutdown } from "./fleet-lifecycle.js";
 import { createFleetReporter } from "./fleet-reporting.js";
@@ -507,7 +508,7 @@ async function runFleetTracked(
 		createPromptsDomainModule({ noContextFiles: true }),
 		AgentsDomainModule,
 		workerHooks.middlewareModule,
-		TelemetryDomainModule,
+		createTelemetryDomainModule({ retention: retentionPruners }),
 		SchedulingDomainModule,
 		// A fleet step is dispatched by executeFleetRun, which drains the handle
 		// itself and never builds a dispatch event registry, so the domain is the

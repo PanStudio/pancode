@@ -8,12 +8,12 @@ import type { Fact } from "../../core/telemetry/fact.js";
 import { ceilChars } from "../../core/token-split.js";
 import { isSessionJsonlHeader, readSessionFileEntries, sessionCurrentPath } from "../../engine/session.js";
 import { displayToolCall } from "../../tools/gateway-display.js";
+import { loadSessionTelemetrySource } from "../telemetry/index.js";
 import { collectSessionEntries } from "./compaction/session-entries.js";
 import { estimateTokens } from "./compaction/tokens.js";
 import type { MessageEntry, SessionEntry } from "./entries.js";
 import { stripInjectedPreamble } from "./history.js";
 import { contentBlocks, messageText, payloadObject, toolCallArguments, toolResultValue } from "./message-projection.js";
-import { loadSessionTelemetrySource } from "./telemetry-source.js";
 import { filterEntriesToActivePath } from "./tree/active-path.js";
 
 /**

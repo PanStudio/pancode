@@ -454,6 +454,29 @@ export type AcpWire<T> =
 
 export const noControls = "^[^\\u0000-\\u001f\\u007f]+$";
 
+/**
+ * The admission reasons this server puts on the wire (CONTRACT C001 §4). The
+ * engine's runtime-resolution diagnostics are a larger and faster-moving set
+ * (`runtime-target-unsupported`, `runtime-use-unsupported`,
+ * `required-capability-missing`, …), and a client cannot branch on codes the
+ * profile never promised, so anything outside this set is reported as
+ * `admission-failed` rather than leaking an engine-internal identifier.
+ */
+export const ACP_ADMISSION_REASONS = [
+	"orchestrator-not-configured",
+	"target-unknown",
+	"target-not-configured",
+	"target-not-found",
+	"runtime-not-registered",
+	"model-not-configured",
+	"chat-unsupported",
+	"streaming-unsupported",
+	"context-window-exceeded",
+	"handoff-skill-refused",
+	"admission-failed",
+] as const;
+export type AcpAdmissionReason = (typeof ACP_ADMISSION_REASONS)[number];
+
 /** A separately installed runtime component, named by its `pancode programs install` id. */
 export const AcpRuntimeComponent = Type.Union([Type.Literal("copilot-sdk"), Type.Literal("claude-sdk")]);
 

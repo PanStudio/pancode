@@ -21,6 +21,7 @@ import {
 	SHADOW_AGENT_OPERATOR_STAND_IN,
 	userOriginAudienceRefusal,
 } from "../agents/spec.js";
+import { computeSettingsFingerprint } from "../config/index.js";
 import type { EffectivePricing } from "../providers/catalog.js";
 import type { RuntimeDescriptor } from "../providers/index.js";
 import { compileWorkerFlowPolicy, flowUnmediatedAgentRefusal } from "../safety/information-flow.js";
@@ -57,7 +58,6 @@ import {
 	assertRuntimeCanHonorWorkerPermissionMode,
 	assertWriteRootsEnforceable,
 } from "./runtime-enforceability.js";
-import { computeSettingsFingerprint } from "./settings-fingerprint.js";
 import { enforceCapabilityGate, readWorkerTargets, resolveDispatchTarget } from "./target-resolution.js";
 import { assertTurnConstraintCompatibility } from "./tool-constraints.js";
 import { validateJobSpec } from "./validation.js";

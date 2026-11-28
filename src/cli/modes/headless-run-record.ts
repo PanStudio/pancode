@@ -4,8 +4,9 @@ import { readPancodeVersion } from "../../core/package-root.js";
 import type { RunOwnerTelemetryContext } from "../../core/telemetry/context.js";
 import { mainAgent } from "../../core/telemetry/context.js";
 import type { TelemetryRecord } from "../../core/telemetry/envelope.js";
+import { telemetryRunDirectory, telemetrySessionDirectory } from "../../core/telemetry/paths.js";
+import { WORKER_OUTPUT_MAX_BYTES } from "../../core/worker-output.js";
 import { pancodeStateDir } from "../../core/xdg.js";
-import { WORKER_OUTPUT_MAX_BYTES } from "../../domains/dispatch/event-pump.js";
 import { mainAgentTerminalReason } from "../../domains/dispatch/outcome.js";
 import { type RunCallUsage, runUsageFromCalls } from "../../domains/dispatch/run-call-usage.js";
 import {
@@ -30,7 +31,6 @@ import type {
 	RunStatus,
 	ToolCallStat,
 } from "../../domains/dispatch/types.js";
-import { telemetryRunDirectory, telemetrySessionDirectory } from "../../domains/telemetry/paths.js";
 import { readPiMonoVersion } from "../../engine/pi-mono-names.js";
 import { createRedactionTally, redactSecretsText } from "../../lib/secrets/redact.js";
 import { redactSecretString } from "../../lib/secrets/redaction.js";

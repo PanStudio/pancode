@@ -84,7 +84,6 @@ import {
 import type { WorkerSpec } from "../../lib/worker-wire/spec-contract.js";
 import type { HeartbeatStamp } from "./heartbeat.js";
 import {
-	type ApprovedWorkerIdentity,
 	approvedIdentityForSpec,
 	createBoundedEventQueue,
 	verifyWorkerAttestation,
@@ -261,12 +260,6 @@ export interface WorkerProcessOptions {
 	 * is accepted, so a request always belongs to an admitted identity.
 	 */
 	onHookRequest?: (request: WorkerHookRequest) => void;
-	/**
-	 * Identity the plan approved. Defaults to the identity of the spec actually
-	 * written to stdin, which is what every production caller wants; a caller
-	 * with a separately sealed plan identity passes it explicitly.
-	 */
-	approvedIdentity?: ApprovedWorkerIdentity;
 	/** How long bulk output may precede the announce before the peer is refused. */
 	attestationGraceMs?: number;
 	/**
@@ -492,7 +485,7 @@ function attachWorkerChannel(
 	const announceDeadlineMs = opts?.announceDeadlineMs ?? WORKER_ANNOUNCE_DEADLINE_MS;
 	const now = opts?.now ?? Date.now;
 	const monotonicNow = opts?.monotonicNow ?? (() => performance.now());
-	const approved = opts?.approvedIdentity ?? approvedIdentityForSpec(spec);
+	const approved = approvedIdentityForSpec(spec);
 	const pid = child.pid ?? null;
 
 	// One wall anchor plus a monotonic span keeps the persisted/display instant

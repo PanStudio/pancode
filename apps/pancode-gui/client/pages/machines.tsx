@@ -25,8 +25,12 @@ import {
 	machineAge,
 	machineCheckLabels,
 	machineDraft,
+	machineSettingsInvalidations,
 	machineStatus,
 	machineSummary,
+	pollsMachineOperation,
+	settleMachineRequest,
+	settlingMachineOperation,
 } from "./machines-model.js";
 import { useWorkspaceSelection, WorkspacePicker } from "./workspace-selection.js";
 import "./machines.css";
@@ -446,13 +450,7 @@ export function MachinesPage({ client, local }: { client: Client; local: Client 
 		enabled: operationScope !== null && !epochChanged,
 		queryFn: ({ signal }) =>
 			client.call(routes.operation, { ...emptyInput, params: { id: operationScope?.id ?? "" } }, undefined, signal),
-		refetchInterval: (query) =>
-			epochChanged ||
-			query.state.data?.status === "succeeded" ||
-			query.state.data?.status === "failed" ||
-			query.state.data?.status === "cancelled"
-				? false
-				: 1000,
+		refetchInterval: (query) => (pollsMachineOperation(query.state.data, epochChanged) ? 1000 : false),
 		retry: false,
 	});
 	useEffect(() => {
@@ -521,31 +519,13 @@ export function MachinesPage({ client, local }: { client: Client; local: Client 
 		retry: false,
 	});
 	useEffect(() => {
-		const status = operation.data?.status;
-		if (
-			!request ||
-			request.settled ||
-			epochChanged ||
-			operation.data?.id !== request.operationId ||
-			(status !== "succeeded" && status !== "failed" && status !== "cancelled")
-		)
-			return;
+		const settling = settlingMachineOperation(request, operation.data, epochChanged);
+		if (!request || !settling) return;
 		// Registration is user-wide; readiness is scoped to the checked workspace.
 		void queries.invalidateQueries({ queryKey: ["machines"] });
-		store.update((current) =>
-			current.request?.key === request.key
-				? {
-						...current,
-						request: { ...current.request, settled: true },
-						adding: request.body.action === "add" ? false : current.adding,
-						draft: status === "succeeded" && request.body.action === "add" ? emptyMachineDraft : current.draft,
-					}
-				: current,
-		);
-		if (status === "succeeded" && request.body.action !== "check") {
-			for (const key of ["settings-report", "settings-controls", "config-graph"])
-				void queries.invalidateQueries({ queryKey: [key] });
-		}
+		store.update((current) => settleMachineRequest(current, request, settling.status));
+		for (const key of machineSettingsInvalidations(request, settling.status))
+			void queries.invalidateQueries({ queryKey: [key] });
 	}, [operation.data, request, epochChanged, queries, store]);
 	const busy = saved.sending || (request !== null && !request.settled);
 	const machines = inventory.data?.machines ?? [];

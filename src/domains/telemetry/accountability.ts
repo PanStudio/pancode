@@ -6,7 +6,8 @@
  * when the run settled and sealed with it. The `/view` accountability page and `pancode usage` surface it.
  */
 
-import { type EvidenceTag, FAILURE_CAUSE_TAGS, type RunEvidence } from "../evidence/index.js";
+import { FAILURE_CAUSE_TAGS } from "../../core/telemetry/trust-vocabulary.js";
+import type { EvidenceTag, RunEvidence } from "../evidence/index.js";
 
 /**
  * Aggregated accountability snapshot.

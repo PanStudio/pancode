@@ -4,14 +4,14 @@ import { createHash } from "node:crypto";
 import { readFileSync, statSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { sha256Hex } from "../../core/hash.js";
-import { gitExecFileSync } from "../../core/internal-git-run.js";
 import { safeResourceWrite } from "../../core/safe-resource-write.js";
 import { enumerateWorkspaceFiles } from "../../core/workspace-files.js";
 import { pancodeCacheDir } from "../../core/xdg.js";
 import { readCodewiki } from "./codewiki/artifact.js";
-import { isIndexablePath, streamFile } from "./codewiki/paths.js";
+import { extensionOf, isIndexablePath, streamFile } from "./codewiki/paths.js";
 import type { Codewiki } from "./codewiki/schema.js";
 import { EXCLUDED_DIRS } from "./excluded-dirs.js";
+import { currentWikiGitHead } from "./wiki/meta.js";
 
 export interface Fingerprint {
 	treeHash: string;
@@ -41,23 +41,6 @@ const LOC_EXTENSIONS = new Set([
 	".java",
 	".kt",
 ]);
-
-function extensionOf(name: string): string {
-	const index = name.lastIndexOf(".");
-	return index === -1 ? "" : name.slice(index);
-}
-
-function currentGitHead(cwd: string): string | null {
-	try {
-		return gitExecFileSync(["rev-parse", "--verify", "HEAD"], {
-			cwd,
-			encoding: "utf8",
-			stdio: ["ignore", "pipe", "ignore"],
-		}).trim();
-	} catch {
-		return null;
-	}
-}
 
 function locFromCodewiki(codewiki: Codewiki | null): number | null {
 	if (!codewiki) return null;
@@ -195,7 +178,7 @@ export function computeFingerprint(
 
 	return {
 		treeHash: hash.digest("hex"),
-		gitHead: currentGitHead(cwd),
+		gitHead: currentWikiGitHead(cwd),
 		loc: artifactLoc ?? loc,
 	};
 }

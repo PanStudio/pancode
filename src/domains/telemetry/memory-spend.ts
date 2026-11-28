@@ -4,14 +4,14 @@ import { readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { listStateDirectorySync, withinStateRoot } from "../../core/state-boundary.js";
 import type { TelemetryRecord } from "../../core/telemetry/envelope.js";
-import { pancodeStateDir } from "../../core/xdg.js";
-import { readCallJournalSync } from "./call-journal.js";
 import {
 	isTelemetryJournalFile,
 	telemetryProcessesDirectory,
 	telemetryRunsDirectory,
 	telemetrySessionsDirectory,
-} from "./paths.js";
+} from "../../core/telemetry/paths.js";
+import { pancodeStateDir } from "../../core/xdg.js";
+import { readCallJournalSync } from "./call-journal.js";
 import type { TaskMemorySpendSummary } from "./read-model-side-surfaces.js";
 import { foldSideSurfaces } from "./read-model-side-surfaces.js";
 

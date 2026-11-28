@@ -9,6 +9,7 @@ import type { getTerminationCoordinator } from "../../core/termination.js";
 import type { ConfigContract } from "../../domains/config/contract.js";
 import { createDispatchDedupRegistration } from "../../domains/dispatch/dedup.js";
 import { configureRunEventJournal } from "../../domains/dispatch/run-event-journal.js";
+import { createStaleEditGuardRegistration } from "../../domains/memory/compaction/stale-edit-guard.js";
 import type { MiddlewareRegistrar } from "../../domains/middleware/contract.js";
 import { formatRegistrationConflict, writeMiddlewareDiagnosticToStderr } from "../../domains/middleware/index.js";
 import { createLocalClockReminderRegistration } from "../../domains/middleware/local-clock-reminder.js";
@@ -18,7 +19,6 @@ import { anthropicQuotaNotice, onAnthropicQuotaChange, watchCopilotStreamQuota }
 import type { SafetyContract } from "../../domains/safety/contract.js";
 import type { ProtectedArtifactState } from "../../domains/safety/protected-artifacts.js";
 import { createProtectedArtifactsRegistration } from "../../domains/safety/protected-artifacts-registration.js";
-import { createStaleEditGuardRegistration } from "../../domains/session/compaction/stale-edit-guard.js";
 import type { SessionContract } from "../../domains/session/contract.js";
 import {
 	appendProtectedArtifactRegistryEvent,

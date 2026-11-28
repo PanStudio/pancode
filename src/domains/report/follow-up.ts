@@ -202,16 +202,16 @@ export async function runReplyCheck(stateDir: string, deps: FollowUpDeps = {}): 
 
 type Triple = [number, number, number];
 
-function versionTriple(version: string): Triple | null {
+export function versionTriple(version: string): Triple | null {
 	const match = /^v?(\d+)\.(\d+)\.(\d+)/u.exec(version.trim());
 	return match ? [Number(match[1]), Number(match[2]), Number(match[3])] : null;
 }
 
-function compareTriples(a: Triple, b: Triple): number {
+export function compareTriples(a: Triple, b: Triple): number {
 	return a[0] - b[0] || a[1] - b[1] || a[2] - b[2];
 }
 
-function citesIssue(line: string, number: number): boolean {
+export function citesIssue(line: string, number: number): boolean {
 	return new RegExp(
 		`(?:(?:^|[^\\w#/]|${REPORT_REPOSITORY})#${number}|github\\.com/${REPORT_REPOSITORY}/(?:issues|pull)/${number})(?!\\d)`,
 		"u",

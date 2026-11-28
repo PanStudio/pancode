@@ -50,6 +50,13 @@ import { createRunCallUsage, runUsageFromCallRecords } from "../../src/domains/d
 
 const emptySum = sumFacts([]);
 
+import {
+	telemetryBundlePath,
+	telemetryProcessDirectory,
+	telemetryProcessesDirectory,
+	telemetryRunDirectory,
+	telemetrySessionDirectory,
+} from "../../src/core/telemetry/paths.js";
 import { defaultRunEventJournal } from "../../src/domains/dispatch/run-event-journal.js";
 import { runFeedPath } from "../../src/domains/dispatch/run-feed.js";
 import { openRunTelemetry } from "../../src/domains/dispatch/run-telemetry.js";
@@ -88,13 +95,6 @@ import {
 	telemetryCommitment,
 	telemetryPromptStructure,
 } from "../../src/domains/telemetry/objects.js";
-import {
-	telemetryBundlePath,
-	telemetryProcessDirectory,
-	telemetryProcessesDirectory,
-	telemetryRunDirectory,
-	telemetrySessionDirectory,
-} from "../../src/domains/telemetry/paths.js";
 import { createProcessJournal } from "../../src/domains/telemetry/process-journal.js";
 import {
 	applyTelemetryPrune,
@@ -105,6 +105,7 @@ import {
 import { readTelemetryScopeFiles, verifyTelemetryScope } from "../../src/domains/telemetry/seal.js";
 import { createSessionJournals } from "../../src/domains/telemetry/session-journals.js";
 import { usageWindow } from "../../src/domains/telemetry/usage-window.js";
+import { retentionPruners } from "../../src/entry/retention-pruners.js";
 import { isReceiptBearingFrame } from "../../src/lib/worker-wire/protocol.js";
 import { checkTelemetryProducer, checkTelemetryWrites } from "../boundaries/check-boundaries.js";
 import { fixtureEnvelope, measuredRunSpend } from "../harness/receipt.js";
@@ -1299,7 +1300,7 @@ test("the daily sweep ages out worker observation archives on the run journals' 
 		const seedRecentOld = await archive(seeds, "3", true);
 		const seedUnknownOld = await archive(seeds, "4", true);
 		const seedUnknownFresh = await archive(seeds, "5", false);
-		ok(await sweepTelemetryDaily(stateDir, { nowMs }));
+		ok(await sweepTelemetryDaily(stateDir, { nowMs, pruners: retentionPruners }));
 		for (const kept of [liveOld, recentOld, unknownFresh, legacyFresh, seedLiveOld, seedRecentOld, seedUnknownFresh])
 			ok(existsSync(kept), `${kept} kept`);
 		for (const gone of [endedFresh, unknownOld, legacyOld, seedEndedOld, seedUnknownOld])

@@ -8,6 +8,7 @@ import { Type } from "typebox";
 import { runHeadlessMainAgent } from "../../src/cli/modes/print.js";
 import { sealedFactsNotVerified } from "../../src/cli/run-output.js";
 import { DEFAULT_SETTINGS } from "../../src/core/defaults.js";
+import { telemetrySessionDirectory } from "../../src/core/telemetry/paths.js";
 import { ToolNames } from "../../src/core/tool-names.js";
 import { pancodeStateDir } from "../../src/core/xdg.js";
 import {
@@ -17,12 +18,11 @@ import {
 } from "../../src/domains/providers/index.js";
 import litellm from "../../src/domains/providers/runtimes/protocol/litellm.js";
 import { createSessionBundle } from "../../src/domains/session/extension.js";
-import { loadSessionTelemetrySource } from "../../src/domains/session/telemetry-source.js";
 import { readCallJournal } from "../../src/domains/telemetry/call-journal.js";
 import type { TelemetryContract } from "../../src/domains/telemetry/contract.js";
-import { telemetrySessionDirectory } from "../../src/domains/telemetry/paths.js";
 import { whyStopped } from "../../src/domains/telemetry/read-model-why-stopped.js";
 import { createSessionJournals } from "../../src/domains/telemetry/session-journals.js";
+import { loadSessionTelemetrySource } from "../../src/domains/telemetry/telemetry-source.js";
 import { createEngineAgent } from "../../src/engine/agent.js";
 import { openAICompletionsApiProvider } from "../../src/engine/apis/openai-completions.js";
 import type { Model } from "../../src/engine/types.js";

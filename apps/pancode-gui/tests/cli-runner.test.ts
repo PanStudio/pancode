@@ -51,7 +51,7 @@ test("CLI runner: closed command table, exact argv, canonical cwd and prose outc
 		[],
 		["connections", "--json"],
 		{ kind: "shell", text: "echo hi" },
-		{ kind: "targets.list", extra: "--probe" },
+		{ kind: "routing.models", extra: "--online" },
 		{ kind: "targets.use", id: "--help" },
 		{ kind: "targets.remove", id: "a;echo bad" },
 		{ kind: "trust.approve", surface: "settings", hash: "a".repeat(63) },
@@ -72,8 +72,6 @@ test("CLI runner: closed command table, exact argv, canonical cwd and prose outc
 	const runner = new CliRunner({ ...h.env, PANCODE_WEB_CLI: fixture, PANCODE_WEB_COMMAND_LOG: log });
 	try {
 		const commands: { command: CliCommand; argv: string[] }[] = [
-			{ command: { kind: "targets.list" }, argv: ["connections", "--json"] },
-			{ command: { kind: "targets.probe", id: "local-1" }, argv: ["connections", "--json", "--probe", "--connection", "local-1"] },
 			{ command: { kind: "targets.use", id: "local-1" }, argv: ["connections", "use", "local-1"] },
 			{ command: { kind: "targets.remove", id: "local-1" }, argv: ["connections", "remove", "local-1"] },
 			{ command: { kind: "routing.models" }, argv: ["models", "--json", "--offline"] },
@@ -98,7 +96,7 @@ test("CLI runner: closed command table, exact argv, canonical cwd and prose outc
 			commands.map((row) => row.argv),
 		);
 		assert.ok(records.every((row) => row.cwd === h.path));
-		await assert.rejects(runner.run({ kind: "targets.list" }, "."), AppProblem);
+		await assert.rejects(runner.run({ kind: "routing.models" }, "."), AppProblem);
 	} finally {
 		await runner.close();
 		await h.close();
@@ -114,7 +112,7 @@ test("CLI runner: output/time bounds, strict decoding and sanitized exit errors"
 				scenario === "ignore-term" ? 150 : 10_000,
 			);
 			try {
-				await assert.rejects(runner.run({ kind: "targets.list" }, h.path), (error) => {
+				await assert.rejects(runner.run({ kind: "routing.models" }, h.path), (error) => {
 					assert.ok(error instanceof AppProblem);
 					assert.equal(error.problem.code, "operation_failed");
 					assert.ok(!JSON.stringify(error.problem).includes("fixture-private-stderr-content"));
@@ -141,7 +139,7 @@ test("CLI runner: cancellation observes SIGTERM, reaps the child, and closes adm
 	});
 	try {
 		const controller = new AbortController();
-		const pending = runner.run({ kind: "targets.probe", id: "local" }, h.path, controller.signal);
+		const pending = runner.run({ kind: "routing.models" }, h.path, controller.signal);
 		const rejected = assert.rejects(pending, CliCancelled);
 		let pid = 0;
 		for (let i = 0; i < 6000; i++) {
@@ -157,9 +155,9 @@ test("CLI runner: cancellation observes SIGTERM, reaps the child, and closes adm
 		await rejected;
 		assert.ok((await readFile(log, "utf8")).includes("SIGTERM"));
 		assert.throws(() => process.kill(pid, 0), { code: "ESRCH" });
-		const jobs = Array.from({ length: 4 }, () => runner.run({ kind: "targets.list" }, h.path));
+		const jobs = Array.from({ length: 4 }, () => runner.run({ kind: "routing.models" }, h.path));
 		const results = Promise.allSettled(jobs);
-		await assert.rejects(runner.run({ kind: "targets.list" }, h.path), /too many commands or is stopping/);
+		await assert.rejects(runner.run({ kind: "routing.models" }, h.path), /too many commands or is stopping/);
 		await runner.close();
 		assert.ok((await results).every((row) => row.status === "rejected"));
 		assert.equal(runner.activeCount, 0);

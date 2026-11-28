@@ -25,7 +25,6 @@ import { completeEngineText, type EngineTextCompletionResult } from "../../engin
 import { declareRuntimeNoticeProducer } from "../../engine/apis/residency.js";
 import { redactSecretString } from "../../lib/secrets/redaction.js";
 import { endpointCapacityUsage } from "../dispatch/capacity-lease.js";
-import { announceMemoryStepEndpoint } from "../middleware/memory-step-endpoint.js";
 import { prepareBackgroundModelMetadata } from "../providers/background-model-metadata.js";
 import { resolveEffectivePricing } from "../providers/catalog.js";
 import type { ProvidersContract, ResolvedRuntimeTarget, TargetDescriptor } from "../providers/index.js";
@@ -55,6 +54,7 @@ import type { CallJournalOptions } from "../telemetry/call-scope.js";
 import { openCallScope } from "../telemetry/call-scope.js";
 import type { BackgroundRouteFacts, SideShareFacts, SideShareHeld } from "./background-budget.js";
 import { decideBackgroundStep, foldSideShare, SIDE_SHARE_EXEMPT } from "./background-budget.js";
+import { announceMemoryStepEndpoint } from "./memory-step-endpoint.js";
 import { OBSERVATION_PROMPT } from "./observations.js";
 import type { TaskMemoryModelClient, TaskMemoryModelRequest, TaskMemoryStepUsage } from "./task-memory-policy.js";
 import {

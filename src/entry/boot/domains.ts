@@ -39,6 +39,7 @@ import type { BUILTIN_SLASH_COMMANDS } from "../../session-control/slash-command
 import type { AskUserHandler } from "../../tools/ask-user.js";
 import type { BootOptions } from "../boot-options.js";
 import { resolvePanesEnablement } from "../panes-activation.js";
+import { retentionPruners } from "../retention-pruners.js";
 
 /**
  * bootOrchestrator's lets and the names it declares after this stage, read and written live: a copy would miss
@@ -134,7 +135,7 @@ export async function loadBootDomains(input: BootDomainsInput) {
 	const memoryOwner = new MemoryRuntime();
 	// The loader publishes only the query contract; this root keeps the right to register hooks.
 	const middlewareDomain = createMiddlewareDomain();
-	const telemetryDomain = createTelemetryDomain();
+	const telemetryDomain = createTelemetryDomain({ retention: retentionPruners });
 	// Annotated: the module options close over contracts read from this result.
 	const result: LoadResult = await loadDomains(
 		[

@@ -20,8 +20,8 @@ import { validPayload } from "../../src/core/telemetry/events.js";
 import { parseAgentRecipeSchema } from "../../src/domains/agents/recipe-schema.js";
 import { parseCodeReport } from "../../src/domains/agents/result-contract-code-report.js";
 import { normalizeAgentSpec, resolveAgentToolCompatibility } from "../../src/domains/agents/spec.js";
+import { computeSettingsFingerprint } from "../../src/domains/config/settings-fingerprint.js";
 import { isDeterministicOutcomeCode } from "../../src/domains/dispatch/backoff.js";
-import { computeSettingsFingerprint } from "../../src/domains/dispatch/settings-fingerprint.js";
 import { createSshWorkerTransport } from "../../src/domains/dispatch/transport.js";
 import {
 	approvedIdentityForSpec,

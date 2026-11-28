@@ -10,6 +10,7 @@ import { Type } from "typebox";
 import type { DomainContext } from "../../src/core/domain-loader.js";
 import { withTelemetryContext } from "../../src/core/telemetry/context.js";
 import type { EventPayload } from "../../src/core/telemetry/events.js";
+import { telemetrySessionDirectory } from "../../src/core/telemetry/paths.js";
 import { scanTelemetrySegment } from "../../src/core/telemetry/segment.js";
 import { createWorkerContextGuard } from "../../src/domains/context/worker/pressure.js";
 import { foldWorkingSet } from "../../src/domains/context/working-set/fold.js";
@@ -23,7 +24,6 @@ import type { SessionContract, SessionEntryInput } from "../../src/domains/sessi
 import type { MessageEntry, SessionEntry } from "../../src/domains/session/entries.js";
 import { createSessionBundle } from "../../src/domains/session/extension.js";
 import { openCallJournal, readCallJournal } from "../../src/domains/telemetry/call-journal.js";
-import { telemetrySessionDirectory } from "../../src/domains/telemetry/paths.js";
 import {
 	freshShareSource,
 	planShare,

@@ -37,7 +37,6 @@ const DEFAULT_CONTENT_WIDTH = 88;
 
 const DECISIONS_OVERLAY_WIDTH = DEFAULT_CONTENT_WIDTH + 4;
 
-export type { DecisionSelection } from "../../session-control/decision-correction.js";
 export { formatDecisionCorrectionTurn } from "../../session-control/decision-correction.js";
 
 export interface OpenDecisionsOverlayOptions {

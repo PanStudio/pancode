@@ -12,11 +12,11 @@ import {
 	type SessionTreeNode,
 	sessionPaths,
 } from "../../../engine/session.js";
+import { liveSessionOwner } from "../../../lib/heartbeat/live-owner.js";
 import { forgetExtensionSessionState } from "../../extensions/session-state.js";
 import { collectSessionEntries } from "../compaction/session-entries.js";
 import type { SessionMeta } from "../contract.js";
 import type { SessionEntry, SessionInfoEntry } from "../entries.js";
-import { liveSessionOwner } from "../live-owner.js";
 
 /**
  * Domain-level tree-file helpers. Operates directly on the on-disk artifacts

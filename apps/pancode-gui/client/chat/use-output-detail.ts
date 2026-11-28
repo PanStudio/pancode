@@ -1,17 +1,14 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import { useSyncExternalStore } from "react";
+import { readPref, writePref } from "../interaction/prefs.js";
 import { DEFAULT_OUTPUT_DETAIL, type OutputDetail, parseOutputDetail } from "./output-detail-model.js";
 
 const KEY = "pancode-gui-output-detail";
 const listeners = new Set<() => void>();
 
 function read(): OutputDetail {
-	try {
-		return parseOutputDetail(localStorage.getItem(KEY));
-	} catch {
-		return DEFAULT_OUTPUT_DETAIL;
-	}
+	return parseOutputDetail(readPref(KEY));
 }
 let current: OutputDetail | null = null;
 const snapshot = () => {
@@ -41,10 +38,6 @@ export function useOutputDetail(): readonly [OutputDetail, (next: OutputDetail) 
 
 function setOutputDetail(next: OutputDetail) {
 	current = next;
-	try {
-		localStorage.setItem(KEY, next);
-	} catch {
-		/* The choice holds for this tab. */
-	}
+	writePref(KEY, next);
 	for (const listener of listeners) listener();
 }

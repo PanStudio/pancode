@@ -23,7 +23,7 @@ import {
 	savedRoutePatch,
 } from "../client/chat/route-picker-model.js";
 import { sessionFacts } from "../client/chat/session-facts-model.js";
-import { settledKey, settledTurns } from "../client/chat/session-telemetry.js";
+import { settledKey, settledTurns } from "../client/chat/session-usage-model.js";
 import { presentTool } from "../client/chat/tool-presentation.js";
 import {
 	activeTurn,

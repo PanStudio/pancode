@@ -82,7 +82,8 @@ export function campaignFacts(view: ResearchCampaign): Fact[] {
 		},
 		{
 			label: "Agent",
-			value: [campaign.agent.target, campaign.agent.model].filter(Boolean).join("/") || "the workspace's default connection",
+			value:
+				[campaign.agent.target, campaign.agent.model].filter(Boolean).join("/") || "the workspace's default connection",
 		},
 		...(campaign.agent.goal ? [{ label: "Goal", value: campaign.agent.goal }] : []),
 	];
@@ -240,6 +241,20 @@ export function campaignFromProgress(messages: readonly string[]): string | null
 		if (match?.[1]) return match[1];
 	}
 	return null;
+}
+
+/** The campaign eyebrow after its id: a live run outranks the stored state, and a stop appends its reason. */
+export function campaignEyebrowState(
+	view: Pick<ResearchCampaign, "state" | "stop"> | undefined,
+	running: boolean,
+): string {
+	if (!view) return " · OPENING";
+	return ` · ${(running ? "running" : view.state).toUpperCase()}${view.stop ? ` · ${view.stop.reason.toUpperCase()}` : ""}`;
+}
+
+/** An error or noisy stop reads as a failure; any other stop is an ordinary end. */
+export function campaignStopClass(stop: NonNullable<ResearchCampaign["stop"]>): string {
+	return stop.reason === "error" || stop.reason === "noisy" ? "research-error" : "";
 }
 
 /** The progress line without its campaign prefix, for the live log. */

@@ -5,9 +5,9 @@ import { normalizeOutputStyle, type OutputStyle } from "../core/defaults.js";
 import { GLYPH } from "../core/glyphs.js";
 import type { RunIntegrity, RunOrigin, RunValidation } from "../core/run-row.js";
 import { factKnownValue } from "../core/telemetry/known.js";
-import { loadRunTelemetrySource, runTelemetryJournalStamp } from "../domains/session/telemetry-source.js";
 import { sizeCallJournalCache } from "../domains/telemetry/call-journal.js";
 import { runTelemetry } from "../domains/telemetry/read-model-runs.js";
+import { loadRunTelemetrySource, runTelemetryJournalStamp } from "../domains/telemetry/telemetry-source.js";
 import { isStructuredAnswerText } from "../domains/telemetry/worker-progress.js";
 /**
  * The workers dashboard's model: which workers the board shows and what each
@@ -29,6 +29,7 @@ import { isStructuredAnswerText } from "../domains/telemetry/worker-progress.js"
 
 import { closeSync, openSync, readFileSync, readSync, statSync } from "node:fs";
 import { StringDecoder } from "node:string_decoder";
+import { HOST_VERIFICATION_EVENT, type VerificationSlotState } from "../core/host-verification.js";
 import { pancodeStateDir } from "../core/xdg.js";
 import { refusedCallsWords, reviewFindingsWords } from "../domains/dispatch/failure-headline.js";
 import {
@@ -41,7 +42,6 @@ import { readRunResultFacts } from "../domains/dispatch/run-result-facts.js";
 import type { LedgerSnapshot } from "../domains/dispatch/state.js";
 import { readFleetRun, readLedgerSnapshot } from "../domains/dispatch/state.js";
 import type { RunEnvelope } from "../domains/dispatch/types.js";
-import { HOST_VERIFICATION_EVENT, type VerificationSlotState } from "../domains/dispatch/verification-slot.js";
 import { trustStateWord, trustVerdictWord, validationClause } from "../domains/evidence/trust-projection.js";
 
 import type { fleetInspectionScope } from "./fleet-project-scope.js";

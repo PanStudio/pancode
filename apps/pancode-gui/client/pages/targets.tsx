@@ -15,7 +15,7 @@ import { useRevealCurrent } from "../interaction/use-reveal-current.js";
 import { capabilityLabels } from "./model-picker-model.js";
 import { ConfigurationTabs } from "./settings.js";
 import { ConnectionSetup } from "./target-onboarding.js";
-import { connectionOperationView } from "./targets-model.js";
+import { connectionOperationView, targetAvailability, targetEndpoint } from "./targets-model.js";
 import { useWorkspaceSelection, WorkspacePicker } from "./workspace-selection.js";
 
 type TargetAction = "probe" | "use" | "signout" | "remove";
@@ -58,7 +58,13 @@ export function TargetsPage({ client, view }: { client: Client; view: "targets" 
 					undefined,
 					request.epoch ?? undefined,
 				)
-			: client.call(user, { ...emptyInput, params: { connectionId: targetId } }, request.key, undefined, request.epoch ?? undefined);
+			: client.call(
+					user,
+					{ ...emptyInput, params: { connectionId: targetId } },
+					request.key,
+					undefined,
+					request.epoch ?? undefined,
+				);
 	});
 	const { operation, request, busy } = tracking;
 	const operationView = operation.data ? connectionOperationView(operation.data) : null;
@@ -141,13 +147,10 @@ export function TargetsPage({ client, view }: { client: Client; view: "targets" 
 									{target.runtime} · {target.tier}
 								</p>
 								<p className="panel-marks">
-									<StatusMark
-										tone={target.health === "unknown" ? "unverified" : target.available ? "success" : "warn"}
-										label={target.health === "unknown" ? "Availability unknown" : target.available ? "Available" : "Unavailable"}
-									/>
+									<StatusMark {...targetAvailability(target)} />
 									<span>Health {humanizeKey(target.health).toLowerCase()}</span>
 								</p>
-								<p className="config-path">{target.url ?? (target.builtIn ? "Built-in endpoint" : "Endpoint not reported")}</p>
+								<p className="config-path">{targetEndpoint(target)}</p>
 								<dl className="connection-card__model">
 									<dt>Default model</dt>
 									<dd>{target.defaultModel ?? "Not reported"}</dd>

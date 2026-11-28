@@ -17,35 +17,41 @@ import { telemetryHub } from "../../../core/telemetry/hub.js";
 import { pricingBasisFields } from "../../../core/telemetry/pricing.js";
 import { sessionPaths } from "../../../engine/session.js";
 import type { AgentMessage, EngineModel } from "../../../engine/types.js";
-import type { MemoryRuntime } from "../../memory/runtime.js";
-import { prepareBackgroundModelMetadata } from "../../providers/background-model-metadata.js";
 import type { EffectivePricing } from "../../providers/catalog.js";
-import { resolveEffectivePricing } from "../../providers/catalog.js";
 import type { ProvidersContract, ResolvedRuntimeTarget, RuntimeTier } from "../../providers/index.js";
 import {
 	applyModelCapabilityPatch,
 	endpointCapacitiesForStatuses,
 	endpointCapacityFor,
 	gatewayEndpointKey,
+	LOCAL_API_KEY_FALLBACK,
 	modelEndpointKey,
+	prepareBackgroundModelMetadata,
 	refineRuntimeTargetWithModelHints,
 	registerForegroundStream,
+	resolveEffectivePricing,
+	resolveModelReference,
 	resolveRuntimeTarget,
+	resolveSideCallAuth,
 	targetRequiresAuth,
 } from "../../providers/index.js";
-import { resolveModelReference } from "../../providers/resolver.js";
-import { LOCAL_API_KEY_FALLBACK, resolveSideCallAuth } from "../../providers/side-call-auth.js";
 import type { SchedulingContract } from "../../scheduling/contract.js";
+import type { SessionContract } from "../../session/contract.js";
+import type { CompactionSummaryEntry, CompactionTrigger, SessionEntry } from "../../session/entries.js";
+import {
+	continuityProjectionTokens,
+	estimateAgentContextBreakdown,
+	filterEntriesToActivePath,
+	firstTokenStallLimitMs,
+	observationCheckpoint,
+	observationSourceUnits,
+	readCompactionSystemPrompt,
+	resolveContinuityProjection,
+	withProviderCheckpointMeasurements,
+} from "../../session/index.js";
 import type { AdmissionHold } from "../../telemetry/call-scope.js";
 import type { TelemetryContract } from "../../telemetry/index.js";
-import { estimateAgentContextBreakdown } from "../context-accounting.js";
-import { continuityProjectionTokens, resolveContinuityProjection } from "../continuity/projection.js";
-import type { SessionContract } from "../contract.js";
-import type { CompactionSummaryEntry, CompactionTrigger, SessionEntry } from "../entries.js";
-import { withProviderCheckpointMeasurements } from "../entries.js";
-import { observationCheckpoint, observationSourceUnits } from "../memory-source.js";
-import { firstTokenStallLimitMs } from "../retry.js";
-import { filterEntriesToActivePath } from "../tree/active-path.js";
+import type { MemoryRuntime } from "../runtime.js";
 import {
 	type CompactInput,
 	type CompactionCallObservation,
@@ -55,7 +61,6 @@ import {
 	compactionFailureOf,
 	tagCompactionFailure,
 } from "./compact.js";
-import { readCompactionSystemPrompt } from "./system-prompt.js";
 
 /** The live budget a caller threads into one compaction. */
 export type CompactionFlowBudget = Pick<

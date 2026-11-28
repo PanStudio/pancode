@@ -26,6 +26,7 @@ import {
 	reconcileRuns,
 	type SteerOutcome,
 	steerOutcome,
+	workerCount,
 } from "./fleet-facts.js";
 import "./approval.css";
 import { sessionCapabilitiesQuery } from "../api/queries.js";
@@ -232,5 +233,4 @@ export const LiveWorkers = memo(function LiveWorkers({
 	);
 });
 
-export const workerCount = (count: number): string => (count === 1 ? "1 worker" : `${count} workers`);
 const liveWorkersLabel = (count: number): string => `${workerCount(count)} running`;

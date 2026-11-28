@@ -21,6 +21,7 @@ import { resolvePackageRoot } from "../core/package-root.js";
 import { formatSettingsLayerIssue } from "../core/settings-layer-diagnostics.js";
 import type { SettingsOrigin } from "../core/settings-layers.js";
 import { readLayeredSettings, settingsSourceFor, settingsValueFor } from "../core/settings-layers.js";
+import { telemetryRoot } from "../core/telemetry/paths.js";
 import { isRecord } from "../core/type-guards.js";
 import { pancodeDataDir, pancodeStateDir } from "../core/xdg.js";
 import { renderEffectivePromptContext } from "../domains/context/compiled-handbook.js";
@@ -39,7 +40,6 @@ import { defaultScopedResourceRoots } from "../domains/resources/common-loader.j
 import { createSafetyPolicyEngine } from "../domains/safety/policy-engine.js";
 import { ceilChars } from "../domains/session/context-accounting.js";
 import { HOOK_RUN_WINDOW_DAYS, workspaceHookRuns } from "../domains/telemetry/hook-runs.js";
-import { telemetryRoot } from "../domains/telemetry/paths.js";
 import { capturedHookSourcesFor } from "../entry/extension-hook-sources.js";
 
 export type CustomizationCategory =
@@ -438,6 +438,33 @@ function inspectSafetyAndMemory(cwd: string, graph: CustomizationGraph): void {
 	} catch (err) {
 		graph.issues.push(`memory: ${err instanceof Error ? err.message : String(err)}`);
 	}
+}
+
+/** The prefixes the inspectors above start an issue line with, by the category they inspect. */
+const ISSUE_PREFIX_CATEGORY: Readonly<Record<string, CustomizationCategory>> = {
+	settings: "settings",
+	"pancode-md": "pancode-md",
+	rule: "rule",
+	rules: "rule",
+	"operator-profile": "operator-profile",
+	hook: "hook",
+	hooks: "hook",
+	"hook-runs": "hook",
+	extensions: "extension",
+	skills: "skill-root",
+	prompts: "prompt-root",
+	agents: "agent-root",
+	playbooks: "playbook-root",
+	safety: "safety",
+	memory: "memory",
+};
+
+/** The category a `graph.issues` line belongs to, or null for a line no inspector here wrote. */
+export function customizationIssueCategory(issue: string): CustomizationCategory | null {
+	const prefix = /^[a-z-]+/.exec(issue)?.[0];
+	return prefix !== undefined && Object.hasOwn(ISSUE_PREFIX_CATEGORY, prefix)
+		? (ISSUE_PREFIX_CATEGORY[prefix] ?? null)
+		: null;
 }
 
 /**

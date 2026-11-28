@@ -1,11 +1,10 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import { boundedExternalDiagnostic } from "../../../core/external-diagnostic.js";
+import { UNMEDIATED_ENFORCEMENT } from "../../../core/runtime-enforcement.js";
 import { runCommandVector } from "../../../core/safe-exec.js";
 import type { Api, Model } from "../../../engine/types.js";
-
 import { synthesizeCatalogBackedModel } from "../catalog.js";
-import { UNMEDIATED_ENFORCEMENT } from "../runtime-enforcement.js";
 import type { CapabilityFlags } from "../types/capability-flags.js";
 import type { KnowledgeBaseHit } from "../types/knowledge-base.js";
 import type {

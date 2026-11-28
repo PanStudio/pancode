@@ -35,13 +35,18 @@ const httpModules = new Map([
 	// The exact loaded build, so a remote node's GUI is driven by this client only when both builds agree.
 	["src/core/build-info.ts", new Set(["runningBuildId"])],
 	["src/acp/transport.ts", new Set(["createStdioTransport", "AcpJsonRpcTransport"])],
-	["src/acp/errors.ts", new Set(["AcpProcessError", "AcpTimeoutError", "AcpRequestError", "AcpProtocolError"])],
+	["src/acp/errors.ts", new Set(["AcpTimeoutError", "AcpProtocolError"])],
 	...acpWireTypes.map((path) => [path, new Set(["*"])] as const),
-	["src/core/xdg.ts", new Set(["pancodeStateDir", "pancodeDataDir", "pancodeConfigDir", "resolvePancodeDirs"])],
+	["src/core/xdg.ts", new Set(["resolvePancodeDirs", "xdgBaseDir"])],
 	["src/core/package-root.ts", new Set(["resolvePackageRoot"])],
 	["src/core/path-containment.ts", new Set(["relativePathEscapes"])],
 	["src/core/context-operation.ts", new Set(["ACP_CONTEXT_STATUS_METHOD"])],
-	["src/core/process-identity.ts", new Set(["processAlive", "processBirthToken"])],
+	[
+		"src/core/process-identity.ts",
+		new Set(["ownerIdentity", "ownerState", "processAlive", "processBirthToken", "processIsZombie"]),
+	],
+	// The background setup's publish lock is the engine's one advisory file lock.
+	["src/core/state-file-lock.ts", new Set(["StateFileLockTimeoutError", "withStateFileLock"])],
 	["src/domains/install/install-method.ts", new Set(["readInstallerRecord"])],
 	["src/domains/install/version.ts", new Set(["getVersionInfo"])],
 	// The approval card reads the scope out of the session option the engine names with this prefix.
@@ -56,28 +61,19 @@ const httpModules = new Map([
 const wireDtoNames = new Set([
 	"CacheReportV1",
 	"CallFilter",
-	"CallRowV1",
-	"CallsReportV1",
 	"CostReportV1",
 	"ExplanationV1",
-	"FactRef",
 	"Quantity",
 	"RunEvidenceV1",
-	"RunRowV1",
 	"RunTelemetryV1",
 	"RunTimelineEntry",
-	"RunTimelineV1",
 	"SessionTelemetryV1",
-	"TelemetryTopic",
 	"TelemetryUpdateV1",
 	"TimelineEntry",
-	"TimelineV1",
-	"WhyStoppedV1",
 	"CallFilterSchema",
 	"FactRefSchema",
 	"parseFactRef",
 	"TELEMETRY_DTO_SCHEMAS",
-	"TELEMETRY_TOPICS",
 ]);
 const adapters = new Set([
 	"src/domains/interop/index.ts",
@@ -90,13 +86,7 @@ const adapters = new Set([
 	"src/domains/resources/hub-inventory.ts",
 	"src/domains/resources/hub-actions.ts",
 	"src/domains/extensions/state.ts",
-	"src/domains/evidence/provenance.ts",
-	"src/domains/evidence/trust-projection.ts",
-	"src/domains/evidence/types.ts",
-	"src/domains/dispatch/state.ts",
 	"src/domains/dispatch/types.ts",
-	"src/domains/dispatch/council-topology.ts",
-	"src/domains/dispatch/gate-topology.ts",
 	"src/core/settings-layers.ts",
 	"src/core/project-target-urls.ts",
 	"src/core/settings-controls.ts",
@@ -109,13 +99,12 @@ const adapters = new Set([
 	"src/domains/providers/registry.ts",
 	"src/domains/providers/runtimes/builtins.ts",
 	"src/domains/providers/settings-facts.ts",
-	"src/domains/providers/support.ts",
 	"src/domains/providers/auth/index.ts",
-	"src/domains/providers/auth/storage.ts",
 	"src/cli/config-inspect.ts",
 	"src/core/package-root.ts",
 	"src/lib/programs/index.ts",
 	"src/core/xdg.ts",
+	"src/core/path-containment.ts",
 	"src/core/cwd-hash.ts",
 	"src/core/workspace-files.ts",
 	"src/domains/session/history.ts",
@@ -123,10 +112,6 @@ const adapters = new Set([
 	"src/domains/telemetry/index.ts",
 	"src/domains/session/index.ts",
 	"src/domains/evidence/index.ts",
-	"src/domains/telemetry/read-model.ts",
-	"src/domains/session/telemetry-source.ts",
-	// The repository window `usage report` folds, so a repo reference explains to the CLI's number (#434 §11.4).
-	"src/domains/telemetry/usage-window.ts",
 	// The run-history read model the fleet and trace adapters page through.
 	"src/domains/dispatch/index.ts",
 	// The saved-task list row ACP `session/list` sends, so the ledger read redacts and bounds as the engine does.
@@ -159,7 +144,7 @@ const testModules = new Set([
 	"tests/harness/telemetry-view.ts",
 	"tests/harness/telemetry-lies.ts",
 	"src/domains/telemetry/call-journal.ts",
-	"src/domains/telemetry/paths.ts",
+	"src/core/telemetry/paths.ts",
 	"src/core/xdg.ts",
 	"src/domains/evidence/trust-status.ts",
 	"src/core/telemetry/schemas.ts",
@@ -208,10 +193,16 @@ function violations(file: string, source: string): string[] {
 			errors.push("Worker outside chokepoint");
 		if (production && /^(?:client|contracts)\//.test(name) && /^(node:)/.test(specifier) && !typeOnly)
 			errors.push("Node runtime dependency on browser surface");
+		// A view model is plain data in, plain data out: no React, styles, query cache or network client.
+		const model = production && /^client\/.*-model\.ts$/.test(name);
+		if (model && (/^(?:react|react-dom)(?:\/|$)|^@tanstack\//.test(specifier) || specifier.endsWith(".css")))
+			errors.push("UI dependency in a pure model");
 		if (!specifier.startsWith(".")) return;
 		const target = resolve(dirname(file), specifier).replace(/\.js$/, ".ts");
 		const localTarget = relative(app, target),
 			rootTarget = relative(root, target);
+		if (model && !typeOnly && (localTarget === "client/api/client.ts" || localTarget === "client/api/events.ts"))
+			errors.push("network client in a pure model");
 		if (
 			production &&
 			localTarget === "server/pancode/http-shims.ts" &&
@@ -323,6 +314,14 @@ test("boundary checker rejects representative bypasses", () => {
 		violations(resolve(app, "server/pancode/wire-runtime.ts"), 'export * from "../../../../src/acp/types.js";').length >
 			0,
 	);
+	const model = resolve(app, "client/chat/escape-model.ts");
+	for (const source of [
+		'import { useState } from "react";',
+		'import { useQuery } from "@tanstack/react-query";',
+		'import "./escape.css";',
+		'import { api } from "../api/client.js";',
+	])
+		assert.ok(violations(model, source).length > 0, source);
 	const client = resolve(app, "client/chat/escape.ts");
 	assert.deepEqual(
 		violations(client, 'import { actionClassWords } from "../../../../src/core/views/approval-words.js";'),

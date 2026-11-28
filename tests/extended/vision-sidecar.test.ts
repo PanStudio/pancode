@@ -5,11 +5,7 @@ import { it } from "node:test";
 import { DEFAULT_SETTINGS } from "../../src/core/defaults.js";
 import type { ProvidersContract } from "../../src/domains/providers/contract.js";
 import llamacpp from "../../src/domains/providers/runtimes/local-native/llamacpp.js";
-import {
-	analyzeVision,
-	createVisionSidecar,
-	visionObservationText,
-} from "../../src/domains/providers/vision-sidecar.js";
+import { analyzeVision, createVisionSidecar, visionObservationText } from "../../src/tools/vision-sidecar.js";
 
 const image = { type: "image" as const, mimeType: "image/png", data: "aGVsbG8=" };
 const binding = {

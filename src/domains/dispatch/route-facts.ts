@@ -83,7 +83,6 @@ function isFresh(probedAt: string, now: number, freshnessMs: number): boolean {
 
 export interface RouteFactEvaluationOptions {
 	now?: number;
-	freshnessMs?: number;
 }
 
 /**
@@ -98,7 +97,6 @@ export function evaluateRouteFacts(
 	options?: RouteFactEvaluationOptions,
 ): RouteFactVerdict {
 	const now = options?.now ?? Date.now();
-	const freshnessMs = options?.freshnessMs ?? ROUTE_FACT_FRESHNESS_MS;
 	const unknowns: string[] = [];
 
 	const fact = facts.find((entry) => entry.nodeId === requirement.nodeId && entry.targetId === requirement.targetId);
@@ -111,7 +109,7 @@ export function evaluateRouteFacts(
 			unknowns,
 		};
 	}
-	const fresh = isFresh(fact.probedAt, now, freshnessMs);
+	const fresh = isFresh(fact.probedAt, now, ROUTE_FACT_FRESHNESS_MS);
 	if (fact.endpointIdentityHash !== requirement.endpointIdentityHash) {
 		return {
 			ok: false,

@@ -40,7 +40,8 @@ import { ResourcesDomainModule } from "../domains/resources/module.js";
 import { SafetyDomainModule } from "../domains/safety/module.js";
 import { SchedulingDomainModule } from "../domains/scheduling/module.js";
 import { SessionDomainModule } from "../domains/session/module.js";
-import { TelemetryDomainModule } from "../domains/telemetry/module.js";
+import { createTelemetryDomainModule } from "../domains/telemetry/module.js";
+import { retentionPruners } from "../entry/retention-pruners.js";
 import { armInternalDispatchDeadline } from "./internal-dispatch.js";
 import { createCliWorkerHooks } from "./worker-extension-hooks.js";
 
@@ -591,7 +592,7 @@ async function loadBootstrapDispatch(): Promise<{
 		AgentsDomainModule,
 		workerHooks.middlewareModule,
 		SessionDomainModule,
-		TelemetryDomainModule,
+		createTelemetryDomainModule({ retention: retentionPruners }),
 		SchedulingDomainModule,
 		createDispatchDomainModule({ workerHooks: workerHooks.workerHooks }),
 	]);

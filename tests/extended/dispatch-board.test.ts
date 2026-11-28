@@ -4,11 +4,11 @@ import { deepStrictEqual, doesNotMatch, match, ok, strictEqual } from "node:asse
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, describe, it } from "node:test";
+import { resolveToolBudgetEnvelope } from "../../src/core/run-budget-envelope.js";
 import { createTelemetryHub } from "../../src/core/telemetry/hub.js";
 import type { DispatchCompletedPayload, DispatchEnqueuedPayload } from "../../src/core/telemetry/live-events.js";
 import { sumFacts, sumPricing } from "../../src/core/telemetry/pricing.js";
 import { pancodeStateDir } from "../../src/core/xdg.js";
-import { resolveToolBudgetEnvelope } from "../../src/domains/dispatch/budget-envelope.js";
 import type { DispatchContract, DispatchSnapshot } from "../../src/domains/dispatch/contract.js";
 import { finishRunResult } from "../../src/domains/dispatch/run-settlement.js";
 import { composeTrustStatus, inspectRunEvidence } from "../../src/domains/evidence/index.js";
@@ -136,6 +136,7 @@ afterEach(() => {
 function setup(readers: TelemetryRunReaders = {}) {
 	const bus = createTelemetryHub();
 	const projection = createTelemetryProjection(bus, {
+		summarizeTrust: summarizeTrustStatus,
 		...readers,
 	});
 	projections.push(projection);

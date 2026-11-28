@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { telemetryRunDirectory } from "../../../../src/core/telemetry/paths.js";
 import {
 	materializePendingGateDecision,
 	stagePendingGateDecision,
@@ -8,7 +9,6 @@ import {
 import { writeFleetRun } from "../../../../src/domains/dispatch/state.js";
 import type { RunEnvelope } from "../../../../src/domains/dispatch/types.js";
 import { openCallJournal } from "../../../../src/domains/telemetry/call-journal.js";
-import { telemetryRunDirectory } from "../../../../src/domains/telemetry/paths.js";
 import { fixtureReceiptDraft, measuredRunSpend } from "../../../../tests/harness/receipt.js";
 import { writeSettledRun } from "../../../../tests/harness/settled-run.js";
 

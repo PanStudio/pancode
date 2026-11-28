@@ -697,6 +697,119 @@ export function viewFor(state: SetupState | null, previous: WizardView | null): 
 	}
 }
 
+// ---- frame ---------------------------------------------------------------------------------------
+
+export type StepState = "done" | "current" | "next";
+
+/** Each stage's mark in the stepper; a finished setup marks every stage done. */
+export function stepStates(stages: readonly StageId[], current: StageId | null, done: boolean): StepState[] {
+	const at = current === null ? -1 : stages.indexOf(current);
+	return stages.map((_, index) => (done || index < at ? "done" : index === at ? "current" : "next"));
+}
+
+/** What the page title announces for a view. */
+export function viewTitle(view: WizardView): string {
+	if (view.kind === "welcome") return "Welcome to PanCode";
+	if (view.kind === "starting") return "Starting setup";
+	if (view.kind === "working") return view.label;
+	if (view.kind === "saved") return "Connection saved";
+	if (view.kind === "failed") return "Setup stopped";
+	if (view.kind === "cancelled") return "Setup cancelled";
+	return view.prompt.heading[0] || "Continue setup";
+}
+
+/**
+ * The view on screen. A first run shows its own welcome until the person starts, and a short working spell
+ * keeps the last step (`held`) up so it does not flash.
+ */
+export function displayedView(
+	intro: "booting" | "welcome" | "done",
+	raw: WizardView,
+	held: StepView | null,
+	workingShown: boolean,
+): WizardView {
+	if (intro === "booting") return { kind: "starting" };
+	if (intro === "welcome" && raw.kind !== "failed") return { kind: "welcome" };
+	if (raw.kind === "working" && !workingShown && held !== null) return held;
+	return raw;
+}
+
+export type StageKey = StageId | "welcome" | "saved";
+
+/** The stepper's stage, the stage scene and the caption key for what is on screen. */
+export function wizardFrame(
+	phase: "setup" | "workspace",
+	view: WizardView,
+	saved: boolean,
+): { current: StageId | null; scene: SceneId; stageKey: StageKey } {
+	if (phase === "workspace") return { current: "workspace", scene: "read", stageKey: "workspace" };
+	const current = "stage" in view ? view.stage : null;
+	return {
+		current,
+		scene: "scene" in view ? view.scene : "read",
+		stageKey: view.kind === "welcome" || view.kind === "starting" ? "welcome" : saved ? "saved" : (current ?? "provider"),
+	};
+}
+
+/**
+ * The stage carries the spinner before the first step exists and while a first run has no card yet;
+ * otherwise the card shows what is being waited on.
+ */
+export function stageWorkingLabel(view: WizardView, startingUp: boolean): string | null {
+	return view.kind === "starting" || startingUp ? "Starting setup" : null;
+}
+
+const PROBE_VIEWS: ReadonlySet<WizardView["kind"]> = new Set([
+	"model",
+	"model-missing",
+	"detected",
+	"credential-source",
+	"credential-key",
+	"credential-env",
+	"review",
+]);
+
+/** The endpoint check's result shows on the steps it informs. */
+export function showsProbe(view: WizardView): boolean {
+	return PROBE_VIEWS.has(view.kind);
+}
+
+export function welcomeTitle(mode: WizardMode): string {
+	return mode === "first" ? "Welcome to PanCode." : mode === "add" ? "Add a connection." : "Repair your connection.";
+}
+
+/** A choice label without the CLI's "(default)" suffix, and whether it carried one. */
+export function defaultMarked(label: string): { text: string; recommended: boolean } {
+	return { text: label.replace(/\s*\(default\)$/u, ""), recommended: /\(default\)/u.test(label) };
+}
+
+/** A review fact's mark and its words for a screen reader; a null glyph draws the check icon. */
+export const FACT_MARKS: Readonly<
+	Record<ReviewFact["tone"], { readonly glyph: string | null; readonly spoken: string }>
+> = {
+	ok: { glyph: null, spoken: "verified" },
+	warn: { glyph: "!", spoken: "not verified" },
+	info: { glyph: "·", spoken: "" },
+};
+
+/** Where arrow keys, Home and End move focus in a tile grid; null for any other key. */
+export function tileTarget(key: string, at: number, count: number): number | null {
+	switch (key) {
+		case "Home":
+			return 0;
+		case "End":
+			return count - 1;
+		case "ArrowRight":
+		case "ArrowDown":
+			return Math.min(count - 1, at + 1);
+		case "ArrowLeft":
+		case "ArrowUp":
+			return Math.max(0, at - 1);
+		default:
+			return null;
+	}
+}
+
 // ---- answers -------------------------------------------------------------------------------------
 
 export const selectAnswer = (prompt: Prompt, choice: Choice): SetupAnswer => ({
