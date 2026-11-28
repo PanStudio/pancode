@@ -17,7 +17,7 @@ import {
 	removePlugin,
 	updatePlugin,
 } from "../../src/domains/plugins/index.js";
-import { HUB_KINDS, type HubEntryKind } from "../../src/domains/resources/hub-types.js";
+import { HUB_PLUGIN_BACKED_KINDS, type HubEntryKind } from "../../src/domains/resources/hub-types.js";
 import { loadPromptTemplates } from "../../src/domains/resources/prompts/loader.js";
 import { loadSkills } from "../../src/domains/resources/skills/loader.js";
 import { trustProjectPackages } from "../harness/project-trust.js";
@@ -53,7 +53,7 @@ function fixture(root: string, kind: HubEntryKind, version = "1.0.0", carries?: 
 	);
 }
 
-for (const kind of HUB_KINDS)
+for (const kind of HUB_PLUGIN_BACKED_KINDS)
 	test(`${kind} uses the same scoped manifest, pin, provenance and lifecycle`, async () => {
 		const env = await isolatePancodeEnv(`hub-${kind}-`);
 		try {
