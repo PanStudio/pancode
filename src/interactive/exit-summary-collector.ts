@@ -797,7 +797,8 @@ export function createExitSummaryCollector(deps: CollectorDeps) {
 			} catch {
 				// An unreadable ledger counts no ledger outcome; the card still closes with the spend it has.
 			}
-			const spend = exitSpend(deps.telemetry.read?.live(), visitFrom, entries, workers.keys());
+			const ownWorkerRunIds = [...workers.keys()].filter((runId) => (runSessions.get(runId) ?? session.id) === session.id);
+			const spend = exitSpend(deps.telemetry.read?.live(), visitFrom, entries, ownWorkerRunIds);
 			const autonomy = deps.autonomy?.() ?? null;
 			const sessions = new Set([...visitSessions, session.id]).size;
 			const liveTurns = Math.max(0, (deps.getTurns() ?? 0) - baseTurns - (deps.undeliveredTurns?.() ?? 0));

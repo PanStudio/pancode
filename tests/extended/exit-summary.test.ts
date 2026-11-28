@@ -713,16 +713,18 @@ test("the exit card divides the session's spend over its distinct verified outco
 		tasks: 0,
 		reviews: 0,
 	});
-	// A passing review gate is a judged outcome, once per result it judged; a failed or compete verdict is none, and a
-	// pass on a run whose host verification already counts is that run's outcome.
-	const gate = (topology: "review" | "compete", outcome: string, runId: string, digest: string) => ({
+	// A passing independent review gate is a judged outcome, once per result it judged; a failed, non-independent, or
+	// compete verdict is none, and a pass on a run whose host verification already counts is that run's outcome.
+	const gate = (topology: "review" | "compete", outcome: string, runId: string, digest: string, independent = true) => ({
 		topology,
 		outcome,
+		independent,
 		subjects: [{ runId, digest }],
 	});
 	const gates = [
 		gate("review", "pass", "run-build", "d1"),
 		gate("review", "pass", "run-build", "d1"),
+		gate("review", "pass", "run-self", "d5", false),
 		gate("review", "fail", "run-other", "d2"),
 		gate("compete", "winner", "run-other", "d3"),
 		gate("review", "pass", "run-b", "d4"),

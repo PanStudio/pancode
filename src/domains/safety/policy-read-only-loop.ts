@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import type { Dirent } from "node:fs";
-import { lstatSync, readdirSync } from "node:fs";
+import { lstatSync, readdirSync, statSync } from "node:fs";
 import path from "node:path";
 import type { ReadScopeInputs } from "./policy-read-only-inspectors.js";
 import {
@@ -21,17 +21,7 @@ export const READ_ONLY_LOOP_RULE_ID = "builtin:read-only-loop";
  * list file at all: sed, find and every command with an output or in-place flag stay out even where they are a
  * read-only step outside a loop.
  */
-const LOOP_BODY_COMMANDS: ReadonlySet<string> = new Set([
-	"cat",
-	"head",
-	"tail",
-	"wc",
-	"echo",
-	"grep",
-	"ls",
-	"stat",
-	"file",
-]);
+const LOOP_BODY_COMMANDS: ReadonlySet<string> = new Set(["cat", "head", "tail", "wc", "echo", "grep", "ls", "stat"]);
 
 /** Lowercase only: PATH, IFS, CDPATH and every other variable the shell reads are uppercase. */
 const LOOP_NAME = /^[a-z_][a-z0-9_]*$/u;
@@ -42,8 +32,44 @@ const PLAIN_VALUE = /^[A-Za-z0-9._+@%,:=/-]+$/u;
 /** find actions that print words other than the paths it visits. */
 const FIND_FREE_OUTPUT = /^-(?:printf|print0|ls|fprint|fprint0|fprintf|fls)$/u;
 
-/** find words that come before its start points. */
-const FIND_LEADING_OPTION = /^-(?:[HLP]|O\d*)$/u;
+/** find leading options that neither follow symlinks nor take a separate operand. */
+const FIND_LEADING_OPTION = /^-(?:P|O\d*)$/u;
+
+/**
+ * A double-quoted `echo` label (`"== $f"`, `"=== ${f} ==="`) whose every `$` is strictly `$name` or `${name}` with no
+ * escapes, nested quotes, or command substitutions. Returns the word with each reference replaced by `x` for the
+ * inspector check, or null.
+ */
+function echoLabelReference(source: string, name: string): string | null {
+	if (source.length < 4 || !source.startsWith('"') || !source.endsWith('"')) return null;
+	const inner = source.slice(1, -1);
+	if (/["\\`]/u.test(inner)) return null;
+	const bare = `$${name}`;
+	const braced = `\${${name}}`;
+	let out = "";
+	let matched = 0;
+	for (let index = 0; index < inner.length; ) {
+		if (inner[index] !== "$") {
+			out += inner[index];
+			index += 1;
+			continue;
+		}
+		if (inner.startsWith(braced, index)) {
+			out += "x";
+			matched += 1;
+			index += braced.length;
+			continue;
+		}
+		if (inner.startsWith(bare, index) && !/[A-Za-z0-9_]/u.test(inner[index + bare.length] ?? "")) {
+			out += "x";
+			matched += 1;
+			index += bare.length;
+			continue;
+		}
+		return null;
+	}
+	return matched > 0 ? `"${out}"` : null;
+}
 
 export interface ReadOnlyLoop {
 	/** Segments the loop spans, from its `for` through its `done`. */
@@ -75,6 +101,7 @@ export function readOnlyLoop(
 	const raw = (token: ShellToken): string => command.slice(token.start, token.end);
 	if (forWord === undefined || raw(forWord) !== "for" || nameWord === undefined || inWord === undefined) return null;
 	if (raw(inWord) !== "in" || !LOOP_NAME.test(raw(nameWord)) || joins[at + 1] !== ";") return null;
+	if (listWords.length === 0 || listWords.some((word) => word.unterminated)) return null;
 	const name = nameWord.value;
 	const doSegment = segments[at + 1];
 	if (doSegment === undefined || doSegment[0] === undefined || raw(doSegment[0]) !== "do") return null;
@@ -98,12 +125,27 @@ export function readOnlyLoop(
 
 	const provenSpans: Array<{ start: number; end: number }> = [];
 	const references = new Set([`$${name}`, `\${${name}}`, `"$${name}"`, `"\${${name}}"`]);
+	const echoSubstitutions = new Map<ShellToken, string>();
 	for (const { words } of body) {
 		const [commandWord] = words;
-		if (commandWord === undefined || !LOOP_BODY_COMMANDS.has(raw(commandWord))) return null;
+		const commandName = commandWord === undefined ? "" : raw(commandWord);
+		if (!LOOP_BODY_COMMANDS.has(commandName)) return null;
 		for (const word of words) {
-			if (references.has(raw(word))) provenSpans.push({ start: word.start, end: word.end });
-			else if (word.substitutions !== undefined || /[$`]/u.test(raw(word))) return null;
+			if (word.unterminated) return null;
+			const source = raw(word);
+			if (references.has(source)) {
+				provenSpans.push({ start: word.start, end: word.end });
+				continue;
+			}
+			if (commandName === "echo" && word !== commandWord && word.substitutions === undefined) {
+				const substituted = echoLabelReference(source, name);
+				if (substituted !== null) {
+					echoSubstitutions.set(word, substituted);
+					provenSpans.push({ start: word.start, end: word.end });
+					continue;
+				}
+			}
+			if (word.substitutions !== undefined || /[$`]/u.test(source)) return null;
 		}
 	}
 	const finds = listWords.filter((word) => word.substitutions !== undefined);
@@ -130,10 +172,14 @@ export function readOnlyLoop(
 			);
 			return null;
 		}
+		const replacement = values.length > 0 ? values.join(" ") : "x";
 		for (const { words, piped } of body) {
 			const text = words
-				.map((word) => (references.has(raw(word)) ? values.join(" ") : raw(word)))
-				.filter((part) => part.length > 0)
+				.map((word) => {
+					const echoLabel = echoSubstitutions.get(word);
+					if (echoLabel !== undefined) return echoLabel;
+					return references.has(raw(word)) ? replacement : raw(word);
+				})
 				.join(" ");
 			if (readOnlyInspectionRule(scanShellLike(text), text, from, workspaceRoot, readScope, piped) === null) return null;
 		}
@@ -163,16 +209,28 @@ function loopListValues(
 
 /** START and every entry under it, for a recognized read-only find that prints only the paths it visits. */
 function findValues(inner: string, cwd: string, workspaceRoot: string, readScope: ReadScopeInputs): string[] | null {
+	if (inner.includes("#") || inner.includes("\n")) return null;
 	const words = scanShellLike(inner);
-	if (words.length === 0 || words.some((word) => word.operator || /[$`]/u.test(inner.slice(word.start, word.end))))
+	if (
+		words.length === 0 ||
+		words.some((word) => word.operator || word.unterminated || /[$`]/u.test(inner.slice(word.start, word.end)))
+	)
 		return null;
 	if (inner.slice(words[0]?.start, words[0]?.end) !== "find") return null;
-	if (words.some((word) => FIND_FREE_OUTPUT.test(word.value))) return null;
+	if (
+		words.some(
+			(word) =>
+				FIND_FREE_OUTPUT.test(word.value) ||
+				word.value === "--" ||
+				word.value === "-H" ||
+				word.value === "-f" ||
+				word.value.startsWith("-D"),
+		)
+	)
+		return null;
 	if (readOnlyInspectionRule(words, inner, cwd, workspaceRoot, readScope) === null) return null;
 	let index = 1;
 	while (index < words.length && FIND_LEADING_OPTION.test(words[index]?.value ?? "")) index += 1;
-	// `-D` takes a value before the start points; refused rather than parsed.
-	if (words[index]?.value === "-D") return null;
 	const starts: string[] = [];
 	for (; index < words.length; index += 1) {
 		const word = words[index];
@@ -184,9 +242,13 @@ function findValues(inner: string, cwd: string, workspaceRoot: string, readScope
 	for (const start of starts.length === 0 ? ["."] : starts) {
 		const root = path.resolve(cwd, start);
 		const stats = lstatSync(root, { throwIfNoEntry: false });
-		if (stats === undefined) continue;
+		if (stats === undefined) return null;
+		if (!operandStaysInWorkspace(start, cwd, workspaceRoot, readScope)) return null;
 		values.push(start);
-		if (!stats.isDirectory()) continue;
+		// Trailing slash or `/.` on a symlink start point makes GNU find traverse it even without -H/-L.
+		const walkRoot =
+			stats.isDirectory() || (stats.isSymbolicLink() && statSync(root, { throwIfNoEntry: false })?.isDirectory() === true);
+		if (!walkRoot) continue;
 		const pending = [start];
 		for (let current = pending.pop(); current !== undefined; current = pending.pop()) {
 			let entries: Dirent[];

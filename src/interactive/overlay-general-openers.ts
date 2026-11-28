@@ -256,6 +256,7 @@ function fleetSettledNotice(
 	plan: FleetPlanRunView | null | undefined,
 	warned: number,
 ): { level: "info" | "success" | "warning"; text: string } {
+	const loopTotal = outcome.result?.loops?.length ?? 0;
 	const counts: FleetStepCounts = plan
 		? planStepCounts(plan)
 		: {
@@ -263,6 +264,7 @@ function fleetSettledNotice(
 				planned: outcome.plannedStepCount,
 				succeeded: outcome.succeededStepCount,
 				required: outcome.requiredStepCount,
+				...(loopTotal > 0 ? { loops: { resolved: outcome.resolvedLoopCount, total: loopTotal } } : {}),
 			};
 	if (plan?.state === "cancelled") {
 		return { level: "info", text: `plan ${name}: cancelled ${GLYPH.sep} ${fleetStepCountText(counts)} before the stop` };

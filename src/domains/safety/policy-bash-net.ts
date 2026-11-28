@@ -237,7 +237,10 @@ export function evaluateBashPolicy(
 			execRecognition: "recognized",
 		};
 	}
-	const chain = loopChain?.chain ?? recognizeCommandChain(recognitionCommand, callCwd, workspaceRoot, policy, readScope);
+	const chain =
+		loopChain !== null
+			? loopChain.chain
+			: recognizeCommandChain(recognitionCommand, callCwd, workspaceRoot, policy, readScope);
 	if (chain !== null) {
 		const chainReasons = [
 			`every step of the command is recognized: ${chain.ruleIds.join(", ")}`,

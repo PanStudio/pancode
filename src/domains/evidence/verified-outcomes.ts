@@ -44,7 +44,7 @@ export interface VerifiedOutcomeCount {
 }
 
 /** A sealed review or compete gate decision, as `readRunGateIndex` reads it. */
-export type ReviewGateFacts = Pick<GateReview, "topology" | "outcome" | "subjects">;
+export type ReviewGateFacts = Pick<GateReview, "topology" | "outcome" | "subjects" | "independent">;
 
 /**
  * The gate decisions sealed about a session's runs, read once through the gate index: each run's coordinators and
@@ -225,12 +225,14 @@ export function countVerifiedOutcomes(
 			if (observedTaskChecks(task).passed.some((pass) => ownPass(pass.observedAt) && !counted.has(pass.observedAt)))
 				tasks += 1;
 		}
-	// A review gate that passed is a judged outcome: a reviewer on its own route read the result and accepted it. The
-	// result it judged names it, so a second pass on the same subjects and digests is the same outcome, and a pass on
-	// runs whose host verification already counts judged a result counted once.
+	// A review gate that passed independently is a judged outcome: a reviewer on an independent route read the result
+	// and accepted it. A non-independent review compromises trust rather than verifying an outcome. The result it judged
+	// names it, so a second pass on the same subjects and digests is the same outcome, and a pass on runs whose host
+	// verification already counts judged a result counted once.
 	const reviews = new Set<string>();
 	for (const gate of gates) {
-		if (gate.topology !== "review" || gate.outcome !== "pass" || gate.subjects.length === 0) continue;
+		if (gate.topology !== "review" || gate.outcome !== "pass" || gate.independent !== true || gate.subjects.length === 0)
+			continue;
 		if (gate.subjects.every((subject) => workers.has(subject.runId))) continue;
 		reviews.add(
 			gate.subjects
