@@ -55,7 +55,6 @@ export const SETTINGS_FIELD_NAMES = [
 	"durable",
 	"egress",
 	"endpoint",
-	"main",
 	"name",
 	"pancodeEntry",
 	"pancodeVersionCommand",
