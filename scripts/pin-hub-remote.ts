@@ -28,9 +28,6 @@ import {
 } from "../src/domains/resources/hub-types.js";
 import { type HubPackageValidationResult, validateHubPackage } from "../src/domains/resources/hub-validation.js";
 
-/** Same remote test the plugin catalog uses to distinguish a source URL from a relative path. */
-export const REMOTE_SOURCE_URL = /^(?:[a-z][a-z0-9+.-]*:\/\/|git@)/i;
-
 export type RegistryRow = Record<string, unknown> & { kind: string; name: string };
 
 /** Where a row's tree comes from: a directory under `hub/`, or an exact commit of a community repository. */

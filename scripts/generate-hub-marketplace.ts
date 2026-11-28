@@ -45,6 +45,9 @@ const MARKETPLACE_DESCRIPTION =
 	"PanHub, the PanCode packs: curated skills for planning, research, git and scientific software work, plus domain plugins.";
 const OWNER_NAME = "PanCode";
 
+/** A registry source URL, as opposed to a path relative to `hub/`. */
+export const REMOTE_SOURCE_URL = /^(?:[a-z][a-z0-9+.-]*:\/\/|git@)/i;
+
 /** Entry fields Claude Code documents; anything else would fail `validate --strict`. */
 interface MarketplaceEntry {
 	name: string;
@@ -335,7 +338,7 @@ export function renderHubMarketplace(options: GenerateMarketplaceOptions = {}): 
 			});
 			continue;
 		}
-		if (entry.source || !entry.sourceUrl || /^(?:[a-z][a-z0-9+.-]*:\/\/|git@)/i.test(entry.sourceUrl)) {
+		if (entry.source || !entry.sourceUrl || REMOTE_SOURCE_URL.test(entry.sourceUrl)) {
 			excluded.push({
 				name: entry.name,
 				sourceUrl: where,
@@ -448,26 +451,4 @@ export function generateHubMarketplace(options: GenerateMarketplaceOptions = {})
 		entries,
 		excluded,
 	};
-}
-
-if (path.resolve(process.argv[1] ?? "") === path.resolve(import.meta.filename)) {
-	const check = process.argv.includes("--check");
-	const result = generateHubMarketplace({ check });
-	for (const error of result.errors) process.stderr.write(`generate-hub-marketplace: ${error}\n`);
-	for (const skip of result.excluded) {
-		process.stdout.write(
-			`not published to Claude Code: ${skip.name} (${/^(?:[a-z][a-z0-9+.-]*:\/\/|git@)/i.test(skip.sourceUrl) ? skip.sourceUrl : `hub/${skip.sourceUrl}`}) — ${skip.reason}\n`,
-		);
-	}
-	if (!result.ok) {
-		if (check && result.drift) {
-			process.stderr.write(".claude-plugin/marketplace.json does not match the pinned packs\n");
-			for (const line of result.driftLines) process.stderr.write(`  ${line}\n`);
-			process.stderr.write("Run `pnpm run hub:pin` and commit the result.\n");
-		}
-		process.exit(1);
-	}
-	process.stdout.write(
-		`${check ? "Verified" : "Generated"} ${result.entries.length} Claude Code marketplace entries.\n`,
-	);
 }
