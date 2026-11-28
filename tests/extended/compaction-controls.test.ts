@@ -23,16 +23,16 @@ import { pancodeStateDir } from "../../src/core/xdg.js";
 import { planEviction } from "../../src/domains/context/working-set/engine.js";
 import { foldWorkingSet } from "../../src/domains/context/working-set/fold.js";
 import { resolveRecall } from "../../src/domains/context/working-set/recall.js";
+import {
+	COMPACTION_SYSTEM_PROMPT,
+	compact,
+	type LivePrefixSummary,
+} from "../../src/domains/memory/compaction/compact.js";
 import type { MemoryConsumptionReceipt } from "../../src/domains/memory/contract.js";
 import type { PromptsContract } from "../../src/domains/prompts/contract.js";
 import type { ProvidersContract, TargetStatus } from "../../src/domains/providers/contract.js";
 import { canonicalEndpointKey, foregroundStreamUsage } from "../../src/domains/providers/index.js";
 import type { RuntimeDescriptor } from "../../src/domains/providers/types/runtime-descriptor.js";
-import {
-	COMPACTION_SYSTEM_PROMPT,
-	compact,
-	type LivePrefixSummary,
-} from "../../src/domains/session/compaction/compact.js";
 import { findCutPoint } from "../../src/domains/session/compaction/cut-point.js";
 import { noteSummaryUsage } from "../../src/domains/session/compaction/reasoning-share.js";
 import { collectSessionEntries } from "../../src/domains/session/compaction/session-entries.js";

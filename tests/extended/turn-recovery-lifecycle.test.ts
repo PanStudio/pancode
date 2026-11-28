@@ -5,11 +5,11 @@ import { getEventListeners } from "node:events";
 import { performance } from "node:perf_hooks";
 import { test } from "node:test";
 import { DEFAULT_SETTINGS } from "../../src/core/defaults.js";
+import type { CompactResult } from "../../src/domains/memory/compaction/compact.js";
 import type { CompiledSessionPrompt } from "../../src/domains/prompts/compiler.js";
 import type { PromptsContract } from "../../src/domains/prompts/contract.js";
 import type { ProvidersContract } from "../../src/domains/providers/contract.js";
 import { ContextOverflowError } from "../../src/domains/providers/errors.js";
-import type { CompactResult } from "../../src/domains/session/compaction/compact.js";
 import { createSessionBundle } from "../../src/domains/session/extension.js";
 import type { RecoveryFailureInput, RecoveryFailureKind } from "../../src/domains/session/retry.js";
 import {

@@ -7,7 +7,7 @@ import {
 	COMPACTION_TURN_PREFIX_PROMPT_TEMPLATE,
 	type CompactionCallObservation,
 	compact,
-} from "../../src/domains/session/compaction/compact.js";
+} from "../../src/domains/memory/compaction/compact.js";
 import { estimateTokens } from "../../src/domains/session/compaction/tokens.js";
 import type { MessageEntry, SessionEntry } from "../../src/domains/session/entries.js";
 import { registerEngineFauxProvider } from "../../src/engine/api-registry.js";

@@ -17,6 +17,7 @@ export {
 } from "../../core/telemetry/paths.js";
 export type { AccountabilitySummary } from "./accountability.js";
 export { summarizeRunAccountability } from "./accountability.js";
+export { openCallScope } from "./call-scope.js";
 export type {
 	TelemetryContract,
 	TelemetryRunReaderBinder,

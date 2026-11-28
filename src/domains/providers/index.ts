@@ -13,6 +13,7 @@ export {
 	resolveRuntimeAuthTarget,
 	targetRequiresAuth,
 } from "./auth/index.js";
+export { prepareBackgroundModelMetadata } from "./background-model-metadata.js";
 export {
 	type CacheDeploymentObservation,
 	observeCacheDeployment,
@@ -20,6 +21,7 @@ export {
 	warmableBackend,
 } from "./cache-deployment.js";
 export { AGENT_ROLE_TOOLS_REQUIRED_REASON, mergeCapabilities, supportsAgentRoleTools } from "./capabilities.js";
+export { resolveEffectivePricing } from "./catalog.js";
 export type { ProvidersContract, TargetHealth, TargetHealthStatus, TargetStatus } from "./contract.js";
 export { isOrchestratorEligibleRuntime, isTargetEligibleRuntime } from "./eligibility.js";
 export {
@@ -92,6 +94,7 @@ export {
 	synthesizeTargetModel,
 } from "./runtime-resolution.js";
 export { isCopilotTransientFailure } from "./runtimes/copilot/transient-failure.js";
+export { LOCAL_API_KEY_FALLBACK, resolveSideCallAuth } from "./side-call-auth.js";
 export {
 	buildProviderSupportEntry,
 	configuredTargetsForRuntime,

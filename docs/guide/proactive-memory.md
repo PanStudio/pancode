@@ -468,7 +468,7 @@ summarizes the ordinary history. When the main route can summarize inside its
 cached request prefix more cheaply than the portable requests, and that live
 call succeeds, the offer is declined as `live-prefix-cheaper` and no
 `offer-used` event is recorded; if the live call fails, the portable request
-carries the offer (`src/domains/session/compaction/compact.ts`).
+carries the offer (`src/domains/memory/compaction/compact.ts`).
 Lifecycle events such as `batch-ready`, `notes-rejected`, `offer-declined` and
 `offer-used`, which records `originalInputTokens` and `substitutedInputTokens`,
 are journaled as `memory.observation_recorded` records in the session's

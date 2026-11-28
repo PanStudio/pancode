@@ -19,6 +19,7 @@ import type { CallSettled, CallStarted } from "../../src/core/telemetry/schemas.
 import { encodeTelemetryLine, scanTelemetrySegment } from "../../src/core/telemetry/segment.js";
 import { ToolNames } from "../../src/core/tool-names.js";
 import { pancodeStateDir } from "../../src/core/xdg.js";
+import { compact } from "../../src/domains/memory/compaction/compact.js";
 import type { MiddlewareContract } from "../../src/domains/middleware/contract.js";
 import type { MiddlewareHookInput } from "../../src/domains/middleware/types.js";
 import type { PromptsContract } from "../../src/domains/prompts/contract.js";
@@ -27,7 +28,6 @@ import type { RuntimeDescriptor } from "../../src/domains/providers/types/runtim
 import type { SafetyJudgementInput } from "../../src/domains/safety/decision-events.js";
 import { safetyJudgedPayload } from "../../src/domains/safety/decision-events.js";
 import type { SchedulingContract } from "../../src/domains/scheduling/contract.js";
-import { compact } from "../../src/domains/session/compaction/compact.js";
 import type { SessionContract, TurnInput } from "../../src/domains/session/contract.js";
 import type { SessionEntry } from "../../src/domains/session/entries.js";
 import { loadTokenSourcesReport } from "../../src/domains/session/token-sources.js";
