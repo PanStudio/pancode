@@ -16,7 +16,15 @@ import {
 import { combineSafeOutput, SAFE_EXEC_PIPE_DRAIN_BOUND_MS } from "./safe-exec.js";
 import { bridgeEgress, type EgressReport, egressStdio } from "./sandbox/egress/bridge.js";
 import { holdsNamedCredential, knownSecretValues, scrubSandboxEnv } from "./sandbox/env-scrub.js";
-import { type MainSandboxPolicy, planMainSandboxSpawn } from "./sandbox/main-session.js";
+import {
+	launchFacts,
+	type SandboxLaunchLabel,
+	type SandboxLaunchRecord,
+	type SandboxLaunchSettlement,
+	sandboxLaunch,
+	writeDeniedHint,
+} from "./sandbox/launch-record.js";
+import { type MainSandboxPolicy, planMainSandboxSpawn, sandboxWriteRefused } from "./sandbox/main-session.js";
 import {
 	forgetResourceScope,
 	invalidateResourceCapabilityCache,
@@ -72,6 +80,8 @@ export interface BashCommandResult extends Partial<BashStreamByteCounts> {
 	resourceNote?: string;
 	/** A proxied sandboxed command's network: the origins it tried and what its proxy answered. */
 	egress?: EgressReport;
+	/** What the sandbox policy decided for this launch and how it settled; absent when no policy applied. */
+	sandbox?: SandboxLaunchRecord;
 }
 
 export interface BashTimeoutLimit {
@@ -105,6 +115,8 @@ interface RunBashCommandOptions {
 	onOutput?: BashOutputListener;
 	/** Set by the bash tool for a contained main-session call: it runs in the main-session sandbox with this policy. */
 	shellSandbox?: MainSandboxPolicy;
+	/** Names what launched the command in its sandbox record; absent, the record says `shell`. */
+	launchLabel?: SandboxLaunchLabel;
 	/** Called with the shell's pid once it is spawned; off Windows the pid is also its process group id. */
 	onSpawn?: (pid: number) => void;
 	/**
@@ -637,7 +649,13 @@ export async function runBashCommand(command: string, options: RunBashCommandOpt
 			: undefined;
 	const sandbox =
 		containedPlan ?? planSandboxedSpawn({ argv: shellArgv }, options.cwd ?? process.cwd(), [], { bridge: true });
-	if (sandbox.kind === "refused") return notSpawnedResult(sandbox.message);
+	const facts = sandbox.launch === undefined ? undefined : launchFacts(sandbox.launch, "shell", options.launchLabel);
+	const launch = sandboxLaunch(facts);
+	const refused = (message: string): BashCommandResult => {
+		const record = launch.settle({ outcome: "refused" });
+		return { ...notSpawnedResult(message), ...(record !== undefined ? { sandbox: record } : {}) };
+	};
+	if (sandbox.kind === "refused") return refused(sandbox.message);
 	const egressPlan = sandbox.kind === "sandboxed" ? sandbox.egress : undefined;
 	// A sandboxed command reaches the network without a judgment, so its
 	// environment loses every credential variable before the sandbox starts;
@@ -657,7 +675,7 @@ export async function runBashCommand(command: string, options: RunBashCommandOpt
 	const resources = planResourceScope(resourceLaunch, { file: plannedFile, args: plannedArgs, env: attribution.env });
 	if (resources.kind === "refused") {
 		if (sandbox.kind === "sandboxed") sandbox.afterExit();
-		return notSpawnedResult(resources.message);
+		return refused(resources.message);
 	}
 	const scope = resources.kind === "scoped" ? resources.scope : null;
 	const spawnFile = scope?.file ?? plannedFile;
@@ -671,10 +689,16 @@ export async function runBashCommand(command: string, options: RunBashCommandOpt
 			settling ??= settleResourceScope(scope);
 			return settling;
 		};
+		// The record settles where the result is delivered, after a resource scope has said whether the launch happened.
+		let settledLaunch: SandboxLaunchSettlement | null = null;
+		const withRecord = (result: BashCommandResult, settled: SandboxLaunchSettlement | null): BashCommandResult => {
+			const record = settled === null ? undefined : launch.settle(settled);
+			return record === undefined ? result : { ...result, sandbox: record };
+		};
 		const resolve = (result: BashCommandResult): void => {
 			const pending = settleScope();
 			if (pending === null || scope === null) {
-				deliver(result);
+				deliver(withRecord(result, settledLaunch));
 				return;
 			}
 			void pending.then((settlement) => {
@@ -687,11 +711,11 @@ export async function runBashCommand(command: string, options: RunBashCommandOpt
 					: null;
 				if (failure !== null) {
 					invalidateResourceCapabilityCache();
-					deliver(notSpawnedResult(scopeLaunchFailureMessage(scope, failure)));
+					deliver(withRecord(notSpawnedResult(scopeLaunchFailureMessage(scope, failure)), { outcome: "launch-failed" }));
 					return;
 				}
 				const note = resourceLimitNote(scope, settlement);
-				deliver(note === null ? result : { ...result, resourceNote: note });
+				deliver(withRecord(note === null ? result : { ...result, resourceNote: note }, settledLaunch));
 			});
 		};
 		const timeout = clampTimerDelayMs(options.timeoutMs ?? 300_000);
@@ -708,7 +732,8 @@ export async function runBashCommand(command: string, options: RunBashCommandOpt
 		// Checked immediately before spawn: a run deadline spent by preparation starts no command (XR-12).
 		if (armedTimeoutLimit(timeout, options.deadlineAt)?.ms === 0) {
 			if (scope !== null) forgetResourceScope(scope);
-			deliver(deadlinePassedResult());
+			if (sandbox.kind === "sandboxed") sandbox.afterExit();
+			deliver(withRecord(deadlinePassedResult(), { outcome: "refused" }));
 			return;
 		}
 		const output = createBashOutputProgressController(options.onUpdate, undefined, options.onOutput);
@@ -721,8 +746,20 @@ export async function runBashCommand(command: string, options: RunBashCommandOpt
 		});
 		// A proxied command's network is PanCode's proxy, served from here until the command exits.
 		const egress = egressPlan === undefined ? null : bridgeEgress(child, egressPlan);
-		const egressField = (code: number | null): { egress?: EgressReport } =>
-			egress === null ? {} : { egress: egress.report(code) };
+		const egressField = (
+			code: number | null,
+			outcome: "ran" | "launch-failed",
+			output: () => string,
+		): { egress?: EgressReport } => {
+			const report = egress === null ? undefined : egress.report(code);
+			settledLaunch = {
+				outcome,
+				exitCode: code,
+				...(report !== undefined ? { egress: report } : {}),
+				hint: outcome === "ran" ? writeDeniedHint(facts, code, output, sandboxWriteRefused) : null,
+			};
+			return report !== undefined ? { egress: report } : {};
+		};
 		if (child.pid !== undefined) options.onSpawn?.(child.pid);
 		const groupId = process.platform !== "win32" ? child.pid : undefined;
 		if (groupId !== undefined) liveCommandGroups.add(groupId);
@@ -891,7 +928,9 @@ export async function runBashCommand(command: string, options: RunBashCommandOpt
 				forgetResourceScope(scope);
 				invalidateResourceCapabilityCache();
 				if (sandbox.kind === "sandboxed") sandbox.afterExit();
-				deliver(notSpawnedResult(scopeLaunchFailureMessage(scope, error.message)));
+				deliver(
+					withRecord(notSpawnedResult(scopeLaunchFailureMessage(scope, error.message)), { outcome: "launch-failed" }),
+				);
 				return;
 			}
 			resolveAfterCancellation({
@@ -903,7 +942,7 @@ export async function runBashCommand(command: string, options: RunBashCommandOpt
 				aborted,
 				timedOut,
 				...stopLimitField(),
-				...egressField(null),
+				...egressField(null, "launch-failed", () => ""),
 			});
 		});
 		child.on("close", (code, signalName) => {
@@ -934,7 +973,7 @@ export async function runBashCommand(command: string, options: RunBashCommandOpt
 				aborted,
 				timedOut,
 				...stopLimitField(),
-				...egressField(code),
+				...egressField(code, "ran", () => `${finalOutput.stderr}\n${finalOutput.stdout}`),
 			});
 		});
 	});

@@ -6,6 +6,7 @@ import { isDeepStrictEqual } from "node:util";
 import { Value } from "typebox/value";
 import { isWorkerToolCallCapExceededReason } from "../core/guardrails.js";
 import { HEADLESS_PERMISSION_DENIED_MARKER } from "../core/headless-permission.js";
+import { recordUncontainedShell } from "../core/sandbox/launch-record.js";
 import {
 	type MainSandboxPolicy,
 	mainSandboxPolicy,
@@ -13,7 +14,7 @@ import {
 	readOnlyScratchDir,
 } from "../core/sandbox/main-session.js";
 import { invalidateWorkspaceSecretScans } from "../core/sandbox/secret-files.js";
-import type { HomeReadList, SandboxEnvPolicy, UnixSocketMode } from "../core/sandbox/types.js";
+import type { HomeReadList, SandboxEnvPolicy, SandboxLaunchWhy, UnixSocketMode } from "../core/sandbox/types.js";
 import type { ToolName } from "../core/tool-names.js";
 import { isMcpToolName, ToolNames } from "../core/tool-names.js";
 import { effectiveToolCall, toolSpecPlacement } from "../core/tool-surface.js";
@@ -84,6 +85,7 @@ import {
 } from "./read-fan-out.js";
 import {
 	applyRegisteredToolClassification,
+	approvalConsequencesOf,
 	disposeAdmissionArgs,
 	hookLanding,
 	outboundFilesOf,
@@ -234,6 +236,42 @@ interface ParkedCall {
 	settledHookEffects?: ReadonlyArray<MiddlewareEffect>;
 	/** Settles an operator-only ask once the operator approves it (a contained command's egress ask). */
 	approve?: (requestedBy: string | undefined) => void;
+}
+
+/**
+ * A call reaching execution without the main-session sandbox. A job command admitted only contained is refused
+ * (true). Otherwise a main-session bash or run_script call journals that the session's shell ran uncontained, once per
+ * reason, so no record of the session reads as contained by omission.
+ */
+function refusesUncontainedLaunch(
+	deps: RegistryDeps,
+	spec: ToolSpec,
+	options: ToolInvokeOptions,
+	jobNeedsContainment: () => boolean,
+): boolean {
+	if (options.shellSandbox !== undefined) return false;
+	if (jobNeedsContainment()) return true;
+	if ((deps.principal ?? "main") !== "main") return false;
+	if (spec.name !== ToolNames.Bash && spec.name !== ToolNames.RunScript) return false;
+	if (deps.sandboxState === undefined || deps.containment === undefined) return false;
+	const readOnly = deps.readOnly === true || options.turnConstraints?.readOnly === true;
+	const hasBackend = readOnly ? deps.containment().readOnlySandbox === true : deps.containment().sandbox;
+	const state = deps.sandboxState();
+	const why: SandboxLaunchWhy =
+		state.mode === "off"
+			? "sandbox-off"
+			: !hasBackend
+				? "no-backend"
+				: !readOnly && (deps.autonomy?.() ?? DEFAULT_AUTONOMY_LEVEL) === "yolo"
+					? "unconfined-opt-in"
+					: "operator-authority";
+	recordUncontainedShell({
+		caller: readOnly ? "main-read-only" : "main",
+		why,
+		mode: state.mode,
+		backend: state.backend,
+	});
+	return false;
 }
 
 /** The operator's sandbox environment, socket, and home-read choices a contained main shell command carries. */
@@ -800,7 +838,7 @@ export function createRegistry(deps: RegistryDeps): ToolRegistry {
 						: {}),
 				};
 				// Fail closed: a job command admitted only contained never runs without its sandbox (XR-12).
-				if (executionOptions.shellSandbox === undefined && jobNeedsContainment(spec, call)) {
+				if (refusesUncontainedLaunch(deps, spec, executionOptions, () => jobNeedsContainment(spec, call))) {
 					const reason = `${spec.name} did not run: its command is admitted only in the sandbox, and the call reached execution without the sandbox policy.`;
 					const verdict = blockedVerdict(decision, `${call.tool} blocked: contained command without its sandbox`, reason, {
 						kind: "block",
@@ -2081,9 +2119,7 @@ export function createRegistry(deps: RegistryDeps): ToolRegistry {
 			const loopReason = rejected();
 			return { kind: "blocked", reason: loopReason ?? abortReason, decision: outcome.decision };
 		}
-		const consequence = outboundFilesOf(tools.get(admissionCall.tool as ToolName), admissionCall.args).map(
-			(file) => file.consequence,
-		);
+		const consequence = approvalConsequencesOf(tools.get(admissionCall.tool as ToolName), admissionCall.args);
 		return new Promise<RegistryVerdict>((resolve) => {
 			const meta: PermissionRequiredMeta = {
 				requestId: nextApprovalRequestId(),

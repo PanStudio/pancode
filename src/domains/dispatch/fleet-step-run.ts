@@ -122,6 +122,7 @@ export function codeStepSettledFacts(record: CodeStepRecord): EventPayload<"code
 		outputTruncated: record.outputTruncated,
 		outputDigest: record.outputDigest,
 		reportDigest: record.reportDigest,
+		...(record.confinement !== undefined ? { confinement: record.confinement } : {}),
 	};
 }
 

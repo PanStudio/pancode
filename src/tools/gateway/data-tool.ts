@@ -14,6 +14,8 @@ import {
 	type ValidateDataOptions,
 	type ValidateDataResult,
 } from "@pancode/scidata";
+import { collectHostLaunches } from "../../core/sandbox/host-launch-record.js";
+import type { SandboxLaunchRecord } from "../../core/sandbox/launch-record.js";
 import { inspectData, selectData, statsData, validateData } from "../data/runtime.js";
 import {
 	commitObservationReservation,
@@ -168,6 +170,13 @@ export function createDataTool(deps: DataToolDeps = {}): ToolSpec {
 					...(stride !== undefined ? { stride } : {}),
 				};
 				let result: DataResult | DataRefusal;
+				// The SQLite reader is the one host process the data tool launches (P8); its record rides the details.
+				let launch: SandboxLaunchRecord | undefined;
+				const readerRun = async (run: () => Promise<DataResult | DataRefusal>) => {
+					const { value, launches } = await collectHostLaunches(run);
+					launch = launches.at(-1);
+					return value;
+				};
 				if (op === "inspect") {
 					const inspectOptions: InspectDataOptions = {
 						...(format !== undefined ? { format } : {}),
@@ -179,7 +188,7 @@ export function createDataTool(deps: DataToolDeps = {}): ToolSpec {
 						...(args.max_rows === null || typeof args.max_rows === "number" ? { maxRows: args.max_rows } : {}),
 						signal,
 					};
-					result = await inspectData(target, inspectOptions);
+					result = await readerRun(() => inspectData(target, inspectOptions));
 				} else if (op === "select") {
 					const selectOptions: SelectDataOptions = {
 						...(format !== undefined ? { format } : {}),
@@ -194,7 +203,7 @@ export function createDataTool(deps: DataToolDeps = {}): ToolSpec {
 						...slab,
 						signal,
 					};
-					result = await selectData(target, selectOptions);
+					result = await readerRun(() => selectData(target, selectOptions));
 				} else if (op === "stats") {
 					const statsOptions: StatsDataOptions = {
 						...(format !== undefined ? { format } : {}),
@@ -229,7 +238,14 @@ export function createDataTool(deps: DataToolDeps = {}): ToolSpec {
 					totalCount: counted.totalCount,
 					truncated: counted.truncated,
 					...(counted.next !== undefined ? { next: counted.next } : {}),
-					details: { op, path: target, format: result.format, view: result.view, viewLabel: describeDataView(result.view) },
+					details: {
+						op,
+						path: target,
+						format: result.format,
+						view: result.view,
+						viewLabel: describeDataView(result.view),
+						...(launch !== undefined ? { sandbox: launch } : {}),
+					},
 					reservation,
 					...(options ? { options } : {}),
 				});

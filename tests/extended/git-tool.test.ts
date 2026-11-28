@@ -93,6 +93,12 @@ describe("git tool", () => {
 		deepStrictEqual(status.output.trim().split("\n"), ["## main", " M a.txt", "M  docs/b.md", "?? new.txt"]);
 		deepStrictEqual(status.details?.argv, ["git", "status", "--short", "--branch"]);
 		strictEqual(status.details?.exitCode, 0);
+		// Unlisted in safety.confine, typed git runs on the host and its launch record says so (P8).
+		const { launcher, integration, confinement, why, outcome } = status.details?.sandbox as Record<string, unknown>;
+		deepStrictEqual(
+			{ launcher, integration, confinement, why, outcome },
+			{ launcher: "typed-git", integration: "git", confinement: "unconfined", why: "not-opted-in", outcome: "ran" },
+		);
 	});
 
 	it("separates unstaged from staged diffs and honours stat, name-only, and path scoping", async () => {
