@@ -33,8 +33,8 @@ import {
 import { directSurfaceNames, withGatewayForCapabilities } from "../../core/tool-surface.js";
 import { type WorkerStaticHeadInput, workerEnvelopeDigest, workerStaticHead } from "../../lib/worker-wire/protocol.js";
 import { applyToolProfile, type ToolProfileName } from "../../tools/profiles.js";
-import { roleExcludes, roleHeldTools, roleRemedy, toolActionClass } from "../agents/role-class.js";
 import type { AgentCapabilityClass } from "../agents/spec.js";
+import { roleExcludes, roleHeldTools, roleRemedy, toolActionClass } from "../safety/index.js";
 import { toolEscapesWriteRoots } from "../safety/policy-write-landing.js";
 import type { WorkerMcpAttestation, WorkerPermitAllowance } from "../safety/worker-permit.js";
 import type { RunRole } from "./obligation.js";

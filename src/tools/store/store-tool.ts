@@ -39,7 +39,7 @@ import {
 	releaseObservation,
 	reserveObservation,
 } from "../observation.js";
-import type { ToolInvokeOptions } from "../registry-contract.js";
+import type { ToolInvokeOptions } from "../registry/contract.js";
 import type { ToolResult, ToolSpec } from "../tool-spec.js";
 import {
 	prepareStoreAdmissionArguments,

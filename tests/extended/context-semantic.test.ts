@@ -21,8 +21,8 @@ import type { ContextSemanticRequest } from "../../src/tools/context/index.js";
 import { createContextTool } from "../../src/tools/context/index.js";
 import { registerCoreTools } from "../../src/tools/core-bootstrap.js";
 import { commitObservationReservation, releaseObservation, reserveObservation } from "../../src/tools/observation.js";
+import type { ToolRegistry } from "../../src/tools/registry/contract.js";
 import { createRegistry } from "../../src/tools/registry.js";
-import type { ToolRegistry } from "../../src/tools/registry-contract.js";
 import { isolatePancodeEnv } from "../harness/scratch-env.js";
 
 let isolated: Awaited<ReturnType<typeof isolatePancodeEnv>>;

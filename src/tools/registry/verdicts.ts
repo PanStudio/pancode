@@ -1,20 +1,20 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
-import { HEADLESS_PERMISSION_DENIED_MARKER } from "../core/headless-permission.js";
-import type { SkillToolSurfaceViolation } from "../core/skill-activation.js";
-import { ToolNames } from "../core/tool-names.js";
-import { SESSION_CODE_CONSENT_RULE_ID } from "../core/views/approval-words.js";
-import type { ClassifierCall } from "../domains/safety/action-classifier.js";
-import type { SafetyDecision } from "../domains/safety/contract.js";
-import type { EscapeScope } from "../domains/safety/escape-scope.js";
-import { escapeScopeOptionLabel } from "../domains/safety/escape-scope.js";
-import type { FlowRestrictionSet } from "../domains/safety/information-flow.js";
-import type { SafetyJudgeOutcome } from "../domains/safety/safety-judge.js";
-import type { AutonomyLevel } from "../lib/autonomy/autonomy.js";
-import { gateReasonText } from "./approval-note.js";
-import type { DispatchPlanView } from "./dispatch-plan.js";
-import type { HostReadOnlySource, RegistryVerdict } from "./registry-contract.js";
-import type { ToolResult } from "./tool-spec.js";
+import { HEADLESS_PERMISSION_DENIED_MARKER } from "../../core/headless-permission.js";
+import type { SkillToolSurfaceViolation } from "../../core/skill-activation.js";
+import { ToolNames } from "../../core/tool-names.js";
+import { SESSION_CODE_CONSENT_RULE_ID } from "../../core/views/approval-words.js";
+import type { ClassifierCall } from "../../domains/safety/action-classifier.js";
+import type { SafetyDecision } from "../../domains/safety/contract.js";
+import type { EscapeScope } from "../../domains/safety/escape-scope.js";
+import { escapeScopeOptionLabel } from "../../domains/safety/escape-scope.js";
+import type { FlowRestrictionSet } from "../../domains/safety/information-flow.js";
+import type { SafetyJudgeOutcome } from "../../domains/safety/safety-judge.js";
+import type { AutonomyLevel } from "../../lib/autonomy/autonomy.js";
+import { gateReasonText } from "../approval-note.js";
+import type { DispatchPlanView } from "../dispatch-plan.js";
+import type { ToolResult } from "../tool-spec.js";
+import type { HostReadOnlySource, RegistryVerdict } from "./contract.js";
 
 /** Final reason code for a before_tool guard block, matching the audit convention (sd-01 §2.5). */
 export const GUARD_BLOCK_REASON_CODE = "guard_block";

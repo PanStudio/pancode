@@ -13,8 +13,8 @@ import { createSessionCodeConsent } from "../../src/domains/safety/session-code-
 import { createWorkerSafety } from "../../src/engine/worker-tools.js";
 import { createDispatchTool } from "../../src/tools/dispatch.js";
 import { formatDispatchOutput } from "../../src/tools/dispatch-output.js";
+import type { PermissionRequiredMeta } from "../../src/tools/registry/contract.js";
 import { createRegistry } from "../../src/tools/registry.js";
-import type { PermissionRequiredMeta } from "../../src/tools/registry-contract.js";
 import { resolveVerifyCall } from "../../src/tools/verify/resolve.js";
 import {
 	isolateDispatchState,

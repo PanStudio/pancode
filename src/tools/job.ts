@@ -34,7 +34,7 @@ import {
 	prepareJobCommand,
 	prepareJobConditions,
 } from "./job-command.js";
-import type { ToolInvokeOptions, ToolRegistry } from "./registry-contract.js";
+import type { ToolInvokeOptions, ToolRegistry } from "./registry/contract.js";
 import type { ToolResult, ToolSpec } from "./tool-spec.js";
 
 export interface JobToolDeps {

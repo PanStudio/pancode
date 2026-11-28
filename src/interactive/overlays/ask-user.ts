@@ -31,7 +31,7 @@ import {
 	recommendedOptionIndex,
 	unavailableAskUserResult,
 } from "../../tools/ask-user.js";
-import type { ToolInvokeOptions } from "../../tools/registry-contract.js";
+import type { ToolInvokeOptions } from "../../tools/registry/contract.js";
 import { CARD_CALLOUT_MAX_WIDTH } from "../card.js";
 import { dockGrowthRows } from "../dock.js";
 import { backOutOneLayer, type EscapeLayers, escapeHintEntry, innermostEscapeLayer } from "../escape-layers.js";

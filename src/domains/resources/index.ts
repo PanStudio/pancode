@@ -1,5 +1,13 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
+
+export {
+	type HubAuditState,
+	type HubCategory,
+	type HubComponentKind,
+	type HubProvidedResource,
+	isHubAuditState,
+} from "../plugins/index.js";
 export type { ResourceDiagnostic } from "./collision.js";
 export type { ResourceList, ResourcesContract } from "./contract.js";
 export {
@@ -42,13 +50,6 @@ export {
 	type HubPairs,
 	readHubPairs,
 } from "./hub-pairing.js";
-export {
-	type HubAuditState,
-	type HubCategory,
-	type HubComponentKind,
-	type HubProvidedResource,
-	isHubAuditState,
-} from "./hub-types.js";
 export {
 	expandPromptTemplateInput,
 	loadPromptTemplates,

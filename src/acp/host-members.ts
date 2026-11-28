@@ -40,7 +40,7 @@ import {
 	type AskUserResult,
 	recommendedOptionIndex,
 } from "../tools/ask-user.js";
-import type { ToolRegistry } from "../tools/registry-contract.js";
+import type { ToolRegistry } from "../tools/registry/contract.js";
 import { AcpTimeoutError } from "./errors.js";
 import type {
 	AcpBoardActions,

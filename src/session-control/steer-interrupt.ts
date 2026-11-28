@@ -10,7 +10,7 @@
  * aborted-by-steer, and the steer lands at the tool boundary that follows. With no steer queued nothing changes.
  */
 
-import type { SteerInterruptHost } from "../tools/registry-contract.js";
+import type { SteerInterruptHost } from "../tools/registry/contract.js";
 
 /** How long a queued steer lets a running call finish on its own before it ends it. */
 const STEER_INTERRUPT_GRACE_MS = 10_000;

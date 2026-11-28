@@ -10,6 +10,7 @@ import {
 	loadManifestFromRoot,
 	readExtensionInstallRecord,
 } from "../extensions/index.js";
+import type { HubEntryKind } from "../plugins/hub-types.js";
 import {
 	type InstalledPlugin,
 	listInstalledPlugins,
@@ -26,7 +27,6 @@ import {
 	readPluginManifest,
 	withPluginScopeLock,
 } from "../plugins/index.js";
-import type { HubEntryKind } from "./hub-types.js";
 
 /** Hub-only projection: a standalone extension never acquires a plugin.json or plugin install record. */
 function extensionManifest(entry: Pick<InstalledExtension, "id" | "version" | "description">): PluginManifest {
