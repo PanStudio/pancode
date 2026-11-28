@@ -110,6 +110,7 @@ import { ensureDetailLedgerForSession } from "../tools/extension-runtime-tools.j
 import { createHeadlessObservationPool } from "../tools/observation.js";
 import type { AskUserToolPolicy, ToolInvokeOptions, ToolRegistry } from "../tools/registry-contract.js";
 import type { ApprovalRequestView } from "./approval-request-view.js";
+import { isRedirectReason } from "./chat-loop/submit-turn.js";
 import { createChatLoopBus } from "./chat-loop-bus.js";
 import { createChatLoopComposition } from "./chat-loop-composition.js";
 import {
@@ -122,7 +123,7 @@ import { normalizeRetrySettings } from "./chat-loop-policy.js";
 import type { ChatLoopScope } from "./chat-loop-scope.js";
 import { createChatLoopStateMachine } from "./chat-loop-state-machine.js";
 import { createChatLoopSteering } from "./chat-loop-steering.js";
-import { compactionFailureReason, createChatLoopSubmit, isRedirectReason } from "./chat-loop-submit.js";
+import { compactionFailureReason, createChatLoopSubmit } from "./chat-loop-submit.js";
 import {
 	DRAFT_MAX_TOKENS,
 	DRAFT_TEMPERATURES,

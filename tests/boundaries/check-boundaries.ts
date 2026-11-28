@@ -829,8 +829,8 @@ const FUNCTION_LINE_EXEMPTIONS: ReadonlyMap<string, number> = new Map([
 	["src/interactive/overlays/settings-items.ts#buildSettingItems", 523],
 	["src/interactive/panes-runtime.ts#createPanesRuntime", 582],
 	["src/session-control/chat-loop-composition.ts#createChatLoopComposition", 662],
-	["src/session-control/chat-loop-submit.ts#createChatLoopSubmit", 1483],
-	["src/session-control/chat-loop-submit.ts#createChatLoopSubmit.submit", 1439],
+	["src/session-control/chat-loop-submit.ts#createChatLoopSubmit", 1197],
+	["src/session-control/chat-loop-submit.ts#createChatLoopSubmit.submit", 1161],
 	["src/session-control/chat-loop.ts#createChatLoop", 1570],
 	["src/session-control/turn-context-compaction.ts#createTurnContextCompaction", 1033],
 	["src/session-control/turn-context-compaction.ts#createTurnContextCompaction.performAutoCompact", 737],
@@ -1074,7 +1074,11 @@ function resolveCandidate(candidate: string): string {
  */
 function isChatLoopTurnModule(filePath: string): boolean {
 	const base = path.basename(filePath);
-	return (base.startsWith("chat-loop") || base.startsWith("turn-")) && base.endsWith(".ts");
+	return (
+		[base, path.basename(path.dirname(filePath))].some(
+			(name) => name.startsWith("chat-loop") || name.startsWith("turn-"),
+		) && base.endsWith(".ts")
+	);
 }
 
 /**
