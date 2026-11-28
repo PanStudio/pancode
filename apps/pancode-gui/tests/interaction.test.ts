@@ -209,10 +209,10 @@ test("the reference lists the conversation chords and the message-box keys", () 
 	assert.match(commands.lede, /^Type \/ in the message box to see this session's commands\./u);
 	assert.ok(commands.entries.some((entry) => entry.term === "/compact [instructions]"));
 	assert.ok(commands.entries.some((entry) => entry.term.includes("/extensions dev")));
-	// One name for stopping, so searching the reference for it finds the chord and Esc, Esc.
-	const stop = searchHelp("stop").find((match) => match.section.id === "keyboard");
-	assert.ok(stop?.entries.some((entry) => entry.term === "Ctrl/Cmd + ."));
-	assert.ok(stop?.entries.some((entry) => entry.term === "Esc, Esc"));
+	// One name for canceling a turn, so searching the reference for it finds the chord and Esc, Esc.
+	const cancel = searchHelp("cancel").find((match) => match.section.id === "keyboard");
+	assert.ok(cancel?.entries.some((entry) => entry.term === "Ctrl/Cmd + ."));
+	assert.ok(cancel?.entries.some((entry) => entry.term === "Esc, Esc"));
 });
 
 test("the terminal's Alt chords keep their meaning here, and the queue and file keys stay in the message box", () => {
