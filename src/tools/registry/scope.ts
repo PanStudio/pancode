@@ -25,6 +25,7 @@ import type { createFlowGates } from "./flow.js";
 import type { createRegistryHooks } from "./hooks.js";
 import type { createOperatorScopes } from "./operator-scope.js";
 import type { createRegistryPark } from "./park.js";
+import type { createRegistryRun } from "./run.js";
 import type { createSnapshotGate } from "./snapshot.js";
 
 export interface ParkedCall {
@@ -114,7 +115,6 @@ export interface RegistryScope {
 	readonly firstEscapeRefusal: ReturnType<typeof createRegistryDenials>["firstEscapeRefusal"];
 	readonly deniedCalls: ReturnType<typeof createRegistryDenials>["deniedCalls"];
 	readonly invokeSingle: ReturnType<typeof createRegistryDenials>["invokeSingle"];
-	readonly invokeAdmitted: (call: ClassifierCall, options?: ToolInvokeOptions) => Promise<RegistryVerdict>;
 	readonly hookApprovalOutcome: ReturnType<typeof createRegistryHooks>["hookApprovalOutcome"];
 	readonly runToolHook: ReturnType<typeof createRegistryHooks>["runToolHook"];
 	readonly admitRewrite: ReturnType<typeof createRegistryHooks>["admitRewrite"];
@@ -136,10 +136,6 @@ export interface RegistryScope {
 	readonly judgeParkedCall: ReturnType<typeof createRegistryPark>["judgeParkedCall"];
 	readonly requestReadRootApproval: ReturnType<typeof createRegistryPark>["requestReadRootApproval"];
 	readonly routeAsk: ReturnType<typeof createRegistryAsk>["routeAsk"];
-	readonly runSpec: (
-		spec: ToolSpec,
-		call: ClassifierCall,
-		decision: SafetyDecision,
-		options?: ToolInvokeOptions,
-	) => Promise<RegistryVerdict>;
+	readonly runSpec: ReturnType<typeof createRegistryRun>["runSpec"];
+	readonly invokeAdmitted: ReturnType<typeof createRegistryRun>["invokeAdmitted"];
 }
