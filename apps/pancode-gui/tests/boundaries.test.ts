@@ -86,6 +86,7 @@ const adapters = new Set([
 	"src/domains/resources/hub-inventory.ts",
 	"src/domains/resources/hub-actions.ts",
 	"src/domains/extensions/state.ts",
+	"src/domains/dispatch/types.ts",
 	"src/core/settings-layers.ts",
 	"src/core/project-target-urls.ts",
 	"src/core/settings-controls.ts",
@@ -111,8 +112,6 @@ const adapters = new Set([
 	"src/domains/telemetry/index.ts",
 	"src/domains/session/index.ts",
 	"src/domains/evidence/index.ts",
-	// The repository window `usage report` folds, so a repo reference explains to the CLI's number (#434 §11.4).
-	"src/domains/telemetry/usage-window.ts",
 	// The saved-task list row ACP `session/list` sends, so the ledger read redacts and bounds as the engine does.
 	"src/acp/session-list-row.ts",
 	"src/acp/server-bounds.ts",
