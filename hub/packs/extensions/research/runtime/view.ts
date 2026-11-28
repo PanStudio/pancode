@@ -70,7 +70,7 @@ export function listPanel(root: string): ExtensionOutputV2 {
 			entries.length === 0
 				? "No research campaigns in this project yet."
 				: `${entries.length} research campaign(s); pancode research list names them.`,
-		panel: { title: "Research", meta: `${entries.length} campaign(s)`, view: { t: "box", dir: "col", children } },
+		panel: { title: "Campaigns", meta: `${entries.length} campaign(s)`, view: { t: "box", dir: "col", children } },
 	};
 }
 
@@ -99,6 +99,6 @@ export function detailPanel(root: string, id: string): ExtensionOutputV2 {
 	});
 	return {
 		text: lines.join("\n"),
-		panel: { title: `Research · ${id}`, view: { t: "box", dir: "col", children } },
+		panel: { title: id, view: { t: "box", dir: "col", children } },
 	};
 }

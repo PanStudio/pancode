@@ -772,7 +772,7 @@ entries:
       and kept only on a clear improvement.
     version: 0.1.0
     sourceUrl: packs/extensions/research
-    sha256: d9689f2f363c1ed20ae351b4899bbe6dd6063e5d8c6779658579f7a77ec33a85
+    sha256: ee22c5cc38d7da50775ff4c97e2ca1893d718e15893eff18d179af98d3affb0b
     license: LicenseRef-PanCode-1.0
     tier: core
     envelopeDigest: fa961ebce45f2f7d84fbea580ec531dc2e4153c537d5e5adb8786c238f97ab3f

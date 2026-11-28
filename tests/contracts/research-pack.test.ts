@@ -440,6 +440,6 @@ describe("research pack panel", () => {
 		strictEqual(list.panel?.meta, "1 campaign(s)", list.text);
 		await host.action("research", { id: "open", key: campaign.id, source: "panel" });
 		const refreshed = await host.action("research", { id: "refresh", source: "panel" });
-		strictEqual(refreshed.panel?.title, `Research · ${campaign.id}`, refreshed.text);
+		strictEqual(refreshed.panel?.title, campaign.id, refreshed.text);
 	});
 });
