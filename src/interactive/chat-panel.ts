@@ -6,7 +6,6 @@ import { sanitizeAssistantProse } from "../core/assistant-prose.js";
 import type { OutputStyle } from "../core/defaults.js";
 import { isNarrationSummary } from "../core/narration-summary.js";
 import { ToolNames } from "../core/tool-names.js";
-import type { ViewArtifact } from "../domains/session/view-artifacts.js";
 import type { TelemetryView } from "../domains/telemetry/contract.js";
 import { settledPrefixLength } from "../engine/apis/diffusion-frames.js";
 import { type Component, stripTerminalSequences, truncateToWidth, wrapTextWithAnsi } from "../engine/tui.js";
@@ -26,6 +25,7 @@ import {
 	endedWithFailedChange,
 	proseBeforeWrittenCalls,
 } from "../session-control/chat-loop-messages.js";
+import type { ViewArtifact } from "../session-control/view-artifacts.js";
 import type { WorkerEntryState } from "../session-control/worker-stream.js";
 import {
 	GAP_ROW,
