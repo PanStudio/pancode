@@ -12,9 +12,11 @@ import type { AcpCommandControl } from "./commands.js";
 import { ACP_SESSION_LIMIT_CODE, AcpRequestError } from "./errors.js";
 import { ACP_WORKSPACE_META_KEY } from "./live-telemetry.js";
 import { requireBoundedClientString, safeStoredIdentifier } from "./server-bounds.js";
+import type { PancodeAcpServerOptions } from "./server-options.js";
 import { ceilingBinds, ceilingMeta } from "./server-prompt-input.js";
 import type { AcpServerScope } from "./server-scope.js";
 import type { AcpServerSession } from "./server-tool-updates.js";
+import { ACP_CEILING_META_KEY } from "./types.js";
 
 export function assertParamKeys(params: unknown, allowed: ReadonlySet<string>): Record<string, unknown> {
 	if (params === undefined) return {};
@@ -22,6 +24,14 @@ export function assertParamKeys(params: unknown, allowed: ReadonlySet<string>): 
 		throw new AcpRequestError(-32602, "invalid method parameters", { code: "invalid_params" });
 	}
 	return params;
+}
+
+export function assertCeilingEnforceable(options: PancodeAcpServerOptions, ceiling: TurnConstraints | undefined): void {
+	if (ceiling !== undefined && options.chat.setToolCeiling === undefined) {
+		throw new AcpRequestError(-32602, `this agent cannot enforce ${ACP_CEILING_META_KEY}`, {
+			code: "ceiling_unsupported",
+		});
+	}
 }
 
 export const ACP_MAX_SESSION_ID_BYTES = 128;
