@@ -25,7 +25,6 @@ import type { createRegistryHooks } from "./hooks.js";
 import type { createShellEgress, OperatorAskQueue } from "./operator-asks.js";
 import type { createOperatorScopes } from "./operator-scope.js";
 import type { createRegistryPark } from "./park.js";
-import type { createRegistryResume } from "./resume.js";
 import type { createRegistryRun } from "./run.js";
 import type { createSnapshotGate } from "./snapshot.js";
 
@@ -115,18 +114,14 @@ export interface RegistryScope {
 	readonly escapeAnswerable: ReturnType<typeof createRegistryDenials>["escapeAnswerable"];
 	readonly firstEscapeRefusal: ReturnType<typeof createRegistryDenials>["firstEscapeRefusal"];
 	readonly deniedCalls: ReturnType<typeof createRegistryDenials>["deniedCalls"];
-	readonly invokeSingle: ReturnType<typeof createRegistryDenials>["invokeSingle"];
 	readonly hookApprovalOutcome: ReturnType<typeof createRegistryHooks>["hookApprovalOutcome"];
 	readonly runToolHook: ReturnType<typeof createRegistryHooks>["runToolHook"];
 	readonly admitRewrite: ReturnType<typeof createRegistryHooks>["admitRewrite"];
 	readonly judgeRewrite: ReturnType<typeof createRegistryHooks>["judgeRewrite"];
 	readonly runAwaitedToolHook: ReturnType<typeof createRegistryHooks>["runAwaitedToolHook"];
-	readonly evaluateCallAdmission: ReturnType<typeof createRegistryAdmission>["evaluateCallAdmission"];
 	readonly admit: ReturnType<typeof createRegistryAdmission>["admit"];
-	readonly deniedVerdict: ReturnType<typeof createRegistryAdmission>["deniedVerdict"];
 	readonly approvalRailOf: ReturnType<typeof createRegistryPark>["approvalRailOf"];
 	readonly cleanupParkedEntry: ReturnType<typeof createRegistryPark>["cleanupParkedEntry"];
-	readonly resolveParkedAsBlocked: ReturnType<typeof createRegistryPark>["resolveParkedAsBlocked"];
 	readonly reparkEntry: ReturnType<typeof createRegistryPark>["reparkEntry"];
 	readonly notifyAdmissionReview: ReturnType<typeof createRegistryPark>["notifyAdmissionReview"];
 	readonly observeUnattendedRefusal: ReturnType<typeof createRegistryPark>["observeUnattendedRefusal"];
@@ -135,9 +130,7 @@ export interface RegistryScope {
 	readonly cancelParkedCallById: ReturnType<typeof createRegistryPark>["cancelParkedCallById"];
 	readonly refreshHooksAfterGitControlWrite: ReturnType<typeof createRegistryPark>["refreshHooksAfterGitControlWrite"];
 	readonly judgeParkedCall: ReturnType<typeof createRegistryPark>["judgeParkedCall"];
-	readonly requestReadRootApproval: ReturnType<typeof createRegistryPark>["requestReadRootApproval"];
 	readonly routeAsk: ReturnType<typeof createRegistryAsk>["routeAsk"];
 	readonly runSpec: ReturnType<typeof createRegistryRun>["runSpec"];
 	readonly invokeAdmitted: ReturnType<typeof createRegistryRun>["invokeAdmitted"];
-	readonly resumeParkedCalls: ReturnType<typeof createRegistryResume>["resumeParkedCalls"];
 }

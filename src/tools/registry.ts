@@ -167,9 +167,6 @@ export function createRegistry(deps: RegistryDeps): ToolRegistry {
 		get deniedCalls() {
 			return deniedCalls;
 		},
-		get invokeSingle() {
-			return invokeSingle;
-		},
 		get invokeAdmitted() {
 			return invokeAdmitted;
 		},
@@ -190,21 +187,11 @@ export function createRegistry(deps: RegistryDeps): ToolRegistry {
 			return admit;
 		},
 
-		get evaluateCallAdmission() {
-			return evaluateCallAdmission;
-		},
-		get deniedVerdict() {
-			return deniedVerdict;
-		},
-
 		get approvalRailOf() {
 			return approvalRailOf;
 		},
 		get cleanupParkedEntry() {
 			return cleanupParkedEntry;
-		},
-		get resolveParkedAsBlocked() {
-			return resolveParkedAsBlocked;
 		},
 		get reparkEntry() {
 			return reparkEntry;
@@ -230,19 +217,12 @@ export function createRegistry(deps: RegistryDeps): ToolRegistry {
 		get judgeParkedCall() {
 			return judgeParkedCall;
 		},
-		get requestReadRootApproval() {
-			return requestReadRootApproval;
-		},
 
 		get routeAsk() {
 			return routeAsk;
 		},
 		get runSpec() {
 			return runSpec;
-		},
-
-		get resumeParkedCalls() {
-			return resumeParkedCalls;
 		},
 	};
 	const {
