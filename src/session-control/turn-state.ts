@@ -676,6 +676,12 @@ export type ChatLoopSubmitState = TurnStateView<
 	| "turnToolNames"
 >;
 
+/** chat-loop/preparation: owns the preparation phase the composer renders. */
+export type ChatLoopPreparationState = TurnStateView<
+	"turnPreparation" | "turnPreparationSince" | "turnPreparationStage",
+	"turnPreparation" | "turnPreparationSince" | "turnPreparationStage"
+>;
+
 /**
  * The thinking level argument is ignored: the agent state owns the level and
  * turn state keeps no copy. The parameter stays optional because existing test

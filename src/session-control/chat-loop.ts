@@ -110,6 +110,7 @@ import { createHeadlessObservationPool } from "../tools/observation.js";
 import type { AskUserToolPolicy, ToolInvokeOptions, ToolRegistry } from "../tools/registry-contract.js";
 import type { VisionSidecar } from "../tools/vision-sidecar.js";
 import type { ApprovalRequestView } from "./approval-request-view.js";
+import { createTurnPreparation } from "./chat-loop/preparation.js";
 import { compactionFailureReason } from "./chat-loop/submit-fit.js";
 import { isRedirectReason } from "./chat-loop/submit-turn.js";
 import { createChatLoopBus } from "./chat-loop-bus.js";
@@ -1059,62 +1060,15 @@ export function createChatLoop(deps: CreateChatLoopDeps): ChatLoop {
 	let lastHistoricalImageNoticeKey: string | null = null;
 
 	const unsubscribeEggSession = deps.bus?.subscribe("session.parked", () => eggs.reset());
-	const preparationListeners = new Set<(phase: TurnPreparationPhase) => void>();
-	/**
-	 * Move the consumed prompt to a new preparation phase and tell everything
-	 * that renders it. Idempotent, so the two compaction sites and the two
-	 * clearing sites (admission and settlement, because a refusal never reaches
-	 * admission) can all set the phase they mean without ordering rules.
-	 */
-	const setTurnPreparation = (phase: TurnPreparationPhase): void => {
-		if (state.turnPreparation === phase) return;
-		// `since` is the age of the whole window, not of its current sub-state:
-		// what the operator is judging is how long ago they pressed Enter.
-		if (state.turnPreparation === "idle") state.turnPreparationSince = Date.now();
-		if (phase === "idle") {
-			state.turnPreparationSince = 0;
-			state.turnPreparationStage = null;
-		}
-		state.turnPreparation = phase;
-		for (const listener of preparationListeners) {
-			try {
-				listener(phase);
-			} catch {
-				// Preparation observers are presentation only and cannot fail a turn.
-			}
-		}
-	};
-
-	const markPreparationStep = (step: TurnPreparationStep): void => {
-		state.turnPreparationStage = { step, since: Date.now() };
-	};
-
-	/**
-	 * Submits currently holding a consumed prompt. The FIFO gate lets a second
-	 * submit open its window while the first is still settling, so the phase is
-	 * refcounted rather than owned: the last one out turns the light off.
-	 */
-	let preparingSubmits = 0;
-	const enterPreparation = (): void => {
-		preparingSubmits += 1;
-		// Opening a window never narrows one that is already open: a second submit
-		// arriving while the first is compacting must not flip the composer from
-		// COMPACTING back to PREPARING while the compaction is still running.
-		if (state.turnPreparation === "idle") setTurnPreparation("preparing");
-	};
-	const leavePreparation = (): void => {
-		preparingSubmits = Math.max(0, preparingSubmits - 1);
-		if (preparingSubmits === 0) setTurnPreparation("idle");
-	};
-	/**
-	 * Return to the plain preparing state after a compaction inside the window.
-	 * Refcount-aware, because two submits share the window and the slower one's
-	 * compaction can finish after the window has already closed; restoring
-	 * `preparing` there would re-open it with nothing left to prepare.
-	 */
-	const endPreparationCompaction = (): void => {
-		setTurnPreparation(preparingSubmits > 0 ? "preparing" : "idle");
-	};
+	const {
+		preparationListeners,
+		setTurnPreparation,
+		markPreparationStep,
+		enterPreparation,
+		leavePreparation,
+		endPreparationCompaction,
+		preparingSubmits,
+	} = createTurnPreparation(state);
 
 	const emit = (event: ChatLoopEvent): void => deliverChatLoopEvent(listeners, event);
 
@@ -2438,7 +2392,7 @@ export function createChatLoop(deps: CreateChatLoopDeps): ChatLoop {
 		(!machineProjectionRequired || machineProjectionBinding !== null) &&
 		machineTurnOwner === null &&
 		!state.streaming &&
-		preparingSubmits === 0 &&
+		preparingSubmits() === 0 &&
 		!loop.turnActive &&
 		!state.currentAskUserPolicy?.inFlight &&
 		deps.toolRegistry?.hasParkedCalls() !== true &&
