@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import { type ChildProcess, spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { cpSync, mkdirSync, mkdtempSync, realpathSync, rmSync } from "node:fs";
+import { cpSync, mkdirSync, mkdtempSync, realpathSync, rmSync, statSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import type {
@@ -44,6 +44,7 @@ import { isBuiltinToolName } from "../../core/tool-names.js";
 import type { EmbeddingResponse } from "../providers/embedding/types.js";
 import { parseExtensionManifest } from "./discovery.js";
 import { extensionContentDigestWithCapture } from "./integrity.js";
+import type { ResolvedPathGrant } from "./path-grants.js";
 import {
 	assertPlainProjectDir,
 	type ExtensionSandboxReport,
@@ -99,6 +100,8 @@ export interface RuntimeProcessV2Options {
 	sandboxMode?: SandboxMode;
 	/** The session is read-only: the runtime may write its store but no user path (readOnlyRuntimeDeclaration). */
 	readOnly?: boolean;
+	/** The paths the operator named for a `pancode <verb>`'s declared path flags; write roots already exist. */
+	grants?: ReadonlyArray<ResolvedPathGrant>;
 }
 
 export interface RuntimeRoots {
@@ -109,6 +112,7 @@ export interface RuntimeRoots {
 	home: string;
 	/** The `runtime.state.project` directory, and whether this session may write it. */
 	project?: { dir: string; writable: boolean };
+	grants?: ReadonlyArray<ResolvedPathGrant>;
 }
 
 /** A request the runtime did not answer in time. The runtime stays up; the caller decides what a miss costs. */
@@ -143,6 +147,14 @@ function runtimePermissionArgs(declaration: ExtensionRuntimeDeclarationV2, roots
 	if (roots.project !== undefined) {
 		read.add(directory(roots.project.dir));
 		if (roots.project.writable) write.add(directory(roots.project.dir));
+	}
+	for (const grant of roots.grants ?? []) {
+		// A read grant of a file opens that file only; an absent one is opened as named, so reading it fails as missing.
+		const isDirectory = grant.access === "write" || (grant.exists && statSync(grant.canonical).isDirectory());
+		for (const root of new Set([grant.path, grant.canonical])) {
+			read.add(isDirectory ? directory(root) : root);
+			if (grant.access === "write") write.add(directory(root));
+		}
 	}
 	return [
 		"--permission",
@@ -222,6 +234,9 @@ interface Pending {
 	reject(error: Error): void;
 	cleanup(): void;
 }
+
+/** The most YAML text one `ctx.yaml` call parses; documents a command reads are small configuration files. */
+const YAML_TEXT_BYTES = 64 * 1024;
 
 const REPLY_FIELDS: Record<string, readonly string[]> = {
 	ready: ["commands", "events", "hooks", "tools", "actions", "interviews", "rss"],
@@ -369,6 +384,7 @@ export class ExtensionRuntimeProcessV2 {
 					storeDir: options.storeDir,
 					bootstrap,
 					...(this.project !== undefined ? { project: { dir: this.project.dir, writable: this.project.writable } } : {}),
+					...(options.grants !== undefined ? { grants: options.grants } : {}),
 				},
 				argv: [
 					process.execPath,
@@ -379,6 +395,7 @@ export class ExtensionRuntimeProcessV2 {
 						storeDir: options.storeDir,
 						home: os.homedir(),
 						...(this.project !== undefined ? { project: { dir: this.project.dir, writable: this.project.writable } } : {}),
+						...(options.grants !== undefined ? { grants: options.grants } : {}),
 					}),
 					bootstrap,
 				],
@@ -439,6 +456,9 @@ export class ExtensionRuntimeProcessV2 {
 			options: options.options,
 			...(this.declaration.permissions.fs.write.includes("store") ? { storeDir: options.storeDir } : {}),
 			...(this.project !== undefined ? { projectDir: this.project.dir } : {}),
+			...(options.grants !== undefined && options.grants.length > 0
+				? { paths: options.grants.map(({ flag, access, path: granted }) => ({ flag, access, path: granted })) }
+				: {}),
 			limits: {
 				completionMessages: RUNTIME_V2_LIMITS.completionMessages,
 				completionRequestChars: RUNTIME_V2_LIMITS.completionRequestChars,
@@ -652,6 +672,16 @@ export class ExtensionRuntimeProcessV2 {
 		try {
 			if (typeof m.op === "string" && Object.hasOwn(SERVICE_CALLS, m.op)) {
 				await this.serveService(m.op as ServiceKind, m, reply);
+				return;
+			}
+			if (m.op === "yaml") {
+				const parent = typeof m.parentRequestId === "string" ? this.pending.get(m.parentRequestId)?.kind : undefined;
+				if (parent !== "command" && parent !== "action") throw new Error("yaml call has no active command or action");
+				if (typeof m.value !== "string") throw new Error("yaml takes text");
+				if (Buffer.byteLength(m.value) > YAML_TEXT_BYTES)
+					throw new Error(`yaml text exceeds ${YAML_TEXT_BYTES / 1024} KiB`);
+				// Plain data only: the reply crosses IPC as JSON, which also drops any anchor aliasing.
+				reply({ value: parseYaml(m.value) ?? null });
 				return;
 			}
 			const [scope, verb] = String(m.op).split(".");

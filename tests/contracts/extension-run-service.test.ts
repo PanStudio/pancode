@@ -16,6 +16,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it } from "node:test";
+import type { Interview } from "@pancode/sdk/extension";
 import {
 	capabilityEnvelope,
 	envelopeGrowth,
@@ -23,11 +24,19 @@ import {
 	parseExtensionRuntimeV2,
 	RUNTIME_V2_LIMITS,
 } from "@pancode/sdk/pack";
-import { runPackVerb } from "../../src/cli/extensions.js";
+import { runHomes, runPackVerb } from "../../src/cli/extensions.js";
 import type { RunCommandVectorOptions, SafeCommandResult } from "../../src/core/safe-exec.js";
+import type { TelemetryRecord } from "../../src/core/telemetry/envelope.js";
 import { applyToolEnvControls, EXTENSION_RUN_DEPTH_ENV } from "../../src/core/tool-env-controls.js";
+import { resetXdgCache } from "../../src/core/xdg.js";
 import { extensionInvocation } from "../../src/domains/extensions/operator-commands.js";
 import { OperatorExtensions } from "../../src/domains/extensions/operator-extensions.js";
+import {
+	createWriteRoots,
+	PathGrantError,
+	releaseCreatedRoots,
+	resolvePathGrants,
+} from "../../src/domains/extensions/path-grants.js";
 import {
 	assertPlainProjectDir,
 	extensionProjectDir,
@@ -37,9 +46,25 @@ import {
 	createExtensionRunService,
 	type ExtensionRunCeilings,
 	type ExtensionRunError,
+	type ExtensionRunHomes,
+	type ExtensionRunServiceDeps,
 } from "../../src/domains/extensions/services/runs.js";
 import { createExtensionRequestScope } from "../../src/domains/extensions/services/scope.js";
 import { disableExtension, installExtension } from "../../src/domains/extensions/state.js";
+import {
+	CLAUDE_AGENT_SDK_VERSION,
+	ClaudeAgentSdkUnavailableError,
+} from "../../src/domains/lifecycle/claude-sdk-install.js";
+import {
+	COPILOT_SDK_PACKAGE,
+	COPILOT_SDK_VERSION,
+	CopilotSdkUnavailableError,
+	resolveCopilotSdkEntry,
+} from "../../src/domains/lifecycle/copilot-sdk-install.js";
+import type { SessionEntry } from "../../src/domains/session/entries.js";
+import { foldRunDigest } from "../../src/domains/session/run-digest.js";
+import { findPinnedTool, resolveVendoredBinary } from "../../src/domains/toolchain/index.js";
+import { runParkedInterview } from "../../src/tools/extension-interview.js";
 import { isolatePancodeEnv } from "../harness/scratch-env.js";
 
 interface Call {
@@ -71,6 +96,7 @@ function harness(
 	yolo: string | null = null,
 	readOnly = false,
 	env: Record<string, string> = {},
+	extra: Partial<ExtensionRunServiceDeps> = {},
 ) {
 	const tempRoot = mkdtempSync(join(tmpdir(), "run-service-"));
 	const calls: Call[] = [];
@@ -82,8 +108,13 @@ function harness(
 		yoloRefusal: () => yolo,
 		...(readOnly ? { readOnly: () => true } : {}),
 		resolvePlace: (place) =>
-			place === "workspace" ? { cwd: "/w", workspaceRoot: "/w" } : { cwd: `/t/${place.worktree}`, workspaceRoot: "/t" },
+			place === "workspace"
+				? { cwd: "/w", workspaceRoot: "/w" }
+				: "path" in place
+					? { cwd: place.path, workspaceRoot: place.path, envPolicy: { targets: [], passEnv: ["PLACE_ONLY"] } }
+					: { cwd: `/t/${place.worktree}`, workspaceRoot: "/t" },
 		tempRoot,
+		...extra,
 		spawn: (file, args, options = {}) =>
 			new Promise((resolve) => {
 				const index = args.indexOf("--answers");
@@ -259,6 +290,91 @@ describe("extension run service", () => {
 		h.cleanup();
 	});
 
+	it("keeps a run's PanCode data in a home inside a granted write root, and digests it once the run ended", async (t) => {
+		const root = realpathSync(mkdtempSync(join(tmpdir(), "run-home-")));
+		t.after(() => rmSync(root, { recursive: true, force: true }));
+		const read: Array<[string, string]> = [];
+		const homes: ExtensionRunHomes = {
+			writeRoots: [root],
+			env: (home) => ({ PANCODE_DATA_DIR: join(home, "data") }),
+			digest: (home, cwd) => {
+				read.push([home, cwd]);
+				const gates = { reached: [], interviews: 0, answered: 0, unscripted: 0, unanswered: 0 };
+				return { sessionId: "s1", gates, refusals: { hookBlocks: 0, toolRefusals: 0 }, loopGuardBlocks: 0, tokens: null };
+			},
+		};
+		const bare = harness();
+		await assert.rejects(
+			bare.service.start({ ...base, home: join(root, "a") }),
+			/home needs a write root the operator granted/u,
+		);
+		bare.cleanup();
+		const h = harness({}, null, false, { PLACE_ONLY: "p" }, { homes });
+		await assert.rejects(h.service.start({ ...base, home: "rel" }), /home must be an absolute path/u);
+		await assert.rejects(h.service.start({ ...base, home: tmpdir() }), /outside every path the operator granted/u);
+		writeFileSync(join(root, "file"), "");
+		await assert.rejects(h.service.start({ ...base, home: join(root, "file") }), /is not a directory/u);
+		const project = join(root, "project");
+		const home = join(root, "e1", "home");
+		const { id } = await h.service.start({ ...base, cwd: { path: project }, home });
+		for (const role of ["data", "state", "cache"]) assert.ok(existsSync(join(home, role)), role);
+		const call = h.calls[0] as Call;
+		assert.equal(call.args[call.args.indexOf("--cwd") + 1], project);
+		assert.equal(call.options.env?.PANCODE_DATA_DIR, join(home, "data"));
+		assert.equal(call.options.env?.PLACE_ONLY, "p", "a path place reads its own env allowlist");
+		assert.equal((await h.service.wait(id)).outcome, "succeeded");
+		assert.equal((await h.service.digest(id)).sessionId, "s1");
+		assert.deepEqual(read, [[home, project]]);
+		const plain = await h.service.start(base);
+		await h.service.wait(plain.id);
+		assert.equal(h.calls[1]?.options.env?.PLACE_ONLY, undefined);
+		await assert.rejects(h.service.digest(plain.id), /started without a home/u);
+		h.cleanup();
+	});
+
+	it("runs another extension's command only when declared, and counts it toward the run depth", async (t) => {
+		const root = realpathSync(mkdtempSync(join(tmpdir(), "run-command-")));
+		t.after(() => rmSync(root, { recursive: true, force: true }));
+		const homes: ExtensionRunHomes = {
+			writeRoots: [root],
+			env: (home) => ({ PANCODE_DATA_DIR: join(home, "data") }),
+			digest: () => assert.fail("not read"),
+		};
+		const request = { extension: "desk", command: "status", timeoutSeconds: 30 };
+		const undeclared = harness();
+		await assert.rejects(undeclared.service.command(request), /does not declare runs\.commands/u);
+		undeclared.cleanup();
+		const h = harness({ commands: true }, null, false, {}, { homes });
+		await assert.rejects(h.service.command({ ...request, extension: "--evil" }), /extension must be/u);
+		await assert.rejects(h.service.command({ ...request, timeoutSeconds: 601 }), /timeoutSeconds/u);
+		const home = join(root, "home");
+		const answer = await h.service.command({ ...request, cwd: { path: root }, home });
+		assert.equal(answer.exitCode, 0);
+		assert.match(answer.stdout, /"type":"run_end"/u);
+		const call = h.calls[0] as Call;
+		assert.deepEqual(call.args, ["/pancode.js", "extensions", "run", "desk", "status", "--json"]);
+		assert.equal(call.options.cwd, root);
+		assert.equal(call.options.timeoutMs, 30_000);
+		assert.equal(call.options.env?.PANCODE_DATA_DIR, join(home, "data"));
+		assert.equal(call.options.env?.PANCODE_EXTENSION_RUN_DEPTH, "1");
+		assert.equal(call.options.env?.SECRET_TOKEN, undefined);
+		h.cleanup();
+		const deep = harness({ commands: true }, null, false, { PANCODE_EXTENSION_RUN_DEPTH: "2" });
+		await assert.rejects(deep.service.command(request), /runs\.command: .*2 extension runs deep/u);
+		assert.equal(deep.calls.length, 0);
+		deep.cleanup();
+	});
+
+	it("says why an answers text is no valid answers file before any run starts", async () => {
+		const h = harness();
+		assert.equal(await h.service.refusal({ answers: "answers: []\n" }), null);
+		assert.match((await h.service.refusal({ answers: "answers: 5\n" })) ?? "", /answers/u);
+		assert.match((await h.service.refusal({ answers: "x".repeat(65 * 1024) })) ?? "", /exceed 64 KiB/u);
+		await assert.rejects(h.service.start({ ...base, answers: "x".repeat(65 * 1024) }), /exceed 64 KiB/u);
+		assert.equal(h.calls.length, 0);
+		h.cleanup();
+	});
+
 	it("reports frames a slow reader lost to the window", async () => {
 		const h = harness();
 		const { id } = await h.service.start({ ...base, prompt: "flood" });
@@ -326,6 +442,111 @@ describe("runs, long commands and verbs in a manifest", () => {
 			);
 		assert.deepEqual(envelopeGrowth(grown, grown), []);
 	});
+
+	it("declares a verb's path flags and runs.commands, and reports each as growth", () => {
+		const verb = (paths: unknown, services: Record<string, unknown> = runs) =>
+			runtime({ services, cli: [{ verb: "go", command: "drive", summary: "go", ...(paths ? { paths } : {}) }] });
+		assert.deepEqual(verb([{ flag: "--out", access: "write" }]).cli?.[0]?.paths, [{ flag: "--out", access: "write" }]);
+		assert.equal(verb(undefined).cli?.[0]?.paths, undefined);
+		assert.throws(() => verb([{ flag: "--cwd", access: "read" }]), /cannot name a path grant/u);
+		assert.throws(
+			() =>
+				verb([
+					{ flag: "--a", access: "read" },
+					{ flag: "--a", access: "write" },
+				]),
+			/repeats '--a'/u,
+		);
+		assert.throws(() => verb([{ flag: "out", access: "read" }]), /paths\[0\]\.flag/u);
+		assert.throws(() => verb([{ flag: "--a", access: "exec" }]), /paths\[0\]\.access/u);
+		assert.throws(() => verb(Array.from({ length: 9 }, (_, i) => ({ flag: `--f${i}`, access: "read" }))), /paths/u);
+		const commands = { runs: { maxTimeoutSeconds: 600, commands: true } };
+		assert.equal(verb(undefined, commands).services?.runs?.commands, true);
+		const growth = envelopeGrowth(
+			capabilityEnvelope(verb(undefined)),
+			capabilityEnvelope(verb([{ flag: "--out", access: "write" }], commands)),
+		);
+		for (const expected of [/pancode go --out \(write\)/u, /installed extensions' commands/u])
+			assert.ok(
+				growth.some((line) => expected.test(line)),
+				`${expected} in ${JSON.stringify(growth)}`,
+			);
+	});
+});
+
+describe("paths a verb's command line grants", () => {
+	const declared = [
+		{ flag: "--in", access: "read" as const },
+		{ flag: "--out", access: "write" as const },
+	];
+
+	it("resolves each declared flag's value against the workspace, up to --", async (t) => {
+		const env = await isolatePancodeEnv("pancode-grants-");
+		t.after(env.restore);
+		const ws = join(realpathSync(env.dir), "ws");
+		mkdirSync(ws);
+		writeFileSync(join(ws, "in.txt"), "");
+		const grants = resolvePathGrants(declared, ["--in", "in.txt", "--json", "--out", "o", "--", "--in", "x"], ws);
+		assert.deepEqual(
+			grants.map(({ flag, access, path, exists }) => [flag, access, path, exists]),
+			[
+				["--in", "read", join(ws, "in.txt"), true],
+				["--out", "write", join(ws, "o"), false],
+			],
+		);
+		assert.deepEqual(resolvePathGrants(declared, ["--in"], ws), []);
+		assert.deepEqual(resolvePathGrants(declared, ["--other", "/"], ws), []);
+	});
+
+	it("refuses the root, the home directory, PanCode's directories and a .pancode write root", async (t) => {
+		const env = await isolatePancodeEnv("pancode-grants-");
+		t.after(env.restore);
+		const ws = join(realpathSync(env.dir), "ws");
+		mkdirSync(join(ws, ".pancode"), { recursive: true });
+		writeFileSync(join(ws, "file"), "");
+		execFileSync("git", ["init", "-q"], { cwd: ws });
+		mkdirSync(join(ws, "sub"));
+		process.env.HOME = join(env.dir, "home");
+		mkdirSync(process.env.HOME);
+		const refusal = (argv: string[], from = ws): string => {
+			try {
+				resolvePathGrants(declared, argv, from);
+			} catch (error) {
+				assert.ok(error instanceof PathGrantError);
+				return `${error.flag} ${error.value}: ${error.message}`;
+			}
+			return "granted";
+		};
+		assert.equal(refusal(["--in", "/"]), "--in /: cannot grant the filesystem root");
+		assert.equal(refusal(["--in", process.env.HOME]), `--in ${process.env.HOME}: cannot grant the home directory itself`);
+		assert.match(refusal(["--in", join(env.dir, "config", "x")]), /overlaps PanCode-managed path/u);
+		assert.match(refusal(["--out", env.dir]), /overlaps PanCode-managed path/u, "a root holding PanCode's data");
+		assert.equal(refusal(["--in", ".pancode"]), "granted", "the workspace's .pancode may be read");
+		assert.match(refusal(["--out", ".pancode/out"]), /overlaps PanCode-managed path .*\.pancode$/u);
+		assert.match(refusal(["--out", "../.pancode"], join(ws, "sub")), /overlaps PanCode-managed path/u);
+		assert.equal(refusal(["--out", "file"]), "--out file: is not a directory");
+	});
+
+	it("creates an absent write root and releases it only while it is empty", async (t) => {
+		const env = await isolatePancodeEnv("pancode-grants-");
+		t.after(env.restore);
+		const ws = join(realpathSync(env.dir), "ws");
+		mkdirSync(ws);
+		const grants = (out: string) => resolvePathGrants(declared, ["--out", out], ws);
+		const created = createWriteRoots(grants("a/b"));
+		assert.deepEqual(created, [join(ws, "a"), join(ws, "a", "b")]);
+		releaseCreatedRoots(created);
+		assert.equal(existsSync(join(ws, "a")), false);
+		const kept = createWriteRoots(grants("c/d"));
+		writeFileSync(join(ws, "c", "d", "result"), "");
+		releaseCreatedRoots(kept);
+		assert.ok(existsSync(join(ws, "c", "d", "result")));
+		writeFileSync(join(ws, "e"), "");
+		assert.throws(
+			() => createWriteRoots(grants("e/f")),
+			(error: unknown) => error instanceof PathGrantError && /ENOTDIR/u.test(error.message),
+		);
+	});
 });
 
 const driverSource = `export default (api) => {
@@ -342,6 +563,15 @@ const driverSource = `export default (api) => {
 		...(ctx.argv ? { stderr: "plain: a note" } : {}),
 		exitCode: 4,
 	}));
+	api.handle("grant", async (args, ctx) => {
+		const { readFileSync, writeFileSync } = await import("node:fs");
+		const named = Object.fromEntries((ctx.paths ?? []).map((grant) => [grant.flag, grant]));
+		const text = readFileSync(named["--in"].path, "utf8");
+		if (ctx.argv.includes("--keep")) writeFileSync(named["--out"].path + "/copy.yaml", text);
+		const bad = await ctx.yaml("a: [").then(() => null, (error) => error.message);
+		const paths = (ctx.paths ?? []).map((grant) => [grant.flag, grant.access]);
+		return { text: JSON.stringify({ paths, doc: await ctx.yaml(text), bad: typeof bad }) };
+	});
 };
 `;
 
@@ -513,10 +743,22 @@ describe("an installed extension's work services", () => {
 					commands: [
 						{ name: "drive", description: "drive", long: true, timeoutMs: 120_000 },
 						{ name: "plain", description: "plain" },
+						{ name: "grant", description: "grant" },
 					],
 					permissions: { fs: { write: ["store"] } },
 					services: { runs: { maxTimeoutSeconds: 600 } },
-					cli: [{ verb: "drive-plain", command: "plain", summary: "a plain answer" }],
+					cli: [
+						{ verb: "drive-plain", command: "plain", summary: "a plain answer" },
+						{
+							verb: "drive-grant",
+							command: "grant",
+							summary: "reads and writes what it is granted",
+							paths: [
+								{ flag: "--in", access: "read" },
+								{ flag: "--out", access: "write" },
+							],
+						},
+					],
 				},
 			}),
 		);
@@ -594,6 +836,39 @@ describe("an installed extension's work services", () => {
 		assert.equal(
 			err.at(-1),
 			"pancode drive-plain: extension:driver is disabled; pancode extensions enable driver enables it\n",
+		);
+	});
+
+	it("a verb reads and writes only the paths its command line grants, and parses YAML in the host", async (t) => {
+		const { cwd } = await installDriver(t);
+		writeFileSync(join(cwd, "in.yaml"), "a: [1, 2]\n");
+		const out: string[] = [];
+		const err: string[] = [];
+		const write = { out: process.stdout.write.bind(process.stdout), err: process.stderr.write.bind(process.stderr) };
+		process.stdout.write = ((chunk: string) => out.push(String(chunk)) > 0) as typeof process.stdout.write;
+		process.stderr.write = ((chunk: string) => err.push(String(chunk)) > 0) as typeof process.stderr.write;
+		try {
+			assert.equal(await runPackVerb("drive-grant", ["--in", "in.yaml", "--out", "made/out", "--keep"]), 0);
+			assert.equal(await runPackVerb("drive-grant", ["--in", "in.yaml", "--out", "released"]), 0);
+			assert.equal(await runPackVerb("drive-grant", ["--in", "in.yaml", "--out", ".pancode/x"]), 2);
+		} finally {
+			process.stdout.write = write.out;
+			process.stderr.write = write.err;
+		}
+		const answers = out.filter((chunk) => chunk.startsWith('{"paths"'));
+		assert.deepEqual(JSON.parse(answers[0] ?? "null"), {
+			paths: [
+				["--in", "read"],
+				["--out", "write"],
+			],
+			doc: { a: [1, 2] },
+			bad: "string",
+		});
+		assert.equal(readFileSync(join(cwd, "made", "out", "copy.yaml"), "utf8"), "a: [1, 2]\n");
+		assert.equal(existsSync(join(cwd, "released")), false, "an unused write root the runner made is removed");
+		assert.match(
+			err.join(""),
+			/pancode drive-grant: --out \.pancode\/x: overlaps PanCode-managed path .*\nsee: pancode drive-grant --help\n/u,
 		);
 	});
 
@@ -681,3 +956,132 @@ describe("an installed extension's work services", () => {
 		assert.equal(existsSync(output.text), false);
 	});
 });
+
+describe("a run home's digest", () => {
+	it("counts gates, extension refusals and loop-guard blocks from the ledger and journal", () => {
+		const digest = foldRunDigest(
+			"s1",
+			[
+				toolResult("gateway", {
+					capability: "extension_wtfp__gate",
+					interview: { outcome: "done", checkpoints: ["plan-introduction"] },
+				}),
+				toolResult(
+					"extension_wtfp__gate",
+					{ interview: { outcome: "cancelled", reason: "unscripted", checkpoints: ["results-acceptance"] } },
+					true,
+				),
+				toolResult("gateway", { capability: "extension_wtfp__record" }, true),
+				// The shape an extension tool's error reaches the ledger in through the gateway: owner stamped, details empty.
+				{
+					...toolResult("gateway", {}, true),
+					payload: { toolName: "gateway", isError: true, owner: { kind: "extension", id: "wtfp" }, result: { details: {} } },
+				} as SessionEntry,
+				toolResult("gateway", { capability: "data" }, true),
+			],
+			[
+				journalRecord("hook.ran", { origin: "extension", hook: "before_tool", effectKinds: ["block_tool"] }),
+				journalRecord("hook.ran", { origin: "user", hook: "before_tool", effectKinds: ["block_tool"] }),
+				journalRecord("middleware.fired", { ruleId: "guard.loop", effects: ["block_tool"], hook: "before_tool" }),
+				journalRecord("middleware.fired", { ruleId: "guard.loop", effects: ["annotate_tool_result"], hook: "after_tool" }),
+			],
+			null,
+		);
+		assert.deepEqual(digest.gates, {
+			reached: ["plan-introduction", "results-acceptance"],
+			interviews: 2,
+			answered: 1,
+			unscripted: 1,
+			unanswered: 0,
+		});
+		assert.deepEqual(digest.refusals, { hookBlocks: 1, toolRefusals: 2 });
+		assert.equal(digest.loopGuardBlocks, 1);
+		assert.equal(digest.tokens, null);
+	});
+
+	it("a parked interview names the checkpoints it put to the author", async () => {
+		const interview: Interview = {
+			id: "gate",
+			title: "Gates",
+			step: {
+				key: "gate.one",
+				questions: [
+					{
+						id: "choice",
+						label: "Approve the plan?",
+						kind: "single",
+						checkpoint: "plan-introduction",
+						options: [{ value: "approve", label: "Approve" }],
+					},
+				],
+			},
+		};
+		const parked = await runParkedInterview(
+			{ ask: async () => ({ answers: [{ question: "Approve the plan?", answer: "Approve", options: ["Approve"] }] }) },
+			interview,
+			{ extensionId: "desk", title: "Desk" },
+			async () => ({ done: true, text: "sealed" }),
+		);
+		assert.deepEqual(parked.checkpoints, ["plan-introduction"]);
+	});
+
+	it("a run home reads the operator's installed SDK and vendored tools, and a missing SDK names the operator's directory", async (t) => {
+		const env = await isolatePancodeEnv("pancode-run-home-components-");
+		t.after(env.restore);
+		delete process.env.PANCODE_CLAUDE_SDK_DIR;
+		process.env.PANCODE_DATA_DIR = join(env.dir, "operator-data");
+		resetXdgCache();
+		const operatorComponents = join(env.dir, "operator-data", "components");
+		const sdk = join(operatorComponents, "copilot-sdk", COPILOT_SDK_VERSION, "node_modules", COPILOT_SDK_PACKAGE);
+		mkdirSync(sdk, { recursive: true });
+		writeFileSync(
+			join(sdk, "package.json"),
+			JSON.stringify({ name: COPILOT_SDK_PACKAGE, version: COPILOT_SDK_VERSION, type: "module", exports: "./sdk.mjs" }),
+		);
+		writeFileSync(join(sdk, "sdk.mjs"), "export class CopilotClient {}\n");
+		const operatorTools = join(env.dir, "operator-data", "tools");
+		const herdr = findPinnedTool("herdr");
+		assert.ok(herdr !== null);
+		const herdrBinary = join(operatorTools, herdr.id, herdr.version, herdr.primaryBinary);
+		mkdirSync(join(herdrBinary, ".."), { recursive: true });
+		writeFileSync(herdrBinary, "#!/bin/sh\n");
+		const config = process.env.PANCODE_CONFIG_DIR;
+		const home = join(env.dir, "out", "01-luna", "home");
+		Object.assign(process.env, (await runHomes()).env(home));
+		resetXdgCache();
+		assert.equal(process.env.PANCODE_CONFIG_DIR, config, "a run home keeps the operator's config");
+
+		const entry = resolveCopilotSdkEntry();
+		assert.ok(entry !== null, "the run resolves the operator's copilot-sdk");
+		assert.equal(realpathSync(entry), realpathSync(join(sdk, "sdk.mjs")));
+		// A vendored tool the operator installed resolves from their toolchain root, not the home's empty one.
+		assert.equal(resolveVendoredBinary("herdr")?.binaryPath, herdrBinary);
+
+		// Without the component, the install hint names the operator's directory, never the run's home.
+		for (const [error, dir] of [
+			[new CopilotSdkUnavailableError(), join(operatorComponents, "copilot-sdk", COPILOT_SDK_VERSION)],
+			[new ClaudeAgentSdkUnavailableError(), join(operatorComponents, "claude-agent-sdk", CLAUDE_AGENT_SDK_VERSION)],
+		] as const) {
+			assert.ok(error.message.includes(`separate component at ${dir};`), error.message);
+			assert.ok(!error.message.includes(home), error.message);
+		}
+		assert.deepEqual(readdirSync(operatorComponents), ["copilot-sdk"]);
+		assert.equal(existsSync(join(home, "data", "components")), false);
+		assert.equal(existsSync(join(home, "data", "tools")), false);
+	});
+});
+
+function toolResult(toolName: string, details: Record<string, unknown>, isError = false): SessionEntry {
+	return {
+		kind: "message",
+		role: "tool_result",
+		turnId: `t-${Math.random()}`,
+		parentTurnId: null,
+		timestamp: "2026-11-16T00:00:00.000Z",
+		payload: { toolCallId: "c", toolName, isError, result: { content: [], details } },
+	} as SessionEntry;
+}
+
+function journalRecord(k: string, data: Record<string, unknown>): TelemetryRecord {
+	return { k, t: "2026-11-16T00:00:00.000Z", ctx: { sessionId: "s1" }, data } as unknown as TelemetryRecord;
+}

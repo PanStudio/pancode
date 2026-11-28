@@ -6,14 +6,20 @@
  * frames for the extension to page through, and ends every run the request that started it no longer waits on.
  */
 import { randomUUID } from "node:crypto";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { mkdirSync, mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { isAbsolute, join } from "node:path";
 import type {
+	ExtensionRunCommandRequest,
+	ExtensionRunCommandResult,
+	ExtensionRunDigest,
 	ExtensionRunEnd,
 	ExtensionRunFrames,
 	ExtensionRunRequest,
 	ExtensionWorkPlace,
 } from "@pancode/sdk/extension";
+import { canonicalizeExistingPath } from "../../../core/path-canonical.js";
+import { isSameOrDescendant } from "../../../core/path-containment.js";
+import { runAnswersRefusal } from "../../../core/run-answers-file.js";
 import { runCommandVector, type SafeCommandResult } from "../../../core/safe-exec.js";
 import {
 	EXTENSION_RUN_DEPTH_ENV,
@@ -29,11 +35,24 @@ export interface ExtensionRunCeilings {
 	autonomy: ReadonlyArray<"default" | "yolo">;
 	maxCostUsd: number | null;
 	maxTimeoutSeconds: number;
+	commands?: true;
 }
 
 export interface ExtensionRunPlace {
 	cwd: string;
 	workspaceRoot: string;
+	/** The env allowlist read at this place, for a place whose settings are its own (`{ path }`). */
+	envPolicy?: RunEnvPolicy;
+}
+
+/** What a run `home` needs from the host: the write roots it may lie in, and how a process is pointed at it. */
+export interface ExtensionRunHomes {
+	/** Physical write roots the operator granted this command. */
+	writeRoots: ReadonlyArray<string>;
+	/** The environment that gives a PanCode process this home's data, state and cache beside the operator's config. */
+	env(home: string): Record<string, string>;
+	/** What an ended run persisted in `home`, its main session the one opened in `cwd`. */
+	digest(home: string, cwd: string): ExtensionRunDigest;
 }
 
 export interface ExtensionRunServiceDeps {
@@ -48,6 +67,8 @@ export interface ExtensionRunServiceDeps {
 	tempRoot: string;
 	readOnly?: () => boolean;
 	spawn?: typeof runCommandVector;
+	/** Absent where no write root can be granted: a `home` is refused there. */
+	homes?: ExtensionRunHomes;
 }
 
 export interface ExtensionRunService {
@@ -60,8 +81,12 @@ export interface ExtensionRunService {
 	): Promise<ExtensionRunFrames>;
 	wait(id: string): Promise<ExtensionRunEnd>;
 	cancel(id: string): Promise<void>;
-	/** Why `start` would refuse runs with these settings before any starts, or null. */
-	refusal(options?: { autonomy?: "default" | "yolo"; readOnly?: boolean }): Promise<string | null>;
+	/** Why `start` would refuse runs with these settings, or this answers text, before any starts, or null. */
+	refusal(options?: { autonomy?: "default" | "yolo"; readOnly?: boolean; answers?: string }): Promise<string | null>;
+	/** What an ended run started with a `home` persisted. */
+	digest(id: string): Promise<ExtensionRunDigest>;
+	/** `pancode extensions run <extension> <command> --json`, counted as a run; the manifest must declare `commands`. */
+	command(request: ExtensionRunCommandRequest, scope?: ExtensionRequestScope): Promise<ExtensionRunCommandResult>;
 	/** End every run and drop every record. */
 	dispose(): Promise<void>;
 }
@@ -89,6 +114,10 @@ const MAX_WAIT_MS = 30_000;
 /** Finished runs kept for `frames` and `wait` before the oldest is forgotten. */
 const MAX_FINISHED = 64;
 const ROUTE_WORD = /^[A-Za-z0-9][A-Za-z0-9._:/@+-]{0,199}$/u;
+/** An extension id or command name `runs.command` passes to `pancode extensions run`: never an option. */
+const COMMAND_WORD = /^[a-z0-9][a-z0-9._-]{0,63}$/u;
+const MAX_COMMAND_STDOUT_BYTES = 1024 * 1024;
+const COMMAND_TAIL_BYTES = 4096;
 
 interface Frame {
 	value: Readonly<Record<string, unknown>>;
@@ -108,6 +137,8 @@ interface RunRecord {
 	settled: Promise<ExtensionRunEnd>;
 	controller: AbortController;
 	waiters: Set<() => void>;
+	/** The run's home and directory, for `digest`; null without a home. */
+	home: { dir: string; cwd: string } | null;
 }
 
 function routeWord(field: string, value: unknown): string {
@@ -146,6 +177,8 @@ function clampRequest(request: ExtensionRunRequest, ceilings: ExtensionRunCeilin
 		if (Buffer.byteLength(request.answers) > MAX_ANSWERS_BYTES)
 			throw new ExtensionRunError("invalid", "runs.start: answers exceed 64 KiB");
 	}
+	if (request.home !== undefined && (typeof request.home !== "string" || !isAbsolute(request.home)))
+		throw new ExtensionRunError("invalid", "runs.start: home must be an absolute path");
 	return {
 		prompt: request.prompt,
 		target,
@@ -253,6 +286,26 @@ export function createExtensionRunService(deps: ExtensionRunServiceDeps): Extens
 		return record;
 	};
 
+	/** Check a run home against the granted write roots and create its data, state and cache directories. */
+	const prepareHome = (home: string, label: string): { dir: string; env: Record<string, string> } => {
+		const homes = deps.homes;
+		if (homes === undefined)
+			throw new ExtensionRunError("refused", `${label}: home needs a write root the operator granted on the command line`);
+		const canonical = canonicalizeExistingPath(home);
+		if (!homes.writeRoots.some((root) => isSameOrDescendant(canonical, root)))
+			throw new ExtensionRunError("refused", `${label}: home ${home} is outside every path the operator granted`);
+		const stat = statSync(canonical, { throwIfNoEntry: false });
+		if (stat !== undefined && !stat.isDirectory())
+			throw new ExtensionRunError("invalid", `${label}: home ${home} is not a directory`);
+		// The home holds sessions and memory of a run that may have seen secrets in the fixture: owner only.
+		for (const role of ["data", "state", "cache"]) mkdirSync(join(canonical, role), { recursive: true, mode: 0o700 });
+		return { dir: canonical, env: homes.env(canonical) };
+	};
+
+	/** The depth a child of this process runs at; standingRefusal already refused an invalid or too-deep value. */
+	const childDepth = (): string =>
+		String((parseExtensionRunDepth(deps.sourceEnv[EXTENSION_RUN_DEPTH_ENV]) as number) + 1);
+
 	/** The refusals that hold whatever the run's place and the live run count: `start` and `refusal` share them. */
 	const standingRefusal = (run: { autonomy: "default" | "yolo"; readOnly: boolean }): string | null => {
 		const depth = parseExtensionRunDepth(deps.sourceEnv[EXTENSION_RUN_DEPTH_ENV]);
@@ -267,6 +320,12 @@ export function createExtensionRunService(deps: ExtensionRunServiceDeps): Extens
 
 	return {
 		async refusal(options = {}) {
+			if (options.answers !== undefined) {
+				if (typeof options.answers !== "string") throw new ExtensionRunError("invalid", "runs.refusal: answers");
+				if (Buffer.byteLength(options.answers) > MAX_ANSWERS_BYTES) return "runs.start: answers exceed 64 KiB";
+				const answers = runAnswersRefusal(options.answers);
+				if (answers !== null) return answers;
+			}
 			const autonomy = options.autonomy ?? "default";
 			if (autonomy !== "default" && autonomy !== "yolo")
 				throw new ExtensionRunError("invalid", "runs.refusal: autonomy must be default or yolo");
@@ -289,6 +348,7 @@ export function createExtensionRunService(deps: ExtensionRunServiceDeps): Extens
 				if (refusal !== null) throw new ExtensionRunError("refused", refusal);
 			}
 			if (signal?.aborted === true) throw new ExtensionRunError("refused", "runs.start: the request has ended");
+			const home = request.home !== undefined ? prepareHome(request.home, "runs.start") : null;
 			const id = randomUUID();
 			let answersDir: string | null = null;
 			let answersPath: string | null = null;
@@ -319,10 +379,10 @@ export function createExtensionRunService(deps: ExtensionRunServiceDeps): Extens
 				run.prompt,
 			];
 			const env = {
-				...runEnv(deps.sourceEnv, deps.envPolicy, run.target),
+				...runEnv(deps.sourceEnv, place.envPolicy ?? deps.envPolicy, run.target),
 				...deps.launch.env,
-				// standingRefusal already refused an invalid or too-deep value.
-				[EXTENSION_RUN_DEPTH_ENV]: String((parseExtensionRunDepth(deps.sourceEnv[EXTENSION_RUN_DEPTH_ENV]) as number) + 1),
+				...home?.env,
+				[EXTENSION_RUN_DEPTH_ENV]: childDepth(),
 			};
 			const controller = new AbortController();
 			const stop = (): void => controller.abort();
@@ -339,6 +399,7 @@ export function createExtensionRunService(deps: ExtensionRunServiceDeps): Extens
 				settled: Promise.resolve(null as unknown as ExtensionRunEnd),
 				controller,
 				waiters: new Set(),
+				home: home !== null ? { dir: home.dir, cwd: place.cwd } : null,
 			};
 			runs.set(id, record);
 			active += 1;
@@ -413,6 +474,90 @@ export function createExtensionRunService(deps: ExtensionRunServiceDeps): Extens
 
 		wait(id) {
 			return lookup(id).settled;
+		},
+
+		async digest(id) {
+			const record = lookup(id);
+			if (record.home === null)
+				throw new ExtensionRunError("invalid", `runs.digest: run ${id} was started without a home`);
+			if (record.end === null) throw new ExtensionRunError("invalid", `runs.digest: run ${id} has not ended`);
+			const homes = deps.homes as ExtensionRunHomes;
+			return homes.digest(record.home.dir, record.home.cwd);
+		},
+
+		async command(request, scope) {
+			if (deps.ceilings.commands !== true)
+				throw new ExtensionRunError("refused", "runs.command: the manifest does not declare runs.commands");
+			if (typeof request !== "object" || request === null) throw new ExtensionRunError("invalid", "runs.command: request");
+			for (const field of ["extension", "command"] as const)
+				if (typeof request[field] !== "string" || !COMMAND_WORD.test(request[field]))
+					throw new ExtensionRunError("invalid", `runs.command: ${field} must be an extension id or command name`);
+			const timeout = request.timeoutSeconds;
+			if (!Number.isInteger(timeout) || timeout < 1 || timeout > deps.ceilings.maxTimeoutSeconds)
+				throw new ExtensionRunError(
+					"invalid",
+					`runs.command: timeoutSeconds must be an integer from 1 to ${deps.ceilings.maxTimeoutSeconds}`,
+				);
+			if (request.home !== undefined && (typeof request.home !== "string" || !isAbsolute(request.home)))
+				throw new ExtensionRunError("invalid", "runs.command: home must be an absolute path");
+			// It runs another extension's code with this process's authority, so it is held to a writable run's limits.
+			const standing = standingRefusal({ autonomy: "default", readOnly: false });
+			if (standing !== null) throw new ExtensionRunError("refused", standing.replace(/^runs\.start:/u, "runs.command:"));
+			const place = await deps.resolvePlace(request.cwd ?? "workspace");
+			if (active >= deps.ceilings.maxConcurrent)
+				throw new ExtensionRunError("busy", `runs.command: ${deps.ceilings.maxConcurrent} runs are already running`);
+			const signal = scope?.signal;
+			if (signal?.aborted === true) throw new ExtensionRunError("refused", "runs.command: the request has ended");
+			const home = request.home !== undefined ? prepareHome(request.home, "runs.command") : null;
+			const env = {
+				...runEnv(deps.sourceEnv, place.envPolicy ?? deps.envPolicy, null),
+				...deps.launch.env,
+				...home?.env,
+				[EXTENSION_RUN_DEPTH_ENV]: childDepth(),
+			};
+			const args = [...deps.launch.args, "extensions", "run", request.extension, request.command, "--json"];
+			const stdout: Buffer[] = [];
+			let stdoutBytes = 0;
+			let stderrTail = Buffer.alloc(0);
+			active += 1;
+			try {
+				const result = await spawn(deps.launch.file, args, {
+					cwd: place.cwd,
+					workspaceRoot: place.workspaceRoot,
+					env,
+					timeoutMs: timeout * 1000,
+					output: {
+						onStdout: (chunk) => {
+							const room = MAX_COMMAND_STDOUT_BYTES - stdoutBytes;
+							if (room <= 0) return;
+							const kept = chunk.subarray(0, room);
+							stdout.push(Buffer.from(kept));
+							stdoutBytes += kept.byteLength;
+						},
+						onStderr: (chunk) => {
+							stderrTail = Buffer.concat([stderrTail, chunk]);
+							if (stderrTail.byteLength > COMMAND_TAIL_BYTES) stderrTail = stderrTail.subarray(-COMMAND_TAIL_BYTES);
+						},
+					},
+					...(signal !== undefined ? { signal } : {}),
+				});
+				const stopped = result.aborted || result.timedOut || result.launched === false;
+				return {
+					exitCode: stopped ? null : result.exitCode,
+					stdout: Buffer.concat(stdout).toString("utf8"),
+					stderrTail: stderrTail.toString("utf8") || (result.launched === false ? result.stderr : ""),
+					...(stopped ? { error: result.failure ?? (result.timedOut ? `timed out after ${timeout}s` : "stopped") } : {}),
+				};
+			} catch (error) {
+				return {
+					exitCode: null,
+					stdout: "",
+					stderrTail: "",
+					error: error instanceof Error ? error.message : String(error),
+				};
+			} finally {
+				active -= 1;
+			}
 		},
 
 		async cancel(id) {

@@ -5,11 +5,16 @@
  * and the operator approved. They live as long as the runtime: retiring it ends every run and removes every worktree
  * nobody kept.
  */
+import { statSync } from "node:fs";
 import os from "node:os";
-import type { ExtensionWorkPlace } from "@pancode/sdk/extension";
+import path from "node:path";
+import type { ExtensionRunDigest, ExtensionWorkPlace } from "@pancode/sdk/extension";
 import type { ExtensionRuntimeDeclarationV2 } from "@pancode/sdk/pack";
+import { canonicalizeExistingPath } from "../../../core/path-canonical.js";
+import { isSameOrDescendant } from "../../../core/path-containment.js";
 import { readLayeredSettings } from "../../../core/settings-layers.js";
 import { containedYoloRefusal } from "../../safety/contained-yolo.js";
+import type { ResolvedPathGrant } from "../path-grants.js";
 import { createExtensionClaimsService } from "./claims.js";
 import { createExtensionWorkHost, type ExtensionWorkHost } from "./host.js";
 import { type PancodeLaunch, selfPancodeLaunch } from "./run-env.js";
@@ -31,6 +36,14 @@ export interface ExtensionWorkOptions {
 	launch?: PancodeLaunch;
 	/** The environment a run's allowlist picks from; this process's by default. */
 	env?: Readonly<Record<string, string>>;
+	/** The paths the operator granted this command on its `pancode <verb>` line; write roots hold run places and homes. */
+	grants?: ReadonlyArray<ResolvedPathGrant>;
+	/** How a run home is entered and read back; without it no run gets a home. */
+	homes?: {
+		/** The environment that gives a PanCode process `home`'s data, state and cache beside the operator's config. */
+		env(home: string): Record<string, string>;
+		digest(home: string, cwd: string): ExtensionRunDigest;
+	};
 }
 
 export interface ExtensionWork {
@@ -49,6 +62,18 @@ function ownLaunch(): PancodeLaunch {
 	const entry = process.argv[1];
 	if (entry === undefined) throw new Error("cannot locate the pancode entry point to start a run");
 	return selfPancodeLaunch(entry);
+}
+
+/** `{ path }`: an existing directory inside a write root the operator granted, as its physical path. */
+function grantedPlace(requested: string, writeRoots: ReadonlyArray<string>): string {
+	if (typeof requested !== "string" || !path.isAbsolute(requested))
+		throw new Error("a { path } place must be an absolute path");
+	const canonical = canonicalizeExistingPath(requested);
+	if (!writeRoots.some((root) => isSameOrDescendant(canonical, root)))
+		throw new Error(`place ${requested} is outside every path the operator granted this command`);
+	if (statSync(canonical, { throwIfNoEntry: false })?.isDirectory() !== true)
+		throw new Error(`place ${requested} is not a directory`);
+	return canonical;
 }
 
 /** Null when the declaration asks for none of these services. */
@@ -75,8 +100,10 @@ export function createExtensionWork(
 				...(binding.readOnly ? { readOnly: binding.readOnly } : {}),
 			})
 		: undefined;
+	const writeRoots = (options.grants ?? []).filter((grant) => grant.access === "write").map((grant) => grant.canonical);
 	const resolvePlace = async (place: ExtensionWorkPlace): Promise<{ cwd: string; root: string }> => {
 		if (place === "workspace") return { cwd: binding.workspace, root: binding.workspace };
+		if ("path" in place) return { cwd: grantedPlace(place.path, writeRoots), root: grantedPlace(place.path, writeRoots) };
 		if (!worktrees) throw new Error("this extension declares no runtime.services.worktrees");
 		return worktrees.resolvePlace(place);
 	};
@@ -94,10 +121,20 @@ export function createExtensionWork(
 				yoloRefusal: () => containedYoloRefusal("an extension's runs"),
 				resolvePlace: async (place) => {
 					const { cwd, root } = await resolvePlace(place);
-					return { cwd, workspaceRoot: root };
+					if (place === "workspace" || !("path" in place)) return { cwd, workspaceRoot: root };
+					// A granted directory is its own project, so its settings choose what a run there may inherit.
+					const own = readLayeredSettings(cwd).settings;
+					return {
+						cwd,
+						workspaceRoot: root,
+						envPolicy: { targets: own.targets, passEnv: own.safety.sandboxPassEnv },
+					};
 				},
 				tempRoot: os.tmpdir(),
 				...(binding.readOnly ? { readOnly: binding.readOnly } : {}),
+				...(options.homes !== undefined && writeRoots.length > 0
+					? { homes: { writeRoots, env: options.homes.env, digest: options.homes.digest } }
+					: {}),
 			})
 		: undefined;
 	const receipts = createExtensionCheckReceipts(256);

@@ -24,6 +24,7 @@ import {
 import { workspaceTrustDirectory } from "../../core/workspace-trust.js";
 import { pancodeConfigDir } from "../../core/xdg.js";
 import { isExtensionId } from "./discovery.js";
+import type { ResolvedPathGrant } from "./path-grants.js";
 
 /**
  * The declaration a runtime starts with in a read-only session, which leaves
@@ -69,6 +70,8 @@ export interface ExtensionLaunchRoots {
 	bootstrap: string;
 	/** The project directory of a runtime that declares `runtime.state.project`, and whether this session may write it. */
 	project?: { dir: string; writable: boolean };
+	/** Paths the operator named on this verb's command line: write roots bound writable, existing read paths readable. */
+	grants?: ReadonlyArray<ResolvedPathGrant>;
 }
 
 export interface ExtensionLaunch {
@@ -320,6 +323,8 @@ function planLaunch(input: {
 	const writable = new Set<string>();
 	if (declaration.permissions.fs.write.includes("store")) writable.add(roots.storeDir);
 	for (const entry of declaration.permissions.fs.write) if (entry !== "store") writable.add(path.join(workspace, entry));
+	const grants = roots.grants ?? [];
+	for (const grant of grants) if (grant.access === "write") writable.add(grant.canonical);
 	let invocation: ReturnType<typeof composeWorkerSandboxInvocation>;
 	try {
 		// An extension never reads PanCode's settings, which can hold target auth headers, so they are masked always.
@@ -344,6 +349,7 @@ function planLaunch(input: {
 					path.dirname(roots.packageCopy),
 					path.dirname(roots.bootstrap),
 					...(roots.project !== undefined ? [roots.project.dir] : []),
+					...grants.filter((grant) => grant.access === "read" && grant.exists).map((grant) => grant.canonical),
 				],
 				network: net,
 				...(input.unixSockets !== undefined && input.unixSockets !== "block" ? { unixSockets: input.unixSockets } : {}),
