@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
-/** A backend kind names a registered factory: `local`, `shared` and `s3` ship. */
+/** A store backend kind: `local`, `shared` and `s3` ship. */
 export type StoreBackendKind = string;
 
 export type StoreTagClass = "input" | "output" | "cache" | "archive";

@@ -23,7 +23,6 @@
 		// the SDK as `pancode/sdk/<subpath>`, the root package's exports.
 		"paths": {
 			"pancode/sdk/*": ["./packages/sdk/src/*/index.ts"],
-			"@pancode/sdk": ["./packages/sdk/src/index.ts"],
 			"@pancode/sdk/*": ["./packages/sdk/src/*/index.ts"],
 			"@pancode/store": ["./packages/store/src/index.ts"],
 			"@pancode/store/*": ["./packages/store/src/*/index.ts"],

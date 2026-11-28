@@ -31,7 +31,6 @@ import path from "node:path";
 import { Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import type { StoreBackend } from "../backend/backend.js";
-import { registerStoreBackend } from "../backend/registry.js";
 import { StoreRefusal } from "../backend/types.js";
 import { hashStoreFile } from "../hash.js";
 import { ensureStoreRootId, readStoreRootId } from "../identity.js";
@@ -450,5 +449,3 @@ export function createSharedStoreBackend(options: SharedStoreOptions): StoreBack
 		},
 	});
 }
-
-registerStoreBackend("shared", createSharedStoreBackend);

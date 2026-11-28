@@ -24,7 +24,6 @@ import {
 import path from "node:path";
 import { pipeline } from "node:stream/promises";
 import type { StoreBackend } from "./backend/backend.js";
-import { registerStoreBackend } from "./backend/registry.js";
 import {
 	compileBlobPattern,
 	type StoreBackendFacts,
@@ -990,5 +989,3 @@ export function createLocalStoreBackend(options: LocalStoreOptions): StoreBacken
 	};
 	return backend;
 }
-
-registerStoreBackend("local", createLocalStoreBackend);
