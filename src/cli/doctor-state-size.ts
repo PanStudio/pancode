@@ -12,8 +12,8 @@ import {
 	sandboxCacheDir,
 } from "../core/sandbox/sandbox-cache.js";
 import { resolvePancodeDirs } from "../core/xdg.js";
-import type { DoctorFinding } from "../domains/lifecycle/doctor.js";
-import { inactiveInstallerRecord, inspectInstallation } from "../domains/lifecycle/install-method.js";
+import type { DoctorFinding } from "../domains/install/doctor.js";
+import { inactiveInstallerRecord, inspectInstallation } from "../domains/install/install-method.js";
 import { formatBytes } from "./lifecycle-presenter.js";
 
 interface MeasuredEntry {

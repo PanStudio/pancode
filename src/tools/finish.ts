@@ -9,10 +9,10 @@ import {
 	parseCompletionDeclaration,
 } from "../core/completion.js";
 import { ToolNames } from "../core/tool-names.js";
+import { effectiveToolCall } from "../core/tool-surface.js";
 import type { CompletionFact } from "../domains/middleware/index.js";
 import { StringEnum } from "../engine/ai.js";
 import { claimsToolsGone, TOOLS_OPEN_REFUSAL } from "./limitation.js";
-import { effectiveToolCall } from "./surface.js";
 import type { ToolResult, ToolSpec } from "./tool-spec.js";
 
 /**

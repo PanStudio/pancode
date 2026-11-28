@@ -1,15 +1,14 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 
-import { type CheckoutSnapshot, takeCheckoutBaseline } from "../../tools/checkout-changes.js";
-import { restoreTaskWorktreeOverlay } from "../../tools/task-worktree-overlay.js";
 import type {
 	AgentLedgerBody,
 	WorkerGrantRequestFrame,
 	WorkerHookEffect,
 	WorkerHookRequest,
 	WorkerModelLoad,
-} from "../../worker/protocol.js";
+} from "../../lib/worker-wire/protocol.js";
+import { restoreTaskWorktreeOverlay } from "../../tools/task-worktree-overlay.js";
 import { recordAgentLedgerDispute } from "../claims/index.js";
 import { resolveClaudeLaunchCredential } from "../providers/auth/index.js";
 import { type FlowRestrictionSet, mergeFlowRestrictions } from "../safety/information-flow.js";
@@ -23,6 +22,7 @@ import {
 import type { AdmittedAttempt } from "./attempt-state.js";
 import type { DispatchRuntime } from "./bundle-runtime.js";
 import { GRANT_DEADLINE_MARGIN_MS, operatorContainedYolo } from "./bundle-support.js";
+import { type CheckoutSnapshot, takeCheckoutBaseline } from "./checkout-changes.js";
 import { reportDispatchDiagnostic } from "./dispatch-diagnostic.js";
 import { envelopeForPermit } from "./envelope.js";
 import { operatorAdmissionAutonomy } from "./envelope-stage.js";

@@ -2,8 +2,8 @@
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import { isAbsolute, relative, resolve } from "node:path";
 import { relativePathEscapes } from "../../core/path-containment.js";
+import { effectiveToolCall, expandChainMessages } from "../../core/tool-surface.js";
 import { isRecord } from "../../core/type-guards.js";
-import { effectiveToolCall, expandChainMessages } from "../../tools/surface.js";
 
 export type SessionArtifactTool = "artifact" | "write" | "edit";
 export type SessionArtifactKind = "plan" | "review" | "report";

@@ -1059,7 +1059,7 @@ const ROOT_ONLY_RESOLVERS = new Set([
 	// Hands the root to the component scanner, which walks whatever is present.
 	"src/cli/components.ts",
 	// Installation identity uses the root's layout to preserve its package-manager prefix.
-	"src/domains/lifecycle/install-method.ts",
+	"src/domains/install/install-method.ts",
 	// Serves files under the root's src/ from dist/assets/source.pack, so it maps paths against the root itself.
 	"src/core/source-pack.ts",
 	// Shows the whole installation back, read-only, inside a sandbox that hides the operator's home.

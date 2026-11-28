@@ -4,14 +4,14 @@ import { deepStrictEqual, match, ok, strictEqual } from "node:assert/strict";
 import { describe, it } from "node:test";
 import { ToolNames } from "../../src/core/tool-names.js";
 import { createWorkerSafety, createWorkerToolRegistry } from "../../src/engine/worker-tools.js";
-import type { ToolResult } from "../../src/tools/tool-spec.js";
-import { createWorkerAgentLedgerPort, WORKER_AGENT_LEDGER_POST_CAP } from "../../src/worker/ledger-mirror.js";
 import type {
 	AgentLedgerBody,
 	AgentLedgerEntry,
 	AgentLedgerPort,
 	WorkerControlFrame,
-} from "../../src/worker/protocol.js";
+} from "../../src/lib/worker-wire/protocol.js";
+import type { ToolResult } from "../../src/tools/tool-spec.js";
+import { createWorkerAgentLedgerPort, WORKER_AGENT_LEDGER_POST_CAP } from "../../src/worker/ledger-mirror.js";
 
 /**
  * The ledger tool through a worker registry bound to the real worker-side

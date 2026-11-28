@@ -6,7 +6,7 @@
  * may take. Lifted from createDispatchBundle; the bundle passes its contracts, breaker and route readers.
  */
 
-import { endpointIdentityHash } from "../../worker/protocol.js";
+import { endpointIdentityHash } from "../../lib/worker-wire/protocol.js";
 import type { AgentsContract } from "../agents/contract.js";
 import type { ProvidersContract } from "../providers/index.js";
 import type { ActiveRun } from "./bundle-types.js";

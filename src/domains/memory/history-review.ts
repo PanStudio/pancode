@@ -23,7 +23,7 @@ import { join } from "node:path";
 import { safeResourceWrite } from "../../core/safe-resource-write.js";
 import { withStateFileLockSync } from "../../core/state-file-lock.js";
 import { ToolNames } from "../../core/tool-names.js";
-import { effectiveToolCall, gatewayChainReceipts } from "../../tools/surface.js";
+import { effectiveToolCall, gatewayChainReceipts } from "../../core/tool-surface.js";
 import type { SessionEntry } from "../session/index.js";
 import type { SessionLedgerStat } from "../session/related-ledgers.js";
 import { sessionLedgersForRoots } from "../session/related-ledgers.js";

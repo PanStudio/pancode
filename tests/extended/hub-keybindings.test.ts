@@ -15,7 +15,7 @@ function routeInteractiveKey(data: string, deps: KeyBindingDeps): boolean {
 	return false;
 }
 
-it("routes PanHub and model defaults independently and closes PanHub with its own shortcut", () => {
+it("routes the hub and model defaults independently and closes the hub with its own shortcut", () => {
 	const manager = createKeybindingManagerForTesting();
 	const actions: string[] = [];
 	const deps = {
@@ -43,7 +43,7 @@ it("routes PanHub and model defaults independently and closes PanHub with its ow
 	);
 });
 
-it("honors explicit user keybindings when PanHub and model defaults change", () => {
+it("honors explicit user keybindings when the hub and model defaults change", () => {
 	const manager = createKeybindingManagerForTesting({
 		"pancode.hub.toggle": "alt+p",
 		"pancode.model.select": "alt+l",

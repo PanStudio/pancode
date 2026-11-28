@@ -15,8 +15,8 @@ import claudeSdkRuntime from "../../src/domains/providers/runtimes/claude/claude
 import { createPancodeToolBridge } from "../../src/engine/claude/pancode-tool-bridge.js";
 import { emitClaudeToolPermissionDecision, mapClaudeToolCall } from "../../src/engine/claude/tool-safety.js";
 import { attestedToolNames, attestedToolSignature, createWorkerSafety } from "../../src/engine/worker-tools.js";
-import { toolSignatureOf } from "../../src/worker/protocol.js";
-import { type WorkerSpec, workerSpecToolNames } from "../../src/worker/spec-contract.js";
+import { toolSignatureOf } from "../../src/lib/worker-wire/protocol.js";
+import { type WorkerSpec, workerSpecToolNames } from "../../src/lib/worker-wire/spec-contract.js";
 import { isolateDispatchState, makeDispatchBundle, restoreDispatchState } from "../harness/dispatch.js";
 import { dispatchStubContext } from "../harness/dispatch-stub-context.js";
 

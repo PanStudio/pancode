@@ -19,9 +19,9 @@ import { join, relative } from "node:path";
 import { after, before, describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
+import { createStdioTransport } from "../../src/acp/transport.js";
 import { SETTINGS_SCAFFOLD_YAML } from "../../src/core/defaults.js";
 import { sandboxAvailability } from "../../src/core/sandbox/availability.js";
-import { createStdioTransport } from "../../src/engine/acp/transport.js";
 import { type CliResult, runSourceCli } from "../harness/headless-run.js";
 import {
 	closeServer,

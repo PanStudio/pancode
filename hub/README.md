@@ -1,10 +1,10 @@
-# PanHub
+# The hub
 
-PanHub is PanCode's canonical home of shareable packs, contributor entry points, and the generated distribution index. One installable unit is a pack.
+The hub is PanCode's canonical home of shareable packs, contributor entry points, and the generated distribution index. One installable unit is a pack.
 
 ## Package Kinds
 
-PanHub organizes shareable packs by kind into dedicated directories under `hub/packs/`:
+The hub organizes shareable packs by kind into dedicated directories under `hub/packs/`:
 
 | Kind | Directory | What an author shares | How it is used |
 | --- | --- | --- | --- |
@@ -42,7 +42,7 @@ pancode hub components <query> --kind agent
 
 `hub components` reads the same bounded, body-free inventory PanCode reads through `gateway(op="call", capability="pancode_hub", args={})`, so the operator and the model agree about which components exist, who owns them, where they came from and how each one is actually invoked. Both are reads: installation, removal and activation stay operator actions through `hub install` and `/hub`, and `/skill <name>` stays the way a skill is activated.
 
-In an interactive session, `/hub` opens the PanHub browser.
+In an interactive session, `/hub` opens the hub browser.
 
 ## Using These Packages From Another Agent
 
@@ -81,7 +81,7 @@ Templates are authoring reference models; they live outside the catalog kind roo
 
 Plugin-backed packages carry a portable `plugin.json` manifest. Standalone
 extensions carry `pancode-extension.yaml` and install through the extension
-writer when selected as `kind: extension` in PanHub.
+writer when selected as `kind: extension` in the hub.
 The optional `extensions["dev.pancode"]` metadata declares a PanCode-specific
 kind, resource paths and components; conventional plugin packages can expose
 `skills/` without it. The key is metadata inside the interoperable manifest,

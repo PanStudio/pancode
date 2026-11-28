@@ -9,7 +9,7 @@
 
 import { sha256Hex } from "../../core/hash.js";
 import type { AutonomyLevel } from "../../lib/autonomy/autonomy.js";
-import type { WorkerPromptMessage } from "../../worker/spec-contract.js";
+import type { WorkerPromptMessage } from "../../lib/worker-wire/spec-contract.js";
 import type { AgentsContract } from "../agents/contract.js";
 import type { AgentProjectContextTier } from "../agents/spec.js";
 import type { ConfigContract } from "../config/contract.js";

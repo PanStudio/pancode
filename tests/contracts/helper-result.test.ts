@@ -20,7 +20,7 @@ import { createWorkerOutputCapture } from "../../src/domains/dispatch/event-pump
 import { executedCalls, summarizeToolActivity } from "../../src/domains/dispatch/tool-stats.js";
 import { approvedIdentityForSpec } from "../../src/domains/dispatch/worker-protocol.js";
 import { attestedToolSignature } from "../../src/engine/worker-tools.js";
-import { parseWorkerSpec, workerSpecToolNames } from "../../src/worker/spec-contract.js";
+import { parseWorkerSpec, workerSpecToolNames } from "../../src/lib/worker-wire/spec-contract.js";
 import { makeDispatchBundle, observedReadEvents } from "../harness/dispatch.js";
 import { dispatchStubContext } from "../harness/dispatch-stub-context.js";
 import { gradeWork } from "../harness/grade-facts.js";

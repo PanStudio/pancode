@@ -335,7 +335,7 @@ describe("contracts/panes files surface", () => {
 				return {
 					status: "missing-binary",
 					binary: "yazi",
-					detail: "not found (install with `pancode tools install yazi`)",
+					detail: "not found (install with `pancode programs install yazi`)",
 				};
 			},
 			async hide() {
@@ -352,7 +352,7 @@ describe("contracts/panes files surface", () => {
 		strictEqual(missing.status, "missing-binary");
 		strictEqual(
 			missing.detail,
-			"the files pane engine is not available: not found (install with `pancode tools install yazi`)",
+			"the files pane engine is not available: not found (install with `pancode programs install yazi`)",
 		);
 	});
 });

@@ -250,7 +250,7 @@ test("footer hints resolve remapped bindings and omit unbound actions", () => {
 			footerKeyHint(i * 60000, false, Number.POSITIVE_INFINITY, "idle"),
 		).join("\n");
 		match(hints, /Ctrl\+M model(?! picker)/);
-		doesNotMatch(hints, /Alt\+M|Alt\+L|PanHub/);
+		doesNotMatch(hints, /Alt\+M|Alt\+L|the hub/);
 		match(hints, /\? keys · \/ commands/);
 		const runHints = Array.from({ length: 40 }, (_, i) =>
 			footerKeyHint(i * 60000, false, Number.POSITIVE_INFINITY, "steer"),

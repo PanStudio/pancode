@@ -22,12 +22,8 @@ import { detectNewerHome, initializePancodeHome } from "../../src/core/init.js";
 import { readPancodeVersion } from "../../src/core/package-root.js";
 import { processBirthToken } from "../../src/core/process-identity.js";
 import { resetXdgCache } from "../../src/core/xdg.js";
-import {
-	inspectInstallation,
-	installationCommand,
-	npmInstallArgs,
-} from "../../src/domains/lifecycle/install-method.js";
-import { describeUpgradeNotice } from "../../src/domains/lifecycle/upgrade-notice.js";
+import { inspectInstallation, installationCommand, npmInstallArgs } from "../../src/domains/install/install-method.js";
+import { describeUpgradeNotice } from "../../src/domains/install/upgrade-notice.js";
 import { isolatePancodeEnv, makeScratchHome } from "../harness/scratch-env.js";
 
 const ARGV_MODULE = new URL("../../src/cli/argv.ts", import.meta.url).href;
@@ -77,7 +73,7 @@ function installedFixture() {
 				"-e",
 				`
 			import { runUpgradeCommand } from ${JSON.stringify(new URL("../../src/cli/upgrade.ts", import.meta.url).href)};
-			import { inspectInstallation } from ${JSON.stringify(new URL("../../src/domains/lifecycle/install-method.ts", import.meta.url).href)};
+			import { inspectInstallation } from ${JSON.stringify(new URL("../../src/domains/install/install-method.ts", import.meta.url).href)};
 			process.exitCode = await runUpgradeCommand(${JSON.stringify(args)}, {
 				inspectInstallation: () => inspectInstallation(${JSON.stringify(entry)}),
 				lookUpAvailableVersion: async () => ({ asked: true, version: '99.0.0' }),

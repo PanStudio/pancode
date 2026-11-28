@@ -9,7 +9,7 @@ import { createInterface } from "node:readline";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { buildSafeToolEnv } from "../../core/safe-exec.js";
 import { type MainSandboxPolicy, planMainSandboxSpawn } from "../../core/sandbox/main-session.js";
-import type { BrowserComponent } from "../../domains/lifecycle/browser-component.js";
+import type { BrowserComponent } from "../../domains/install/browser-component.js";
 import type { BrowserReply, BrowserRequest } from "./protocol.js";
 
 /**

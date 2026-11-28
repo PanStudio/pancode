@@ -3,16 +3,16 @@
 import { deepStrictEqual, match, ok, strictEqual } from "node:assert/strict";
 import { test } from "node:test";
 import { Type } from "typebox";
-import { createTelemetryHub } from "../../src/core/telemetry/hub.js";
-import { ToolNames } from "../../src/core/tool-names.js";
 import {
 	ACP_DISPATCH_PLAN_MAX_TASKS,
 	type AcpDispatchPlanMeta,
 	projectDispatchPlanMeta,
-} from "../../src/engine/acp/dispatch-plan-meta.js";
-import { servePancodeAcpAgent } from "../../src/engine/acp/server.js";
-import type { AcpServerChat } from "../../src/engine/acp/server-options.js";
-import type { AcpJsonRpcPeerTransport } from "../../src/engine/acp/transport.js";
+} from "../../src/acp/dispatch-plan-meta.js";
+import { servePancodeAcpAgent } from "../../src/acp/server.js";
+import type { AcpServerChat } from "../../src/acp/server-options.js";
+import type { AcpJsonRpcPeerTransport } from "../../src/acp/transport.js";
+import { createTelemetryHub } from "../../src/core/telemetry/hub.js";
+import { ToolNames } from "../../src/core/tool-names.js";
 import { createWorkerSafety } from "../../src/engine/worker-tools.js";
 import { mutationFacts } from "../../src/session-control/approval-request-facts.js";
 import { bashTool } from "../../src/tools/bash.js";

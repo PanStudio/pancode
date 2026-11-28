@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
+
+import { effectiveToolCall } from "../core/tool-surface.js";
 import type { TurnToolCall } from "../core/turn-origin.js";
 import { isRecord } from "../core/type-guards.js";
 import { redactToolArgs } from "../lib/secrets/redaction.js";
-import { effectiveToolCall } from "../tools/surface.js";
 
 /** Longest string an argument keeps; the rest is replaced by its length. */
 const ARG_STRING_CHARS = 400;

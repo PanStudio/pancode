@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
-// Which PanHub rows the desktop may act on, and what an extension row offers instead. The plan contract's
+// Which hub rows the desktop may act on, and what an extension row offers instead. The plan contract's
 // `packageRef` names only the PACKAGE_KINDS, so a button on any other kind is a guaranteed 400. Extension
 // consent (the capability envelope review) stays in the terminal. Pure, so the commands are testable without a browser.
 

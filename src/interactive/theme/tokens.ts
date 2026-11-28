@@ -2,7 +2,6 @@
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import { terminalBackground, terminalBackgroundColor, terminalColorVersion } from "../../core/terminal-background.js";
 import { type ColorDepth, colorDepth } from "../../core/terminal-preferences.js";
-import { adaptPalette, type ProjectedColor } from "../../core/theme-contrast.js";
 import {
 	DEFAULT_THEME_CONTEXT,
 	isSemanticRole,
@@ -31,6 +30,7 @@ import {
 	TERMINAL_PALETTE,
 	type ThemeBackground,
 } from "../../core/theme-token-hex.js";
+import { adaptPalette, type ProjectedColor } from "./contrast.js";
 
 export type { ColorDepth } from "../../core/terminal-preferences.js";
 export * from "../../core/theme-roles.js";

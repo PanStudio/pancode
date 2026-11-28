@@ -6,19 +6,19 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
 import { ToolNames } from "../../src/core/tool-names.js";
-import { createLoopGuardRegistration } from "../../src/engine/loop-guard.js";
-import { createWorkerSafety, createWorkerToolRegistry } from "../../src/engine/worker-tools.js";
-import { resolveAgentTools } from "../../src/tools/agent-tools.js";
-import { registerAllTools } from "../../src/tools/bootstrap.js";
-import { createRegistry } from "../../src/tools/registry.js";
-import type { ToolRegistry } from "../../src/tools/registry-contract.js";
 import {
 	directSurfaceNames,
 	effectiveToolCall,
 	TOOL_PLACEMENT,
 	toolPlacement,
 	withGatewayForCapabilities,
-} from "../../src/tools/surface.js";
+} from "../../src/core/tool-surface.js";
+import { createLoopGuardRegistration } from "../../src/engine/loop-guard.js";
+import { createWorkerSafety, createWorkerToolRegistry } from "../../src/engine/worker-tools.js";
+import { resolveAgentTools } from "../../src/tools/agent-tools.js";
+import { registerAllTools } from "../../src/tools/bootstrap.js";
+import { createRegistry } from "../../src/tools/registry.js";
+import type { ToolRegistry } from "../../src/tools/registry-contract.js";
 import { type IsolatedPancodeEnv, isolatePancodeEnv } from "../harness/scratch-env.js";
 
 /**

@@ -19,7 +19,7 @@ import { isRecord } from "../../core/type-guards.js";
 import { captureProjectSurface } from "../../core/workspace-trust.js";
 import { pancodeConfigDir } from "../../core/xdg.js";
 import { isWorkerSurfaceExcludedTool } from "../../tools/policy.js";
-import { mcpSkillReferenceServer } from "../gateway/mcp/skills.js";
+import { mcpSkillReferenceServer } from "../mcp/skills.js";
 import { resolvePackageReferences } from "../resources/package-references.js";
 import { loadSkills, type Skill, type SkillList } from "../resources/skills/loader.js";
 import { parseFrontmatter } from "./frontmatter.js";

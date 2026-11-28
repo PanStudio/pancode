@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 /**
- * PanHub trust: the exact-commit fetch, row parsing, the verified remote index,
+ * The hub trust: the exact-commit fetch, row parsing, the verified remote index,
  * publisher identity, revocation, tiers, the licence key, and the Git sync
  * remote checks.
  *
@@ -32,7 +32,7 @@ import { validateExtensionPackage } from "../../src/domains/extensions/authoring
 import { parseExtensionManifest } from "../../src/domains/extensions/discovery.js";
 import { OperatorExtensions } from "../../src/domains/extensions/operator-extensions.js";
 import { installExtension, listInstalledExtensions } from "../../src/domains/extensions/state.js";
-import { loadMcpServerConfig } from "../../src/domains/gateway/mcp/index.js";
+import { loadMcpServerConfig } from "../../src/domains/mcp/index.js";
 import { bundledHubIndexPath, fetchPluginCommit, parseHubIndexRows } from "../../src/domains/plugins/catalog.js";
 import {
 	clearPluginSnapshots,

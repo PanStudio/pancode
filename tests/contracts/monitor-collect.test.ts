@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { DetachedBatchRecord } from "../../src/domains/dispatch/batch-store.js";
 import { dispatchOwnership } from "../../src/domains/dispatch/ownership.js";
-import { renderCollectedBlock } from "../../src/domains/turn-control/index.js";
+import { renderCollectedBlock } from "../../src/lib/turn-control/index.js";
 import type { MonitorToolDeps } from "../../src/tools/monitor.js";
 import { collectDetachedBatch } from "../../src/tools/monitor-collect.js";
 import { fixtureEnvelope } from "../harness/receipt.js";

@@ -5,7 +5,7 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import type { MainSandboxPolicy } from "../../core/sandbox/main-session.js";
 import { UNTRUSTED_CONTENT_BANNER } from "../../core/untrusted-content.js";
-import { BROWSER_INSTALL_COMMAND, resolveBrowserComponent } from "../../domains/lifecycle/browser-component.js";
+import { BROWSER_INSTALL_COMMAND, resolveBrowserComponent } from "../../domains/install/browser-component.js";
 import type {
 	BrowserConsoleRecord,
 	BrowserEventDelta,

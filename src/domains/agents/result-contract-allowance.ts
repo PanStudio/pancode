@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
-import { INTERNAL_HELPER_RESULT_KINDS } from "../../worker/protocol.js";
+import { INTERNAL_HELPER_RESULT_KINDS } from "../../lib/worker-wire/protocol.js";
 import { isHoareResultContract, type ResultContract } from "./result-contract-types.js";
 
 /** Shared acceptance/capture ceiling: a worker may not accept a result the parent cannot retain. */

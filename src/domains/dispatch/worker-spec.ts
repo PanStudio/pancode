@@ -26,9 +26,12 @@ import type { ToolName } from "../../core/tool-names.js";
 import { toolSurfaceSources, workerTurnConstraints } from "../../core/turn-constraints.js";
 import { attestedToolSchemaSignature } from "../../engine/worker-tools.js";
 import type { AutonomyLevel } from "../../lib/autonomy/autonomy.js";
-import { shareTaskWorktreeDependencies } from "../../tools/task-worktree-dependencies.js";
-import { parseWorkerContextSeed } from "../../worker/context-seed.js";
-import { WORKER_STDIN_FRAME_MAX_BYTES, type WorkerExtensionHook, workerStaticHead } from "../../worker/protocol.js";
+import { parseWorkerContextSeed } from "../../lib/worker-wire/context-seed.js";
+import {
+	WORKER_STDIN_FRAME_MAX_BYTES,
+	type WorkerExtensionHook,
+	workerStaticHead,
+} from "../../lib/worker-wire/protocol.js";
 import {
 	DEFAULT_ESCALATION_FALLBACK,
 	DEFAULT_ESCALATION_TIMEOUT_MS,
@@ -41,7 +44,8 @@ import {
 	type WorkerPromptMessage,
 	workerSpecToolNames,
 	workerSpecVersionFor,
-} from "../../worker/spec-contract.js";
+} from "../../lib/worker-wire/spec-contract.js";
+import { shareTaskWorktreeDependencies } from "../../tools/task-worktree-dependencies.js";
 import type { AgentRecipe } from "../agents/recipe.js";
 import { INTERNAL_HELPER_RESULT_KINDS } from "../agents/result-contract.js";
 import { isHoareResultContract, type ResultContract } from "../agents/result-contract-types.js";

@@ -517,7 +517,7 @@ export class ListOverlayView implements Component {
 	 * Esc by the shared rule: a nonempty filter clears first, explicit search then
 	 * returns to the list, an inner level is left before the overlay is (drilling
 	 * into a package's members and pressing Esc returns to the packages, not out of
-	 * PanHub with the category, mode and scope the operator set), and only
+	 * the hub with the category, mode and scope the operator set), and only
 	 * then does Esc close. The footer reads its Esc word from the same list.
 	 */
 	private escapeLayers(): EscapeLayers {
@@ -902,7 +902,7 @@ export class ListOverlayView implements Component {
 			const noMatch = allItems.length > 0;
 			const error = noMatch ? undefined : this.options.emptyError?.();
 			const text = noMatch ? "No matches found" : (empty ?? "No matches found");
-			// A read that failed is not an empty PanHub. It says what failed, and
+			// A read that failed is not an empty hub. It says what failed, and
 			// the remedy beneath it is the key that reads again.
 			const rows =
 				error !== undefined

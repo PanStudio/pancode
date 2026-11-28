@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
 import { PassThrough } from "node:stream";
 import { setImmediate } from "node:timers/promises";
+import { AcpProcessError } from "../../src/acp/errors.js";
+import { ACP_MAX_INPUT_LINE_BYTES, createStdioServerTransport } from "../../src/acp/transport.js";
 import { restoreStdout, takeOverStdout, writeRawStdout } from "../../src/cli/output-guard.js";
-import { AcpProcessError } from "../../src/engine/acp/errors.js";
-import { ACP_MAX_INPUT_LINE_BYTES, createStdioServerTransport } from "../../src/engine/acp/transport.js";
 
 const scenario = process.argv[2];
 const received = [];

@@ -20,7 +20,7 @@ import {
 	readMcpServerCatalog,
 	readMcpSkillCatalog,
 	resolveMcpServers,
-} from "../gateway/mcp/index.js";
+} from "../mcp/index.js";
 import type { WorkerMcpAttestation, WorkerMcpToolAttestation } from "../safety/worker-permit.js";
 
 /**

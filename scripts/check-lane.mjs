@@ -3,7 +3,7 @@
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 // `pnpm run check:lane`: one pre-READY command for a lane branch. Runs the
 // gates a landing fails on most, in order, for the diff against the lane's
-// base: environment guards, typecheck and lint (which holds the PanHub pins),
+// base: environment guards, typecheck and lint (which holds the hub pins),
 // the GUI check, OpenAPI freshness, the test files the diff adds or directly
 // imports, and the gate-list check for new test files. It runs no suite, no build and no
 // browser. Summary lines read `check: <step> pass|fail ...` or
@@ -35,15 +35,15 @@ const CONTRACT_SOURCES = [
 	"src/core/telemetry/session-schemas.ts",
 	"src/core/telemetry/surface-schemas.ts",
 	"src/core/telemetry/tool-schemas.ts",
-	"src/engine/acp/types.ts",
-	"src/engine/acp/types-capabilities.ts",
-	"src/engine/acp/types-fleet.ts",
-	"src/engine/acp/types-readouts.ts",
-	"src/engine/acp/types-session.ts",
-	"src/engine/acp/types-settings.ts",
-	"src/engine/acp/types-tools.ts",
-	"src/engine/acp/types-views.ts",
-	"src/engine/acp/runtime.ts",
+	"src/acp/types.ts",
+	"src/acp/types-capabilities.ts",
+	"src/acp/types-fleet.ts",
+	"src/acp/types-readouts.ts",
+	"src/acp/types-session.ts",
+	"src/acp/types-settings.ts",
+	"src/acp/types-tools.ts",
+	"src/acp/types-views.ts",
+	"src/acp/runtime.ts",
 ];
 const TEST_FILE = /\.test\.tsx?$/u;
 const RELATIVE_IMPORT = /(?:from|import)\s*\(?\s*["'](\.{1,2}\/[^"']+)["']/gu;

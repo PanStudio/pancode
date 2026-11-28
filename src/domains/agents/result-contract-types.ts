@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import type { HoareAssurance, HoareObligation, ObservedProof } from "../../core/hoare.js";
-import type { INTERNAL_HELPER_RESULT_KINDS } from "../../worker/protocol.js";
+import type { INTERNAL_HELPER_RESULT_KINDS } from "../../lib/worker-wire/protocol.js";
 import type { AgentAutomationAuthority } from "./spec.js";
 
 export type ResultContract =

@@ -6,7 +6,7 @@ import { AGENT_LEDGER_PROMPT_MAX_CHARS, renderAgentLedger } from "../domains/dis
 import { MAX_AGENT_LEDGER_POSTS_PER_RUN } from "../domains/dispatch/agent-ledger-store.js";
 import { mergeFlowRestrictions } from "../domains/safety/information-flow.js";
 import { StringEnum } from "../engine/ai.js";
-import type { AgentLedgerBody, AgentLedgerEntry, AgentLedgerPort } from "../worker/protocol.js";
+import type { AgentLedgerBody, AgentLedgerEntry, AgentLedgerPort } from "../lib/worker-wire/protocol.js";
 import {
 	AGENT_LEDGER_CLAIM_MAX_CHARS,
 	AGENT_LEDGER_EVIDENCE_MAX_CHARS,
@@ -15,7 +15,7 @@ import {
 	AGENT_LEDGER_SCOPE_ENTRY_MAX_CHARS,
 	AGENT_LEDGER_SCOPE_MAX_ENTRIES,
 	parseAgentLedgerBody,
-} from "../worker/protocol.js";
+} from "../lib/worker-wire/protocol.js";
 import { FLOW_RESTRICTIONS_DETAIL } from "./registry-verdicts.js";
 import type { ToolResult, ToolSpec } from "./tool-spec.js";
 

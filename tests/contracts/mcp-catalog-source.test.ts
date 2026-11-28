@@ -13,7 +13,7 @@ import {
 	type McpClientOptions,
 	type McpServerSpec,
 	trustMcpServer,
-} from "../../src/domains/gateway/mcp/index.js";
+} from "../../src/domains/mcp/index.js";
 import { createWorkerSafety } from "../../src/engine/worker-tools.js";
 import type { McpCapabilitySource } from "../../src/tools/gateway/index.js";
 import { createMcpCapabilitySource } from "../../src/tools/gateway/mcp-capabilities.js";

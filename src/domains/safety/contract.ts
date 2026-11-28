@@ -11,7 +11,7 @@ import type { ScopeSpec } from "./scope.js";
 
 /**
  * Posture of a re-admission the operator approved. The policy engine converts
- * its confirmation rails (damage-control ask rules, PanHub and system-modify
+ * its confirmation rails (damage-control ask rules, the hub and system-modify
  * confirmations, project confirmations) to an allow under it.
  */
 export const CONFIRMED_POSTURE = "confirmed";

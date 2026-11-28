@@ -35,7 +35,7 @@ function computeDirectoryFingerprint(dir: string): Record<string, string> {
 	return result;
 }
 
-describe("PanHub pack authoring templates", () => {
+describe("The hub pack authoring templates", () => {
 	it("both templates load cleanly through native domain loaders", () => {
 		// 1. Skill template
 		const skillRoot = join(TEMPLATES_DIR, "skill");
@@ -443,7 +443,7 @@ Check \${pluginRoot}/assets/nonexistent-file.txt
 			)
 			.reduce((sum, count) => sum + count, 0);
 		const local = hubRegistry.entries.filter((entry) => entry.sourceUrl !== undefined);
-		ok(local.length > 0, "PanHub index must list the local packs");
+		ok(local.length > 0, "The hub index must list the local packs");
 		const diskPacks: string[] = [];
 		const collectPacks = (dir: string, manifest: string): void => {
 			if (existsSync(join(dir, manifest))) {
@@ -466,12 +466,12 @@ Check \${pluginRoot}/assets/nonexistent-file.txt
 		deepStrictEqual(
 			local.map((entry) => join(REPO_ROOT, "hub", entry.sourceUrl ?? "")).sort(),
 			diskPacks.sort(),
-			"PanHub index local rows must match every curated plugin, skill and extension pack on disk",
+			"The hub index local rows must match every curated plugin, skill and extension pack on disk",
 		);
 		equal(
 			hubRegistry.entries.length,
 			local.length + communityRows,
-			`PanHub index must contain its ${local.length} local packs and the ${communityRows} community rows`,
+			`The hub index must contain its ${local.length} local packs and the ${communityRows} community rows`,
 		);
 
 		// None of the entries should reference _authoring or templates
@@ -484,7 +484,7 @@ Check \${pluginRoot}/assets/nonexistent-file.txt
 			);
 			ok(
 				!["citation-check", "data-curation"].includes(entry.name),
-				`authoring template '${entry.name}' found in the PanHub index`,
+				`authoring template '${entry.name}' found in the hub index`,
 			);
 		}
 

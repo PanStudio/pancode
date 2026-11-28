@@ -6,7 +6,7 @@ import {
 	type InstallRecordReport,
 	repairExtensionInstallRecords,
 } from "../domains/extensions/index.js";
-import type { DoctorFinding } from "../domains/lifecycle/doctor.js";
+import type { DoctorFinding } from "../domains/install/doctor.js";
 import { auditPluginInstallRecords, repairPluginInstallRecords } from "../domains/plugins/index.js";
 
 const STORES = [

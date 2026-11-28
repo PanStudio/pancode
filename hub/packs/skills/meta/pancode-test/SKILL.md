@@ -6,7 +6,7 @@ triggers:
   - test PanCode context compaction or memory
   - verify PanCode skill activation
   - choose PanCode test gates
-version: 0.5.2
+version: 0.5.3
 license: LicenseRef-PanCode-1.0
 pancode:
   registry-id: PanStudio/pancode

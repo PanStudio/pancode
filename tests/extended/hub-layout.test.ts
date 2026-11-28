@@ -7,17 +7,17 @@ import { visibleWidth } from "../../src/engine/tui.js";
 import { PancodeOverlayFrame } from "../../src/interactive/overlay-frame.js";
 import { ListOverlayView } from "../../src/interactive/overlays/list-overlay.js";
 
-it("fills the live terminal and reflows PanHub between wide and narrow viewports", () => {
+it("fills the live terminal and reflows the hub between wide and narrow viewports", () => {
 	const items = Array.from({ length: 50 }, (_, index) => ({
 		id: `recipe-${index}`,
 		label: `Recipe ${index}`,
 		detail: () => ["# Recipe", "Source: Bundled with PanCode", "Example instructions ".repeat(20)],
 	}));
 	const view = new ListOverlayView(
-		{ title: "PanHub", items, fullScreen: true, filterable: true, layout: "split", onClose() {} },
+		{ title: "Hub", items, fullScreen: true, filterable: true, layout: "split", onClose() {} },
 		() => {},
 	);
-	const frame = new PancodeOverlayFrame(view, "PanHub");
+	const frame = new PancodeOverlayFrame(view, "Hub");
 	for (const [width, rows] of [
 		[140, 42],
 		[48, 18],
@@ -43,12 +43,12 @@ it("keeps ordinary list overlays compact when the terminal grows", () => {
 	deepStrictEqual(view.render(90), before);
 });
 
-it("keeps mode and scope controls available on an empty PanHub tab and visible on resize", () => {
+it("keeps mode and scope controls available on an empty hub tab and visible on resize", () => {
 	let mode = "Browse";
 	let scope = "User";
 	const view = new ListOverlayView(
 		{
-			title: "PanHub",
+			title: "Hub",
 			items: [],
 			fullScreen: true,
 			filterable: true,
@@ -86,7 +86,7 @@ it("keeps mode and scope controls available on an empty PanHub tab and visible o
 	const next = view.render(32);
 	strictEqual(next === first, false, "status changes invalidate the rendered view");
 	match(stripVTControlCharacters(next.join("\n")), /Installed · Project/);
-	const frame = new PancodeOverlayFrame(view, "PanHub");
+	const frame = new PancodeOverlayFrame(view, "Hub");
 	for (const [width, rows] of [
 		[32, 10],
 		[140, 42],
@@ -112,7 +112,7 @@ it("gives an explicit search its cursor and letters, then returns to list action
 	];
 	const view = new ListOverlayView(
 		{
-			title: "PanHub",
+			title: "Hub",
 			items,
 			filterable: true,
 			explicitSearch: true,
@@ -162,7 +162,7 @@ it("gives an explicit search its cursor and letters, then returns to list action
 });
 
 it("keeps every key the rail drops on screen at six rows once the pane state settles", () => {
-	// PanHub at 54 columns: a 50-cell body, a 35-cell rail, the pane
+	// The hub at 54 columns: a 50-cell body, a 35-cell rail, the pane
 	// requested on open but without room to stack. The shed pass used to run
 	// under the hints of the pane it assumed, and the hints of the frame it
 	// settled on needed one row more, so `[u] update` sat behind the marker.
@@ -175,7 +175,7 @@ it("keeps every key the rail drops on screen at six rows once the pane state set
 	}));
 	const view = new ListOverlayView(
 		{
-			title: "PanHub",
+			title: "Hub",
 			items: [],
 			tabs: ["Skills", "Agents", "Prompts", "Playbooks", "Plugins", "Extensions"].map((label) => ({
 				id: label.toLowerCase(),
@@ -233,7 +233,7 @@ it("inverts the pane on every detail key press, two presses before a repaint inc
 		detailFormat: "rows" as const,
 	}));
 	const view = new ListOverlayView(
-		{ title: "PanHub", items, fullScreen: true, layout: "split", onSelect() {}, onClose() {} },
+		{ title: "Hub", items, fullScreen: true, layout: "split", onSelect() {}, onClose() {} },
 		() => {},
 	);
 	view.toggleDetail();
@@ -258,7 +258,7 @@ it("leaves the pane request alone when the detail key has no pane to change", ()
 	}));
 	const view = new ListOverlayView(
 		{
-			title: "PanHub",
+			title: "Hub",
 			items,
 			fullScreen: true,
 			layout: "split",
@@ -292,7 +292,7 @@ it("leaves the pane request alone when the detail key has no pane to change", ()
 it("cuts an empty state before the keys under it", () => {
 	const view = new ListOverlayView(
 		{
-			title: "PanHub",
+			title: "Hub",
 			items: [],
 			fullScreen: true,
 			emptyMessage: "An empty state long enough to wrap ".repeat(8),
@@ -318,10 +318,7 @@ it("counts selectable rows in the position line, never the group headers between
 		label: `Skill ${index}`,
 		group: index < 2 ? "Provider packages" : "Available",
 	}));
-	const view = new ListOverlayView(
-		{ title: "PanHub", items, fullScreen: true, layout: "stack", onClose() {} },
-		() => {},
-	);
+	const view = new ListOverlayView({ title: "Hub", items, fullScreen: true, layout: "stack", onClose() {} }, () => {});
 	view.setViewportRows(18);
 	const position = stripVTControlCharacters(view.render(100).join("\n")).match(/(\d+)\D(\d+) of (\d+) rows/);
 	ok(position, "a list longer than its window names its position");
@@ -334,7 +331,7 @@ it("rules off a pinned detail head and counts the scroll from the rows under it"
 	const detail = ["Title", "status", "keys", "", ...Array.from({ length: 20 }, (_, line) => `body ${line}`)];
 	const view = new ListOverlayView(
 		{
-			title: "PanHub",
+			title: "Hub",
 			items: [{ id: "one", label: "one", detail: () => detail, detailFormat: "rows", detailHead: () => 3 }],
 			fullScreen: true,
 			layout: "split",

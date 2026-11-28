@@ -2998,7 +2998,7 @@
 		"/api/workspaces/{id}/hub/plans": {
 			"post": {
 				"operationId": "hubPlan",
-				"summary": "Stage one reviewed PanHub lifecycle plan; writes nothing",
+				"summary": "Stage one reviewed hub lifecycle plan; writes nothing",
 				"security": [
 					{
 						"bearer": []
@@ -4179,7 +4179,7 @@
 		"/api/hub": {
 			"get": {
 				"operationId": "installationHub",
-				"summary": "The same PanHub inventory with no workspace open; only user and built-in layers apply",
+				"summary": "The same hub inventory with no workspace open; only user and built-in layers apply",
 				"security": [
 					{
 						"bearer": []
@@ -4445,7 +4445,7 @@
 		"/api/hub/plans": {
 			"post": {
 				"operationId": "installationHubPlan",
-				"summary": "Stage a reviewed user-scope PanHub plan with no workspace open; writes nothing",
+				"summary": "Stage a reviewed user-scope hub plan with no workspace open; writes nothing",
 				"security": [
 					{
 						"bearer": []

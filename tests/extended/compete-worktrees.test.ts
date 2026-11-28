@@ -14,6 +14,7 @@ import { readGateDecisionArtifacts } from "../../src/domains/dispatch/gate-decis
 import { readVerifiedRun } from "../../src/domains/telemetry/index.js";
 import { createWorkerSafety } from "../../src/engine/worker-tools.js";
 import { mapAutonomy } from "../../src/lib/autonomy/autonomy.js";
+import { workerSpecToolNames } from "../../src/lib/worker-wire/spec-contract.js";
 import {
 	candidateDiffStat,
 	claimCompeteGroup,
@@ -26,7 +27,6 @@ import {
 import { createDispatchTool } from "../../src/tools/dispatch.js";
 import { dispatchSchemaCompositionFor } from "../../src/tools/dispatch-schema.js";
 import { readTool } from "../../src/tools/read.js";
-import { workerSpecToolNames } from "../../src/worker/spec-contract.js";
 import { makeDispatchBundle } from "../harness/dispatch.js";
 import { dispatchStubContext } from "../harness/dispatch-stub-context.js";
 import { isolatePancodeEnv } from "../harness/scratch-env.js";

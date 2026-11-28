@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 
+import type { AcpPeerQuestion } from "../../acp/adapter.js";
 import { requirePricedRefusal } from "../../core/run-overrides.js";
 import { workerAgent } from "../../core/telemetry/context.js";
 import { pancodeStateDir } from "../../core/xdg.js";
-import type { AcpPeerQuestion } from "../../engine/acp/adapter.js";
 import type { AskUserQuestion, AskUserResult } from "../../tools/ask-user.js";
 import { persistWorkerContextSeed } from "../context/worker/store.js";
 import { telemetryRunDirectory } from "../telemetry/index.js";

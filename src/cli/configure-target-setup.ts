@@ -9,7 +9,7 @@ import {
 	updateSettings,
 } from "../core/config.js";
 import { initializePancodeHome } from "../core/init.js";
-import { ensureClaudeAgentSdk } from "../domains/lifecycle/claude-sdk-install.js";
+import { ensureClaudeAgentSdk } from "../domains/install/claude-sdk-install.js";
 import {
 	applyTargetCredentialPlan,
 	openAuthStorage,

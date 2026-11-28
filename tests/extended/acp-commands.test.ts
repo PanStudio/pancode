@@ -5,15 +5,6 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import type { PendingSkillRequest } from "../../src/core/skill-activation.js";
-import {
-	createReportTextHost,
-	formatReportPlanText,
-	type ReportPlan,
-	readReportDraft,
-	saveReportDraft,
-	updateOutbox,
-} from "../../src/domains/report/index.js";
 import {
 	ACP_COMMAND_RULES,
 	ACP_COMMANDS_CAPABILITY,
@@ -23,8 +14,17 @@ import {
 	acpCommandCatalog,
 	acpCommandControl,
 	invokeAcpCommand,
-} from "../../src/engine/acp/commands.js";
-import { AcpRequestError } from "../../src/engine/acp/errors.js";
+} from "../../src/acp/commands.js";
+import { AcpRequestError } from "../../src/acp/errors.js";
+import type { PendingSkillRequest } from "../../src/core/skill-activation.js";
+import {
+	createReportTextHost,
+	formatReportPlanText,
+	type ReportPlan,
+	readReportDraft,
+	saveReportDraft,
+	updateOutbox,
+} from "../../src/domains/report/index.js";
 import { acpCommandHost as host } from "../harness/acp-fake-transport.js";
 
 function descriptor(name: string): AcpCommandDescriptor {

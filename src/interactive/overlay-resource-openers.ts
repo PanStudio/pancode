@@ -51,7 +51,7 @@ export interface OverlayResourceOpeners {
  * The session's own reloads, or nothing for a seam this host has not wired.
  * An extension change reaches the running session only through the operator
  * reload, which restarts runtimes and republishes hooks and waits for an idle
- * session; PanHub overlay is open, so it normally queues until it closes.
+ * session; the hub overlay is open, so it normally queues until it closes.
  */
 function sessionReload(ctx: SlashCommandContext): HubSessionReload {
 	const reload = ctx.reloadPlugins;
@@ -129,13 +129,13 @@ export function createOverlayResourceOpeners(deps: OverlayResourceOpenersDeps): 
 				ctx.notice("warn", `hub: a pinned program did not download: ${failure}`),
 			),
 			// A fleet's `use` is its approval preview, which is a surface of its own.
-			// PanHub closes first so the preview owns the overlay slot, exactly
+			// The hub closes first so the preview owns the overlay slot, exactly
 			// as `/fleet run <playbook>` typed into the composer would.
 			openFleetRun: (name) => {
 				deps.closeOverlay();
 				deps.getSlashContext().startFleetRun?.(name, {});
 			},
-			// Discovery is explicit. Opening PanHub never sweeps another
+			// Discovery is explicit. Opening the hub never sweeps another
 			// agent's home; this is the only route that does, and only on `o`.
 			openImport: () => {
 				deps.closeOverlay();

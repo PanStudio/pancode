@@ -4,9 +4,9 @@ import { deepStrictEqual, ok } from "node:assert/strict";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
+import { createStdioTransport } from "../../src/acp/transport.js";
 import { type SettingsMutator, updateSettings } from "../../src/core/config.js";
-import { ensurePancodeState } from "../../src/domains/lifecycle/index.js";
-import { createStdioTransport } from "../../src/engine/acp/transport.js";
+import { ensurePancodeState } from "../../src/domains/install/index.js";
 import { isolatePancodeEnv, scratchPancodeEnvVars } from "../harness/scratch-env.js";
 
 test("saved next-turn settings reach the running guardrail consumer", async () => {
@@ -28,7 +28,7 @@ test("saved next-turn settings reach the running guardrail consumer", async () =
 				`
 				import { telemetryHub } from ${JSON.stringify(source("core/telemetry/hub.ts"))};
 				import { resolveGuardrail } from ${JSON.stringify(source("core/guardrails.ts"))};
-				import { createStdioServerTransport } from ${JSON.stringify(source("engine/acp/transport.ts"))};
+				import { createStdioServerTransport } from ${JSON.stringify(source("acp/transport.ts"))};
 				import { bootOrchestrator } from ${JSON.stringify(source("entry/orchestrator.ts"))};
 				const transport = createStdioServerTransport();
 				telemetryHub().subscribe("config.next_turn_scheduled", () => {

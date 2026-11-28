@@ -15,7 +15,7 @@ import { ToolNames } from "../../src/core/tool-names.js";
 import { captureProjectSurface, recordProjectSurfaceTrust } from "../../src/core/workspace-trust.js";
 import { pancodeStateDir } from "../../src/core/xdg.js";
 import type { ConfigContract } from "../../src/domains/config/index.js";
-import { takeContainedYoloNotice } from "../../src/domains/lifecycle/state.js";
+import { takeContainedYoloNotice } from "../../src/domains/install/state.js";
 import type { MiddlewareContract } from "../../src/domains/middleware/contract.js";
 import { runMiddlewareRegistrations } from "../../src/domains/middleware/runtime.js";
 import { createMiddlewareToolChoiceControl } from "../../src/domains/middleware/tool-choice-control.js";

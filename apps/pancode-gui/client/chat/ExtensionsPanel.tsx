@@ -13,7 +13,7 @@ import "./pane-inspection.css";
 
 /**
  * The terminal's /extensions view and /extensions reload for this conversation. The list is what the
- * running session loaded; installing or enabling one stays with PanHub page and the CLI.
+ * running session loaded; installing or enabling one stays with the hub page and the CLI.
  */
 export const ExtensionsPanel = memo(function ExtensionsPanel({
 	client,
@@ -134,7 +134,7 @@ export const ExtensionsPanel = memo(function ExtensionsPanel({
 						) : null}
 					</details>
 					<p className="session-board__note">
-						<Link to="/hub">Manage installed tools in PanHub</Link>
+						<Link to="/hub">Manage installed tools in the hub</Link>
 					</p>
 				</>
 			) : null}

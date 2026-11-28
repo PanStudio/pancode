@@ -13,8 +13,8 @@ import type { DispatchContract } from "../domains/dispatch/contract.js";
 import type { AgentRoleFactsResolver } from "../domains/dispatch/execution-role.js";
 import type { InstalledExtension } from "../domains/extensions/index.js";
 import type { OperatorExtensions } from "../domains/extensions/operator-extensions.js";
+import type { DoctorFinding } from "../domains/install/doctor.js";
 import type { InteropAgentId, InteropProposal, InteropReport } from "../domains/interop/index.js";
-import type { DoctorFinding } from "../domains/lifecycle/doctor.js";
 import type { OperatorMemoryScope } from "../domains/memory/operator-statement.js";
 import type { PanePeerId, PanesOperations, PanesPresetId } from "../domains/mux/operations.js";
 import type { ProvidersContract, ResolvedModelRef } from "../domains/providers/index.js";
@@ -77,7 +77,7 @@ export type SlashReportRequest =
 export type HubBrowseIntent = HubOperation;
 
 /**
- * How a command opens PanHub.
+ * How a command opens the hub.
  *
  * A reference is a selection, never a write. `/hub install <ref>` opens the
  * browser on that row with its review armed, so the operator reads the plan

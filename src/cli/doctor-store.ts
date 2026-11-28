@@ -11,7 +11,7 @@ import {
 	storeRootSpecs,
 	storeS3Settings,
 } from "../core/store-paths.js";
-import type { DoctorFinding } from "../domains/lifecycle/doctor.js";
+import type { DoctorFinding } from "../domains/install/doctor.js";
 import { openAuthStorage } from "../domains/providers/auth/index.js";
 import { STORE_S3_CREDENTIAL_ID } from "../domains/store/backends/s3.js";
 import { formatBytes } from "./lifecycle-presenter.js";

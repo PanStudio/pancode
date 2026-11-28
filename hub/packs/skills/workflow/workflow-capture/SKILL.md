@@ -7,7 +7,7 @@ triggers:
   - turn this into a reusable workflow
   - distill this repeated process
   - create a skill from this session
-version: 0.4.8
+version: 0.4.9
 license: LicenseRef-PanCode-1.0
 allowed-tools:
   - read
@@ -121,7 +121,7 @@ Phase 6, read references/frontmatter-contract.md. The proposed installation
 scope defaults to project; suggest user
 scope only when the user said the workflow crosses repositories. Creation here
 produces a draft. The operator later reviews a portable package envelope and
-installs through PanHub; never write into an active skill store directly. Placeholders replace every
+installs through the hub; never write into an active skill store directly. Placeholders replace every
 session-specific path, name, and value; distill the pattern, not the
 incident. Keep the generated skill under 120 lines; reference instead of
 inlining. If the session repeatedly dispatched the same worker pattern, also

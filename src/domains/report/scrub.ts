@@ -10,7 +10,7 @@ import { SETTINGS_FIELD_NAMES } from "../../core/settings-fields.js";
 import { FailureCause } from "../../core/telemetry/enums.js";
 import { BILLING_PROVIDERS } from "../../core/telemetry/schemas.js";
 import { createRedactionTally, redactKnownSecrets, redactSecretsText } from "../../lib/secrets/redact.js";
-import { inspectInstallation } from "../lifecycle/index.js";
+import { inspectInstallation } from "../install/index.js";
 import { RUNTIME_VOCABULARY } from "../telemetry/index.js";
 import { type ReportCommandRunner, runReportCommand } from "./command.js";
 import {

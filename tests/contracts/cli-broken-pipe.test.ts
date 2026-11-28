@@ -6,7 +6,7 @@ import { resolve } from "node:path";
 import { test } from "node:test";
 import { createFleetEventJournal } from "../../src/domains/dispatch/fleet-event-journal.js";
 import { openLedger } from "../../src/domains/dispatch/state.js";
-import { ensurePancodeState } from "../../src/domains/lifecycle/index.js";
+import { ensurePancodeState } from "../../src/domains/install/index.js";
 import { isolatePancodeEnv } from "../harness/scratch-env.js";
 
 test("closed stdout quietly ends fleet journals, followers, trace JSON, and root help with SIGPIPE status", async () => {

@@ -512,7 +512,7 @@ export function probeLines(descriptor: TargetDescriptor, probe: ProbeResult): st
 		if (descriptor.runtime === "copilot-sdk") {
 			const next =
 				probe.failureKind === "missing"
-					? "install the Copilot SDK component with `pancode tools install copilot-sdk`, then re-run `pancode targets --probe`"
+					? "install the Copilot SDK component with `pancode programs install copilot-sdk`, then re-run `pancode targets --probe`"
 					: probe.failureKind === "authentication"
 						? "sign in with `copilot login` or `gh auth login`; PanCode never signs in to Copilot itself. A login kept only in the system keychain is closed to headless runs; `pancode doctor` in a terminal shows which login the runtime sees"
 						: "check that `copilot login` succeeded and the account has Copilot models enabled, then re-run `pancode targets --probe`";

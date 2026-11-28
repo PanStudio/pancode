@@ -2,8 +2,8 @@
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 
 import { isAbsolute } from "node:path";
-import { DEFAULT_CANCEL_GRACE_MS } from "../../engine/acp/adapter.js";
-import { DEFAULT_TERMINATION_GRACE_MS, DEFAULT_TERMINATION_WAIT_MS } from "../../engine/acp/transport.js";
+import { DEFAULT_CANCEL_GRACE_MS } from "../../acp/adapter.js";
+import { DEFAULT_TERMINATION_GRACE_MS, DEFAULT_TERMINATION_WAIT_MS } from "../../acp/transport.js";
 import { asAssignmentId } from "./assignment.js";
 import { cancelStoredAssignment, getStoredAssignment, subscribeStoredAssignments } from "./assignment-store.js";
 import {

@@ -5,7 +5,7 @@
  * Keeps PanCode's ACP wire shapes in step with the upstream Agent Client Protocol JSON schemas.
  *
  * The pin (scripts/acp-schema.pin.json) names one upstream tag per protocol major and the sha256 of each file read
- * from it. `src/engine/acp/upstream-schema.ts` is generated from the pinned v1 schema: TypeBox schemas for the
+ * from it. `src/acp/upstream-schema.ts` is generated from the pinned v1 schema: TypeBox schemas for the
  * answers PanCode reads from a peer and serves as one, the enums it matches on and the method tables.
  *
  *   --check (default)  fail when the generated module is not what the pin produces, or a pinned file changed
@@ -24,8 +24,8 @@ import { sha256Hex } from "../src/core/hash.js";
 
 const root = path.resolve(import.meta.dirname, "..");
 const pinPath = path.join(root, "scripts", "acp-schema.pin.json");
-const modulePath = path.join(root, "src", "engine", "acp", "upstream-schema.ts");
-const moduleRelative = "src/engine/acp/upstream-schema.ts";
+const modulePath = path.join(root, "src", "acp", "upstream-schema.ts");
+const moduleRelative = "src/acp/upstream-schema.ts";
 
 /** The v1 definitions generated as exported schemas; everything they reference is generated alongside. */
 const ROOTS = ["InitializeResponse", "NewSessionResponse", "LoadSessionResponse", "ResumeSessionResponse"] as const;

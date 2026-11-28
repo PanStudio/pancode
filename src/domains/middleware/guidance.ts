@@ -271,7 +271,7 @@ export const GUIDANCE_LESSONS: ReadonlyArray<GuidanceLesson> = [
 		feature: "/hub",
 		score: (turn) => (HUB_INSTALL.test(turn.prompt) ? SPECIFIC_SCORE : 0),
 		text: (context) =>
-			`${context.keyFor("pancode.hub.toggle") ?? "/hub"} opens PanHub: browse, install and update skills, agents and plugins, with a review before anything changes.`,
+			`${context.keyFor("pancode.hub.toggle") ?? "/hub"} opens the hub: browse, install and update skills, agents and plugins, with a review before anything changes.`,
 	},
 	{
 		id: "read-only",

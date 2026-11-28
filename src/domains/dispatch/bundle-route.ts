@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 
 import { type TelemetryContext, workerAgent } from "../../core/telemetry/context.js";
-import { endpointIdentityHash } from "../../worker/protocol.js";
+import { endpointIdentityHash } from "../../lib/worker-wire/protocol.js";
 import { isHoareResultContract } from "../agents/result-contract-types.js";
 import { normalizeAgentSpec } from "../agents/spec.js";
 import { workspaceStoreTags } from "../store/index.js";

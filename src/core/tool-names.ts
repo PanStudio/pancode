@@ -16,7 +16,7 @@
  *   GATEWAY      gateway
  *
  * Placement (which names carry an attached schema and which are reached
- * through the gateway) is a separate axis, declared in src/tools/surface.ts.
+ * through the gateway) is a separate axis, declared in src/core/tool-surface.ts.
  */
 
 export const ToolNames = {

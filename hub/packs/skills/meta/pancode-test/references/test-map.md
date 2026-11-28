@@ -53,7 +53,7 @@ pnpm run hub:check
 ```
 
 Inspect the generated diff; do not accept unrelated pin drift. The skill hash
-and full PanHub digest are different contracts. Package validation uses
+and full hub digest are different contracts. Package validation uses
 `pancode hub validate <package-root> --json` with a current candidate CLI.
 The portable manifest and house frontmatter are richer than a generic skill
 validator; use PanCode's own validation as the authority for PanCode metadata.

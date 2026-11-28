@@ -5,6 +5,16 @@ import { mkdirSync, realpathSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
 import { Value } from "typebox/value";
+import { AcpRequestError } from "../../src/acp/errors.js";
+import {
+	ACP_FLEET_MAX_STEPS,
+	type AcpFleetControl,
+	type AcpFleetPreview,
+	projectFleetPreview,
+} from "../../src/acp/fleet-run.js";
+import { servePancodeAcpAgent } from "../../src/acp/server.js";
+import type { AcpJsonRpcPeerTransport } from "../../src/acp/transport.js";
+import { AcpFleetPreviewSchema } from "../../src/acp/types-fleet.js";
 import { DEFAULT_SETTINGS } from "../../src/core/defaults.js";
 import type { Playbook } from "../../src/domains/agents/index.js";
 import { cancelStoredAssignment, registerAssignment } from "../../src/domains/dispatch/assignment-store.js";
@@ -16,16 +26,6 @@ import {
 	type FleetRunPreview,
 } from "../../src/domains/dispatch/index.js";
 import type { FleetRunRecord } from "../../src/domains/dispatch/state.js";
-import { AcpRequestError } from "../../src/engine/acp/errors.js";
-import {
-	ACP_FLEET_MAX_STEPS,
-	type AcpFleetControl,
-	type AcpFleetPreview,
-	projectFleetPreview,
-} from "../../src/engine/acp/fleet-run.js";
-import { servePancodeAcpAgent } from "../../src/engine/acp/server.js";
-import type { AcpJsonRpcPeerTransport } from "../../src/engine/acp/transport.js";
-import { AcpFleetPreviewSchema } from "../../src/engine/acp/types-fleet.js";
 import { parseSlashCommand } from "../../src/session-control/slash-commands.js";
 import { dispatchStubContext } from "../harness/dispatch-stub-context.js";
 import { isolatePancodeEnv } from "../harness/scratch-env.js";

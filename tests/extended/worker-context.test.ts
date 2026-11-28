@@ -35,11 +35,15 @@ import { boundWorkerResponse } from "../../src/engine/worker-response-stream.js"
 import type { WorkerRunHandle } from "../../src/engine/worker-run-types.js";
 import { startWorkerRun } from "../../src/engine/worker-runtime.js";
 import { createWorkerSafety, createWorkerToolRegistry } from "../../src/engine/worker-tools.js";
+import {
+	parseWorkerContextSeed,
+	seededWorkerMessages,
+	seedRecallLineage,
+} from "../../src/lib/worker-wire/context-seed.js";
 import { buildModelReplayAgentMessagesFromTurns } from "../../src/session-control/model-session-replay.js";
 import { createContextTool } from "../../src/tools/context/index.js";
 import { createDispatchAdmissionController } from "../../src/tools/dispatch-admission.js";
 import { DISPATCH_PLAN_PREPARATION_ERROR_ARGUMENT } from "../../src/tools/dispatch-plan.js";
-import { parseWorkerContextSeed, seededWorkerMessages, seedRecallLineage } from "../../src/worker/context-seed.js";
 import { closeServer, readRequestBody } from "../harness/openai-compat-fixture.js";
 import { fixtureEnvelope, fixtureReceiptDraft } from "../harness/receipt.js";
 import { isolatePancodeEnv } from "../harness/scratch-env.js";

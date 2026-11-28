@@ -2,9 +2,8 @@
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import { deepStrictEqual, strictEqual } from "node:assert/strict";
 import { it } from "node:test";
-
+import { acpUsageSums } from "../../src/acp/adapter.js";
 import { sumFacts } from "../../src/core/telemetry/pricing.js";
-import { acpUsageSums } from "../../src/engine/acp/adapter.js";
 
 const quantity = (metric: string, fact: unknown) => ({ fact, display: "-", ref: `session:peer#${metric}` });
 const measured = (value: number) => ({ kind: "measured", value, source: "provider" });

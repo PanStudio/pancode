@@ -5,7 +5,7 @@ import { resolve } from "node:path";
 import { canonicalJson } from "../../../core/canonical-json.js";
 import { isSameOrDescendant } from "../../../core/path-containment.js";
 import type { AgentMessage } from "../../../engine/types.js";
-import { carriedMarkers, WORKER_CONTEXT_MAX_BYTES } from "../../../worker/context-seed.js";
+import { carriedMarkers, WORKER_CONTEXT_MAX_BYTES } from "../../../lib/worker-wire/context-seed.js";
 import { estimateAgentMessageTokens } from "../../session/context-accounting.js";
 import {
 	WORKER_CONTEXT_SPLICE_TOKENS,

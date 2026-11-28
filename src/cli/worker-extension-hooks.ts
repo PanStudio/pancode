@@ -6,7 +6,7 @@ import type { DispatchBundleOptions } from "../domains/dispatch/extension.js";
 import { type ExtensionsContract, isLoadableExtension } from "../domains/extensions/index.js";
 import { createMiddlewareDomain } from "../domains/middleware/module.js";
 import type { WorkerHookHost } from "../entry/worker-hook-host.js";
-import type { WorkerExtensionHook } from "../worker/protocol.js";
+import type { WorkerExtensionHook } from "../lib/worker-wire/protocol.js";
 
 /**
  * Extension tool hooks for the workers `fleet run`, `run --agent`,

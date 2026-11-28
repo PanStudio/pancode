@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 /**
  * What an extension may do, in words, before anything is installed or loaded.
- * One renderer feeds the dev consent card, PanHub review, the CLI plan
+ * One renderer feeds the dev consent card, the hub review, the CLI plan
  * output and `extensions install`, so the four never describe the same
  * envelope differently.
  */

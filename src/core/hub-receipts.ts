@@ -60,9 +60,9 @@ function receiptPath(): string {
 function read(): LifecycleReceipt[] {
 	const file = receiptPath();
 	if (!existsSync(file)) return [];
-	if (statSync(file).size > MAX_BYTES) throw new Error("PanHub receipt store exceeds its size limit");
+	if (statSync(file).size > MAX_BYTES) throw new Error("The hub receipt store exceeds its size limit");
 	const value = JSON.parse(readFileSync(file, "utf8")) as { version?: unknown; receipts?: unknown };
-	if (value.version !== 1 || !Array.isArray(value.receipts)) throw new Error("invalid PanHub receipt store");
+	if (value.version !== 1 || !Array.isArray(value.receipts)) throw new Error("invalid hub receipt store");
 	return value.receipts.filter(
 		(row): row is LifecycleReceipt =>
 			row && typeof row.operationId === "string" && typeof row.id === "string" && typeof row.at === "string",
@@ -116,7 +116,7 @@ export function recordLifecycleReceipt(
 					receipts.shift();
 					text = JSON.stringify({ version: 1, receipts });
 				}
-				if (Buffer.byteLength(text) > MAX_BYTES) throw new Error("PanHub receipt exceeds its size limit");
+				if (Buffer.byteLength(text) > MAX_BYTES) throw new Error("The hub receipt exceeds its size limit");
 				safeResourceWrite(receiptPath(), `${text}\n`, { encoding: "utf8" });
 			},
 			{ timeoutMs: 1000 },

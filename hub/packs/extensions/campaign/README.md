@@ -74,7 +74,7 @@ directory instead.
 
 Each entry uses your config directory as it is (targets, credentials, installed extensions and MCP configuration), the
 way your own `pancode run` would: nothing secret is copied under `--out`, and a login an entry refreshes is saved to your
-credential store. Each also reads the runtime components you installed with `pancode tools install` (copilot-sdk,
+credential store. Each also reads the runtime components you installed with `pancode programs install` (copilot-sdk,
 claude-sdk) and your vendored tools from your own data directory, read-only, and an entry missing one names that
 directory in its install hint rather than offering to install under `--out`. Its environment is filtered the way every
 run an extension starts is (see Limits), with the allowlist read from the fixture copy's settings.

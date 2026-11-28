@@ -17,6 +17,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
 
 import { ToolNames } from "../../src/core/tool-names.js";
+import { surfaceSpecPlacement } from "../../src/core/tool-surface.js";
 import { compile } from "../../src/domains/prompts/compiler.js";
 import { loadFragments } from "../../src/domains/prompts/fragment-loader.js";
 import type {
@@ -39,7 +40,6 @@ import { isWorkerSurfaceExcludedTool } from "../../src/tools/policy.js";
 import { createRegistry } from "../../src/tools/registry.js";
 import type { ToolInvokeOptions, ToolRegistry } from "../../src/tools/registry-contract.js";
 import { writeToolOffload } from "../../src/tools/result-shaping.js";
-import { surfaceSpecPlacement } from "../../src/tools/surface.js";
 import { isolatePancodeEnv } from "../harness/scratch-env.js";
 
 /** The gateway prompt line an operator who never bound a route has always had. */

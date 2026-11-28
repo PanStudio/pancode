@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 /**
- * The `@path` reference under the caret, by the grammar the agent expands (`src/core/file-references.ts`):
+ * The `@path` reference under the caret, by the grammar the agent expands (`src/tools/file-references.ts`):
  * an `@` at the start of the text or after whitespace, then a path that runs to the next whitespace,
  * or a double-quoted path that may hold spaces.
  */

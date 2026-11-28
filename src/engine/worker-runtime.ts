@@ -46,6 +46,7 @@ import { observedToolCallOrigin, withTelemetryContext } from "../core/telemetry/
 import { telemetryHub } from "../core/telemetry/hub.js";
 import { hasTokenUsageCounts, normalizeTokenUsage } from "../core/token-split.js";
 import { type ToolName, ToolNames } from "../core/tool-names.js";
+import { effectiveToolCall, gatewayChainReceipts } from "../core/tool-surface.js";
 import {
 	parseWorkerResultContract,
 	validateResultContract,
@@ -108,21 +109,8 @@ import {
 import { estimateAgentMessageTokens } from "../domains/session/context-accounting.js";
 import { abortReasonCause } from "../domains/telemetry/call-facts.js";
 import { describeCallTarget, WORKER_CALL_TARGET_MAX_CHARS } from "../lib/call-target/call-target.js";
-import { resolveAgentTools, type ToolTelemetry } from "../tools/agent-tools.js";
-import type { McpCapabilitySource } from "../tools/gateway/index.js";
-import { createWorkerGitContext } from "../tools/git-exec.js";
-import { runObservationPool } from "../tools/observation.js";
-import { CODE_NAV_TASK_STEERING, codeNavTaskSteering } from "../tools/profiles.js";
-import type { RegistryDeps } from "../tools/registry-contract.js";
-import { effectiveToolCall, gatewayChainReceipts } from "../tools/surface.js";
-import {
-	clearTaskGates,
-	configureWorkerTaskGates,
-	contractDeclaresTaskGates,
-	isTaskGateCall,
-} from "../tools/verify/task-gates.js";
-import { seededWorkerMessages, seedRecallLineage } from "../worker/context-seed.js";
-import { permissionHoldBackstopAt, type WorkerGrantRequestFrame } from "../worker/protocol.js";
+import { seededWorkerMessages, seedRecallLineage } from "../lib/worker-wire/context-seed.js";
+import { permissionHoldBackstopAt, type WorkerGrantRequestFrame } from "../lib/worker-wire/protocol.js";
 import {
 	DEFAULT_ESCALATION_FALLBACK,
 	DEFAULT_ESCALATION_TIMEOUT_MS,
@@ -132,7 +120,19 @@ import {
 	type WorkerBudget,
 	type WorkerEscalationConfig,
 	type WorkerPromptMessage,
-} from "../worker/spec-contract.js";
+} from "../lib/worker-wire/spec-contract.js";
+import { resolveAgentTools, type ToolTelemetry } from "../tools/agent-tools.js";
+import type { McpCapabilitySource } from "../tools/gateway/index.js";
+import { createWorkerGitContext } from "../tools/git-exec.js";
+import { runObservationPool } from "../tools/observation.js";
+import { CODE_NAV_TASK_STEERING, codeNavTaskSteering } from "../tools/profiles.js";
+import type { RegistryDeps } from "../tools/registry-contract.js";
+import {
+	clearTaskGates,
+	configureWorkerTaskGates,
+	contractDeclaresTaskGates,
+	isTaskGateCall,
+} from "../tools/verify/task-gates.js";
 import type { WorkerDecisionBinding } from "../worker/stdin-demux.js";
 import { createEngineAgent, type EngineAgentOptions } from "./agent.js";
 import { registerFauxFromEnv } from "./ai.js";

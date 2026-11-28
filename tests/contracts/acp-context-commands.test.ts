@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { acpCommandControl } from "../../src/engine/acp/commands.js";
+import { acpCommandControl } from "../../src/acp/commands.js";
 import { acpCommandHost as host } from "../harness/acp-fake-transport.js";
 
 // The ACP context verbs were allowlisted but no host supplied them, so a wire client never saw them.

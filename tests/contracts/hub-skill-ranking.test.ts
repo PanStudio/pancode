@@ -21,7 +21,7 @@ function skillDirs(dir: string): string[] {
 	});
 }
 
-/** The reminder's ranking over every skill PanHub ships, as the session ranks its ready skills. */
+/** The reminder's ranking over every skill the hub ships, as the session ranks its ready skills. */
 function rankHubSkills(task: string, installed?: string) {
 	const hub = loadSkills({ disableDiscovery: true, explicitSkillPaths: skillDirs(packs) }).items;
 	ok(hub.length > 30, `loaded ${hub.length} hub skills`);
@@ -39,7 +39,7 @@ function rankHubSkills(task: string, installed?: string) {
 	});
 }
 
-describe("PanHub skill ranking", () => {
+describe("The hub skill ranking", () => {
 	it("offers science-data first for a question about simulation output", () => {
 		const task = "What variables are in the simulation output?";
 		const [top] = rankHubSkills(task);

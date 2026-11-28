@@ -7,7 +7,7 @@
  */
 import { pathToFileURL } from "node:url";
 import type { CopilotClient } from "@github/copilot-sdk";
-import { CopilotSdkUnavailableError, resolveCopilotSdkEntry } from "../../domains/lifecycle/copilot-sdk-install.js";
+import { CopilotSdkUnavailableError, resolveCopilotSdkEntry } from "../../domains/install/copilot-sdk-install.js";
 
 /** The slice of the SDK surface the adapter calls. */
 export interface CopilotSdkModule {

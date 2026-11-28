@@ -4,15 +4,15 @@
 import { GLYPH } from "../core/glyphs.js";
 import type { NotificationLevel } from "../core/views/notice-words.js";
 import { resolvePancodeDirs } from "../core/xdg.js";
-import { inspectInstallation } from "../domains/lifecycle/install-method.js";
-import { describeTracking } from "../domains/lifecycle/install-plan.js";
+import { inspectInstallation } from "../domains/install/install-method.js";
+import { describeTracking } from "../domains/install/install-plan.js";
 import {
 	type DeferredUpgrade,
 	planSelfUpgrade,
 	prepareDeferredUpgrade,
 	runApprovedSelfUpgrade,
 	type SelfUpgradePlan,
-} from "../domains/lifecycle/self-upgrade.js";
+} from "../domains/install/self-upgrade.js";
 import type { AskUserHandler } from "../tools/ask-user.js";
 
 export interface InteractiveUpgradeFlowDeps {

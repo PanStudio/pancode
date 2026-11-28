@@ -2,15 +2,15 @@
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import { AcpRequestError } from "../../src/acp/errors.js";
+import { bindBoardActions } from "../../src/acp/host-members.js";
+import { servePancodeAcpAgent } from "../../src/acp/server.js";
+import type { AcpBoardActions } from "../../src/acp/server-options.js";
+import type { AcpJsonRpcPeerTransport } from "../../src/acp/transport.js";
 import { loadMemoryRecords } from "../../src/domains/memory/index.js";
 import type { TaskMemorySnapshot } from "../../src/domains/memory/task-bank.js";
 import { createDecisionBoardStore, type DecisionLedgerEntryFields } from "../../src/domains/session/decision-board.js";
 import type { DecisionLedgerEntry } from "../../src/domains/session/entries.js";
-import { AcpRequestError } from "../../src/engine/acp/errors.js";
-import { bindBoardActions } from "../../src/engine/acp/host-members.js";
-import { servePancodeAcpAgent } from "../../src/engine/acp/server.js";
-import type { AcpBoardActions } from "../../src/engine/acp/server-options.js";
-import type { AcpJsonRpcPeerTransport } from "../../src/engine/acp/transport.js";
 import { isolatePancodeEnv } from "../harness/scratch-env.js";
 
 const INTERVIEW: DecisionLedgerEntry = {

@@ -421,7 +421,7 @@ export const SLASH_ALIASES: readonly SlashAliasSpec[] = [
 		summary: "Open Sessions to continue another task",
 		target: { kind: "navigate", path: "/sessions" },
 	},
-	{ names: ["hub"], summary: "Open PanHub", target: { kind: "navigate", path: "/hub" } },
+	{ names: ["hub"], summary: "Open the hub", target: { kind: "navigate", path: "/hub" } },
 	{ names: ["research"], summary: "Open Research", target: { kind: "navigate", path: "/research" } },
 	{
 		names: ["quit", "exit"],

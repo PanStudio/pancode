@@ -3,12 +3,12 @@
 import { isCopilotRefusal } from "../../core/copilot-refusal.js";
 import { isResponseSchemaRejection } from "../../core/response-schema.js";
 import { isEngineContextOverflow, isProviderContentFilter } from "../../engine/ai.js";
-import { WORKER_STDOUT_UNDRAINED_REASON } from "../../worker/ndjson.js";
+import { WORKER_STDOUT_UNDRAINED_REASON } from "../../lib/worker-wire/ndjson.js";
 import {
 	WORKER_EXIT_PERMISSION_REQUIRED,
 	WORKER_PROVIDER_HTTP_STATUS_MARKER,
 	WORKER_SPEC_VERSION_SKEW,
-} from "../../worker/spec-contract.js";
+} from "../../lib/worker-wire/spec-contract.js";
 import { isDeterministicOutcomeCode } from "./backoff.js";
 import type { RunTerminationEvidence } from "./outcome.js";
 import type { RunOutcome, RunOutcomeCode } from "./types.js";
@@ -77,7 +77,7 @@ const WORKERSPEC_REJECTION = /\[worker\] fatal: workerspec/;
 
 /** CopilotSdkUnavailableError and ClaudeAgentSdkUnavailableError wording, lowercased. */
 const MISSING_RUNTIME_COMPONENT =
-	/the (?:copilot-sdk|claude sdk) runtime needs \S+\. run: pancode tools install (?:copilot-sdk|claude-sdk)\b|no @anthropic-ai\/claude-agent-sdk in prepared prefix\b/;
+	/the (?:copilot-sdk|claude sdk) runtime needs \S+\. run: pancode programs install (?:copilot-sdk|claude-sdk)\b|no @anthropic-ai\/claude-agent-sdk in prepared prefix\b/;
 
 /** The Copilot runtime's not-signed-in refusal, lowercased; only an operator sign-in changes it. */
 const COPILOT_NOT_SIGNED_IN = /github copilot is not signed in\b/;
@@ -143,7 +143,7 @@ export function honestWorkerSpecSkewText(text: string): string {
 
 // The worker words this remedy for its own machine: the client command it names does not reach the node.
 const COMPONENT_REMEDY =
-	/Run: pancode tools install (copilot-sdk|claude-sdk)\. This installs a separate component at ([^;]+);/g;
+	/Run: pancode programs install (copilot-sdk|claude-sdk)\. This installs a separate component at ([^;]+);/g;
 
 /** A remote worker's missing-component remedy, reworded to the client command that installs it on that node. */
 export function nodeComponentRemedy(text: string, nodeId: string): string {
@@ -164,7 +164,7 @@ export function nodeComponentRemedyEvent<T>(event: T, nodeId: string): T {
 		}
 		return value;
 	};
-	return JSON.stringify(event)?.includes("pancode tools install") === true ? (rewrite(event) as T) : event;
+	return JSON.stringify(event)?.includes("pancode programs install") === true ? (rewrite(event) as T) : event;
 }
 
 /**

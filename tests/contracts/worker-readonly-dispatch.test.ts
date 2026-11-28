@@ -13,15 +13,15 @@ import claudeSdkRuntime from "../../src/domains/providers/runtimes/claude/claude
 import { startClaudeSdkWorkerRun } from "../../src/engine/claude/sdk-runtime.js";
 import type { WorkerRunInput } from "../../src/engine/worker-run-types.js";
 import { createWorkerSafety } from "../../src/engine/worker-tools.js";
-import { createDispatchTool } from "../../src/tools/dispatch.js";
-import { createRegistry } from "../../src/tools/registry.js";
-import { workerEnvelopeDigest, workerPermitDigest } from "../../src/worker/protocol.js";
+import { workerEnvelopeDigest, workerPermitDigest } from "../../src/lib/worker-wire/protocol.js";
 import {
 	envelopePermissionMode,
 	parseWorkerSpec,
 	WORKER_SPEC_HOOKLESS_VERSION,
 	type WorkerSpec,
-} from "../../src/worker/spec-contract.js";
+} from "../../src/lib/worker-wire/spec-contract.js";
+import { createDispatchTool } from "../../src/tools/dispatch.js";
+import { createRegistry } from "../../src/tools/registry.js";
 import { makeDispatchBundle } from "../harness/dispatch.js";
 import { dispatchStubContext } from "../harness/dispatch-stub-context.js";
 import { isolatePancodeEnv } from "../harness/scratch-env.js";

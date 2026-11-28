@@ -135,7 +135,7 @@ export const KEYBINDINGS = {
 		key: "l",
 		modifiers: ["alt"],
 		scope: "global",
-		action: "Open PanHub",
+		action: "Open the hub",
 		where: "No dialog open",
 	},
 	overview: {
@@ -168,7 +168,7 @@ export const KEYBINDINGS = {
 		modifiers: [],
 		scope: "list",
 		action: "Previous tab",
-		where: "A tab focused: Help topics, PanHub, run details",
+		where: "A tab focused: Help topics, the hub, run details",
 	},
 	tabNext: {
 		id: "tabNext",
@@ -176,7 +176,7 @@ export const KEYBINDINGS = {
 		modifiers: [],
 		scope: "list",
 		action: "Next tab",
-		where: "A tab focused: Help topics, PanHub, run details",
+		where: "A tab focused: Help topics, the hub, run details",
 	},
 	tabFirst: {
 		id: "tabFirst",
@@ -184,7 +184,7 @@ export const KEYBINDINGS = {
 		modifiers: [],
 		scope: "list",
 		action: "First tab",
-		where: "A tab focused: Help topics, PanHub, run details",
+		where: "A tab focused: Help topics, the hub, run details",
 	},
 	tabLast: {
 		id: "tabLast",
@@ -192,7 +192,7 @@ export const KEYBINDINGS = {
 		modifiers: [],
 		scope: "list",
 		action: "Last tab",
-		where: "A tab focused: Help topics, PanHub, run details",
+		where: "A tab focused: Help topics, the hub, run details",
 	},
 	listNext: {
 		id: "listNext",

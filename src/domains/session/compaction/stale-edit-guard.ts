@@ -14,8 +14,8 @@
  * gone too. Files the model never saw before the cut are not judged here.
  */
 
+import { effectiveToolCall } from "../../../core/tool-surface.js";
 import { expandPath } from "../../../tools/path-utils.js";
-import { effectiveToolCall } from "../../../tools/surface.js";
 import { foldWorkingSet } from "../../context/working-set/fold.js";
 import {
 	canonicalize,

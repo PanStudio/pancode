@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
-// PanHub's components, in the operator's words: what an agent may spend and where it
+// The hub's components, in the operator's words: what an agent may spend and where it
 // stops, and whether the model can ever reach a skill. The agent's `configuration` is an open record
 // on the wire, so every key is read defensively. Pure, so the order and the sentences are testable
 // without a browser.
@@ -161,7 +161,7 @@ export function collectionTabLabel(
 	return `${name} · ${read.failed ? "Unavailable" : "…"}`;
 }
 
-/** With no workspace open PanHub reads installation-wide: built-in and user layers, no project. */
+/** With no workspace open the hub reads installation-wide: built-in and user layers, no project. */
 export function hubContextCopy(workspace: boolean) {
 	return workspace
 		? {

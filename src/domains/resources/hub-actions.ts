@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 /**
- * PanHub lifecycle: one reviewed plan per operation, applied per package above
+ * The hub lifecycle: one reviewed plan per operation, applied per package above
  * the atomic package writers. Planning stages sources and writes nothing; apply
  * rechecks reviewed facts inside each writer's lock, keeps every committed write
  * when a later step fails, releases every staged source, and reports disk/state
@@ -93,7 +93,7 @@ export interface HubLifecycleRequest {
 	force?: boolean;
 	withRequirements?: boolean;
 	catalog?: string;
-	/** Refuse local-path shadowing and installed-only fallbacks; resolve from PanHub indexes only. */
+	/** Refuse local-path shadowing and installed-only fallbacks; resolve from the hub indexes only. */
 	catalogOnly?: boolean;
 	cwd?: string;
 }
@@ -809,7 +809,7 @@ function runWriter(plan: HubLifecyclePlan, step: HubPlanStep): PluginMutationRes
 			for (const expected of step.expected) {
 				const observed = observeHubCopy(expected.scope, expected.id, plan.cwd, "extension");
 				if (JSON.stringify(expected) !== JSON.stringify(observed))
-					throw new PluginWriterRefusal("stale_plan", "extension copy changed since PanHub review");
+					throw new PluginWriterRefusal("stale_plan", "extension copy changed since the hub review");
 			}
 			if (step.operation === "install" || step.operation === "update") {
 				const source = staged.get(plan.id)?.get(stepKey(identity));

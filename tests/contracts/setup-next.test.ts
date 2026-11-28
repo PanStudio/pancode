@@ -8,7 +8,7 @@ import { nextStepLines } from "../../src/cli/setup-next.js";
 import { settingsPath, updateSettings } from "../../src/core/config.js";
 import { initializePancodeHome } from "../../src/core/init.js";
 import { readPancodeVersion } from "../../src/core/package-root.js";
-import { COPILOT_SDK_PACKAGE, COPILOT_SDK_VERSION } from "../../src/domains/lifecycle/copilot-sdk-install.js";
+import { COPILOT_SDK_PACKAGE, COPILOT_SDK_VERSION } from "../../src/domains/install/copilot-sdk-install.js";
 import { getRuntimeRegistry } from "../../src/domains/providers/registry.js";
 import { registerBuiltinRuntimes } from "../../src/domains/providers/runtimes/builtins.js";
 import { isolatePancodeEnv } from "../harness/scratch-env.js";

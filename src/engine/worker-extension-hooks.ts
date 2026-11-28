@@ -8,7 +8,7 @@ import {
 	type WorkerExtensionHook,
 	type WorkerHookEffect,
 	type WorkerHookRequest,
-} from "../worker/protocol.js";
+} from "../lib/worker-wire/protocol.js";
 
 /** Sends one hook request to the orchestrator and resolves with its answer, or rejects when none arrives. */
 export type WorkerHookTransport = (

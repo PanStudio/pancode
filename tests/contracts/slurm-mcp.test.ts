@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
 import { ToolNames } from "../../src/core/tool-names.js";
-import { createMcpClient } from "../../src/domains/gateway/mcp/index.js";
+import { createMcpClient } from "../../src/domains/mcp/index.js";
 import { createWorkerSafety } from "../../src/engine/worker-tools.js";
 import type { AutonomyLevel } from "../../src/lib/autonomy/autonomy.js";
 import { registerCoreTools } from "../../src/tools/core-bootstrap.js";

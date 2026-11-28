@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import { readSettings } from "../core/config.js";
 import type { ThinkingLevel } from "../core/defaults.js";
-import type { Candidate } from "../domains/lifecycle/setup-status.js";
+import type { Candidate } from "../domains/install/setup-status.js";
 import type { ProviderSupportEntry } from "../domains/providers/index.js";
 import { buildProviderSupportEntry, listProviderSupportEntries } from "../domains/providers/index.js";
 import { getRuntimeRegistry } from "../domains/providers/registry.js";

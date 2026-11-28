@@ -22,7 +22,7 @@ import {
 import { forecastRoute } from "../../src/domains/dispatch/route-policy.js";
 import { defaultRoutingIntent } from "../../src/domains/dispatch/routing-intent.js";
 import type { SpawnedWorker, SpawnedWorkerResult, WorkerSpec } from "../../src/domains/dispatch/worker-spawn.js";
-import { endpointIdentityHash } from "../../src/worker/protocol.js";
+import { endpointIdentityHash } from "../../src/lib/worker-wire/protocol.js";
 import { makeDispatchBundle, observedReadEvents } from "../harness/dispatch.js";
 import { dispatchStubContext } from "../harness/dispatch-stub-context.js";
 import { type IsolatedPancodeEnv, isolatePancodeEnv } from "../harness/scratch-env.js";

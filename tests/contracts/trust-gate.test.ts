@@ -7,6 +7,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, symlinkSync, 
 import { join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
+import { createStdioTransport } from "../../src/acp/transport.js";
 import { settingsPath } from "../../src/core/config.js";
 import { readLayeredSettings } from "../../src/core/settings-layers.js";
 import {
@@ -20,13 +21,12 @@ import {
 	workspaceTrustDirectory,
 } from "../../src/core/workspace-trust.js";
 import { disableExtension, installExtension, listInstalledExtensions } from "../../src/domains/extensions/state.js";
+import { runDoctorHarnessChecks } from "../../src/domains/install/doctor.js";
 import { INTEROP_AGENT_KINDS } from "../../src/domains/interop/registry.js";
-import { runDoctorHarnessChecks } from "../../src/domains/lifecycle/doctor.js";
 import { createMiddlewareBundle } from "../../src/domains/middleware/extension.js";
 import { loadUserHooks, userHookToRegistration } from "../../src/domains/middleware/hooks.js";
 import { buildUserHookRegistrations, spawnSyncCommandRunner } from "../../src/domains/middleware/hooks-io.js";
 import { createSafetyPolicyEngine } from "../../src/domains/safety/policy-engine.js";
-import { createStdioTransport } from "../../src/engine/acp/transport.js";
 import { createExtensionReloadCoordinator } from "../../src/entry/extension-reload.js";
 import { middlewareOwner } from "../harness/middleware-owner.js";
 import { isolatePancodeEnv } from "../harness/scratch-env.js";

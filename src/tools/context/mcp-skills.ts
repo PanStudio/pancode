@@ -15,7 +15,7 @@ import { neutralizeFraming } from "../../core/reminder-framing.js";
 import type { SkillLoadRefusal } from "../../core/skill-activation.js";
 import { ToolNames } from "../../core/tool-names.js";
 import { MCP_SKILL_APPROVAL_RULE_ID } from "../../core/views/approval-words.js";
-import type { McpAttestedSkill } from "../../domains/gateway/mcp/skill-catalog.js";
+import type { McpAttestedSkill } from "../../domains/mcp/skill-catalog.js";
 import {
 	boundedMcpSkillText,
 	getMcpSkill,
@@ -27,7 +27,7 @@ import {
 	mcpSkillRelativePath,
 	readMcpSkillDirectory,
 	readMcpSkillFile,
-} from "../../domains/gateway/mcp/skills.js";
+} from "../../domains/mcp/skills.js";
 import {
 	approveMcpSkill,
 	currentMcpSkillApproval,
@@ -35,7 +35,7 @@ import {
 	type McpTrustOptions,
 	type ResolvedMcpServer,
 	resolveMcpServers,
-} from "../../domains/gateway/mcp/trust.js";
+} from "../../domains/mcp/trust.js";
 import { withPluginDiscoveryPass } from "../../domains/plugins/index.js";
 import {
 	type LoadSkillsInput,

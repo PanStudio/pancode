@@ -65,7 +65,7 @@ const ADAPTED_MIT = new Map([
 
 /** Files a generator writes; the generator's own source carries the header. */
 const GENERATED = new Set([
-	"src/engine/acp/upstream-schema.ts", // scripts/acp-schema.ts
+	"src/acp/upstream-schema.ts", // scripts/acp-schema.ts
 	"site/css/brand.css", // site/tokens.mjs
 	"apps/pancode-gui/client/design/brand.css", // apps/pancode-gui/scripts/sync-brand.mjs
 ]);
@@ -84,7 +84,7 @@ const EXCLUDED = [
 	{ test: (path) => GENERATED.has(path), reason: "generated file" },
 	{
 		test: (path) => path.startsWith("hub/"),
-		reason: "PanHub pack, pinned by sha256 and licensed in its own plugin.json or SKILL.md",
+		reason: "A hub pack, pinned by sha256 and licensed in its own plugin.json or SKILL.md",
 	},
 	{ test: (path) => path.startsWith("patches/"), reason: "dependency patch, applied byte for byte" },
 	{

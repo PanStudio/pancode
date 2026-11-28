@@ -57,11 +57,7 @@ import type { WorkerHookTransport } from "../engine/worker-extension-hooks.js";
 import type { WorkerRunHandle, WorkerRunInput } from "../engine/worker-run-types.js";
 import { startWorkerRun, workerProviderSupportsTools } from "../engine/worker-runtime.js";
 import { attestedToolNames, attestedToolSchemaSignature } from "../engine/worker-tools.js";
-import { emitControlFrame, guardControlLane } from "./control-lane.js";
-import { projectWorkerEventForStdout } from "./event-projection.js";
-import { startWorkerHeartbeat } from "./heartbeat.js";
-import { createWorkerAgentLedgerPort } from "./ledger-mirror.js";
-import { emitEvent, exitAfterDrain, onStdoutFailure } from "./ndjson.js";
+import { emitEvent, exitAfterDrain, onStdoutFailure } from "../lib/worker-wire/ndjson.js";
 import {
 	endpointIdentityHash,
 	toolSignatureOf,
@@ -72,16 +68,20 @@ import {
 	type WorkerHookEffect,
 	workerSpecDigest,
 	workerStaticHead,
-} from "./protocol.js";
-import { observeHostIdentity, observeWorkerResourceFacts } from "./resource-facts.js";
-import { resolveWorkerRuntime } from "./runtime-registry.js";
+} from "../lib/worker-wire/protocol.js";
 import {
 	envelopeAllowance,
 	envelopePermissionMode,
 	validateRehydratedWorkerRuntime,
 	type WorkerSpec,
 	workerSpecToolNames,
-} from "./spec-contract.js";
+} from "../lib/worker-wire/spec-contract.js";
+import { emitControlFrame, guardControlLane } from "./control-lane.js";
+import { projectWorkerEventForStdout } from "./event-projection.js";
+import { startWorkerHeartbeat } from "./heartbeat.js";
+import { createWorkerAgentLedgerPort } from "./ledger-mirror.js";
+import { observeHostIdentity, observeWorkerResourceFacts } from "./resource-facts.js";
+import { resolveWorkerRuntime } from "./runtime-registry.js";
 import { createOrderedSteerHandler, createWorkerStdinDemux } from "./stdin-demux.js";
 
 /** Bound between channel-close abort and forced exit for a hung run. */

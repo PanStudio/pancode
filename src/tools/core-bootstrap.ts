@@ -21,7 +21,7 @@ import type { WorkspaceSnapshot } from "../domains/session/workspace/index.js";
 import type { UserTasksStore } from "../domains/user-tasks/store.js";
 import type { ImageContent } from "../engine/types.js";
 import type { AutonomyLevel } from "../lib/autonomy/autonomy.js";
-import type { AgentLedgerPort } from "../worker/protocol.js";
+import type { AgentLedgerPort } from "../lib/worker-wire/protocol.js";
 import { createArtifactTool } from "./artifact.js";
 import { type AskUserHandler, createAskUserTool } from "./ask-user.js";
 import { bashTool } from "./bash.js";
@@ -261,7 +261,7 @@ export function registerCoreTools(registry: ToolRegistry, deps: CoreToolBootstra
 	const semantic: ContextSemanticDeps = deps.semantic ?? {
 		isEnabled: () => semanticUsable(deps.getSettings?.().context.semantic),
 		loadSearch: async () => {
-			const { searchSemantic } = await import("../domains/semantic-app/index.js");
+			const { searchSemantic } = await import("../domains/semantic/index.js");
 			return (request, context) => {
 				const { query, ...filters } = request;
 				const settings = deps.getSettings?.();

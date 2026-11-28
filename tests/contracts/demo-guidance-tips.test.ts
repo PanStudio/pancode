@@ -177,11 +177,11 @@ describe("demo guidance tips", () => {
 		doesNotMatch(tipOf(guidance().turn("how can I use skills in pancode?")) ?? "", /\/hub skills lists the skills/);
 	});
 
-	it("teaches usage, doctor and PanHub from questions about them", () => {
+	it("teaches usage, doctor and the hub from questions about them", () => {
 		for (const [prompt, pattern] of [
 			["how much have I spent today?", /^\[tip\] \/usage shows/],
 			["my pancode login seems broken, how do I check it?", /\/doctor checks this install/],
-			["can you install a skill for writing changelogs", /Alt\+L opens PanHub/],
+			["can you install a skill for writing changelogs", /Alt\+L opens the hub/],
 		] as const) {
 			const { turn } = guidance({ keyFor: (id) => (id === "pancode.hub.toggle" ? "Alt+L" : null) });
 			match(tipOf(turn(prompt)) ?? "", pattern, prompt);

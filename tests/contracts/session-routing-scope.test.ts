@@ -14,7 +14,7 @@ import {
 	seedSessionRouting,
 } from "../../src/core/session-routing.js";
 import { ConfigDomainModule } from "../../src/domains/config/module.js";
-import { ensurePancodeState } from "../../src/domains/lifecycle/index.js";
+import { ensurePancodeState } from "../../src/domains/install/index.js";
 import type { ProvidersContract } from "../../src/domains/providers/index.js";
 import { createProvidersDomainModule } from "../../src/domains/providers/module.js";
 import { getRuntimeRegistry } from "../../src/domains/providers/registry.js";

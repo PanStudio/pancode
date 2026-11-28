@@ -13,8 +13,8 @@ import {
 	mcpPromptsStale,
 	readMcpServerCatalog,
 	writeMcpServerCatalog,
-} from "../../src/domains/gateway/mcp/metadata-cache.js";
-import type { McpToolDescriptor } from "../../src/domains/gateway/mcp/tool-results.js";
+} from "../../src/domains/mcp/metadata-cache.js";
+import type { McpToolDescriptor } from "../../src/domains/mcp/tool-results.js";
 
 /**
  * The persisted MCP tool catalog. It exists so find and describe can answer

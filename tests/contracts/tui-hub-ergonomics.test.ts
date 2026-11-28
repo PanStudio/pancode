@@ -522,7 +522,7 @@ it("a confirmGlobal key asks once: the rail says so, another key keeps it, the s
 	equal(restarts, 1);
 });
 
-it("moved-key texts name the live letter: PanHub refresh is r, Extensions restart is R, Interop scope is s", async () => {
+it("moved-key texts name the live letter: The hub refresh is r, Extensions restart is R, Interop scope is s", async () => {
 	const { readFileSync } = await import("node:fs");
 	const { hubRefreshSummary } = await import("../../src/interactive/overlays/hub-review.js");
 	match(hubRefreshSummary({ status: "failed", error: "boom" } as never), /press r\.$/);

@@ -19,7 +19,7 @@ const skill = join(config, "skills", "fixture-skill");
 mkdirSync(skill, { recursive: true });
 writeFileSync(
 	join(skill, "SKILL.md"),
-	"---\nname: fixture-skill\ndescription: A small PanHub fixture.\n---\nExplain the next step.\n",
+	"---\nname: fixture-skill\ndescription: A small hub fixture.\n---\nExplain the next step.\n",
 );
 const source = join(cwd, "extension-source");
 mkdirSync(source, { recursive: true });
