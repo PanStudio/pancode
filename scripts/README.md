@@ -46,7 +46,7 @@ use system `/tmp` or commit run output under `scripts/`.
 
 Build:
 
-- `build.ts`: runs tsup for the CLI and worker bundles; `--clean` empties `dist/` first and `--watch` rebuilds on change.
+- `build.ts`: `pnpm run build`. Runs tsup for the CLI and worker bundles, then the three asset steps below in order; `--clean` empties `dist/` first and `--watch` rebuilds the bundles on change.
 - `build-output.ts`: shared stage timing, size and color output for the build steps.
 - `chunk-merge.ts`: tsup plugin that merges esbuild's split chunks into the few files each boot path loads.
 - `build-source-pack.ts`: packs the TypeScript source PanCode never reads at runtime into `dist/assets/source.pack`.

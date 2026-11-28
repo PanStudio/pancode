@@ -108,8 +108,8 @@
 		"access": "public"
 	},
 	"scripts": {
-		"build": "node --import tsx scripts/build.ts && node --import tsx scripts/build-source-pack.ts && node --import tsx scripts/build-codewiki-asset.ts && node --import tsx scripts/build-preparsed-yaml.ts",
-		"build:release": "node --import tsx scripts/build.ts --clean && node --import tsx scripts/build-source-pack.ts && node --import tsx scripts/build-codewiki-asset.ts && node --import tsx scripts/build-preparsed-yaml.ts",
+		"build": "node --import tsx scripts/build.ts",
+		"build:release": "node --import tsx scripts/build.ts --clean",
 		"dev": "node --import tsx scripts/build.ts --watch",
 		"site:dev": "node site/dev.mjs",
 		"clean": "rm -rf dist",
