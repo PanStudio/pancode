@@ -44,7 +44,6 @@ export type FileReferenceCompletionSource = (
 
 export interface FileReferenceCompletionOptions {
 	basePath: string;
-	cacheTtlMs?: number;
 	/** Test/runtime seam; defaults to the repository's authoritative visible-file enumerator. */
 	listWorkspaceFiles?: (basePath: string) => Promise<ReadonlyArray<string>>;
 	/** Test/runtime seam; defaults to `git ls-files --cached`. */
@@ -413,7 +412,6 @@ export function createFileReferenceCompletionSource(
 	const basePath = resolve(options.basePath);
 	const listWorkspaceFiles = options.listWorkspaceFiles ?? ((cwd: string) => enumerateWorkspaceFilesAsync(cwd));
 	const listTrackedFiles = options.listTrackedFiles ?? gitTrackedFiles;
-	const cacheTtlMs = options.cacheTtlMs ?? SNAPSHOT_TTL_MS;
 	// `snapshot: null` records an enumeration that failed (a non-Git tree over the
 	// walk's limits), so keystrokes fall back to one directory listing instead of
 	// walking the tree again.
@@ -436,7 +434,7 @@ export function createFileReferenceCompletionSource(
 			// Enumeration refused or failed; queries list one directory instead.
 		}
 		// Stamped when the load completes: a load slower than the TTL must still be reused.
-		const ttl = indexPath === null || indexMtime === null ? cacheTtlMs : GIT_SNAPSHOT_MAX_AGE_MS;
+		const ttl = indexPath === null || indexMtime === null ? SNAPSHOT_TTL_MS : GIT_SNAPSHOT_MAX_AGE_MS;
 		return { expiresAt: Date.now() + ttl, indexPath: indexMtime === null ? null : indexPath, indexMtime, snapshot: next };
 	};
 

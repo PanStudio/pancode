@@ -417,12 +417,6 @@ export function parseAgentLedgerEntry(value: unknown): AgentLedgerEntry | null {
 	};
 }
 
-/** Stdin frame that pushes newly admitted entries toward one worker's mirror. */
-export interface AgentLedgerDeltaFrame {
-	type: "ledger_delta";
-	entries: ReadonlyArray<AgentLedgerEntry>;
-}
-
 /**
  * The port both sides share. `post` is fire and forget over the control lane,
  * so its refusal is the worker-local bound check; `read` answers from the local
