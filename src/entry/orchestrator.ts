@@ -14,7 +14,6 @@ import {
 } from "../acp/host-members.js";
 import type { AcpHandoffControl } from "../acp/server-options.js";
 import { createStdioServerTransport } from "../acp/transport.js";
-import { writeHeadlessNoticesToStderr } from "../cli/headless-notices.js";
 import type { RunJsonMainSessionFrame } from "../cli/modes/run-json-schema.js";
 import { RUN_JSON_SCHEMA_VERSION } from "../cli/modes/run-json-schema.js";
 import { noteMainRunV2, writeRunDiagnostic } from "../cli/run-failure.js";
@@ -25,7 +24,6 @@ import { type PancodeSettings, readSettings } from "../core/config.js";
 import type { OutputStyle } from "../core/defaults.js";
 import { type LoadResult, loadDomains } from "../core/domain-loader.js";
 import { setAutonomousCommitProcess } from "../core/git-commit-attribution.js";
-import { configureGuardrails, guardrailValuesFromSettings } from "../core/guardrails.js";
 import { flushPackageActivities } from "../core/package-activity.js";
 import { ensureProjectIgnore } from "../core/project-root.js";
 import { consumeRestartIntent } from "../core/restart-intent.js";
@@ -40,10 +38,8 @@ import { pancodeStateDir } from "../core/xdg.js";
 import { AgentsDomainModule } from "../domains/agents/module.js";
 import { ConfigDomainModule, createConfigDomainModule } from "../domains/config/module.js";
 import { createContextDomainModule } from "../domains/context/module.js";
-import { createDispatchDedupRegistration } from "../domains/dispatch/dedup.js";
 import { createWorktreeBootRecovery } from "../domains/dispatch/index.js";
 import { createDispatchDomainModule } from "../domains/dispatch/module.js";
-import { configureRunEventJournal } from "../domains/dispatch/run-event-journal.js";
 import { ExtensionsDomainModule } from "../domains/extensions/module.js";
 import { describeUpgradeNotice, ensurePancodeState, takeUpgradeNotice } from "../domains/install/index.js";
 import { InteropDomainModule } from "../domains/interop/module.js";
@@ -51,11 +47,7 @@ import { prepareBackgroundMemoryModel } from "../domains/memory/background-route
 import { withDispatchMemory } from "../domains/memory/dispatch-section.js";
 import { MemoryRuntime } from "../domains/memory/index.js";
 import { createCapabilityGate } from "../domains/middleware/capability-gate.js";
-import { formatRegistrationConflict, writeMiddlewareDiagnosticToStderr } from "../domains/middleware/index.js";
-import { createLocalClockReminderRegistration } from "../domains/middleware/local-clock-reminder.js";
 import { createMiddlewareDomain } from "../domains/middleware/module.js";
-import { createStaleBuildReminderRegistration } from "../domains/middleware/stale-build-reminder.js";
-import { createTaskBoardReminderRegistration } from "../domains/middleware/task-board-reminder.js";
 import { PluginsDomainModule } from "../domains/plugins/module.js";
 import { createPromptsDomainModule } from "../domains/prompts/module.js";
 import type { ProvidersContract } from "../domains/providers/index.js";
@@ -69,7 +61,6 @@ import {
 import { resolveModelReference } from "../domains/providers/resolver.js";
 import { LOCAL_API_KEY_FALLBACK, resolveSideCallAuth } from "../domains/providers/side-call-auth.js";
 import { resolveTarget } from "../domains/providers/unpriced-routes.js";
-import { anthropicQuotaNotice, onAnthropicQuotaChange, watchCopilotStreamQuota } from "../domains/quota/index.js";
 import { createResourcesDomainModule } from "../domains/resources/module.js";
 import { DEFAULT_RECENT_ENTRY_LIMIT } from "../domains/safety/finish-entries.js";
 import type { GitHookDriftGuard } from "../domains/safety/hook-drift.js";
@@ -78,7 +69,6 @@ import { EMPTY_INFORMATION_FLOW_POLICY, resolveModelDestination } from "../domai
 import { workerFlowPolicyInput } from "../domains/safety/information-flow.js";
 import { SafetyDomainModule } from "../domains/safety/module.js";
 import type { ProtectedArtifactState } from "../domains/safety/protected-artifacts.js";
-import { createProtectedArtifactsRegistration } from "../domains/safety/protected-artifacts-registration.js";
 import type { SafetyJudgeSeat } from "../domains/safety/safety-judge.js";
 import { unattendedWindowMs } from "../domains/safety/unattended.js";
 import { createSchedulingDomainModule } from "../domains/scheduling/module.js";
@@ -91,18 +81,11 @@ import {
 	runCompactionFlow,
 } from "../domains/session/compaction/flow.js";
 import { collectSessionEntries } from "../domains/session/compaction/session-entries.js";
-import { createStaleEditGuardRegistration } from "../domains/session/compaction/stale-edit-guard.js";
 import type { SessionContract, SessionMeta } from "../domains/session/contract.js";
 import type { CompactionTrigger, SessionEntry } from "../domains/session/entries.js";
 import { commitHandoff, type HandoffServiceDeps, prepareHandoff } from "../domains/session/handoff-service.js";
 import { SessionLiveError } from "../domains/session/index.js";
 import { SessionDomainModule } from "../domains/session/module.js";
-import {
-	appendProtectedArtifactRegistryEvent,
-	protectedArtifactStateForCurrentSession,
-} from "../domains/session/protected-artifact-recording.js";
-import { appendSkillActivationRegistryEvent } from "../domains/session/skill-activation-recording.js";
-import { activePath } from "../domains/session/tree/active-path.js";
 import { createTelemetryDomain } from "../domains/telemetry/module.js";
 import {
 	declareRuntimeNoticeProducer,
@@ -158,12 +141,12 @@ import {
 	parseSlashCommand,
 } from "../session-control/slash-commands.js";
 import { runWatchdogReview } from "../session-control/watchdog-run.js";
-import { createSkillActivationObserver } from "../tools/observers.js";
 import { startToolOffloadSweep } from "../tools/result-shaping.js";
 import { runAcpSurface } from "./boot/acp-surface.js";
 import { buildBootAutonomy } from "./boot/autonomy.js";
 import { startBootChat } from "./boot/chat.js";
 import { wireBootExtensions } from "./boot/extension-reload.js";
+import { buildBootGuards } from "./boot/guards.js";
 import { runHeadlessSurface } from "./boot/headless-surface.js";
 import { runInteractiveSurface } from "./boot/interactive-surface.js";
 import { wireBootMemory } from "./boot/memory.js";
@@ -849,156 +832,32 @@ export async function bootOrchestrator(options: BootOptions = {}): Promise<BootR
 		await termination.shutdown(2);
 		return { exitCode: 2, bootTimeMs: timer.snapshot().totalMs };
 	}
-
-	// Hook diagnostics ride the typed bus. The domain loader constructed the
-	// bundle with the stderr default; swap in a sink that publishes
-	// middleware.hook_failed (the interactive warn notice consumes it) and keep
-	// stderr for non-interactive runs, which have no notice subscriber.
-	middlewareRegistrar.setDiagnosticSink((diagnostic) => {
-		if (diagnostic.kind === "registration_conflict") {
-			// Registration bookkeeping has no hook occurrence; the affected owner
-			// today declares user hooks, which never run on on_compaction, so the
-			// payload's hook slot carries that as the "no evaluation" marker.
-			bus.emit("middleware.hook_failed", {
-				kind: "registration_conflict",
-				registrationId: diagnostic.registrationId,
-				hook: "on_compaction",
-				at: Date.now(),
-				message: formatRegistrationConflict(diagnostic),
-			});
-			if (!interactive) writeMiddlewareDiagnosticToStderr(diagnostic);
-			return;
-		}
-		bus.emit("middleware.hook_failed", {
-			kind: diagnostic.kind,
-			registrationId: diagnostic.registrationId,
-			hook: diagnostic.hook,
-			at: Date.now(),
-			...(diagnostic.kind === "hook_failed"
-				? { message: diagnostic.message }
-				: {
-						elapsedMs: diagnostic.elapsedMs,
-						budgetMs: diagnostic.budgetMs,
-						steadyStateWarn: diagnostic.steadyStateWarn,
-						p50Ms: diagnostic.stats.p50Ms,
-						p95Ms: diagnostic.stats.p95Ms,
-						overCount: diagnostic.stats.overCount,
-						windowSamples: diagnostic.stats.window,
-					}),
-		});
-		if (!interactive) writeMiddlewareDiagnosticToStderr(diagnostic);
-	});
-
-	// Runtime and session notices: the terminal renders them, ACP sends them as session info, a headless run prints them.
-	if (!interactive && !acpMode) writeHeadlessNoticesToStderr(bus);
-
-	termination.onDrain(watchCopilotStreamQuota());
-	termination.onDrain(
-		onAnthropicQuotaChange((targetId, snapshot) => {
-			const notice = anthropicQuotaNotice(snapshot);
-			if (notice !== null)
-				emitQuotaNotice(
-					{
-						kind: "stress",
-						...notice,
-						targetId,
-						runtimeId: "anthropic-max",
-						model: "",
-					},
-					bus,
-				);
-		}),
-	);
-
-	// Install guardrail policy before any guard registration or tool reads it.
-	// The effective session view replaces this boot projection below.
-	const resolvedSettings = config?.get() ?? readSettings();
-	configureGuardrails(guardrailValuesFromSettings(resolvedSettings));
-
-	// The journal sink sits on the dispatch event path, where reading settings
-	// would be both a cost and a throw site. The effective session view replaces
-	// this boot projection below.
-	configureRunEventJournal(resolvedSettings.fleet.history.journal);
-
-	// Register the loop and dispatch guards first. The protected-artifact guard
-	// is constructed here but registered after user hooks below, so it can
-	// absorb their protect_path effects. Workers register their own guards in
-	// worker-runtime.ts; these instances carry the bus and session persistence.
-	const loopGuard = createLoopGuardRegistration({
-		safety,
+	const { activePathEntries, loopGuard, protectedArtifactsGuard, resolvedSettings } = buildBootGuards({
+		acpMode,
 		bus,
-		readResultMaxBytes: () => (effectiveSettingsForDispatch?.() ?? resolvedSettings).context.toolResultMaxBytes,
-		turnBlockBudget: INTERACTIVE_LOOP_BLOCK_BUDGET,
-		sameCallBlockLimit: INTERACTIVE_SAME_CALL_BLOCK_LIMIT,
-		turnToolCallBudget: () => readOrchTurnToolCallBudget(),
-		// Interactive/headless/ACP all share this orchestrator guard: at the
-		// block budget, lock tools for the rest of the turn so the model
-		// answers from what it gathered instead of hard-cancelling a turn that
-		// may already hold the answer. The bounded backstop still cancels a
-		// model that keeps calling tools.
-		turnSynthesisLockout: true,
-	});
-	middlewareRegistrar.registerHook(loopGuard);
-	let initialProtectedArtifactState: ProtectedArtifactState | undefined;
-	let initialProtectionReadError: string | null = null;
-	if (session) {
-		try {
-			initialProtectedArtifactState = protectedArtifactStateForCurrentSession(session);
-		} catch (error) {
-			initialProtectionReadError = error instanceof Error ? error.message : String(error);
-		}
-	}
-	const protectedArtifactsGuard = createProtectedArtifactsRegistration({
-		...(initialProtectedArtifactState !== undefined ? { initialState: initialProtectedArtifactState } : {}),
-		onProtect: (event) => appendProtectedArtifactRegistryEvent(session, event),
-		onDurabilityFailure: (health) => {
-			bus.emit("middleware.hook_failed", {
-				kind: "hook_failed",
-				registrationId: "guard.protected-artifacts",
-				hook: "before_tool",
-				at: Date.now(),
-				message: health.reason,
-			});
+		config,
+		createLoopGuardRegistration,
+		emitQuotaNotice,
+		interactive,
+		INTERACTIVE_LOOP_BLOCK_BUDGET,
+		INTERACTIVE_SAME_CALL_BLOCK_LIMIT,
+		middlewareRegistrar,
+		readOrchTurnToolCallBudget,
+		safety,
+		session,
+		termination,
+		cells: {
+			get effectiveSettingsForDispatch() {
+				return effectiveSettingsForDispatch;
+			},
+			get protectedArtifactStateForDispatch() {
+				return protectedArtifactStateForDispatch;
+			},
+			set protectedArtifactStateForDispatch(value) {
+				protectedArtifactStateForDispatch = value;
+			},
 		},
 	});
-	if (initialProtectionReadError !== null) {
-		protectedArtifactsGuard.markDegraded(
-			`initial session protection history could not be read: ${initialProtectionReadError}`,
-		);
-	}
-	protectedArtifactStateForDispatch = () => {
-		const health = protectedArtifactsGuard.health();
-		if (health.kind === "degraded") {
-			throw new Error(`dispatch: protected artifact durability degraded: ${health.reason}`);
-		}
-		return protectedArtifactsGuard.state();
-	};
-	const dispatchDedup = createDispatchDedupRegistration();
-	middlewareRegistrar.registerHook(dispatchDedup.registration);
-	// Folding through the active path (not the raw file) is what
-	// keeps a /resume from picking up whichever branch happened to write its
-	// taskLedger entry last in file order; the task board's readEntries used to
-	// skip that filter entirely (issue #94).
-	const activePathEntries = () => {
-		const meta = session?.current();
-		if (!session || !meta) return [];
-		return activePath(session.readEntries(), session.leafId(meta.id) ?? undefined);
-	};
-	middlewareRegistrar.registerHook(
-		createStaleEditGuardRegistration({ readEntries: activePathEntries, cwd: () => process.cwd() }),
-	);
-	// Observers run after the guards; they emit no effects and their sinks are
-	// best-effort (session ledger, codewiki refresh).
-	middlewareRegistrar.registerHook(
-		createSkillActivationObserver((activation) => appendSkillActivationRegistryEvent(session, activation)),
-	);
-	// Task-board reminder: same user-message-visible channel, fired once per
-	// session when a request literally enumerates three or more steps. The
-	// static routing line and tasks hint ask for the same board; battery-tested
-	// local models only comply when the instruction rides the user message.
-	middlewareRegistrar.registerHook(createTaskBoardReminderRegistration());
-	middlewareRegistrar.registerHook(createStaleBuildReminderRegistration());
-	middlewareRegistrar.registerHook(createLocalClockReminderRegistration());
 	const {
 		beforeShellEntryRecorded,
 		beforeTurnRecorded,
