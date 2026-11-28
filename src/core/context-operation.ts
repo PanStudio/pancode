@@ -49,7 +49,7 @@ export interface ContextOperationStatus {
 	latest: ContextOperation | null;
 }
 export const CONTEXT_OPERATION_CUSTOM_TYPE = "pancode.context-operation";
-export type ContextOperationProgress = Omit<ContextActivityPayload, "kind" | "at" | "operation">;
+type ContextOperationProgress = Omit<ContextActivityPayload, "kind" | "at" | "operation">;
 
 export function createContextOperation(
 	input: Pick<ContextOperation, "kind" | "sessionId" | "cwd" | "origin" | "reason">,
@@ -122,7 +122,7 @@ const FACT_VERBS: Record<ContextOperationFact["kind"], readonly [string, string]
 
 const PATHS_SHOWN = 3;
 
-export interface FactRow {
+interface FactRow {
 	/** The measured statement. */
 	head: string;
 	/** Paths the statement names, shown dim after it. */

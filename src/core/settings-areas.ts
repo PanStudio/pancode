@@ -94,7 +94,7 @@ export const SETTINGS_AREA_GROUPS: Readonly<Record<SettingsAreaId, readonly stri
 	],
 };
 
-export interface SettingsPlacement {
+interface SettingsPlacement {
 	area: SettingsAreaId;
 	group: string;
 }

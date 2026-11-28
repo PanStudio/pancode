@@ -6,7 +6,7 @@ import { join, resolve, sep } from "node:path";
 
 const commandResultCache = new Map<string, string | undefined>();
 
-export interface ConfigValueWarning {
+interface ConfigValueWarning {
 	code: "dynamic-command-in-static-resolution";
 	message: string;
 	command: string;

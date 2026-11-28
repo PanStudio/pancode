@@ -73,7 +73,7 @@ export interface BashCommandProgress {
 	outputBytes: number;
 }
 
-export interface RunBashCommandOptions {
+interface RunBashCommandOptions {
 	cwd?: string;
 	timeoutMs?: number;
 	/**
@@ -108,7 +108,7 @@ export interface BashProgressScheduler {
 	clearTimeout(timer: unknown): void;
 }
 
-export interface BashOutputProgressController {
+interface BashOutputProgressController {
 	/** Raw stream byte counts, independent of UTF-8 decoding and capture clipping. */
 	byteCounts(): BashStreamByteCounts;
 	/** Emit the initial empty cumulative snapshot, when a callback is configured. */
@@ -300,7 +300,7 @@ let loginEnvSnapshot: NodeJS.ProcessEnv | null = null;
 let loginEnvSettled = false;
 
 /** `pending` means the login profile has not been captured yet, so what it exports is unknown. */
-export type ToolEnvProbe = "set" | "unset" | "pending";
+type ToolEnvProbe = "set" | "unset" | "pending";
 
 /**
  * Whether the environment a bash command will run with sets `key` to a non-empty value. The login profile can export

@@ -17,7 +17,7 @@ export type RouteSource = "session" | "project" | "user" | "built-in" | "chat";
 
 export type RouteName = "chat" | "memory" | "compaction" | "fleet";
 
-export const ROUTE_NAMES: ReadonlyArray<RouteName> = ["chat", "memory", "compaction", "fleet"];
+const ROUTE_NAMES: ReadonlyArray<RouteName> = ["chat", "memory", "compaction", "fleet"];
 
 const ROUTE_PATHS: Readonly<Record<RouteName, ReadonlyArray<string>>> = {
 	chat: ["chat.target", "chat.model", "chat.thinkingLevel"],

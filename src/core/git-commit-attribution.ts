@@ -36,7 +36,7 @@ const AUTHORED_ENV = "PANCODE_COMMIT_AUTHORED";
 /** Space-separated decision refs the spawn was made under; each becomes one `PanCode-Decision:` trailer. */
 const DECISIONS_ENV = "PANCODE_COMMIT_DECISIONS";
 /** Effective `integrations.git.commitAuthor` for child-process seams. Internal state, not an operator override. */
-export const PANCODE_GIT_COMMIT_AUTHOR_ENV = "PANCODE_GIT_COMMIT_AUTHOR";
+const PANCODE_GIT_COMMIT_AUTHOR_ENV = "PANCODE_GIT_COMMIT_AUTHOR";
 /** Present iff this environment's GIT_AUTHOR_NAME/EMAIL name PanCode because a PanCode seam set them, not the operator. */
 const AUTHOR_MANAGED_ENV = "PANCODE_GIT_AUTHOR_MANAGED";
 /** Present iff this environment carries PanCode's command-scope core.hooksPath pair; holds the count below it. */
@@ -96,7 +96,7 @@ function providedDecisionRefs(): ReadonlyArray<string> {
 }
 
 /** Who authors a commit a seam's child process makes. */
-export type GitCommitAuthor = "pancode" | "human";
+type GitCommitAuthor = "pancode" | "human";
 
 /**
  * PanCode as the author of one commit, with the human who still commits it.
@@ -109,7 +109,7 @@ export interface PancodeCommitAuthorship {
 	human: string;
 }
 
-export interface ManagedCommitAttributionOptions {
+interface ManagedCommitAttributionOptions {
 	cwd?: string;
 	enabled?: boolean;
 	evidence?: Readonly<CommitAttributionEvidence>;
@@ -131,7 +131,7 @@ export interface ManagedCommitAttributionOptions {
 	authorship?: PancodeCommitAuthorship;
 }
 
-export interface ManagedCommitAttributionEnvironment {
+interface ManagedCommitAttributionEnvironment {
 	env: NodeJS.ProcessEnv;
 	/** Bounded, nonfatal reason the managed hook could not be composed. */
 	diagnostic: string | null;

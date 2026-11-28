@@ -8,7 +8,7 @@ export const FUNDING_PAYERS = ["personal", "sponsor", "employer", "none"] as con
 export const FUNDING_PERIODS = ["day", "week", "month", "year", "one-time"] as const;
 export const FUNDING_SIGNALS = ["local-native", "oauth-login"] as const;
 
-export type FundingScheme = (typeof FUNDING_SCHEMES)[number];
+type FundingScheme = (typeof FUNDING_SCHEMES)[number];
 export type FundingPayer = (typeof FUNDING_PAYERS)[number];
 export type FundingPeriod = (typeof FUNDING_PERIODS)[number];
 export type FundingSignal = (typeof FUNDING_SIGNALS)[number];

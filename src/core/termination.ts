@@ -44,7 +44,7 @@ function registeredHook(hook: Hook, options?: { timeoutMs: number }): Registered
 }
 
 /** Wall-clock budget per hook and per domain.stop() call. */
-export const DEFAULT_SHUTDOWN_HOOK_MS = 500;
+const DEFAULT_SHUTDOWN_HOOK_MS = 500;
 
 const SIGNAL_EXIT_CODES: Partial<Record<NodeJS.Signals, number>> = {
 	SIGHUP: 129,

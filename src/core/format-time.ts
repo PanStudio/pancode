@@ -21,7 +21,7 @@
  */
 
 /** Anything a caller already holds: an ISO string, epoch millis, or a Date. */
-export type Instant = Date | number | string;
+type Instant = Date | number | string;
 
 /** What every export returns when the instant is absent or unparseable. */
 const MISSING = "—";

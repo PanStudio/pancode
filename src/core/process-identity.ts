@@ -115,8 +115,8 @@ function readBootId(): string | null {
  * A namespace inode is only meaningful within one boot, so the two travel together. Compare against our own
  * namespace, never a fixed "initial" one: WSL2 and PanCode's own bwrap run every process in a non-initial namespace.
  */
-export const PID_NAMESPACE = readPidNamespace("self");
-export const BOOT_ID = readBootId();
+const PID_NAMESPACE = readPidNamespace("self");
+const BOOT_ID = readBootId();
 
 /** The owner fields a durable record carries so another process can adjudicate it. */
 export interface OwnerIdentity {

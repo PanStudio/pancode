@@ -285,7 +285,7 @@ export function settingsValuesEqual(a: unknown, b: unknown): boolean {
 // biome-ignore lint/suspicious/noConfusingVoidType: in-place mutators legitimately return nothing, including named functions typed `: void`
 export type SettingsMutator = (settings: PancodeSettings) => PancodeSettings | undefined | void;
 
-export interface SettingsUpdateOptions {
+interface SettingsUpdateOptions {
 	/** Total time to wait for the lock before giving up. Default 10s. */
 	timeoutMs?: number;
 	/** Dotted leaf written even when it equals the inherited value (`config set`). */

@@ -11,12 +11,12 @@ import type { OutputStyle } from "./defaults.js";
 export type ToolDurationBudget = "never" | "long" | "always";
 /** A call this long or longer shows its duration under the `long` budget. */
 export const LONG_TOOL_DURATION_MS = 1_000;
-export type ReceiptBudget = "outcome" | "summary" | "full";
+type ReceiptBudget = "outcome" | "summary" | "full";
 export type BoardColumn = "state" | "agent" | "time" | "text" | "in" | "out" | "cost" | "node" | "account";
 export type BoardFact = "doing" | "task" | "slots" | "started";
 export type NoticeFloor = "warning" | "info";
 export type PickerDetail = "status" | "facts" | "pane";
-export type ListDescriptions = "focused" | "all";
+type ListDescriptions = "focused" | "all";
 export type UsageSections = "totals" | "breakdown" | "provenance";
 
 export interface TierPolicy {

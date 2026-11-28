@@ -13,20 +13,20 @@
  * speaks for every part: `a && b` exits 0 only when `a` and then `b` both
  * ran to completion and exited 0.
  */
-export interface ShellArgvOptions {
+interface ShellArgvOptions {
 	/** Refuse an unquoted `#` that starts a word: the shell would drop the rest of the line as a comment. */
 	readonly rejectComments?: boolean;
 	/** Allow leading `NAME=value` words, returned separately instead of refused. */
 	readonly allowAssignments?: boolean;
 }
 
-export interface ShellInvocation {
+interface ShellInvocation {
 	assignments: string[];
 	argv: string[];
 }
 
 /** One segment of an `&&` chain, with the exact text the shell would run for it. */
-export interface ShellChainSegment extends ShellInvocation {
+interface ShellChainSegment extends ShellInvocation {
 	text: string;
 }
 

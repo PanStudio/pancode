@@ -72,7 +72,7 @@ export interface SettingsLayerIssue {
 	kind?: NonNullable<SettingsIssue["kind"]>;
 }
 
-export interface SettingsLayerInfo {
+interface SettingsLayerInfo {
 	origin: SettingsOrigin;
 	path: string;
 	present: boolean;
@@ -926,7 +926,7 @@ function mergeInto(
 	}
 }
 
-export interface ReadLayeredSettingsOptions {
+interface ReadLayeredSettingsOptions {
 	/** Override the user settings.yaml path; defaults to the resolved config dir. */
 	userPath?: string;
 }

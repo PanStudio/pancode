@@ -9,7 +9,7 @@
  * module existed they each carried their own copy of this exact mapping,
  * kept in sync only by a comment asking the next editor to remember to.
  */
-export type DispatchFailureStatus = "dead" | "aborted" | "failed";
+type DispatchFailureStatus = "dead" | "aborted" | "failed";
 
 export function resolveDispatchFailureStatus(reason: unknown): DispatchFailureStatus {
 	if (reason === "dead" || reason === "stalled") return "dead";
