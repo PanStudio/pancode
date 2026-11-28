@@ -50,9 +50,9 @@ import { credentialWriteFailed, printPlaintextCredentialWarning } from "./shared
 import { terminalColumns, wrapPlain } from "./text-layout.js";
 
 const USAGE = `usage: pancode auth list [--json]
-       pancode auth status [target-or-runtime] [--json]
-       pancode auth login [target-or-runtime] [--api-key <value>] [--method browser|device]
-       pancode auth logout [target-or-runtime]
+       pancode auth status [connection-or-runtime] [--json]
+       pancode auth login [connection-or-runtime] [--api-key <value>] [--method browser|device]
+       pancode auth logout [connection-or-runtime]
 `;
 
 interface ParsedAuthTargetArgs {
@@ -86,7 +86,7 @@ function parseAuthTargetArgs(args: ReadonlyArray<string>, verb: string): ParsedA
 			continue;
 		}
 		if (arg.startsWith("-")) throw new Error(`unknown flag: ${arg}`);
-		if (parsed.target) throw new Error(`auth ${verb} accepts at most one target or runtime`);
+		if (parsed.target) throw new Error(`auth ${verb} accepts at most one connection or runtime`);
 		parsed.target = arg;
 	}
 	return parsed;
@@ -167,7 +167,7 @@ function statusRows(rows: ReadonlyArray<ConnectableProviderRow>, auth: ReturnTyp
 			return [
 				[
 					authTarget.providerId,
-					`${row.entry.label} (target ${target.id})`,
+					`${row.entry.label} (connection ${target.id})`,
 					targetStatus.credentialType ?? "-",
 					targetStatus.available ? "present" : "absent",
 					targetStatus.detail ?? targetStatus.source,
@@ -214,7 +214,7 @@ async function promptForLoginTarget(rows: ReadonlyArray<ConnectableProviderRow>)
 					? "copilot login"
 					: "disconnected";
 			process.stdout.write(
-				`    ${String(index + 1).padStart(2)}. ${row.entry.runtimeId.padEnd(22)} ${status.padEnd(18)} targets=${row.targetCount}\n`,
+				`    ${String(index + 1).padStart(2)}. ${row.entry.runtimeId.padEnd(22)} ${status.padEnd(18)} connections=${row.targetCount}\n`,
 			);
 		}
 		// The picker is where a runtime id copied off `pancode configure --list` gets
@@ -265,7 +265,7 @@ function defaultLogoutChoice(choices: ReadonlyArray<LogoutChoice>): LogoutChoice
 
 async function promptForLogoutChoice(choices: ReadonlyArray<LogoutChoice>): Promise<LogoutChoice | null> {
 	if (choices.length === 0) {
-		printError("no stored target credentials");
+		printError("no stored connection credentials");
 		return null;
 	}
 	const rl = createInterface({ input, output });
@@ -275,7 +275,9 @@ async function promptForLogoutChoice(choices: ReadonlyArray<LogoutChoice>): Prom
 		process.stdout.write(renderLogoutChoices(choices, true).replace(/^/gmu, "  ").replace(/ +$/u, ""));
 		process.stdout.write("\n");
 		for (;;) {
-			const answer = (await rl.question(`Selection (number, runtime or target id) [${defaultChoice?.id ?? ""}]: `)).trim();
+			const answer = (
+				await rl.question(`Selection (number, runtime or connection id) [${defaultChoice?.id ?? ""}]: `)
+			).trim();
 			const value = answer.length > 0 ? answer : (defaultChoice?.id ?? "");
 			const numeric = Number(value);
 			if (Number.isInteger(numeric) && numeric >= 1 && numeric <= choices.length) {
@@ -362,7 +364,7 @@ async function runLogin(args: ReadonlyArray<string>): Promise<number> {
 
 	const resolved = resolveCliProviderReference(parsed.target);
 	if (!resolved) {
-		printError(`unknown target or runtime: ${parsed.target}`);
+		printError(`unknown connection or runtime: ${parsed.target}`);
 		process.stderr.write(USAGE);
 		return 2;
 	}
@@ -434,7 +436,7 @@ async function runLogin(args: ReadonlyArray<string>): Promise<number> {
 	let apiKey = parsed.apiKey?.trim();
 	if (parsed.apiKey !== undefined && input.isTTY) {
 		process.stderr.write(
-			'warning: --api-key leaves the key in shell history and in the process list. To keep it out of both, omit --api-key and paste it at the prompt, or pipe it: printf %s "$KEY" | pancode auth login <target>\n',
+			'warning: --api-key leaves the key in shell history and in the process list. To keep it out of both, omit --api-key and paste it at the prompt, or pipe it: printf %s "$KEY" | pancode auth login <connection>\n',
 		);
 	}
 	if (apiKey === undefined) {
@@ -477,7 +479,7 @@ export async function readApiKey(
 		const field = io.output.isTTY ? io.output : process.stderr;
 		if (typeof io.input.setRawMode !== "function") {
 			printError(
-				"this terminal cannot hide typed input; pipe the key on stdin instead: pancode auth login <target> < keyfile",
+				"this terminal cannot hide typed input; pipe the key on stdin instead: pancode auth login <connection> < keyfile",
 			);
 			return null;
 		}
@@ -565,7 +567,7 @@ async function runStatus(argv: ReadonlyArray<string>): Promise<number> {
 		return 2;
 	}
 	if (args.length > 1) {
-		printError("auth status accepts at most one target or runtime");
+		printError("auth status accepts at most one connection or runtime");
 		process.stderr.write(USAGE);
 		return 2;
 	}
@@ -576,7 +578,7 @@ async function runStatus(argv: ReadonlyArray<string>): Promise<number> {
 	if (target) {
 		const resolved = resolveCliProviderReference(target);
 		if (!resolved) {
-			const message = `unknown target or runtime: ${target}`;
+			const message = `unknown connection or runtime: ${target}`;
 			if (json) writeCliFailure({ path: ["auth", "status"], slug: "not_found", message, json });
 			else printError(message);
 			return 2;
@@ -630,14 +632,14 @@ function runLogout(args: ReadonlyArray<string>): Promise<number> | number {
 		return promptForLogoutChoice(choices).then((picked) => (picked ? logoutChoice(picked) : 1));
 	}
 	if (args.length > 1) {
-		printError("auth logout accepts at most one target or runtime");
+		printError("auth logout accepts at most one connection or runtime");
 		process.stderr.write(USAGE);
 		return 2;
 	}
 
 	const resolved = resolveLogoutReference(target);
 	if (!resolved) {
-		printError(`unknown target or runtime: ${target}`);
+		printError(`unknown connection or runtime: ${target}`);
 		process.stderr.write(USAGE);
 		return 2;
 	}
@@ -652,7 +654,7 @@ function runLogout(args: ReadonlyArray<string>): Promise<number> | number {
 			.map((t) => t.id);
 		if (keyed.length > 0) {
 			printError(
-				`no stored credential for runtime ${resolved.authTarget.providerId}; target keys are stored for ${keyed.join(", ")}. Run \`pancode auth logout <target-id>\` to drop one`,
+				`no stored credential for runtime ${resolved.authTarget.providerId}; connection keys are stored for ${keyed.join(", ")}. Run \`pancode auth logout <connection-id>\` to drop one`,
 			);
 			return 1;
 		}

@@ -283,7 +283,7 @@ function applySettingChange(settings: PancodeSettings, id: string, value: string
 	}
 }
 
-/** Per-entry rows route to the same mutations the `pancode targets` CLI applies. */
+/** Per-entry rows route to the same mutations the `pancode connections` CLI applies. */
 function applyEntrySettingChange(settings: PancodeSettings, id: string, value: string): boolean {
 	if (id === "fleet.profiles" || id === "fleet.agentProfiles") {
 		// `name -> target` / `agent -> profile`: the encoding the chained add pickers produce.
@@ -506,7 +506,7 @@ function humanizeChangePlanValue(plan: SettingsChangePlan): string {
 	if (plan.rowId === "fleet.profiles" || plan.rowId === "fleet.agentProfiles") return `${head} ${GLYPH.next} ${tail}`;
 	if (!plan.rowId.startsWith("fleet.profiles.")) return plan.selectedValue;
 	const label =
-		head === "thinkingLevel" ? "thinking" : head === "node" ? "placement" : head === "target" ? "target" : "model";
+		head === "thinkingLevel" ? "thinking" : head === "node" ? "placement" : head === "target" ? "connection" : "model";
 	return `${label} ${GLYPH.next} ${tail}`;
 }
 

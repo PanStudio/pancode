@@ -255,7 +255,7 @@ function projectTargetKeyName(
 			path: `${path}.${key}`,
 			message:
 				key === "apiKeyEnvVar"
-					? "a project target's auth.apiKeyEnvVar must be an environment variable name; key ignored"
+					? "a project connection's auth.apiKeyEnvVar must be an environment variable name; key ignored"
 					: "credentials are not allowed in project settings; key ignored",
 		});
 	}
@@ -564,7 +564,7 @@ const OPERATOR_ONLY_SAFETY_KEYS: ReadonlyArray<{ key: string; message: string }>
 	// A repository could otherwise hand its own commands the operator's Copilot login.
 	{
 		key: "liveCheckTargets",
-		message: "live-check login targets are set only in user settings; project value ignored",
+		message: "live-check login connections are set only in user settings; project value ignored",
 	},
 	// A repository could otherwise reopen the sockets that run code outside the sandbox.
 	{
@@ -631,7 +631,7 @@ function projectJudgeRoute(
 			issues.push({
 				origin,
 				path: `safety.judge.${key}`,
-				message: "a project sets only the safety judge's target and model; project value ignored",
+				message: "a project sets only the safety judge's connection and model; project value ignored",
 			});
 			continue;
 		}
@@ -644,7 +644,7 @@ function projectJudgeRoute(
 				issues.push({
 					origin,
 					path: "safety.judge.target",
-					message: `a project may point the safety judge only at a target your user settings declare, and '${value}' is not one; project target and model ignored`,
+					message: `a project may point the safety judge only at a connection your user settings declare, and '${value}' is not one; project connection and model ignored`,
 				});
 				return undefined;
 			}
@@ -1172,7 +1172,7 @@ function prepareProjectLayers(
  * operator's own targets, and the stored credentials their entries name, are gone in this checkout.
  */
 export const PROJECT_TARGETS_REPLACE_USER_TARGETS =
-	"replaces the targets list in your user settings; this checkout uses only the targets this file declares, and no stored credential attaches to them";
+	"replaces the connections list in your user settings; this checkout uses only the connections this file declares, and no stored credential attaches to them";
 
 /** What each of the user's own targets names for its credential, by validated id. */
 function userTargetCredentials(userBlob: Record<string, unknown> | undefined): Map<string, "stored" | "key-variable"> {
@@ -1219,7 +1219,7 @@ function downgradeProjectRemovedTargets(
 		issues.push({
 			origin: targetsOrigin,
 			path,
-			message: `target '${value}' from user settings is not in this file's targets list; ${effect}`,
+			message: `connection '${value}' from user settings is not in this file's connections list; ${effect}`,
 		});
 	};
 	const safety = isRecord(merged.safety) ? merged.safety : {};

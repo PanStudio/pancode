@@ -267,7 +267,7 @@ export const FILE_STEP: Step = {
 			const confirm = await wizard.select<"apply" | "back">({
 				heading: ["", chalk.bold("This setup file will:"), ...describeImport(prepared)],
 				choices: [
-					{ value: "apply", label: "Apply", hint: "save these targets to your PanCode settings" },
+					{ value: "apply", label: "Apply", hint: "save these connections to your PanCode settings" },
 					{ value: "back", label: "Back", hint: "choose another file" },
 				],
 				railPrefix: wizard.rail,

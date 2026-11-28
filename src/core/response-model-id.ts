@@ -93,7 +93,7 @@ export function modelRouteRefusalMessage(refusal: ModelRouteRefusal): string {
 		return `requested ${refusal.requested}, provider served ${refusal.served}; the turn is refused. Pick another model with /model.`;
 	const shown = refusal.available.slice(0, 24);
 	const more = refusal.available.length > shown.length ? `, and ${refusal.available.length - shown.length} more` : "";
-	return `no model ${refusal.requested} on target ${refusal.target}; available: ${shown.length > 0 ? shown.join(", ") : "none"}${more}. Pick another with /model.`;
+	return `no model ${refusal.requested} on connection ${refusal.target}; available: ${shown.length > 0 ? shown.join(", ") : "none"}${more}. Pick another with /model.`;
 }
 
 /** The typed refusal a refused assistant message carries, or null. */

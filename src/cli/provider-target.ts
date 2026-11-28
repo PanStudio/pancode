@@ -180,7 +180,7 @@ export function listLogoutChoices(): LogoutChoice[] {
 			if (target.runtime !== entry.runtimeId || !targetRequiresAuth(target, runtime)) continue;
 			const targetAuth = resolveAuthTarget(target, runtime);
 			add(
-				{ id: target.id, label: `${entry.label} target`, group: entry.group, authTarget: targetAuth },
+				{ id: target.id, label: `${entry.label} connection`, group: entry.group, authTarget: targetAuth },
 				auth.statusForTarget(targetAuth, { includeFallback: false }),
 			);
 		}

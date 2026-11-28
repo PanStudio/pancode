@@ -209,7 +209,7 @@ function enumerateJointRouteUniverse(input: JointRouteResolverInput): ReadonlyAr
 	const universeSize = input.agents.length * input.targets.length * input.nodes.length;
 	if (universeSize > limit) {
 		throw new Error(
-			`dispatch routing configuration error: joint route universe overflow (${universeSize}/${limit}); narrow configured targets, models, runtimes, or nodes`,
+			`dispatch routing configuration error: joint route universe overflow (${universeSize}/${limit}); narrow configured connections, models, runtimes, or nodes`,
 		);
 	}
 	if (universeSize === 0) throw new Error("dispatch routing configuration error: joint route universe is empty");

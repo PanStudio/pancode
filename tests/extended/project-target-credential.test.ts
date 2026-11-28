@@ -120,7 +120,7 @@ test("a project targets list that drops a user-only target warns against the pro
 		join(configDir, "settings.yaml"),
 		[...userTargets, "safety:", "  review:", "    target: ghost", ""].join("\n"),
 	);
-	throws(() => readStrictLayeredSettings(workspace), /safety\.review\.target: unknown target 'ghost'/);
+	throws(() => readStrictLayeredSettings(workspace), /safety\.review\.target: unknown connection 'ghost'/);
 });
 
 test("a project redeclaring a credentialed user target is refused naming its file, never sent the placeholder", async (t) => {
@@ -373,7 +373,7 @@ test("a trusted project target whose named key is unset is refused before any re
 	recordProjectSurfaceTrust(workspace, "settings", snapshot.contentHash);
 	const env: NodeJS.ProcessEnv = { ...process.env, NODE_ENV: "test", NO_COLOR: "1" };
 	delete env.TEAM_KEY;
-	const named = /target team reads its key from \$TEAM_KEY, which is not set/;
+	const named = /connection team reads its key from \$TEAM_KEY, which is not set/;
 
 	const run = await runCli(["--no-context-files", "--no-skills", "run", "--no-delegate", "say hi"], {
 		env,
@@ -394,6 +394,6 @@ test("a trusted project target whose named key is unset is refused before any re
 	const chat = (doctor.stdout + doctor.stderr).split("\n").find((line) => /^\S+\s+chat\s/.test(line));
 	strictEqual(
 		chat,
-		`!!   chat                   target 'team', model 'mock-model'; target team reads its key from $TEAM_KEY, which is not set in this shell; set it with \`export TEAM_KEY=<key>\`, or fix auth.apiKeyEnvVar on target team in ${join(workspace, ".pancode", "settings.yaml")}.`,
+		`!!   chat                   connection 'team', model 'mock-model'; connection team reads its key from $TEAM_KEY, which is not set in this shell; set it with \`export TEAM_KEY=<key>\`, or fix auth.apiKeyEnvVar on connection team in ${join(workspace, ".pancode", "settings.yaml")}.`,
 	);
 });

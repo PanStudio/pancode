@@ -145,7 +145,7 @@ export const CREDENTIAL_STEP: Step = {
 					"",
 					chalk.bold(`Sign in to ${runtime.displayName}`),
 					chalk.dim(`credential: ${stored}`),
-					"Sign-in stores credentials immediately; target settings wait for Save.",
+					"Sign-in stores credentials immediately; connection settings wait for Save.",
 				],
 				choices,
 				initialIndex: Math.max(

@@ -94,14 +94,14 @@ export function resolveChoice(settings: Readonly<PancodeSettings>, name: string 
 			return {
 				kind: "unavailable",
 				name,
-				problem: "context.memory names no target and model, and memory never falls back to the chat route",
+				problem: "context.memory names no connection and model, and memory never falls back to the chat route",
 			};
 		}
 		return { kind: "engine", name, engine: { kind: "llm", target, model } };
 	}
 	const target = settings.targets.find((entry) => entry.id === name);
 	if (target === undefined) {
-		return { kind: "unavailable", name, problem: `'${name}' is not a known route, engine or target` };
+		return { kind: "unavailable", name, problem: `'${name}' is not a known route, engine or connection` };
 	}
 	return {
 		kind: "engine",

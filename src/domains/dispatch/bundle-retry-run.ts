@@ -29,7 +29,7 @@ export function createRetryRunner(rt: DispatchRuntime) {
 		const allowed = req.allowedCandidates ?? [];
 		if (!allowed.some((candidate) => recovery.sameFailoverCandidate(candidate, effective))) {
 			throw new Error(
-				`dispatch: admission denied: effective route agent=${effective.agentId} target=${effective.target} model=${effective.model} node=${effective.node} is outside the approved failover envelope`,
+				`dispatch: admission denied: effective route agent=${effective.agentId} connection=${effective.target} model=${effective.model} node=${effective.node} is outside the approved failover envelope`,
 			);
 		}
 	}

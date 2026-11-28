@@ -496,7 +496,7 @@ function renderPlanText(
 	}
 	for (const [index, task] of tasks.entries()) {
 		const model = task.model !== undefined ? ` model=${safeField(task.model)}` : "";
-		const target = task.target !== undefined ? ` target=${safeField(task.target)}` : "";
+		const target = task.target !== undefined ? ` connection=${safeField(task.target)}` : "";
 		const node = ` node=${safeField(task.node ?? "local")}${
 			task.nodeKind !== undefined ? ` kind=${task.nodeKind}` : ""
 		}${task.nodeHost !== undefined ? ` host=${safeField(task.nodeHost)}` : ""}`;
@@ -530,7 +530,7 @@ function renderPlanText(
 		if (task.allowedCandidates !== undefined) {
 			for (const [candidateIndex, candidate] of task.allowedCandidates.entries()) {
 				lines.push(
-					`    candidate#${candidateIndex + 1} agent=${safeField(candidate.agentId)} target=${safeField(candidate.target)} model=${safeField(candidate.model)} node=${safeField(candidate.node)}`,
+					`    candidate#${candidateIndex + 1} agent=${safeField(candidate.agentId)} connection=${safeField(candidate.target)} model=${safeField(candidate.model)} node=${safeField(candidate.node)}`,
 				);
 			}
 		}

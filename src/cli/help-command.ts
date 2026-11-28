@@ -80,7 +80,7 @@ interface ManifestLeaf {
 /** C2: groups that run a read when bare. */
 const DEFAULT_ACTION_GROUPS = new Set([
 	"context",
-	"targets",
+	"connections",
 	"agents",
 	"tasks",
 	"claims",

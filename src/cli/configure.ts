@@ -303,7 +303,7 @@ const SECTION_IDS: ReadonlyArray<string> = SECTIONS.map((section) => section.id)
  * such as the bare `pancode` launch that nothing was configured.
  */
 function firstRunCancelled(): number {
-	printNote("configuration cancelled; no target saved. Run `pancode configure` when you are ready.");
+	printNote("configuration cancelled; no connection saved. Run `pancode configure` when you are ready.");
 	return 130;
 }
 
@@ -497,7 +497,7 @@ export async function runConfigureCommand(
 	if ((runtimeId !== undefined || hasTargetSetupFlag) && !(inStream as { isTTY?: boolean }).isTTY) {
 		printError(
 			runtime === null
-				? "--runtime is required when configuring a target non-interactively"
+				? "--runtime is required when configuring a connection non-interactively"
 				: "--id is required when passing flags non-interactively",
 		);
 		return 2;

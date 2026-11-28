@@ -7,7 +7,7 @@
  * the user scope saves through `updateSettings` (settings lock, re-read,
  * re-validate) and the project scope through the trusted project-local writer,
  * which approves the bytes it writes. Routing paths are refused with a pointer
- * to `targets use` and `configure`, which own target selection.
+ * to `connections use` and `configure`, which own target selection.
  */
 import { lstatSync, readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -48,16 +48,17 @@ class SettingNotFoundError extends Error {}
 
 /** Routing has its own commands, which validate targets and clear stale model overrides together (review H20). */
 function routingPointer(path: string): string | null {
-	if (path === "targets" || path.startsWith("targets.")) return "targets are created and edited with pancode configure";
+	if (path === "targets" || path.startsWith("targets."))
+		return "connections are created and edited with pancode configure";
 	if (path === "fleet" || path.startsWith("fleet."))
-		return "fleet routing is set with pancode targets use --fleet-target, pancode targets profile, or pancode configure";
+		return "fleet routing is set with pancode connections use --fleet-connection, pancode connections profile, or pancode configure";
 	if (
 		path === "chat.target" ||
 		path === "chat.model" ||
 		path === "context.memory.target" ||
 		path === "context.memory.model"
 	)
-		return "routing is set with pancode targets use or pancode configure";
+		return "routing is set with pancode connections use or pancode configure";
 	return null;
 }
 

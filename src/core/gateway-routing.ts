@@ -40,7 +40,7 @@ export function liteLLMRouteFailureMessage(
 	const providerMessage = errorMessage?.trim() || "LiteLLM request failed.";
 	if (!hasPartialResponse && isLiteLLMConnectionFailure(providerMessage)) return providerMessage;
 	const advice =
-		`LiteLLM route '${modelId}' on target '${targetId}' failed. ` +
+		`LiteLLM route '${modelId}' on connection '${targetId}' failed. ` +
 		"PanCode did not substitute another model; select a different route with /model, then resend.";
 	return providerMessage.includes(advice) ? providerMessage : `${providerMessage}\n\n${advice}`;
 }
@@ -79,7 +79,7 @@ export function headlessRouteFailureText(message: string): string | null {
 		}
 	}
 	return (
-		`${provider} (model '${tail[1]}' on target '${tail[2]}'; PanCode did not substitute another model; ` +
+		`${provider} (model '${tail[1]}' on connection '${tail[2]}'; PanCode did not substitute another model; ` +
 		"run `pancode models` to list routes or pass a different --model)"
 	);
 }

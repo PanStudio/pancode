@@ -2552,7 +2552,7 @@ test("a default copilot-sdk target admits workers beside the foreground turn, an
 		while (foreground.length < capacity.limit) foreground.push(registerForegroundStream(capacity.key));
 		await rejects(admit("behind-foreground"), (error: unknown) => {
 			ok(error instanceof Error);
-			match(error.message, /set maxConcurrentRequests on target 'copilot' above its default of \d+/u);
+			match(error.message, /set maxConcurrentRequests on connection 'copilot' above its default of \d+/u);
 			return true;
 		});
 	} finally {
@@ -2722,7 +2722,7 @@ test("a Copilot worker asked for a model the seat does not list is refused befor
 	const last = messages.at(-1) as AssistantMessage & { modelRouteRefusal?: { code?: string } };
 	strictEqual(last.stopReason, "error");
 	strictEqual(last.modelRouteRefusal?.code, "model_unavailable");
-	match(last.errorMessage ?? "", /^no model gpt-6\.2-terra on target copilot-worker; available: /);
+	match(last.errorMessage ?? "", /^no model gpt-6\.2-terra on connection copilot-worker; available: /);
 	strictEqual(fake().sessions.length, sessionsBefore, "no Copilot session opened");
 	disposeCopilotConversations("row384-worker");
 });

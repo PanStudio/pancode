@@ -57,10 +57,10 @@ export function isProjectKeyVariableName(name: string): boolean {
  * that file's `auth.apiKeyEnvVar`, since `pancode configure` edits only the user's settings.
  */
 export function unsetKeyVariableSentence(targetId: string, variable: string, projectFile?: string): string {
-	const unset = `target ${targetId} reads its key from $${variable}, which is not set in this shell`;
+	const unset = `connection ${targetId} reads its key from $${variable}, which is not set in this shell`;
 	return projectFile === undefined
 		? `${unset}.`
-		: `${unset}; set it with \`export ${variable}=<key>\`, or fix auth.apiKeyEnvVar on target ${targetId} in ${projectFile}.`;
+		: `${unset}; set it with \`export ${variable}=<key>\`, or fix auth.apiKeyEnvVar on connection ${targetId} in ${projectFile}.`;
 }
 
 export function isLoopbackUrl(url: string): boolean {
@@ -80,7 +80,7 @@ export function isLoopbackUrl(url: string): boolean {
 }
 
 /** How every redeclared-target refusal's fix begins; doctor keys on it to drop its generic `pancode configure` hint. */
-export const REDECLARED_TARGET_FIX_LEAD = "Remove targets from that file";
+export const REDECLARED_TARGET_FIX_LEAD = "Remove connections from that file";
 
 /**
  * Why a target a project redeclared gets none of the credential the user's own entry for it names. `projectFile` is
@@ -90,8 +90,8 @@ export const REDECLARED_TARGET_FIX_LEAD = "Remove targets from that file";
 export function redeclaredTargetSentence(targetId: string, projectFile: string | null, signIn = false): string {
 	const where = projectFile ?? "a project settings file";
 	return signIn
-		? `Target ${targetId} is redeclared in ${where}; the stored credential your user settings name for it attaches only to the target there. ${REDECLARED_TARGET_FIX_LEAD}; a project cannot name a stored sign-in.`
-		: `Target ${targetId} is redeclared in ${where}; stored credentials attach only to targets in your user settings. ${REDECLARED_TARGET_FIX_LEAD}, or give the target auth.apiKeyEnvVar there.`;
+		? `Connection ${targetId} is redeclared in ${where}; the stored credential your user settings name for it attaches only to the connection there. ${REDECLARED_TARGET_FIX_LEAD}; a project cannot name a stored sign-in.`
+		: `Connection ${targetId} is redeclared in ${where}; stored credentials attach only to connections in your user settings. ${REDECLARED_TARGET_FIX_LEAD}, or give the connection auth.apiKeyEnvVar there.`;
 }
 
 /** Record the targets list a project layer supplied, for the URL rules below. */

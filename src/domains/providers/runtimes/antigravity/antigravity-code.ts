@@ -22,7 +22,7 @@ import type { TargetDescriptor } from "../../types/target-descriptor.js";
 
 const ANTIGRAVITY_AUTH_NOTICE =
 	"Experimental local delegation through your installed Antigravity (`agy`) CLI. PanCode neither signs in nor stores " +
-	"or inspects Antigravity credentials. Run `agy` yourself and complete sign-in before probing this target.";
+	"or inspects Antigravity credentials. Run `agy` yourself and complete sign-in before probing this connection.";
 
 // Hints only until an account returns a live catalog. They are never used to
 // validate a model after a successful live probe.

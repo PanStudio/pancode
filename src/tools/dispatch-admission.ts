@@ -243,7 +243,7 @@ function competeSettingsFromArgs(args: Record<string, unknown>):
 	  } {
 	let candidates = COMPETE_MIN_CANDIDATES;
 	let candidateRoutes: Array<{ target?: string; model?: string }> | undefined;
-	const candidatesMessage = `dispatch: candidates must be an integer ${COMPETE_MIN_CANDIDATES}..${COMPETE_MAX_CANDIDATES} or a list of ${COMPETE_MIN_CANDIDATES}..${COMPETE_MAX_CANDIDATES} {target, model} entries`;
+	const candidatesMessage = `dispatch: candidates must be an integer ${COMPETE_MIN_CANDIDATES}..${COMPETE_MAX_CANDIDATES} or a list of ${COMPETE_MIN_CANDIDATES}..${COMPETE_MAX_CANDIDATES} {connection, model} entries`;
 	if (Array.isArray(args.candidates)) {
 		if (args.candidates.length < COMPETE_MIN_CANDIDATES || args.candidates.length > COMPETE_MAX_CANDIDATES) {
 			return { ok: false, message: candidatesMessage };

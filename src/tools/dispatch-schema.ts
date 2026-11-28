@@ -467,7 +467,7 @@ export function buildDispatchParameters(composition: DispatchSchemaComposition =
 						),
 						node: Type.Optional(Type.String({ description: "Fleet node pin for the reviewer." })),
 						model: Type.Optional(Type.String({ description: "Model for the reviewer." })),
-						target: Type.Optional(Type.String({ description: "Target for the reviewer." })),
+						target: Type.Optional(Type.String({ description: "Connection for the reviewer." })),
 					}),
 				],
 				{
@@ -484,7 +484,7 @@ export function buildDispatchParameters(composition: DispatchSchemaComposition =
 								Type.Number(),
 								Type.Array(Type.Object({ target: Type.Optional(Type.String()), model: Type.Optional(Type.String()) })),
 							],
-							{ description: "Compete candidates, 2 to 4 (default 2), or one {target, model} each." },
+							{ description: "Compete candidates, 2 to 4 (default 2), or one {connection, model} each." },
 						),
 					),
 					apply_winner: Type.Optional(
@@ -527,7 +527,7 @@ export function buildDispatchParameters(composition: DispatchSchemaComposition =
 		budget: Type.Optional(DispatchBudgetSchema),
 		target: Type.Optional(
 			Type.String({
-				description: "Target ID; configured external CLI selects headless mode.",
+				description: "Connection ID; configured external CLI selects headless mode.",
 			}),
 		),
 		model: Type.Optional(Type.String({ description: "Default model override." })),
@@ -550,7 +550,7 @@ export function buildDispatchParameters(composition: DispatchSchemaComposition =
 				{
 					additionalProperties: false,
 					description: composition.adaptiveRouting
-						? "Advisory posture and hard routing bounds; exact target, model, and node pins stay manual."
+						? "Advisory posture and hard routing bounds; exact connection, model, and node pins stay manual."
 						: "Hard routing bounds: cost ceiling, deadline, and required model capabilities.",
 				},
 			),

@@ -138,7 +138,7 @@ function stepFacts(step: FleetRunPreviewStep, plan: Pick<ExecutionPlan, "isolati
 	const node = step.route === undefined ? "" : `${sep()}node ${step.route.nodeId}`;
 	const declaredRoute =
 		step.target !== undefined
-			? `${sep()}target ${step.target}`
+			? `${sep()}connection ${step.target}`
 			: step.profile !== undefined
 				? `${sep()}profile ${step.profile}`
 				: "";

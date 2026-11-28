@@ -41,7 +41,7 @@ export function agentRoleToolWarnings(providers: ProvidersContract, settings: Re
 			)
 				continue;
 			warnings.push(
-				`${role.label} model '${wireModelId}' on target '${targetId}' ${AGENT_ROLE_TOOLS_REQUIRED_REASON}. ` +
+				`${role.label} model '${wireModelId}' on connection '${targetId}' ${AGENT_ROLE_TOOLS_REQUIRED_REASON}. ` +
 					`Pick another model, or state the correction in a model-catalog.d entry if the provider's flag is wrong.`,
 			);
 		} catch {

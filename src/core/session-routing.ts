@@ -405,12 +405,12 @@ const ROUTING_FIELD_LABELS: ReadonlyArray<{
 	label: string;
 	read: (settings: Readonly<PancodeSettings>) => unknown;
 }> = [
-	{ field: "chat.target", label: "chat target", read: (s) => s.chat.target ?? null },
+	{ field: "chat.target", label: "chat connection", read: (s) => s.chat.target ?? null },
 	{ field: "chat.model", label: "chat model", read: (s) => s.chat.model ?? null },
 	{ field: "chat.thinkingLevel", label: "chat thinking", read: (s) => s.chat.thinkingLevel ?? "off" },
-	{ field: "context.memory.target", label: "memory target", read: (s) => s.context.memory.target ?? null },
+	{ field: "context.memory.target", label: "memory connection", read: (s) => s.context.memory.target ?? null },
 	{ field: "context.memory.model", label: "memory model", read: (s) => s.context.memory.model ?? null },
-	{ field: "fleet.default.target", label: "fleet target", read: (s) => s.fleet.default.target ?? null },
+	{ field: "fleet.default.target", label: "fleet connection", read: (s) => s.fleet.default.target ?? null },
 	{ field: "fleet.default.model", label: "fleet model", read: (s) => s.fleet.default.model ?? null },
 	{
 		field: "fleet.default.thinkingLevel",
@@ -482,7 +482,7 @@ export function routingChangeNotices(
 		notices.push({
 			kind: "active-target-removed",
 			level: "warning",
-			text: `active target '${activeTarget}' was removed from settings.yaml; chat turns will fail until you pick a new target${hint}.`,
+			text: `active connection '${activeTarget}' was removed from settings.yaml; chat turns will fail until you pick a new connection${hint}.`,
 		});
 	}
 	return notices;

@@ -91,7 +91,7 @@ export function ensureRegistryPopulated(): void {
 }
 
 function printSummary(settings: PancodeSettings, descriptor: TargetDescriptor, probe: ProbeResult | null): void {
-	process.stdout.write(`\nsaved target ${descriptor.id} (runtime=${descriptor.runtime})\n`);
+	process.stdout.write(`\nsaved connection ${descriptor.id} (runtime=${descriptor.runtime})\n`);
 	if (descriptor.url) process.stdout.write(`  url        ${descriptor.url}\n`);
 	if (descriptor.defaultModel) process.stdout.write(`  model      ${descriptor.defaultModel}\n`);
 	if (descriptor.auth?.apiKeyEnvVar) process.stdout.write(`  apiKeyEnv  ${descriptor.auth.apiKeyEnvVar}\n`);
@@ -102,8 +102,8 @@ function printSummary(settings: PancodeSettings, descriptor: TargetDescriptor, p
 		for (const line of probeLines(descriptor, probe)) process.stdout.write(`  ${line}\n`);
 	}
 	warnUndiscoveredContextWindow(descriptor, probe);
-	if (settings.chat.target === descriptor.id) process.stdout.write("  orchestrator target\n");
-	if (settings.context.memory.target === descriptor.id) process.stdout.write("  background memory target\n");
+	if (settings.chat.target === descriptor.id) process.stdout.write("  orchestrator connection\n");
+	if (settings.context.memory.target === descriptor.id) process.stdout.write("  background memory connection\n");
 	if (settings.fleet.default.target === descriptor.id) process.stdout.write("  fleet default\n");
 	for (const [name, profile] of Object.entries(settings.fleet.profiles)) {
 		if (profile.target === descriptor.id) process.stdout.write(`  fleet profile ${name}\n`);
@@ -196,7 +196,7 @@ export async function runNonInteractive(runtime: RuntimeDescriptor, args: Parsed
 	const support = buildProviderSupportEntry(runtime);
 	const existing = settings.targets.find((e) => e.id === args.id);
 	if (existing && (getRuntimeRegistry().get(existing.runtime)?.id ?? existing.runtime) !== runtime.id) {
-		printError(`target ${args.id} already exists with runtime ${existing.runtime}`);
+		printError(`connection ${args.id} already exists with runtime ${existing.runtime}`);
 		return 2;
 	}
 	const argsUrlProblem = args.url ? targetUrlProblem(args.url) : null;
@@ -219,7 +219,7 @@ export async function runNonInteractive(runtime: RuntimeDescriptor, args: Parsed
 			{ credentialsPresent: new Set(), httpTimeoutMs: 750 },
 		);
 		if (!greeting.ok) {
-			printError(`refusing to save LM Studio target '${args.id}': ${url} did not return the LM Studio greeting`);
+			printError(`refusing to save LM Studio connection '${args.id}': ${url} did not return the LM Studio greeting`);
 			return 2;
 		}
 	}
@@ -227,7 +227,7 @@ export async function runNonInteractive(runtime: RuntimeDescriptor, args: Parsed
 		const fingerprint = await fingerprintNativeRuntime(url);
 		if (fingerprint) {
 			process.stdout.write(
-				`note: detected ${fingerprint.displayName} at ${url}; consider \`pancode targets convert ${args.id} --runtime ${fingerprint.runtimeId}\` for proper resident-model lifecycle\n`,
+				`note: detected ${fingerprint.displayName} at ${url}; consider \`pancode connections convert ${args.id} --runtime ${fingerprint.runtimeId}\` for proper resident-model lifecycle\n`,
 			);
 		}
 	}
@@ -316,7 +316,7 @@ export async function runNonInteractive(runtime: RuntimeDescriptor, args: Parsed
 	const setBackground = args.setBackground || args.backgroundModel !== undefined;
 	if ((setOrchestrator || setBackground) && !isOrchestratorEligibleRuntime(runtime)) {
 		printError(
-			`cannot use target '${descriptor.id}' as a chat or background target because runtime '${runtime.id}' is not an HTTP/native runtime`,
+			`cannot use connection '${descriptor.id}' as a chat or background connection because runtime '${runtime.id}' is not an HTTP/native runtime`,
 		);
 		return 1;
 	}
@@ -328,7 +328,7 @@ export async function runNonInteractive(runtime: RuntimeDescriptor, args: Parsed
 	}
 	if (args.verify === true) {
 		if (!descriptor.defaultModel) {
-			printError(`--verify needs a model for target ${args.id}; pass --model`);
+			printError(`--verify needs a model for connection ${args.id}; pass --model`);
 			return 2;
 		}
 		const { chatTestFix, sendChatTest } = await import("./chat-test.js");
@@ -359,7 +359,9 @@ export async function runNonInteractive(runtime: RuntimeDescriptor, args: Parsed
 		// Bailing here leaves nothing half-done: settings are not touched until
 		// applyConfiguration below, so a refused credential write means the whole
 		// command changed nothing, which is what the non-zero exit now claims.
-		if (credentialWriteFailed(auth, `credential for ${runtime.id} was not stored; target '${descriptor.id}' not saved`))
+		if (
+			credentialWriteFailed(auth, `credential for ${runtime.id} was not stored; connection '${descriptor.id}' not saved`)
+		)
 			return 1;
 		printPlaintextCredentialWarning();
 	}
@@ -396,15 +398,15 @@ export async function runNonInteractive(runtime: RuntimeDescriptor, args: Parsed
 		}).available
 	) {
 		process.stdout.write(
-			`note: authenticate ${runtime.id} with \`pancode auth login ${runtime.id}\` before using this target\n`,
+			`note: authenticate ${runtime.id} with \`pancode auth login ${runtime.id}\` before using this connection\n`,
 		);
 	}
 	if (args.apiKeyEnv !== undefined && !process.env[args.apiKeyEnv]) {
 		process.stderr.write(
-			`warning: ${args.apiKeyEnv} is not set in this shell; export it before using target ${args.id}\n`,
+			`warning: ${args.apiKeyEnv} is not set in this shell; export it before using connection ${args.id}\n`,
 		);
 	}
-	printOk(`target ${args.id} saved`);
+	printOk(`connection ${args.id} saved`);
 	return 0;
 }
 
@@ -567,7 +569,7 @@ export async function runTargetSetupInteractive(
 		? (settings.targets.find((entry) => entry.id === defaults.id && entry.runtime === initialRuntimeId) ?? null)
 		: null;
 	if (existingForRuntime.length > 0) {
-		process.stdout.write(`\nExisting targets for ${runtime.id}:\n`);
+		process.stdout.write(`\nExisting connections for ${runtime.id}:\n`);
 		for (const target of existingForRuntime) {
 			process.stdout.write(`  - ${target.id}${target.defaultModel ? ` (${target.defaultModel})` : ""}\n`);
 		}
@@ -578,9 +580,9 @@ export async function runTargetSetupInteractive(
 		process.stdout.write(`Known models: ${describeRuntimeModels(support, 4)}\n`);
 	}
 	const suggestedId = defaults.id ?? existing?.id ?? deriveTargetId(runtime.id, settings.targets);
-	const idInput = await ask(rl, "Target id", suggestedId);
+	const idInput = await ask(rl, "Connection id", suggestedId);
 	if (idInput === null || idInput.length === 0) {
-		printError("target id is required");
+		printError("connection id is required");
 		return 2;
 	}
 	const targetId = idInput;
@@ -603,7 +605,7 @@ export async function runTargetSetupInteractive(
 		const urlDefault = defaults.url ?? existing?.url ?? defaultUrlFor(runtime.id);
 		const urlInput = await ask(
 			rl,
-			support.group === "local-http" ? "Target URL" : "Base URL override (blank for runtime default)",
+			support.group === "local-http" ? "Connection URL" : "Base URL override (blank for runtime default)",
 			urlDefault,
 		);
 		if (urlInput === null) return 0;
@@ -629,7 +631,7 @@ export async function runTargetSetupInteractive(
 				{ credentialsPresent: new Set(), httpTimeoutMs: 750 },
 			);
 			if (!greeting.ok) {
-				printError(`refusing to save LM Studio target '${targetId}': ${url} did not return the LM Studio greeting`);
+				printError(`refusing to save LM Studio connection '${targetId}': ${url} did not return the LM Studio greeting`);
 				return 2;
 			}
 		}
@@ -744,7 +746,7 @@ export async function runTargetSetupInteractive(
 			process.stdout.write(`  listed in provider catalog order, which recommends none of them; pick one.\n`);
 		}
 		for (;;) {
-			const pickedModel = await askModelChoice(rl, "Default target model", wireModels, model);
+			const pickedModel = await askModelChoice(rl, "Default connection model", wireModels, model);
 			if (pickedModel === null) return 0;
 			if (pickedModel.length > 0) model = pickedModel;
 			if (!model) {
@@ -839,7 +841,7 @@ export async function runTargetSetupInteractive(
 		process.stdout.write("\n");
 		for (const line of probeLines(descriptor, probe)) process.stdout.write(`${line}\n`);
 		if (!probe.ok) {
-			const keepAnyway = await askYesNo(rl, "save this target anyway, without a reply from it?", true);
+			const keepAnyway = await askYesNo(rl, "save this connection anyway, without a reply from it?", true);
 			if (!keepAnyway) {
 				printError("aborted; settings not changed");
 				return 0;
@@ -851,7 +853,7 @@ export async function runTargetSetupInteractive(
 		? false
 		: defaults.setOrchestrator
 			? true
-			: await askYesNo(rl, "use as orchestrator (chat) target?", !settings.chat.target);
+			: await askYesNo(rl, "use as orchestrator (chat) connection?", !settings.chat.target);
 	const setWorkerDefault = defaults.setWorkerDefault
 		? true
 		: await askYesNo(rl, "use as fleet default?", !settings.fleet.default.target);
@@ -859,7 +861,7 @@ export async function runTargetSetupInteractive(
 		? false
 		: defaults.setBackground
 			? true
-			: await askYesNo(rl, "use as background memory target?", false);
+			: await askYesNo(rl, "use as background memory connection?", false);
 	const orchestratorModel = setOrchestrator
 		? (defaults.orchestratorModel ??
 			(await askModelChoice(
@@ -895,7 +897,9 @@ export async function runTargetSetupInteractive(
 		auth.setApiKey(apiKeyRef, apiKeyLiteral);
 		// As in the non-interactive path: the settings write is still ahead of us,
 		// so refusing here leaves the whole wizard run without an effect.
-		if (credentialWriteFailed(auth, `credential for ${runtime.id} was not stored; target '${descriptor.id}' not saved`))
+		if (
+			credentialWriteFailed(auth, `credential for ${runtime.id} was not stored; connection '${descriptor.id}' not saved`)
+		)
 			return 1;
 		printPlaintextCredentialWarning();
 	}
@@ -910,7 +914,7 @@ export async function runTargetSetupInteractive(
 	updateSettings(applyWizardChoice);
 
 	printSummary(settings, descriptor, probe);
-	printOk(`target ${targetId} saved`);
+	printOk(`connection ${targetId} saved`);
 	await runInteropReview({ rl });
 	return 0;
 }
@@ -918,7 +922,7 @@ export async function runTargetSetupInteractive(
 export function runTargetRemove(id: string): number {
 	const removed = readSettings().targets.find((e) => e.id === id);
 	if (!removed) {
-		printError(`no target with id ${id}`);
+		printError(`no connection with id ${id}`);
 		return 1;
 	}
 	updateSettings((settings) => {
@@ -935,7 +939,7 @@ export function runTargetRemove(id: string): number {
 			damageReason: () => auth.damageReason(),
 		},
 	);
-	printOk(`removed target ${id}${credential ? `; ${credential}` : ""}`);
+	printOk(`removed connection ${id}${credential ? `; ${credential}` : ""}`);
 	return 0;
 }
 
@@ -946,11 +950,11 @@ export function runTargetRename(oldId: string, newId: string): number {
 	}
 	const current = readSettings();
 	if (current.targets.some((e) => e.id === newId)) {
-		printError(`target id already exists: ${newId}`);
+		printError(`connection id already exists: ${newId}`);
 		return 2;
 	}
 	if (!current.targets.some((e) => e.id === oldId)) {
-		printError(`no target with id ${oldId}`);
+		printError(`no connection with id ${oldId}`);
 		return 1;
 	}
 	updateSettings((settings) => {

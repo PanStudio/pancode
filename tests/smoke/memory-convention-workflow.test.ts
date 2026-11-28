@@ -156,7 +156,7 @@ test("operator promotion persists a convention and only approval admits it into 
 					"run",
 					"--output-format",
 					"stream-json",
-					"--target",
+					"--connection",
 					"fixture",
 					"--model",
 					"mock-model",

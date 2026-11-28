@@ -766,7 +766,7 @@ describe("provider transport boundary", () => {
 				});
 			});
 			process.env.GOOGLE_API_KEY = "bad-key";
-			const refused = await captureStdout(() => runModelsCommand(["--target", "gem"]));
+			const refused = await captureStdout(() => runModelsCommand(["--connection", "gem"]));
 			ok(refused.output.includes("gemini-2.5-pro"), `the catalog is the fallback:\n${refused.output}`);
 			ok(
 				refused.output.includes(
@@ -776,7 +776,7 @@ describe("provider transport boundary", () => {
 			);
 
 			process.env.GOOGLE_API_KEY = "gem-test-key";
-			const live = await captureStdout(() => runModelsCommand(["--target", "gem", "--json"]));
+			const live = await captureStdout(() => runModelsCommand(["--connection", "gem", "--json"]));
 			const rows = JSON.parse(live.output) as Array<{
 				modelId: string;
 				source: string;
@@ -809,7 +809,7 @@ describe("provider transport boundary", () => {
 			}
 
 			process.env.GOOGLE_API_KEY = "bad-key";
-			const stale = await captureStdout(() => runModelsCommand(["--target", "gem"]));
+			const stale = await captureStdout(() => runModelsCommand(["--connection", "gem"]));
 			ok(
 				stale.output.includes("gem: cached list, not verified live: the Gemini API refused the key (HTTP 403: Forbidden)"),
 				stale.output,

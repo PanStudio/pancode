@@ -77,7 +77,7 @@ export interface TargetStatus {
 	/** Probe-only per-model load state keyed by wire model id. */
 	discoveredModelStates?: Readonly<Record<string, ProbeModelStatus>> | null;
 	/**
-	 * Result of the last opt-in live tool-call probe (`targets --probe --tools`).
+	 * Result of the last opt-in live tool-call probe (`connections --probe --tools`).
 	 * Held in memory with the rest of the status; never persisted.
 	 */
 	toolProbe?: ToolCallVerification;

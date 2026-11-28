@@ -36,7 +36,7 @@ function sample(models: ReadonlyArray<string>): string {
 }
 
 function describeLiveTarget(live: LiveModelInventory): string {
-	return live.url ? `target '${live.targetId}' at ${live.url}` : `target '${live.targetId}'`;
+	return live.url ? `connection '${live.targetId}' at ${live.url}` : `connection '${live.targetId}'`;
 }
 
 /** The refusal `configure` prints for a model the live target does not advertise. */
@@ -45,7 +45,7 @@ function formatUnadvertisedModelReason(modelId: string, live: LiveModelInventory
 	return (
 		`${describeLiveTarget(live)} does not advertise model '${modelId}'. ` +
 		`Advertised (${live.models.length}): ${sample(live.models)}. Resident instances: ${resident}. ` +
-		"Pass one of the advertised ids with --model, or --force to save a model the target cannot serve."
+		"Pass one of the advertised ids with --model, or --force to save a model the connection cannot serve."
 	);
 }
 

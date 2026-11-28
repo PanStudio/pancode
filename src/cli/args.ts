@@ -381,7 +381,7 @@ export function parseRunCliArgs(argv: ReadonlyArray<string>): RunCliArgs {
 			parsed.trustTaskFile = true;
 			continue;
 		}
-		if (arg === "--target") {
+		if (arg === "--connection") {
 			const value = need(arg);
 			if (value !== null) parsed.target = value;
 			continue;

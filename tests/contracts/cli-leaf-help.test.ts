@@ -103,7 +103,7 @@ describe("leaf commands answer --help", { concurrency: 4 }, () => {
 		};
 		equal(doc.version, 1);
 		const paths = new Set(doc.leaves.map((leaf) => leaf.path.join(" ")));
-		for (const sentinel of ["targets profile bind", "context replay", "fleet nodes tools install", "report sweep"])
+		for (const sentinel of ["connections profile bind", "context replay", "fleet nodes tools install", "report sweep"])
 			ok(paths.has(sentinel), `help --json omits ${sentinel}`);
 		// SPEC 6.4 (R08): the credential flags that write to disk say so per flag.
 		for (const [path, flag] of [

@@ -224,10 +224,13 @@ for (const event of [
 			retry: { ...settings.fleet?.retry, maxRetries: 0 },
 		};
 		writeFileSync(settingsPath, stringify(settings));
-		const result = await runCli(["run", "--agent", "coder", "--read-only", "--target", "peer", "Inspect the workspace"], {
-			cwd: scratch.root,
-			env: { ...scratch.env, PATH: `${bin}:${scratch.env.PATH ?? ""}` },
-		});
+		const result = await runCli(
+			["run", "--agent", "coder", "--read-only", "--connection", "peer", "Inspect the workspace"],
+			{
+				cwd: scratch.root,
+				env: { ...scratch.env, PATH: `${bin}:${scratch.env.PATH ?? ""}` },
+			},
+		);
 		equal(result.code, 0, `${result.stderr}\n${result.stdout}`);
 		const argv = JSON.parse(readFileSync(join(scratch.root, "peer-argv.json"), "utf8")) as string[];
 		ok(argv.includes("--sandbox"));

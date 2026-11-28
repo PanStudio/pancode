@@ -425,7 +425,7 @@ export function validateSystemOne(issues: Issues, raw: unknown, settings: Pancod
 		else if (Array.isArray(raw.use)) {
 			const names = raw.use.filter((name): name is string => typeof name === "string" && name.trim().length > 0);
 			if (names.length !== raw.use.length) {
-				issues.add("systemOne.use", "expected a list of route names, each an engine, a target, jev, memory or main");
+				issues.add("systemOne.use", "expected a list of route names, each an engine, a connection, jev, memory or main");
 			} else next.use = names;
 		} else {
 			const use = expectString(issues, "systemOne.use", raw.use);
@@ -453,7 +453,7 @@ export function validateSystemOne(issues: Issues, raw: unknown, settings: Pancod
 				// A binding to a target nobody configured would fail at the call site,
 				// where nothing connects the failure back to this line.
 				if (!settings.targets.some((entry) => entry.id === target)) {
-					issues.add(`${path}.target`, `target '${target}' is not defined in targets`);
+					issues.add(`${path}.target`, `connection '${target}' is not defined in connections`);
 					continue;
 				}
 				const engine: PancodeSettings["systemOne"]["engines"][string] = { kind, target };

@@ -163,7 +163,7 @@ const TOOL_METADATA: Readonly<Record<string, ToolMetadata>> = {
 	[ToolNames.PancodeDocs]: {
 		objective: "Search PanCode's bundled documentation or list its corpus.",
 		examples: [
-			{ goal: "Look up PanCode commands and configuration", args: { query: "configuration and targets" } },
+			{ goal: "Look up PanCode commands and configuration", args: { query: "configuration and connections" } },
 			{ goal: "Propose and approve persistent repository memory", args: { query: "memory promotion" } },
 		],
 		uiLabel: "PanCode docs",
@@ -541,11 +541,12 @@ const TOOL_METADATA: Readonly<Record<string, ToolMetadata>> = {
 			'Do not ask about something the operator already stated. Ask one question per round in interviews, up to four related questions otherwise, then action="complete" with the decisions before final prose.',
 	},
 	[ToolNames.ConfigurePancode]: {
-		objective: "Preview one PanCode settings or target change and apply it only after the operator approves the diff.",
+		objective:
+			"Preview one PanCode settings or connection change and apply it only after the operator approves the diff.",
 		uiLabel: "Configure",
 		resultSizePolicy: { kind: "exact", maxBytes: 8_192 },
 		promptHint:
-			"When asked to change PanCode settings or add a target, call configure_pancode through gateway. Preview first, then apply the returned proposal id; the operator approves the exact diff on a card. Headless, read-only and yolo sessions only preview: hand the operator the diff and steps. Never run pancode configure, targets or auth from bash.",
+			"When asked to change PanCode settings or add a connection, call configure_pancode through gateway. Preview first, then apply the returned proposal id; the operator approves the exact diff on a card. Headless, read-only and yolo sessions only preview: hand the operator the diff and steps. Never run pancode configure, connections or auth from bash.",
 	},
 	[ToolNames.RestartSession]: {
 		objective: "Restart PanCode on a rebuilt build of this tree and continue the task, after the operator approves.",

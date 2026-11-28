@@ -708,7 +708,7 @@ function readyPeerLines(catalogs: CatalogSnapshot, inputs: SessionPromptInputs):
 		const target = modes.find((mode) => mode.mode === "headless" && mode.status !== "unavailable")?.targetIds?.[0];
 		const reach = [
 			`panes(action="handoff", peer="${kind.id}")`,
-			...(target !== undefined && names.has("dispatch") ? [`dispatch with target="${target}"`] : []),
+			...(target !== undefined && names.has("dispatch") ? [`dispatch with connection="${target}"`] : []),
 		];
 		return [`- ${kind.id}: ${reach.join(", or ")}`];
 	});

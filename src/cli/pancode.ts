@@ -196,7 +196,7 @@ export async function runPancodeCommand(
 		if (keptRoute) {
 			if (verdict.kind !== "missing-credential") {
 				process.stderr.write(
-					`${describeVerdict(verdict)} Your saved chat route is kept and no other target is used. Run \`pancode configure\` to fix it.\n`,
+					`${describeVerdict(verdict)} Your saved chat route is kept and no other connection is used. Run \`pancode configure\` to fix it.\n`,
 				);
 				return 2;
 			}

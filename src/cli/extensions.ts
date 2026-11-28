@@ -54,9 +54,9 @@ Commands:
   pancode extensions enable <id> [--user|--project] [--json]
   pancode extensions disable <id> [--user|--project] [--json]
   pancode extensions remove <id> [--user|--project] [--json]
-  pancode extensions services <id> [--model <target>/<model> [--session-tokens <n>] | --clear] [--user|--project] [--json]
+  pancode extensions services <id> [--model <connection>/<model> [--session-tokens <n>] | --clear] [--user|--project] [--json]
 
-services shows or sets the model an extension's completions go to. --model records the endpoint the target
+services shows or sets the model an extension's completions go to. --model records the endpoint the connection
 resolves to now; a call made after it changes is refused until the model is assigned again. --session-tokens
 lowers the token budget the extension declared for one session.
 `;
@@ -644,7 +644,7 @@ async function servicesCommand(parsed: Parsed): Promise<number> {
 		(parsed.sessionTokens !== undefined && parsed.model === undefined)
 	) {
 		process.stderr.write(
-			"usage: pancode extensions services <id> [--model <target>/<model> [--session-tokens <n>] | --clear] [--user|--project]\n",
+			"usage: pancode extensions services <id> [--model <connection>/<model> [--session-tokens <n>] | --clear] [--user|--project]\n",
 		);
 		return 2;
 	}
@@ -661,7 +661,7 @@ async function servicesCommand(parsed: Parsed): Promise<number> {
 	if (parsed.model !== undefined) {
 		const slash = parsed.model.indexOf("/");
 		if (slash <= 0 || slash === parsed.model.length - 1) {
-			printError("--model takes <target>/<model>");
+			printError("--model takes <connection>/<model>");
 			return 2;
 		}
 		if (!declared) {
@@ -720,7 +720,7 @@ async function servicesCommand(parsed: Parsed): Promise<number> {
 			declared
 				? assigned
 					? `model: ${assigned.target}/${assigned.model} at ${assigned.endpoint}, up to ${Math.min(declared.sessionTokens, assigned.sessionTokens ?? declared.sessionTokens)} tokens a session, ${declared.maxOutputTokens} a reply (assigned ${assigned.assignedAt})`
-					: `model: none assigned, so its completions are refused; assign one with pancode extensions services ${id} --model <target>/<model>`
+					: `model: none assigned, so its completions are refused; assign one with pancode extensions services ${id} --model <connection>/<model>`
 				: "model: not declared",
 			store
 				? `store: reads ${[...store.read, ...store.write].join(", ")}; writes ${store.write.join(", ") || "none"}`

@@ -16,7 +16,7 @@ scope/routing question. Required per-write Apply or policy approval cards still
 apply. Ask again only for a material change outside the approved scope.
 
 To bind an agent or pin a successful worker model, first check current routes.
-`fleet.profiles.<name>` holds target/model; `fleet.agentProfiles.<agent>` names
+`fleet.profiles.<name>` holds connection/model; `fleet.agentProfiles.<agent>` names
 that profile. Preserve existing entries. Where configure_pancode is admitted, its
 paths are the whole `fleet.profiles` and `fleet.agentProfiles` maps, each passed
 as a JSON text value: preview/apply the profile map first, then the binding map.

@@ -66,7 +66,7 @@ export function playbookPreflightDiagnostic(
 	const checkRoute = (id: string, route: { target?: string; profile?: string }): string | null => {
 		if (route.target !== undefined || route.profile !== undefined) routed.add(id);
 		if (route.target !== undefined && !targets.has(route.target)) {
-			return `unknown target '${route.target}' at step '${id}'`;
+			return `unknown connection '${route.target}' at step '${id}'`;
 		}
 		if (route.profile !== undefined && !profiles.has(route.profile)) {
 			return `unknown profile '${route.profile}' at step '${id}'`;

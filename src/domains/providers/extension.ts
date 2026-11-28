@@ -327,7 +327,7 @@ function unservedDefaultModelReason(
 	// LM Studio lists a loaded model under its instance id and keeps the model
 	// key in the state map; the request path resolves either.
 	if (merge.discoveredModelStates && model in merge.discoveredModelStates) return null;
-	return `default model '${model}' is not advertised by the target`;
+	return `default model '${model}' is not advertised by the connection`;
 }
 
 export interface ProvidersBundleOptions {
@@ -713,9 +713,9 @@ export function createProvidersBundle(
 			error,
 		});
 		if (desc.defaultCapabilities.decisions && !desc.defaultCapabilities.chat) {
-			return skipped("not applicable: decision-engine targets do not call tools");
+			return skipped("not applicable: decision-engine connections do not call tools");
 		}
-		if (!modelId) return skipped("no chat or default model is set for this target");
+		if (!modelId) return skipped("no chat or default model is set for this connection");
 		// SDK and subprocess runtimes stream through their own worker runners,
 		// not the engine request path this probe exercises.
 		if (desc.kind !== "http") return skipped(`runtime kind '${desc.kind}' does not stream through the engine`);
@@ -726,7 +726,7 @@ export function createProvidersBundle(
 			return skipped(`model synthesis failed: ${err instanceof Error ? err.message : String(err)}`);
 		}
 		const apiKey = targetRequiresAuth(target, desc) ? probeCtx.authToken : LOCAL_API_KEY_FALLBACK;
-		// The probe can load and pin a cold model, and `targets` never runs the
+		// The probe can load and pin a cold model, and `connections` never runs the
 		// orchestrator's release on exit, so the release happens here for every
 		// caller, on success, failure, and abort. It is scoped to this server and
 		// this model: in-session `/doctor deep` shares the process with chat turns,
@@ -802,11 +802,11 @@ export function createProvidersBundle(
 					for (const row of comparison) {
 						if (!row.profileId) {
 							writeDiagnostic(
-								`[providers:profiles:compare] unmatched target=${row.targetId} runtime=${row.runtimeId} model=${row.modelId ?? "(unset)"} fallback=${row.fallbackFamily ?? "none"}`,
+								`[providers:profiles:compare] unmatched connection=${row.targetId} runtime=${row.runtimeId} model=${row.modelId ?? "(unset)"} fallback=${row.fallbackFamily ?? "none"}`,
 							);
 						} else if (row.differentFields.length > 0) {
 							writeDiagnostic(
-								`[providers:profiles:compare] differs target=${row.targetId} model=${row.modelId} profile=${row.profileId} fields=${row.differentFields.join(",")}`,
+								`[providers:profiles:compare] differs connection=${row.targetId} model=${row.modelId} profile=${row.profileId} fields=${row.differentFields.join(",")}`,
 							);
 						}
 					}

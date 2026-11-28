@@ -275,7 +275,7 @@ export async function runQuickConnect(prompts: ConfigurePrompts): Promise<"conne
 			const apply = (settings: ReturnType<typeof readSettings>) => {
 				const target = settings.targets.find((entry) => entry.id === descriptor.id);
 				if (JSON.stringify(target) !== JSON.stringify(connection?.existing))
-					throw new Error("This target changed during setup. Reopen Quick Connect to keep those changes.");
+					throw new Error("This connection changed during setup. Reopen Quick Connect to keep those changes.");
 				applyTarget(settings, descriptor);
 				setOrchestratorPointer(settings, descriptor, model);
 				if (first && !settings.fleet.default.target) setWorkerDefaultPointer(settings, descriptor, model);

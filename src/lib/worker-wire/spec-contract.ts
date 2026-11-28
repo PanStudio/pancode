@@ -525,7 +525,7 @@ function validateTarget(value: unknown, runtimeId: string, runtimeAliases: Reado
 	const targetRuntime = readString(target.runtime, "WorkerSpec.target.runtime");
 	if (targetRuntime !== runtimeId && !runtimeAliases.includes(targetRuntime)) {
 		throw new Error(
-			`WorkerSpec target runtime mismatch: target.runtime=${targetRuntime} runtimeId=${runtimeId}. Set the target's runtime to '${runtimeId}' in settings.yaml.`,
+			`WorkerSpec target runtime mismatch: target.runtime=${targetRuntime} runtimeId=${runtimeId}. Set the connection's runtime to '${runtimeId}' in settings.yaml.`,
 		);
 	}
 	if (targetId.length === 0) throw new Error("WorkerSpec.target.id must be a non-empty string");

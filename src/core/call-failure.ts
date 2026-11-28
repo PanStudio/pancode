@@ -144,7 +144,7 @@ export function classifyCallFailure(
 		stage = "auth";
 		// A refusal is PanCode withholding a credential it holds; storing another one would not change it.
 		errorClass =
-			/stored credentials? (?:attach(?:es)? only to targets|your user settings name for it attaches only)|PanCode does not send your stored/u.test(
+			/stored credentials? (?:attach(?:es)? only to connections|your user settings name for it attaches only)|PanCode does not send your stored/u.test(
 				message,
 			)
 				? "credential_refused"

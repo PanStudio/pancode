@@ -89,7 +89,7 @@ export interface GlobalCliFlags {
 	maxContextTokens?: number;
 	/** `--resume [id]`/`-r` or `--continue`/`-c` before any subcommand: the session the interactive app opens on. */
 	resume?: StartupResume;
-	/** `--target <id>` and `--model <ref>` before any subcommand: the interactive session's chat route, as `run` reads them. */
+	/** `--connection <id>` and `--model <ref>` before any subcommand: the interactive session's chat route, as `run` reads them. */
 	route?: { target?: string; model?: string };
 	/**
 	 * The boot-option flags (`--api-key`, `--skill`, `--no-context-files`/`-nc`,
@@ -265,13 +265,13 @@ export function extractGlobalFlags(
 			}
 			continue;
 		}
-		if (arg === "--target" || arg === "--model" || arg.startsWith("--target=") || arg.startsWith("--model=")) {
-			const name = arg.startsWith("--target") ? "--target" : "--model";
+		if (arg === "--connection" || arg === "--model" || arg.startsWith("--connection=") || arg.startsWith("--model=")) {
+			const name = arg.startsWith("--connection") ? "--connection" : "--model";
 			const inline = arg !== name;
 			const value = inline ? arg.slice(name.length + 1) : argv[i + 1];
 			if (value === undefined || value.trim() === "" || value.startsWith("-") || isSubcommand(value))
 				return failed(`${name} requires a value`);
-			route = { ...route, [name === "--target" ? "target" : "model"]: value };
+			route = { ...route, [name === "--connection" ? "target" : "model"]: value };
 			if (!inline) i += 1;
 			continue;
 		}

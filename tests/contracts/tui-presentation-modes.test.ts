@@ -513,7 +513,7 @@ test("welcome renders orientation guidance without configuration inventory or du
 		ok(artRows.length > 0);
 		const text = rows.join("\n");
 		ok(!/describe a task|Permissions|configured|recipes|Systems engineering/u.test(text));
-		match(text, /✓ ready · local target healthy/u);
+		match(text, /✓ ready · local connection healthy/u);
 		match(text, /contained · OS sandbox active/u);
 		match(text, /not indexed yet · \/context init/u);
 		const stale = buildWelcomeDashboardLines({ ...stats, projectContext: "stale" }, "0.5.7", width, "launchpad")

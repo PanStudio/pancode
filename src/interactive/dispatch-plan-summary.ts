@@ -51,7 +51,7 @@ export interface PlanSummary {
 
 const HEAD = /^dispatch plan: topology=(\S+) tasks=(\d+)/u;
 const TASK =
-	/^\s+\d+\.(?: role=(\S+))? agent=(\S+)(?: target=(\S+))?(?: model=(\S+))?.*? task_preview=("(?:[^"\\]|\\.)*")/u;
+	/^\s+\d+\.(?: role=(\S+))? agent=(\S+)(?: connection=(\S+))?(?: model=(\S+))?.*? task_preview=("(?:[^"\\]|\\.)*")/u;
 const COUNCIL = /^\s+council label=(\S+)/u;
 const LIMITS = /^\s+limits: (.+)$/u;
 const FORECAST = /^\s+forecast: (.+)$/u;

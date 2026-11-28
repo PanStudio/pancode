@@ -4,7 +4,7 @@ import { flagValuePlaceholder, renderArgsSpec } from "../core/views/slash-words.
 import type { SlashCommand } from "./slash-command-types.js";
 
 export interface CommandFlagSpec {
-	/** Unique flag name, e.g. "--target". */
+	/** Unique flag name, e.g. "--connection". */
 	name: string;
 	/** True when the flag consumes the next token as its value. */
 	takesValue?: boolean;

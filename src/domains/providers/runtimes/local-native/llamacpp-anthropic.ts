@@ -43,7 +43,7 @@ const llamacppAnthropicRuntime: RuntimeDescriptor = {
 	hidden: true,
 	async probe(target: TargetDescriptor, ctx: ProbeContext): Promise<ProbeResult> {
 		const base = url(target);
-		if (!base) return { ok: false, error: "target has no url" };
+		if (!base) return { ok: false, error: "connection has no url" };
 		const healthOpts = { url: `${base}/health`, timeoutMs: ctx.httpTimeoutMs } as const;
 		const health = await (ctx.signal ? probeHttp({ ...healthOpts, signal: ctx.signal }) : probeHttp(healthOpts));
 		if (!health.ok) return health;

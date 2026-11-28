@@ -84,7 +84,7 @@ export function buildSettingItems(
 	const profileCount = Object.keys(settings.fleet.profiles ?? {}).length;
 	const addProfileSubmenu = chainSubmenus(
 		textInputSubmenu("New profile name"),
-		() => selectListSubmenu("Select the profile's target", profileTargetChoices(live, options?.providers)),
+		() => selectListSubmenu("Select the profile's connection", profileTargetChoices(live, options?.providers)),
 		(name, target) => `${name} -> ${target}`,
 	);
 	const addBindingSubmenu = chainSubmenus(
@@ -307,7 +307,7 @@ export function buildSettingItems(
 		}),
 		settingItem("fleet.history.journal", String(settings.fleet.history.journal), { values: ["true", "false"] }),
 		settingItem("targets", "", {
-			description: "Live inference target inventory and routing roles.",
+			description: "Live inference connection inventory and routing roles.",
 			affordance: "column heading",
 			readOnly: true,
 			presentationKind: "group-header",
@@ -439,8 +439,8 @@ export function buildSettingItems(
 		// Both optional keys render their absence rather than a fabricated value:
 		// an unset target means the session's own, and an unset cadence means the
 		// watchdog fires at turn end only. Submitting an empty value clears them.
-		settingItem("safety.review.target", watchdog.target ?? "(session target)", {
-			submenu: editTextSubmenu("Edit watchdog target; blank uses the session's active target"),
+		settingItem("safety.review.target", watchdog.target ?? "(session connection)", {
+			submenu: editTextSubmenu("Edit watchdog connection; blank uses the session's active connection"),
 			affordance: "free text",
 			editValue: watchdog.target ?? "",
 		}),
@@ -470,7 +470,7 @@ export function buildSettingItems(
 		settingItem("integrations.git.commitAuthor", settings.integrations.git.commitAuthor, {
 			values: ["auto", "human"],
 		}),
-		settingItem("context.compaction.model", compaction.model ?? "(orchestrator target)", {
+		settingItem("context.compaction.model", compaction.model ?? "(orchestrator connection)", {
 			submenu: editTextSubmenu("Edit compaction model; blank uses the orchestrator"),
 			affordance: "free text",
 		}),
@@ -615,7 +615,7 @@ function fleetProfileRows(
 			const compactRoute = truncateProfileFact(route, routeBudget);
 			return settingItem(`fleet.profiles.${name}`, summary, {
 				label: name,
-				description: `Profile ${name}. Enter to edit its target, model, thinking level, placement, or remove it.`,
+				description: `Profile ${name}. Enter to edit its connection, model, thinking level, placement, or remove it.`,
 				help: "Choose a connection, model, thinking level, and where this worker runs.",
 				submenu: profileWorkbenchSubmenu(name, settings, live, options),
 				affordance: "Enter: drill into profile fields",
@@ -636,7 +636,7 @@ function profileWorkbenchSubmenu(
 ): SettingSubmenuBuilder {
 	return (_currentValue: string, done: (value?: string) => void): Component => {
 		const fields = [
-			{ value: "target", label: "Edit target", presentationKind: "action" as const },
+			{ value: "target", label: "Edit connection", presentationKind: "action" as const },
 			{ value: "model", label: "Edit model", presentationKind: "action" as const },
 			{ value: "thinkingLevel", label: "Edit thinking level", presentationKind: "action" as const },
 			{ value: "node", label: "Edit placement", presentationKind: "action" as const },
@@ -665,9 +665,9 @@ function profileWorkbenchSubmenu(
 				done(value === undefined ? undefined : `${field}${PROFILE_FIELD_SEPARATOR}${value}`);
 			if (field === "target") {
 				active = selectListSubmenu(
-					`Target for profile ${name}`,
+					`Connection for profile ${name}`,
 					profileTargetChoices(live, options?.providers),
-					"Changing the target rebases the model on that target's default.",
+					"Changing the connection rebases the model on that connection's default.",
 				)(profile.target ?? "(unset)", finish);
 				return;
 			}

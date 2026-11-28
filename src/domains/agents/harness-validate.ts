@@ -405,7 +405,7 @@ function modelIssue(
 	return {
 		file,
 		field,
-		message: `names model '${model}', which target '${targetId}' does not list${suggestion(model, target.wireModels)}; its recorded models are ${listOf(target.wireModels)}`,
+		message: `names model '${model}', which connection '${targetId}' does not list${suggestion(model, target.wireModels)}; its recorded models are ${listOf(target.wireModels)}`,
 	};
 }
 
@@ -425,7 +425,7 @@ function settingsIssues(input: HarnessInput): HarnessIssue[] {
 				issues.push({
 					file,
 					field: `${field}.target`,
-					message: `names target '${profile.target}', which is not configured${suggestion(profile.target, targetIds)}; the profile is dropped silently and every agent bound to it falls back to fleet.default, so use one of ${listOf(targetIds)} or add the target with \`pancode configure\``,
+					message: `names connection '${profile.target}', which is not configured${suggestion(profile.target, targetIds)}; the profile is dropped silently and every agent bound to it falls back to fleet.default, so use one of ${listOf(targetIds)} or add the connection with \`pancode configure\``,
 				});
 				continue;
 			}

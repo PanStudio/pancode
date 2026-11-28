@@ -229,7 +229,7 @@ test("configure_pancode fleet routing apply parks for the operator while its pre
 	const proposalId = proposalOf(routingPreview);
 	const previewText =
 		routingPreview.kind === "ok" && routingPreview.result.kind === "ok" ? routingPreview.result.output : "";
-	match(previewText, /per-call target and model/);
+	match(previewText, /per-call connection and model/);
 	const apply = registry.invoke({ tool: ToolNames.ConfigurePancode, args: { action: "apply", proposalId } });
 	strictEqual(await settledWithin(apply, 50), "pending");
 	strictEqual(asked.length, 1);
@@ -271,7 +271,7 @@ test("a headless edit of project routing settings is refused with the dispatch p
 	strictEqual(verdict.kind, "blocked");
 	const text = verdict.kind === "blocked" && verdict.decision.kind !== "allow" ? verdict.decision.rejection.detail : "";
 	match(text, /project-settings-confirm/);
-	match(text, /dispatch's per-call target and model/);
+	match(text, /dispatch's per-call connection and model/);
 	strictEqual(readFileSync(local, "utf8"), "fleet: {}\n");
 	ok(!existsSync(join(workspace, ".pancode", "settings.yaml")));
 });
@@ -350,7 +350,7 @@ test("configure_pancode sets a target's routing fields, keeps the rest, and neve
 		["targets.gw", JSON.stringify({ url: "http://host:4000/v1?api_key=x" }), /key or token/],
 		["targets.new", JSON.stringify({ url: "http://host:4000" }), /needs a runtime/],
 		["targets.new", JSON.stringify({ runtime: "no-such-runtime" }), /unknown runtime/],
-		["targets.gw.url", JSON.stringify({ url: "http://host:4000" }), /names no target/],
+		["targets.gw.url", JSON.stringify({ url: "http://host:4000" }), /names no connection/],
 	];
 	for (const [path, value, expected] of refused) {
 		const result = await tool.run({ action: "preview", path, value });

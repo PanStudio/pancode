@@ -224,7 +224,7 @@ function targetIdOf(saved: PancodeSettings, path: string): { id: string } | { er
 	if (saved.targets.some((target) => target.id === id)) return { id };
 	if (TARGET_PATH.test(path)) return { id };
 	return {
-		error: `path ${JSON.stringify(path)} names no target; use targets.<id> with a JSON object value, for example targets.gw with {"url":"http://host:4000/v1"}`,
+		error: `path ${JSON.stringify(path)} names no connection; use targets.<id> with a JSON object value, for example targets.gw with {"url":"http://host:4000/v1"}`,
 	};
 }
 
@@ -294,7 +294,7 @@ function mergeTarget(
 		}
 		target.runtime = fields.runtime;
 	}
-	if (target.runtime === "") return { error: `a new target needs a runtime, for example {"runtime":"litellm"}` };
+	if (target.runtime === "") return { error: `a new connection needs a runtime, for example {"runtime":"litellm"}` };
 	if ("url" in fields) {
 		const url = fields.url;
 		if (typeof url !== "string") return { error: "url is a string" };
@@ -400,7 +400,7 @@ function recordSettingsChange(proposal: ConfigurePancodeProposal, sessionId: str
 
 function savedSettingEffect(path: string): string {
 	if (path.startsWith("targets."))
-		return "New sessions and dispatches see the target; switch a running chat with /model or /settings models.";
+		return "New sessions and dispatches see the connection; switch a running chat with /model or /settings models.";
 	if (isRoutingPath(path))
 		return "This session keeps its current routing. Exit and start a new PanCode session to use the saved routing.";
 	switch (settingsChangeKind(path)) {

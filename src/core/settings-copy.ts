@@ -139,7 +139,7 @@ export const SETTINGS_DESCRIPTIONS_BY_ID = {
 	"fleet.staggerSharedPrefix":
 		"On by default; workers that share a prompt prefix start after the leader streams (at most 15 s), so they reuse its cache.",
 	"fleet.retry.routeCooldownMs":
-		"How long a failing target, runtime, and model route is skipped before it is tried again.",
+		"How long a failing connection, runtime, and model route is skipped before it is tried again.",
 	"fleet.adaptiveRouting.roles": "Types of worker allowed to use an automatically selected model.",
 	"fleet.adaptiveRouting.postures": "Priorities that automatic model selection may use for workers.",
 	"fleet.adaptiveRouting.agentRoles": "Specific agents allowed to use automatic model selection.",
@@ -157,7 +157,7 @@ export const SETTINGS_DESCRIPTIONS_BY_ID = {
 	"chat.modelPicker.recentLimit": "How many recently used models /model remembers.",
 	"chat.modelPicker.favorites": "Connections and models pinned in the model picker.",
 	"safety.limits.sessionCostUsd": "Per-session cost cap.",
-	"chat.maxOutputTokens": "Output tokens requested per turn, applied to every target.",
+	"chat.maxOutputTokens": "Output tokens requested per turn, applied to every connection.",
 	"context.toolResultMaxBytes": "Maximum bytes returned from one tool result before the full text spills to scratch.",
 	"fleet.concurrency": "Maximum number of workers running at the same time.",
 	"safety.limits.chatToolCallsPerTurn": "Maximum tool uses PanCode may make during one chat turn.",
@@ -207,7 +207,7 @@ export const SETTINGS_DESCRIPTIONS_BY_ID = {
 	"integrations.externalAgents.defaults.turnTimeoutMs": "How long a single delegated turn may run.",
 	"integrations.externalAgents.defaults.permissionTimeoutMs":
 		"How long PanCode waits for your answer to an external agent's permission request.",
-	targets: "Inference targets available for chat and workers. Add one with `pancode configure`.",
+	targets: "Inference connections available for chat and workers. Add one with `pancode configure`.",
 	funding:
 		"Optional user-owned fees, grants, payers and electricity facts for reports. Never grants spending authority.",
 	"interface.keybindings": "Custom key overrides layered on the defaults.",
@@ -482,8 +482,8 @@ export const EXTRA_HELP: Record<string, [string, string]> = {
 		"Semantic search",
 		"Make the optional project search index available to PanCode after pinning a qualified embedding route.",
 	],
-	"context.semantic.target": ["Embedding connection", "Target id of the qualified embedding route."],
-	"context.semantic.model": ["Embedding model", "Exact model id served by the embedding target."],
+	"context.semantic.target": ["Embedding connection", "Connection id of the qualified embedding route."],
+	"context.semantic.model": ["Embedding model", "Exact model id served by the embedding connection."],
 	"context.semantic.assetIdentity": ["Embedding asset identity", "GGUF SHA-256 or a visible unverified operator label."],
 	"context.semantic.projectorIdentity": [
 		"Embedding projector identity",
@@ -619,8 +619,8 @@ export const EXTRA_HELP: Record<string, [string, string]> = {
 		"Environment variables your sandboxed commands keep although they look like credentials. Every other token, key, password and URL with a password is removed before a sandboxed command starts, because it can reach the network without asking. User settings only.",
 	],
 	"safety.liveCheckTargets": [
-		"Live-check login targets",
-		"Target ids whose own login file your sandboxed commands may read, read-only, so a live check of a build can sign in (copilot-sdk targets: the official copilot login in $COPILOT_HOME/config.json). Dispatched workers keep it hidden. User settings only.",
+		"Live-check login connections",
+		"Connection ids whose own login file your sandboxed commands may read, read-only, so a live check of a build can sign in (copilot-sdk connections: the official copilot login in $COPILOT_HOME/config.json). Dispatched workers keep it hidden. User settings only.",
 	],
 	"safety.sandboxUnixSockets": [
 		"Sandbox unix sockets",
@@ -692,7 +692,7 @@ export const EXTRA_HELP: Record<string, [string, string]> = {
 	],
 	"fleet.profiles": [
 		"Worker profiles",
-		"Named target, model, thinking, and placement choices. Use Fleet's profile actions for guided edits, or edit this JSON object.",
+		"Named connection, model, thinking, and placement choices. Use Fleet's profile actions for guided edits, or edit this JSON object.",
 	],
 	models: [
 		"Model tiers",
@@ -816,7 +816,7 @@ export const EXTRA_HELP: Record<string, [string, string]> = {
 	],
 	"systemOne.use": [
 		"Decision engine",
-		"Experimental opt-in. Off until chosen. Names what answers the consult tool, the judge screen and steering triage, one route or an ordered list: jev, memory, main, a declared engine or a target. Applies on the next start. A hosted route receives web and MCP result text at judge time.",
+		"Experimental opt-in. Off until chosen. Names what answers the consult tool, the judge screen and steering triage, one route or an ordered list: jev, memory, main, a declared engine or a connection. Applies on the next start. A hosted route receives web and MCP result text at judge time.",
 	],
 	"fleet.retry.breakerThreshold": [
 		"Failures before cooldown",

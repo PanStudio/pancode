@@ -217,7 +217,7 @@ export function compactArgumentHint(args: CommandArgsSpec | undefined): string |
 const COMPLETION_SLOT_MANIFEST: Readonly<Record<string, CompletionSlotName>> = {
 	"run:pos:agent": "agents",
 	"run:flag:--agent-profile": "agent-profiles",
-	"run:flag:--target": "targets",
+	"run:flag:--connection": "targets",
 	"run:flag:--model": "models",
 	"council:flag:--roster": "rosters",
 	"skill:pos:name": "skills",

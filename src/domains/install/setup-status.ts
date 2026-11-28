@@ -175,7 +175,7 @@ export function describeMissing(
 						sentence: `${missing.target}'s runtime sends no credential, and its endpoint asks for one. ${
 							options.inSession
 								? "Switch to a route that sends one with /model."
-								: "Run: pancode configure to choose a target that sends one"
+								: "Run: pancode configure to choose a connection that sends one"
 						}`,
 						...(options.inSession ? {} : { command: "pancode configure" }),
 					};
@@ -205,11 +205,13 @@ export function describeMissing(
 		case "model": {
 			if (missing.model !== undefined)
 				return { sentence: `${missing.model} is not available on ${missing.target}. Pick another with /model.` };
-			const command = `pancode targets use ${missing.target} --model <model>`;
-			return { sentence: `Target '${missing.target}' has no chat model. Run: ${command}`, command };
+			const command = `pancode connections use ${missing.target} --model <model>`;
+			return { sentence: `Connection '${missing.target}' has no chat model. Run: ${command}`, command };
 		}
 		case "runtime":
-			return { sentence: `Target '${missing.target}' runs on '${missing.runtime}', which cannot drive the main agent.` };
+			return {
+				sentence: `Connection '${missing.target}' runs on '${missing.runtime}', which cannot drive the main agent.`,
+			};
 		case "untested":
 			return { sentence: `${missing.target} has not answered a request yet.` };
 	}

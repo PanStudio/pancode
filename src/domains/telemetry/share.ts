@@ -97,7 +97,7 @@ export const SHARE_PROFILES: Readonly<Record<ShareProfile, ShareProfileDefinitio
 		objects: "none",
 	},
 	report: {
-		summary: "structural, with target ids anonymized too: for an archive linked from a public issue",
+		summary: "structural, with connection ids anonymized too: for an archive linked from a public issue",
 		tiers: ["accountability", "operational"],
 		classes: ["content-free", "structural"],
 		objects: "structure",

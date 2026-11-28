@@ -169,7 +169,7 @@ function validateSafetyReview(issues: Issues, review: unknown, settings: Pancode
 		const parsed = expectString(issues, "safety.review.target", review.target);
 		if (parsed !== undefined && settings.targets.some((target) => target.id === parsed))
 			settings.safety.review.target = parsed;
-		else if (parsed !== undefined) issues.add("safety.review.target", `unknown target '${parsed}'`);
+		else if (parsed !== undefined) issues.add("safety.review.target", `unknown connection '${parsed}'`);
 	}
 	if ("cadenceToolCalls" in review && review.cadenceToolCalls !== null) {
 		const parsed = expectInteger(issues, "safety.review.cadenceToolCalls", review.cadenceToolCalls, { min: 1 });
@@ -251,7 +251,7 @@ export function validateSettings(raw: unknown): SettingsValidationResult {
 				const target = validateTarget(issues, `targets[${index}]`, raw.targets[index], settings.funding);
 				if (!target) continue;
 				if (seen.has(target.id)) {
-					issues.add(`targets[${index}].id`, `duplicate target id '${target.id}'`);
+					issues.add(`targets[${index}].id`, `duplicate connection id '${target.id}'`);
 					continue;
 				}
 				seen.add(target.id);
@@ -541,7 +541,7 @@ function validateFleet(issues: Issues, value: unknown, settings: PancodeSettings
 						if (label !== undefined && labels.has(label)) issues.add(`${memberPath}.label`, "duplicate label");
 						if (label !== undefined) labels.add(label);
 						if (target !== undefined && !settings.targets.some((entry) => entry.id === target))
-							issues.add(`${memberPath}.target`, `unknown target '${target}'`);
+							issues.add(`${memberPath}.target`, `unknown connection '${target}'`);
 						const model =
 							rawMember.model === undefined ? undefined : expectString(issues, `${memberPath}.model`, rawMember.model);
 						const thinkingLevel =
@@ -1103,7 +1103,7 @@ function validateSafety(issues: Issues, value: unknown, settings: PancodeSetting
 							const target = settings.targets.find((candidate) => candidate.id === id);
 							const problem =
 								target === undefined
-									? "no target with this id"
+									? "no connection with this id"
 									: LIVE_CHECK_LOGIN_RUNTIMES.has(target.runtime)
 										? null
 										: `runtime ${target.runtime} has no login file PanCode can reveal (only ${[...LIVE_CHECK_LOGIN_RUNTIMES].join(", ")})`;
@@ -1167,7 +1167,7 @@ function validateSafety(issues: Issues, value: unknown, settings: PancodeSetting
 					const parsed = expectString(issues, "safety.judge.target", judge.target);
 					if (parsed !== undefined && settings.targets.some((target) => target.id === parsed))
 						settings.safety.judge.target = parsed;
-					else if (parsed !== undefined) issues.add("safety.judge.target", `unknown target '${parsed}'`);
+					else if (parsed !== undefined) issues.add("safety.judge.target", `unknown connection '${parsed}'`);
 				}
 				if ("model" in judge && judge.model !== null) {
 					const parsed = expectString(issues, "safety.judge.model", judge.model);

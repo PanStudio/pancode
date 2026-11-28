@@ -5,7 +5,7 @@ import type { PancodeSettings } from "../core/config.js";
 import type { BootOptions } from "./boot-options.js";
 
 /**
- * Settings as a session started with `--target`/`--model` (and `run`'s
+ * Settings as a session started with `--connection`/`--model` (and `run`'s
  * `--thinking`/`--autonomy`) sees them. The caller's copy is untouched, so
  * settings.yaml never learns the session's route.
  */

@@ -525,7 +525,7 @@ export function createCopilotQuotaProvider(options: CopilotQuotaOptions = {}): Q
 			return credentialFingerprint(COPILOT_QUOTA_PROVIDER_ID, `${held.host}\0${held.login}`);
 		},
 		async fetch(): Promise<UsageSnapshot> {
-			if (!hasTarget()) return snapshot("no_credentials", "No GitHub Copilot target is configured");
+			if (!hasTarget()) return snapshot("no_credentials", "No GitHub Copilot connection is configured");
 			const signal = options.readAccount ? null : copilotLocalSignal();
 			if (!options.readQuota) {
 				if (!copilotDiscoveryAllowed()) {

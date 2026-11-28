@@ -148,13 +148,13 @@ async function runTargetWizard(io: SectionIo, options: Parameters<typeof runOnbo
 	if (code !== 0) {
 		// Keep the actual save error visible until the user has read it.
 		await io.rl.text("Press Enter to return");
-		io.warn("Target settings were not saved.");
+		io.warn("Connection settings were not saved.");
 		return;
 	}
 	const changed = readSettings().targets.find(
 		(target) => JSON.stringify(target) !== JSON.stringify(before.find((entry) => entry.id === target.id)),
 	);
-	if (changed) io.ok(`Target ${changed.id} saved`);
+	if (changed) io.ok(`Connection ${changed.id} saved`);
 }
 
 async function askFundingNumber(rl: ConfigurePrompts, label: string): Promise<number | undefined> {
@@ -212,12 +212,12 @@ async function configureTargetFunding(io: SectionIo): Promise<void> {
 	const settings = readSettings();
 	const targets = settings.targets.map((target) => target.id);
 	if (targets.length === 0) {
-		io.warn("Add a target before binding a funding pool.");
+		io.warn("Add a connection before binding a funding pool.");
 		return;
 	}
-	const id = await io.rl.choose("Target for funding", targets, targets[0] ?? "");
+	const id = await io.rl.choose("Connection for funding", targets, targets[0] ?? "");
 	const target = settings.targets.find((entry) => entry.id === id);
-	if (target === undefined) throw new Error("choose a configured target");
+	if (target === undefined) throw new Error("choose a configured connection");
 	const evidence = targetFundingEvidence(target);
 	const declared = Object.keys(settings.funding).filter((key) => settings.funding[key]?.scheme === "declared");
 	const choices = [
@@ -264,7 +264,7 @@ async function configureTargetFunding(io: SectionIo): Promise<void> {
 	}
 	updateSettings((draft) => {
 		const current = draft.targets.find((entry) => entry.id === id);
-		if (current === undefined) throw new Error(`target ${id} no longer exists`);
+		if (current === undefined) throw new Error(`connection ${id} no longer exists`);
 		if (binding === undefined) {
 			delete current.funding;
 			return;
@@ -272,7 +272,7 @@ async function configureTargetFunding(io: SectionIo): Promise<void> {
 		if (pool !== undefined) {
 			if (Object.hasOwn(draft.funding, binding.pool)) throw new Error(`pool ${binding.pool} already exists`);
 			if (binding.detection && targetFundingEvidence(current).observation?.loginStamp !== binding.detection.loginStamp)
-				throw new Error("the target login or route changed; reopen funding to check it again");
+				throw new Error("the connection login or route changed; reopen funding to check it again");
 			draft.funding[binding.pool] = pool;
 		} else if (draft.funding[binding.pool]?.scheme !== "declared") {
 			throw new Error(`pool ${binding.pool} is no longer declared`);
@@ -298,11 +298,11 @@ const CONTENT_PARTS = {
 				]);
 				rows.push([`Funding for ${target.id}`, describeTargetFunding(target, settings.funding)]);
 			}
-			return rows.length ? rows : [["Connections", "No connections yet. Choose Add a target to connect a provider."]];
+			return rows.length ? rows : [["Connections", "No connections yet. Choose Add a connection to connect a provider."]];
 		},
 		actions: [
 			{
-				label: "Add a target",
+				label: "Add a connection",
 				place: "targets",
 				hint: "register a provider endpoint",
 				run: async (io) => {
@@ -318,14 +318,14 @@ const CONTENT_PARTS = {
 				},
 			},
 			{
-				label: "Edit a target",
+				label: "Edit a connection",
 				place: "targets",
 				hint: "endpoint, credentials, model, capabilities",
 				run: async (io) => {
 					const targets = readSettings().targets;
 					if (targets.length === 0) return;
 					const id = await io.rl.choose(
-						"Target to edit",
+						"Connection to edit",
 						targets.map((target) => target.id),
 						targets[0]?.id ?? "",
 					);
@@ -340,43 +340,43 @@ const CONTENT_PARTS = {
 				},
 			},
 			{
-				label: "Rename a target",
+				label: "Rename a connection",
 				place: "targets",
 				run: async (io) => {
 					const ids = readSettings().targets.map((target) => target.id);
 					if (ids.length === 0) return;
-					const id = await io.rl.choose("Target to rename", ids, ids[0] ?? "");
-					const name = await ask(io.rl, "New target id", id);
+					const id = await io.rl.choose("Connection to rename", ids, ids[0] ?? "");
+					const name = await ask(io.rl, "New connection id", id);
 					if (!name || name === id) return;
 					if (ids.includes(name)) {
-						io.warn(`Target id already exists: ${name}`);
+						io.warn(`Connection id already exists: ${name}`);
 						return;
 					}
 					if (runTargetRename(id, name) === 0) io.ok(`Renamed ${id} to ${name}`);
-					else io.warn(`Could not rename target ${id}`);
+					else io.warn(`Could not rename connection ${id}`);
 				},
 			},
 			{
-				label: "Remove a target",
+				label: "Remove a connection",
 				place: "targets",
 				run: async (io) => {
 					const settings = readSettings();
 					const ids = settings.targets.map((target) => target.id);
 					if (ids.length === 0) {
-						io.warn("No targets to remove.");
+						io.warn("No connections to remove.");
 						return;
 					}
 					io.out.write(`  Registered: ${ids.join(", ")}\n`);
-					const chosen = await io.rl.choose("Target to remove", ids, ids[0] ?? "");
+					const chosen = await io.rl.choose("Connection to remove", ids, ids[0] ?? "");
 					if (chosen === null || !ids.includes(chosen)) return;
-					if (await askYesNo(io.rl, `Remove target '${chosen}'?`, false)) {
-						if (runTargetRemove(chosen) === 0) io.ok(`Removed target ${chosen}`);
-						else io.warn(`Could not remove target ${chosen}`);
+					if (await askYesNo(io.rl, `Remove connection '${chosen}'?`, false)) {
+						if (runTargetRemove(chosen) === 0) io.ok(`Removed connection ${chosen}`);
+						else io.warn(`Could not remove connection ${chosen}`);
 					}
 				},
 			},
 			{
-				label: "Funding for a target",
+				label: "Funding for a connection",
 				place: "targets[].funding",
 				hint: "optional fee, grant or electricity facts; does not send requests",
 				run: configureTargetFunding,
@@ -387,8 +387,8 @@ const CONTENT_PARTS = {
 		fields: () => {
 			const settings = readSettings();
 			return [
-				["Chat target", settings.chat.target ?? NONE],
-				["Chat model", settings.chat.model ?? "(target default)"],
+				["Chat connection", settings.chat.target ?? NONE],
+				["Chat model", settings.chat.model ?? "(connection default)"],
 				["Chat thinking", settings.chat.thinkingLevel],
 				["Favorites", listOr(settings.chat.modelPicker.favorites)],
 				["Model cycle set", listOr(settings.chat.modelPicker.cycleSet)],
@@ -409,8 +409,8 @@ const CONTENT_PARTS = {
 		fields: () => {
 			const settings = readSettings();
 			return [
-				["Fleet target", settings.fleet.default.target ?? NONE],
-				["Fleet model", settings.fleet.default.model ?? "(target default)"],
+				["Fleet connection", settings.fleet.default.target ?? NONE],
+				["Fleet model", settings.fleet.default.model ?? "(connection default)"],
 				["Fleet thinking", settings.fleet.default.thinkingLevel],
 				["Concurrency limit", concurrencyLabel(settings.fleet.concurrency)],
 				["Max retries", String(settings.fleet.retry.maxRetries)],
@@ -444,10 +444,10 @@ const CONTENT_PARTS = {
 				["Working-set eviction", onOff(settings.context.workingSet.enabled)],
 				["Tool result cap (bytes)", String(settings.context.toolResultMaxBytes)],
 				[
-					"Memory target",
+					"Memory connection",
 					`${memoryRoute.source === "chat" ? "Chat route (no memory model set): " : ""}${memoryRoute.target ?? "(unset)"}`,
 				],
-				["Memory model", memoryRoute.model ?? (memoryRoute.source === "chat" ? "(unset)" : "(target default)")],
+				["Memory model", memoryRoute.model ?? (memoryRoute.source === "chat" ? "(unset)" : "(connection default)")],
 				["Proactive memory", onOff(settings.context.memory.enabled)],
 			];
 		},

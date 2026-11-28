@@ -227,12 +227,12 @@ function parseInformationFlow(value: unknown, errors: string[]): InformationFlow
 	const targets: Record<string, FlowTargetBinding> = {};
 	if (value.targets !== undefined) {
 		if (!isRecord(value.targets)) {
-			errors.push("informationFlow.targets must be a mapping of target id to { runtime, endpoint }");
+			errors.push("informationFlow.targets must be a mapping of connection id to { runtime, endpoint }");
 		} else {
 			for (const [id, raw] of Object.entries(value.targets)) {
 				const label = `informationFlow.targets.${id}`;
 				if (!ID_RE.test(id)) {
-					errors.push(`${label}: target id must match ${ID_RE}`);
+					errors.push(`${label}: connection id must match ${ID_RE}`);
 					continue;
 				}
 				if (!isRecord(raw)) {

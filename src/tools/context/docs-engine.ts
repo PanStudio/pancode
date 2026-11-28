@@ -636,7 +636,7 @@ function resultPayload(index: DocsIndex, plan: QueryPlan, scored: ReadonlyArray<
 		followUp:
 			results.length > 0
 				? 'Use a relevant hit\'s read.tool and read.args to read exactly its cited section at the bundled absolute path. Do not read the whole guide for a narrow question. Stop once the question is answered; for other sections, call gateway(op="call", capability="pancode_docs", args={query:"<more specific terms>"}).'
-				: "Try PanCode vocabulary such as target, autonomy, dispatch, evidence, middleware, context, validation, install, or model catalog.",
+				: "Try PanCode vocabulary such as connection, autonomy, dispatch, evidence, middleware, context, validation, install, or model catalog.",
 	};
 }
 
@@ -663,7 +663,7 @@ export function listDocsCorpus(): DocsCorpusOutcome {
 		},
 		followUp:
 			'Call gateway(op="call", capability="pancode_docs", args={query:"<terms>"}) to search these bundled docs; omit query to list the corpus. They ship with PanCode and are not workspace files. ' +
-			"Try PanCode vocabulary such as target, autonomy, dispatch, evidence, middleware, context, validation, install, or model catalog.",
+			"Try PanCode vocabulary such as connection, autonomy, dispatch, evidence, middleware, context, validation, install, or model catalog.",
 	};
 	return { ok: true, payload, fileCount: index.files.length };
 }

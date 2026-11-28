@@ -85,7 +85,7 @@ type CouncilRosterResolution = { ok: true; roster: string } | { ok: false; reaso
  */
 const COUNCIL_NO_ROSTER_NOTICE =
 	`/council needs a roster. Declare one under fleet.rosters in settings.yaml, for example ` +
-	`fleet.rosters.${COUNCIL_DEFAULT_ROSTER} with two to five members, each with a label and a target, ` +
+	`fleet.rosters.${COUNCIL_DEFAULT_ROSTER} with two to five members, each with a label and a connection, ` +
 	`then run /council <task> or name another roster with --roster <name>.`;
 
 function knownRosterNames(rosters: CouncilRosters): string[] {

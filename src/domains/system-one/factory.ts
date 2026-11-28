@@ -116,7 +116,7 @@ export function createSystemOne(deps: SystemOneDeps): SystemOneInstance {
 		const cfg = resolved.engine;
 		const effective = effectiveSystemOne(settings, [name]);
 		const target = deps.providers.getTarget(cfg.target) ?? effective.targets.find((entry) => entry.id === cfg.target);
-		if (!target) return { problem: `target '${cfg.target}' is not configured`, cfg };
+		if (!target) return { problem: `connection '${cfg.target}' is not configured`, cfg };
 		const runtime = deps.providers.getRuntime(target.runtime);
 		if (!runtime) return { problem: `runtime '${target.runtime}' is not registered`, cfg };
 		const problem = ENGINE_KINDS[cfg.kind].problem(

@@ -263,13 +263,13 @@ function appendCapabilityDiagnostics(
 	targetId: string,
 ): void {
 	if (!decisions.chat) {
-		diagnostics.push(diagnostic("error", "chat-unsupported", `target '${targetId}' does not advertise chat support`));
+		diagnostics.push(diagnostic("error", "chat-unsupported", `connection '${targetId}' does not advertise chat support`));
 	}
 	if (input.requireTools === true && !decisions.tools) {
-		diagnostics.push(diagnostic("warning", "tools-unsupported", `target '${targetId}' does not support tool calls`));
+		diagnostics.push(diagnostic("warning", "tools-unsupported", `connection '${targetId}' does not support tool calls`));
 	}
 	if (input.requireStreaming === true && !decisions.streaming) {
-		diagnostics.push(diagnostic("error", "streaming-unsupported", `target '${targetId}' cannot stream responses`));
+		diagnostics.push(diagnostic("error", "streaming-unsupported", `connection '${targetId}' cannot stream responses`));
 	}
 	if (input.requireOutputBudget === true && decisions.maxTokens <= 0) {
 		// Unknown is a normal state: no server or profile named a cap, so the configured request
@@ -278,7 +278,7 @@ function appendCapabilityDiagnostics(
 			diagnostic(
 				"info",
 				"output-budget-unknown",
-				`target '${targetId}' does not report an output limit; the request budget applies and the server enforces its own`,
+				`connection '${targetId}' does not report an output limit; the request budget applies and the server enforces its own`,
 			),
 		);
 	}
@@ -288,7 +288,7 @@ function appendCapabilityDiagnostics(
 				diagnostic(
 					"error",
 					"required-capability-missing",
-					`target '${targetId}' does not satisfy required capability '${capability}'`,
+					`connection '${targetId}' does not satisfy required capability '${capability}'`,
 				),
 			);
 		}
@@ -399,13 +399,13 @@ function unknownModelDiagnostic(
 		return diagnostic(
 			"warning",
 			"model-catalog-unreadable",
-			`target '${target.id}' returned no model list, so PanCode could not check whether '${wireModelId}' is served there; requests will send the id as-is. Re-read the catalog with: pancode targets --probe`,
+			`connection '${target.id}' returned no model list, so PanCode could not check whether '${wireModelId}' is served there; requests will send the id as-is. Re-read the catalog with: pancode connections --probe`,
 		);
 	}
 	return diagnostic(
 		"warning",
 		"model-not-in-catalog",
-		`model '${wireModelId}' is not in target '${target.id}' ${sources.join(" or ")}; requests will send the id as-is. Fix the settings entry or add the model to the server if this is unintended.`,
+		`model '${wireModelId}' is not in connection '${target.id}' ${sources.join(" or ")}; requests will send the id as-is. Fix the settings entry or add the model to the server if this is unintended.`,
 	);
 }
 
@@ -430,7 +430,7 @@ export function resolveRuntimeTarget(
 	if (!targetId) {
 		return {
 			ok: false,
-			diagnostics: [diagnostic("error", "target-not-configured", "no target is configured")],
+			diagnostics: [diagnostic("error", "target-not-configured", "no connection is configured")],
 		};
 	}
 
@@ -438,7 +438,7 @@ export function resolveRuntimeTarget(
 	if (!target) {
 		return {
 			ok: false,
-			diagnostics: [diagnostic("error", "target-not-found", `target '${targetId}' not found in settings.targets`)],
+			diagnostics: [diagnostic("error", "target-not-found", `connection '${targetId}' not found in settings.targets`)],
 		};
 	}
 
@@ -457,7 +457,7 @@ export function resolveRuntimeTarget(
 				diagnostic(
 					"error",
 					"runtime-target-unsupported",
-					`target '${targetId}' uses runtime '${runtime.id}' (${runtime.kind}); PanCode cannot drive this runtime as a target`,
+					`connection '${targetId}' uses runtime '${runtime.id}' (${runtime.kind}); PanCode cannot drive this runtime as a connection`,
 				),
 			],
 		};
@@ -471,7 +471,7 @@ export function resolveRuntimeTarget(
 				diagnostic(
 					"error",
 					"runtime-use-unsupported",
-					`target '${targetId}' uses runtime '${runtime.id}' (${runtime.kind}); this runtime is only supported for worker dispatch`,
+					`connection '${targetId}' uses runtime '${runtime.id}' (${runtime.kind}); this runtime is only supported for worker dispatch`,
 				),
 			],
 		};
@@ -481,7 +481,7 @@ export function resolveRuntimeTarget(
 	if (!wireModelId) {
 		return {
 			ok: false,
-			diagnostics: [diagnostic("error", "model-not-configured", `target '${targetId}' has no model configured`)],
+			diagnostics: [diagnostic("error", "model-not-configured", `connection '${targetId}' has no model configured`)],
 		};
 	}
 
@@ -534,7 +534,7 @@ export function resolveRuntimeTarget(
 			diagnostic(
 				"info",
 				"capability-override-ignored",
-				`target '${targetId}' sets ${flag}: true, but the server reports ${flag} unsupported for '${wireModelId}'; the report stands`,
+				`connection '${targetId}' sets ${flag}: true, but the server reports ${flag} unsupported for '${wireModelId}'; the report stands`,
 			),
 		);
 	}
@@ -557,7 +557,7 @@ export function resolveRuntimeTarget(
 			diagnostic(
 				"warning",
 				"tools-probe-failed",
-				`target '${targetId}' model '${wireModelId}' failed the live tool-call probe: ${toolsVerification.error ?? "unknown error"}`,
+				`connection '${targetId}' model '${wireModelId}' failed the live tool-call probe: ${toolsVerification.error ?? "unknown error"}`,
 			),
 		);
 	}

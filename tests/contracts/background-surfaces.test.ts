@@ -197,14 +197,14 @@ test("fleet board tier changes invalidate cached rows and explicit detail overri
 	setPresentationTier("compact");
 	try {
 		const compact = plain(board.render(120));
-		doesNotMatch(compact, /target\s|tokens\s/);
+		doesNotMatch(compact, /connection\s|tokens\s/);
 		// The route and token facts of the selected run are detailed's (boardFacts).
 		setPresentationTier("detailed");
-		match(plain(board.render(120)), /target\s/);
+		match(plain(board.render(120)), /connection\s/);
 		setPresentationTier("compact");
 		strictEqual(plain(board.render(120)), compact);
 		board.toggleDetail();
-		match(plain(board.render(120)), /target\s/);
+		match(plain(board.render(120)), /connection\s/);
 		strictEqual(board.detailExpanded(), true);
 	} finally {
 		setPresentationTier("standard");

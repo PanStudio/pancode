@@ -156,7 +156,7 @@ const llamacppCompletionRuntime: RuntimeDescriptor = {
 	hidden: true,
 	async probe(target: TargetDescriptor, ctx: ProbeContext): Promise<ProbeResult> {
 		const base = targetUrl(target);
-		if (!base) return { ok: false, error: "target has no url" };
+		if (!base) return { ok: false, error: "connection has no url" };
 		const healthOpts = { url: `${base}/health`, timeoutMs: ctx.httpTimeoutMs } as const;
 		const health = await (ctx.signal ? probeHttp({ ...healthOpts, signal: ctx.signal }) : probeHttp(healthOpts));
 		if (!health.ok) return health;
@@ -196,13 +196,13 @@ const llamacppCompletionRuntime: RuntimeDescriptor = {
 	},
 	async *complete(target: TargetDescriptor, opts: CompleteOptions): AsyncIterable<CompletionChunk> {
 		const base = targetUrl(target);
-		if (!base) throw new Error("target has no url");
+		if (!base) throw new Error("connection has no url");
 		const body = await postStream(`${base}/completion`, buildCompleteBody(opts), opts.signal);
 		for await (const chunk of streamSse(body)) yield chunk;
 	},
 	async *infill(target: TargetDescriptor, opts: InfillOptions): AsyncIterable<CompletionChunk> {
 		const base = targetUrl(target);
-		if (!base) throw new Error("target has no url");
+		if (!base) throw new Error("connection has no url");
 		const body = await postStream(`${base}/infill`, buildInfillBody(opts), opts.signal);
 		for await (const chunk of streamSse(body)) yield chunk;
 	},

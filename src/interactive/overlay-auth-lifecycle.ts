@@ -108,7 +108,7 @@ export function createOverlayAuthLifecycle(deps: OverlayAuthLifecycleDeps): Over
 		if (!resolved?.target) {
 			deps.notify(
 				"warning",
-				`connect: unknown target ${reference}. Add it with pancode configure.`,
+				`connect: unknown connection ${reference}. Add it with pancode configure.`,
 				`connect:${reference}`,
 			);
 			return;
@@ -126,10 +126,10 @@ export function createOverlayAuthLifecycle(deps: OverlayAuthLifecycleDeps): Over
 			deps.setOverlayHandle(dialog.handle);
 
 			const probeTarget = async (): Promise<TargetStatus | null> => {
-				dialog.controller.setLines([`Target: ${targetId}`, `Runtime: ${runtimeId}`, "Checking target..."]);
+				dialog.controller.setLines([`Connection: ${targetId}`, `Runtime: ${runtimeId}`, "Checking connection..."]);
 				const status = await deps.providers.probeTarget(targetId);
 				if (!status) {
-					dialog.controller.setLines([`Target: ${targetId}`, "Target check failed: target is not configured."]);
+					dialog.controller.setLines([`Connection: ${targetId}`, "Connection check failed: connection is not configured."]);
 					deps.notify("error", `connect: ${targetId} is not configured`, `connect:${targetId}`);
 					return null;
 				}
@@ -144,13 +144,13 @@ export function createOverlayAuthLifecycle(deps: OverlayAuthLifecycleDeps): Over
 				// A refused key is a credential to replace, not an address to fix, so the way on names Connect.
 				const refused = !answers && status.health.credentialRefused === true;
 				dialog.controller.setLines([
-					`Target: ${targetId}`,
+					`Connection: ${targetId}`,
 					`Runtime: ${runtimeId}`,
 					answers
-						? `Target ready (${health})`
+						? `Connection ready (${health})`
 						: refused
-							? "Target refused the API key"
-							: `Target does not answer (${health})`,
+							? "Connection refused the API key"
+							: `Connection does not answer (${health})`,
 					detail,
 				]);
 				deps.notify(
@@ -170,7 +170,7 @@ export function createOverlayAuthLifecycle(deps: OverlayAuthLifecycleDeps): Over
 			/** Ask for a key, store it, then probe with it. `intro` says why the key is being asked for. */
 			const enterApiKey = async (intro: string): Promise<void> => {
 				authDialogDismiss = dialog.controller.dismiss;
-				dialog.controller.setLines([`Target: ${targetId}`, `Runtime: ${runtime.id}`, intro]);
+				dialog.controller.setLines([`Connection: ${targetId}`, `Runtime: ${runtime.id}`, intro]);
 				deps.requestRender();
 				const apiKey = (await dialog.controller.prompt("API key")).trim();
 				if (apiKey.length === 0) throw new Error("empty API key");
@@ -258,8 +258,8 @@ export function createOverlayAuthLifecycle(deps: OverlayAuthLifecycleDeps): Over
 						await probeTarget();
 					} catch (error) {
 						dialog.controller.setLines([
-							`Target: ${targetId}`,
-							`Target check failed: ${error instanceof Error ? error.message : String(error)}`,
+							`Connection: ${targetId}`,
+							`Connection check failed: ${error instanceof Error ? error.message : String(error)}`,
 						]);
 						deps.requestRender();
 					} finally {
@@ -270,11 +270,11 @@ export function createOverlayAuthLifecycle(deps: OverlayAuthLifecycleDeps): Over
 				return;
 			}
 			if (resolved.runtime.auth === "api-key") {
-				runKeyFlow(() => enterApiKey("API key required before PanCode can connect to this target."));
+				runKeyFlow(() => enterApiKey("API key required before PanCode can connect to this connection."));
 				return;
 			}
 			authDialogDismiss = dialog.controller.dismiss;
-			dialog.controller.setLines([`Target: ${targetId}`, `Runtime: ${runtime.id}`, "Starting authorization flow..."]);
+			dialog.controller.setLines([`Connection: ${targetId}`, `Runtime: ${runtime.id}`, "Starting authorization flow..."]);
 			void (async () => {
 				let manualCodeTimer: NodeJS.Timeout | null = null;
 				try {
@@ -298,7 +298,7 @@ export function createOverlayAuthLifecycle(deps: OverlayAuthLifecycleDeps): Over
 							maybeOpenExternalUrl(verificationUri);
 						},
 						onPrompt: async (prompt) => (await dialog.controller.prompt(prompt.message)).trim(),
-						onSelect: (prompt) => selectOAuthOption(prompt, [`Target: ${targetId}`, `Runtime: ${runtime.id}`]),
+						onSelect: (prompt) => selectOAuthOption(prompt, [`Connection: ${targetId}`, `Runtime: ${runtime.id}`]),
 						onManualCodeInput: async () =>
 							await new Promise<string>((resolve, reject) => {
 								manualCodeTimer = setTimeout(() => {

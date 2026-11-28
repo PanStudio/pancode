@@ -850,7 +850,7 @@ class UsageOverlayBody implements Component, RowBudgetedBody, GrowableBody {
 					: wrapTextWithAnsi(
 							theme.fg(
 								"annotation",
-								"No account quota is known. It appears here once a signed-in subscription target reports its limits; local and API-key targets report none.",
+								"No account quota is known. It appears here once a signed-in subscription connection reports its limits; local and API-key connections report none.",
 							),
 							contentWidth,
 						)),

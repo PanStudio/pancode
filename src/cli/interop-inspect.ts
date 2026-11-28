@@ -195,7 +195,7 @@ export async function runInteropInspect(args: ReadonlyArray<string>): Promise<nu
 	else
 		for (const agent of snapshot.agents) {
 			process.stdout.write(
-				`${agent.label}: ${agent.presence}; version ${agent.version ?? "unknown"}; ACP ${agent.acp ? (agent.configured ? "configured" : "not configured") : "unsupported"}; adapter ${agent.adapter ?? "unsupported"}; headless ${agent.headless ? `${agent.headless.runtimeId} (${agent.headless.binaryPresent ? "binary installed" : "install CLI"}, ${agent.headless.configured ? "target configured" : "target needed"})` : "unsupported"}; pane ${agent.paneEligible ? "CLI installed" : agent.modes.some((mode) => mode.mode === "pane") ? "unavailable" : "unsupported"}\n`,
+				`${agent.label}: ${agent.presence}; version ${agent.version ?? "unknown"}; ACP ${agent.acp ? (agent.configured ? "configured" : "not configured") : "unsupported"}; adapter ${agent.adapter ?? "unsupported"}; headless ${agent.headless ? `${agent.headless.runtimeId} (${agent.headless.binaryPresent ? "binary installed" : "install CLI"}, ${agent.headless.configured ? "connection configured" : "connection needed"})` : "unsupported"}; pane ${agent.paneEligible ? "CLI installed" : agent.modes.some((mode) => mode.mode === "pane") ? "unavailable" : "unsupported"}\n`,
 			);
 			for (const mode of agent.modes) {
 				process.stdout.write(`  ${mode.mode}: ${mode.status}; ${mode.reason}. Next: ${mode.setupAction}\n`);

@@ -63,15 +63,15 @@ test("run --agent with an API key refuses a target on an unregistered runtime", 
 	process.chdir(cwd);
 	try {
 		const run = (target: string) =>
-			runPancodeRun(["--agent", "coder", "--read-only", "--target", target, "audit"], {
+			runPancodeRun(["--agent", "coder", "--read-only", "--connection", target, "audit"], {
 				apiKey: "fixture-key",
 				noContextFiles: true,
 			});
 		strictEqual(await run("box"), 1);
-		match(stderr, /cannot use target 'box': runtime 'no-such-runtime' is not registered/u);
+		match(stderr, /cannot use connection 'box': runtime 'no-such-runtime' is not registered/u);
 		stderr = "";
 		strictEqual(await run("nosuch"), 2);
-		match(stderr, /target 'nosuch' not found/u);
+		match(stderr, /connection 'nosuch' not found/u);
 	} finally {
 		process.chdir(original);
 		home.restore();

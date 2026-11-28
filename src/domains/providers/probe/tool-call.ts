@@ -7,7 +7,7 @@
  * with the runtime's synthesized model, so it cannot pass while a turn fails.
  *
  * It generates tokens and can load a cold model, so callers run it only when
- * the operator asked for it (`targets --probe --tools`).
+ * the operator asked for it (`connections --probe --tools`).
  */
 import { performance } from "node:perf_hooks";
 import { Type } from "typebox";

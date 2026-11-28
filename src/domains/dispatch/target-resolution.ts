@@ -275,7 +275,8 @@ function pickCapabilityMatchedWorker(
 export function targetUsabilityProblem(status: TargetStatus | null | undefined): string | null {
 	if (!status) return null;
 	if (!status.runtime) return runtimeNotRegistered(status.target.runtime);
-	if (!isTargetEligibleRuntime(status.runtime)) return `runtime '${status.runtime.id}' is not a fleet-dispatch target`;
+	if (!isTargetEligibleRuntime(status.runtime))
+		return `runtime '${status.runtime.id}' is not a fleet-dispatch connection`;
 	if (!status.available) return status.reason.trim() || "unavailable";
 	if (status.health.status === "down") {
 		return status.health.lastError ? `health down: ${status.health.lastError}` : "health down";
@@ -295,12 +296,12 @@ export function requiredCapabilityFailureDetail(
 	required: ReadonlyArray<string> | undefined,
 ): string | null {
 	if (!required || required.length === 0) return null;
-	if (!capabilities) return `capability info unavailable for target '${targetId}'`;
+	if (!capabilities) return `capability info unavailable for connection '${targetId}'`;
 	const caps = capabilities as unknown as Record<string, unknown>;
 	for (const name of required) {
 		const value = caps[name];
 		if (value === undefined || value === false || value === 0 || value === "") {
-			return `capability '${name}' not supported by target '${targetId}'`;
+			return `capability '${name}' not supported by connection '${targetId}'`;
 		}
 	}
 	return null;
@@ -344,7 +345,7 @@ function pickBestAvailableWorker(
 
 function compactRouteReason(reason: string | null | undefined): string {
 	const compact = reason ? compactDiagnosticText(reason) : "";
-	return compact.length > 0 ? compact : "no usable target";
+	return compact.length > 0 ? compact : "no usable connection";
 }
 
 function resolveSelectedDispatchTarget(
@@ -358,7 +359,11 @@ function resolveSelectedDispatchTarget(
 ): TargetResolutionAttempt {
 	const target = providers.getTarget(targetId);
 	if (!target) {
-		return { ok: false, reason: `target '${targetId}' not found`, message: `dispatch: target '${targetId}' not found` };
+		return {
+			ok: false,
+			reason: `connection '${targetId}' not found`,
+			message: `dispatch: connection '${targetId}' not found`,
+		};
 	}
 	const runtime = providers.getRuntime(target.runtime);
 	if (!runtime) {
@@ -371,8 +376,8 @@ function resolveSelectedDispatchTarget(
 	if (!isTargetEligibleRuntime(runtime)) {
 		return {
 			ok: false,
-			reason: `runtime '${runtime.id}' is not a fleet-dispatch target`,
-			message: `dispatch: target '${targetId}' uses runtime '${runtime.id}' (${runtime.kind}); this runtime is not a fleet-dispatch target`,
+			reason: `runtime '${runtime.id}' is not a fleet-dispatch connection`,
+			message: `dispatch: connection '${targetId}' uses runtime '${runtime.id}' (${runtime.kind}); this runtime is not a fleet-dispatch connection`,
 		};
 	}
 	const status = providers.list().find((entry) => entry.target.id === target.id);
@@ -381,7 +386,7 @@ function resolveSelectedDispatchTarget(
 		return {
 			ok: false,
 			reason: statusProblem,
-			message: `dispatch: target '${targetId}' unavailable: ${statusProblem}`,
+			message: `dispatch: connection '${targetId}' unavailable: ${statusProblem}`,
 		};
 	}
 	const matchingDefault = workerDefault?.target === targetId ? workerDefault : null;
@@ -390,8 +395,8 @@ function resolveSelectedDispatchTarget(
 	if (!requestedWireModelId) {
 		return {
 			ok: false,
-			reason: `no model for target '${targetId}'`,
-			message: `dispatch: no model for target '${targetId}' (set a fleet profile model or target.defaultModel)`,
+			reason: `no model for connection '${targetId}'`,
+			message: `dispatch: no model for connection '${targetId}' (set a fleet profile model or target.defaultModel)`,
 		};
 	}
 	const wireModelId = status ? canonicalizeWireModelId(status, requestedWireModelId) : requestedWireModelId;
@@ -409,7 +414,7 @@ function resolveSelectedDispatchTarget(
 		return {
 			ok: false,
 			reason: detail,
-			message: `dispatch: target resolution failed: ${detail}`,
+			message: `dispatch: connection resolution failed: ${detail}`,
 		};
 	}
 	const modelCapabilities = resolved.target.capabilities;
@@ -453,7 +458,7 @@ function profileRouteSelection(agentId: string, profileName: string, workerProfi
 			label: `agent ${agentId} profile ${profileName}`,
 			targetId: null,
 			selectedWorkerTarget: profile,
-			problem: `fleet profile '${profileName}' has no target`,
+			problem: `fleet profile '${profileName}' has no connection`,
 		};
 	}
 	return {
@@ -486,7 +491,7 @@ export function resolveDispatchTarget(
 				? profile
 				: null;
 		const attempt = resolveSelectedDispatchTarget(req, recipe, workerDefault, routeProfile, providers, explicitTarget);
-		if (attempt.ok) return { ...attempt.target, routeSource: "target named in the call" };
+		if (attempt.ok) return { ...attempt.target, routeSource: "connection named in the call" };
 		throw new Error(attempt.message);
 	}
 
@@ -521,12 +526,12 @@ export function resolveDispatchTarget(
 		);
 		if (capabilityMatchedWorker?.target) {
 			selection = {
-				label: `capability/runtime matched target ${capabilityMatchedWorker.target}`,
+				label: `capability/runtime matched connection ${capabilityMatchedWorker.target}`,
 				targetId: capabilityMatchedWorker.target,
 				selectedWorkerTarget: capabilityMatchedWorker,
 				problem: null,
 			};
-			source = "fleet target matching the required capabilities";
+			source = "fleet connection matching the required capabilities";
 		}
 	}
 
@@ -545,7 +550,7 @@ export function resolveDispatchTarget(
 			selection = {
 				...selection,
 				targetId: null,
-				problem: `fleet default target '${selection.targetId}' does not use requested runtime '${req.workerRuntime}'`,
+				problem: `fleet default connection '${selection.targetId}' does not use requested runtime '${req.workerRuntime}'`,
 			};
 		}
 	}
@@ -575,7 +580,7 @@ export function resolveDispatchTarget(
 	);
 	if (fallback) {
 		const reason = compactRouteReason(selection.problem);
-		const warning = `dispatch: ${selection.label} unavailable (${reason}); using best-available target ${fallback.status.target.id}`;
+		const warning = `dispatch: ${selection.label} unavailable (${reason}); using best-available connection ${fallback.status.target.id}`;
 		const attempt = resolveSelectedDispatchTarget(
 			req,
 			recipe,
@@ -586,14 +591,14 @@ export function resolveDispatchTarget(
 			warning,
 		);
 		if (attempt.ok)
-			return { ...attempt.target, routeSource: `best-available target; ${selection.label} unavailable (${reason})` };
+			return { ...attempt.target, routeSource: `best-available connection; ${selection.label} unavailable (${reason})` };
 		throw new Error(`${warning}; fallback failed (${compactRouteReason(attempt.reason)})`);
 	}
 
 	const runtimeSuffix = req.workerRuntime ? ` for runtime '${req.workerRuntime}'` : "";
-	const base = `dispatch: ${selection.label} unavailable (${compactRouteReason(selection.problem)}); no best-available dispatch target found${runtimeSuffix}`;
+	const base = `dispatch: ${selection.label} unavailable (${compactRouteReason(selection.problem)}); no best-available dispatch connection found${runtimeSuffix}`;
 	if (selection.label === "fleet default" && selection.problem === "not configured") {
-		throw new Error(`${base} (set the fleet default, add a fleet profile, or pass target)`);
+		throw new Error(`${base} (set the fleet default, add a fleet profile, or pass connection)`);
 	}
 	throw new Error(base);
 }
@@ -605,13 +610,13 @@ export function enforceCapabilityGate(
 ): void {
 	if (!required || required.length === 0) return;
 	if (!capabilities) {
-		throw new Error(`dispatch: admission denied: capability info unavailable for target '${targetId}'`);
+		throw new Error(`dispatch: admission denied: capability info unavailable for connection '${targetId}'`);
 	}
 	const caps = capabilities as unknown as Record<string, unknown>;
 	for (const name of required) {
 		const value = caps[name];
 		if (value === undefined || value === false || value === 0 || value === "") {
-			throw new Error(`dispatch: admission denied: capability '${name}' not supported by target '${targetId}'`);
+			throw new Error(`dispatch: admission denied: capability '${name}' not supported by connection '${targetId}'`);
 		}
 	}
 }

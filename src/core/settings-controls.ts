@@ -52,7 +52,7 @@ export function settingInactiveNote(
 		settings.context.semantic.enabled &&
 		!semanticUsable(settings.context.semantic)
 	)
-		return "Inactive until target, model and assetIdentity are pinned with pancode semantic configure.";
+		return "Inactive until connection, model and assetIdentity are pinned with pancode semantic configure.";
 	if (path === "chat.prewarm" && settings.chat.prewarm) {
 		const target = settings.targets.find((entry) => entry.id === settings.chat.target);
 		const localNative = target ? facts.localNative(target.runtime) : false;
@@ -457,7 +457,7 @@ export function applyControlValue(
 		path === "chat.modelPicker.favorites" &&
 		JSON.stringify(value) !== JSON.stringify(result.settings.chat.modelPicker.favorites)
 	)
-		throw new Error("Use target-id/model-id favorites from an existing connection.");
+		throw new Error("Use connection-id/model-id favorites from an existing connection.");
 	setAtPath(settings, path, getAtPath(candidate, path));
 	if (routeRoot) setAtPath(settings, `${routeRoot}.model`, getAtPath(candidate, `${routeRoot}.model`));
 }

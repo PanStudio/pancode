@@ -590,7 +590,7 @@ function resolveThinkingCapability(
 	if (applied.thinkingActive && mechanism === "budget-tokens" && budgetEnforcement === "informational") {
 		applied = appendNotice(
 			applied,
-			"target does not expose an enforceable per-request thinking budget; level is advisory",
+			"connection does not expose an enforceable per-request thinking budget; level is advisory",
 			"applied",
 		);
 	}

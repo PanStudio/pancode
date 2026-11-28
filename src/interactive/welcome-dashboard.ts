@@ -235,7 +235,7 @@ function deriveRoute(
 	if (targetLabel === null || modelLabel === null) return { route: "unset", routeReason: null };
 	// A target id that matches no listed target is a real misconfiguration, not an
 	// unprobed one.
-	if (current === null) return { route: "unavailable", routeReason: "no such target in settings" };
+	if (current === null) return { route: "unavailable", routeReason: "no such connection in settings" };
 	// `available: false` is decided from configuration and auth without probing.
 	if (!current.available || current.health.status === "down")
 		return { route: "unavailable", routeReason: shortRouteReason(current) };
@@ -412,7 +412,7 @@ function healthValue(theme: PancodeTheme, stats: WelcomeDashboardStats, room: nu
 			theme,
 			[
 				{ text: theme.fg("success", `${GLYPH.ok} ready`), rank: 0 },
-				...(target ? [{ text: theme.fg("body", `${target} target healthy`), rank: 1 }] : []),
+				...(target ? [{ text: theme.fg("body", `${target} connection healthy`), rank: 1 }] : []),
 			],
 			room,
 		);
@@ -422,7 +422,7 @@ function healthValue(theme: PancodeTheme, stats: WelcomeDashboardStats, room: nu
 			theme,
 			[
 				{ text: theme.fg("annotation", "checking"), rank: 0 },
-				...(target ? [{ text: theme.fg("annotation", `${target} target`), rank: 1 }] : []),
+				...(target ? [{ text: theme.fg("annotation", `${target} connection`), rank: 1 }] : []),
 			],
 			room,
 		);

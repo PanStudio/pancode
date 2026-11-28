@@ -145,9 +145,9 @@ function formatRelativeTime(iso: string | null | undefined, now: number = Date.n
 function shortTarget(meta: SessionMeta): string {
 	const target = sanitizeCallTargetText(meta.target ?? "");
 	const model = sanitizeCallTargetText(meta.model ?? "");
-	if (!target && !model) return "no target";
+	if (!target && !model) return "no connection";
 	if (target && model) return `${target} ${GLYPH.sep} ${model}`;
-	return target || model || "no target";
+	return target || model || "no connection";
 }
 
 function previewLine(meta: SessionMeta): string {

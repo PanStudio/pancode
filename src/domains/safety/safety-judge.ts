@@ -466,7 +466,7 @@ export function createSafetyJudge(deps: SafetyJudgeDeps): SafetyJudgeSeat {
 				return { kind: "park", cause, gateReason: noVerdictReason(cause, detail), build, latencyMs };
 			};
 			const targetId = config.target;
-			if (targetId === null) return noVerdict("no-route", "no judge target and no chat route");
+			if (targetId === null) return noVerdict("no-route", "no judge connection and no chat route");
 			const consult = async (): Promise<SafetyJudgeOutcome> => {
 				const call: ClassifierCall = {
 					tool: subject.tool,

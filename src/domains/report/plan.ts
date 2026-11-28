@@ -141,7 +141,7 @@ const MASK_NOUNS: Readonly<Record<MaskKind, [string, string]>> = {
 	project: ["project name", "project names"],
 	branch: ["branch name", "branch names"],
 	remote: ["repository name", "repository names"],
-	target: ["target name", "target names"],
+	target: ["connection name", "connection names"],
 };
 
 export function maskNoun(kind: MaskKind, count: number): string {

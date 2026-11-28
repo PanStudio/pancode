@@ -235,13 +235,13 @@ export async function handleRun(
 	if (options.target && options.workerProfile) {
 		deps.notice(
 			"warn",
-			`--target ${options.target} takes precedence; --agent-profile ${options.workerProfile} will be ignored`,
+			`--connection ${options.target} takes precedence; --agent-profile ${options.workerProfile} will be ignored`,
 		);
 	}
 	if (options.target && options.workerRuntime) {
 		deps.notice(
 			"warn",
-			`--target ${options.target} takes precedence; --runtime ${options.workerRuntime} will be ignored`,
+			`--connection ${options.target} takes precedence; --runtime ${options.workerRuntime} will be ignored`,
 		);
 	}
 	await runAttributed(
@@ -285,7 +285,7 @@ export function externalIgnoredFlags(options: RunCommandOptions): string[] {
 	const used: Array<[boolean, string]> = [
 		[options.workerProfile !== undefined, "--agent-profile"],
 		[options.workerRuntime !== undefined, "--runtime"],
-		[options.target !== undefined, "--target"],
+		[options.target !== undefined, "--connection"],
 		[options.model !== undefined, "--model"],
 		[options.thinkingLevel !== undefined, "--thinking"],
 		[options.toolProfile !== undefined, "--tool-profile"],
@@ -526,8 +526,8 @@ function councilFailureWords(message: string): string {
 	const body = (/^\[(?:operator )?approval\]/u.test(lines[0] ?? "") ? lines.slice(1) : lines).join(" ").trim();
 	const headline = workerFailureHeadline(body);
 	// Admission takes a council whole, so one unreachable member target keeps every member from starting.
-	const unreachable = /^its target (\S+) is not reachable/u.exec(headline ?? "");
-	if (unreachable !== null) return `a member's target ${unreachable[1]} is not reachable, so no member ran`;
+	const unreachable = /^its connection (\S+) is not reachable/u.exec(headline ?? "");
+	if (unreachable !== null) return `a member's connection ${unreachable[1]} is not reachable, so no member ran`;
 	return headline ?? (body.length > 0 ? body : "the council stopped before any member answered");
 }
 

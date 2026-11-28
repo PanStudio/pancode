@@ -181,7 +181,7 @@ export function eligibleAlternateRoute(
 				settings,
 			);
 			if (identity.targetId !== route.targetId) {
-				return { candidate, unavailable: `route resolved to target '${identity.targetId}'` };
+				return { candidate, unavailable: `route resolved to connection '${identity.targetId}'` };
 			}
 			if (identity.targetId === run.targetId && identity.wireModelId === run.wireModelId) {
 				return { candidate, unavailable: "route resolved to the failed route" };

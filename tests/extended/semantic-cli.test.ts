@@ -14,7 +14,7 @@ it("parses semantic pins, inbox operations and bounded search filters", () => {
 		parseSemanticArgs(
 			[
 				"configure",
-				"--target",
+				"--connection",
 				"embed",
 				"--model",
 				"gemma",
@@ -45,7 +45,7 @@ it("parses semantic pins, inbox operations and bounded search filters", () => {
 	});
 	assert.equal(
 		parseSemanticArgs(
-			["configure", "--target", "embed", "--model", "gemma", "--asset-identity", "hash", "--background"],
+			["configure", "--connection", "embed", "--model", "gemma", "--asset-identity", "hash", "--background"],
 			cwd,
 		).request.command,
 		"configure",
@@ -53,7 +53,7 @@ it("parses semantic pins, inbox operations and bounded search filters", () => {
 	assert.equal(
 		(
 			parseSemanticArgs(
-				["configure", "--target", "embed", "--model", "gemma", "--asset-identity", "hash", "--background"],
+				["configure", "--connection", "embed", "--model", "gemma", "--asset-identity", "hash", "--background"],
 				cwd,
 			).request as { background?: boolean }
 		).background,
@@ -123,7 +123,7 @@ it("refuses missing pins, unbounded results and invalid flags before executing",
 	let calls = 0;
 	for (const args of [
 		["configure"],
-		["configure", "--target", "x", "--model", "m"],
+		["configure", "--connection", "x", "--model", "m"],
 		["inbox", "add", "science"],
 		["inbox", "add", "science", "--id", "x", "--scope", "foreign"],
 		["reembed"],

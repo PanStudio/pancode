@@ -346,7 +346,7 @@ export function buildDispatchWorkerSpec(input: DispatchWorkerSpecInput, config?:
 		// D13: a ceiling PanCode cannot apply refuses rather than runs unbounded.
 		if (input.target.runtime.kind !== "http")
 			throw new Error(
-				`dispatch: safety.resources.workers is set but the ${input.target.runtime.kind} runtime ${input.target.runtime.id} runs its own commands, which PanCode cannot bound; unset the worker ceilings or dispatch to a target PanCode runs the tools for.`,
+				`dispatch: safety.resources.workers is set but the ${input.target.runtime.kind} runtime ${input.target.runtime.id} runs its own commands, which PanCode cannot bound; unset the worker ceilings or dispatch to a connection PanCode runs the tools for.`,
 			);
 		limits.resources = resources;
 	}

@@ -22,7 +22,7 @@ function foundName(candidate: Candidate<TargetDescriptor>): string {
 		case "stored-login":
 			return `a stored sign-in for ${candidate.target.runtime}`;
 		default:
-			return `target ${candidate.target.id}`;
+			return `connection ${candidate.target.id}`;
 	}
 }
 

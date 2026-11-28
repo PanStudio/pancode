@@ -132,7 +132,7 @@ export function selectProjectPreload(
 	}
 	const retrieval =
 		providerSupportsTools === false
-			? "Remaining source text is unavailable to this target and cannot be recovered with tools in this session. Paths are source references."
+			? "Remaining source text is unavailable to this connection and cannot be recovered with tools in this session. Paths are source references."
 			: options.externalReadTools
 				? "External read tools are unknown. If available and permitted, read the listed omitted physical lines with your file-reading tool. Otherwise report the missing guidance to the parent. Reads use current disk content, which may differ from the captured source."
 				: `${providerSupportsTools === null ? "If tools are available, read" : "Read"} each omitted suffix with read({path: ABSOLUTE_PATH, offset: FIRST_OMITTED_LINE, limit: 200}); continue as needed. Reads use current disk content, which may differ from the captured source.`;

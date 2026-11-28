@@ -186,7 +186,7 @@ export function fleetEndpointRows(providers: ProvidersContract | undefined): Set
 		const slots = `slots ${usage[key] ?? 0}/${endpoint.limit}`;
 		return settingItem(`fleet.endpoints.${key}`, slots, {
 			label: `endpoint ${endpoint.label}`,
-			description: `Targets: ${(targetsByEndpoint.get(key) ?? []).join(", ")} ${GLYPH.sep} Limit source: ${endpoint.source}`,
+			description: `Connections: ${(targetsByEndpoint.get(key) ?? []).join(", ")} ${GLYPH.sep} Limit source: ${endpoint.source}`,
 			affordance: "read-only inference endpoint capacity",
 			readOnly: true,
 			presentationKind: "status",

@@ -143,16 +143,16 @@ export function groupHeader(
 export function targetAddCta(): SettingsCenterItem {
 	return {
 		id: "targets.add-cta",
-		label: "Add a target",
-		currentValue: "Open target wizard",
-		description: "Add a target without leaving the TUI. Review and save its runtime, credentials, URL and model.",
+		label: "Add a connection",
+		currentValue: "Open connection wizard",
+		description: "Add a connection without leaving the TUI. Review and save its runtime, credentials, URL and model.",
 		section: "models",
 		configPath: "targets.add-cta",
-		affordance: "Enter: open target wizard",
+		affordance: "Enter: open connection wizard",
 		scope: "live",
 		readOnly: false,
 		presentationKind: "action",
-		valueSegments: [{ text: "Open target wizard", tone: "neutral" }],
+		valueSegments: [{ text: "Open connection wizard", tone: "neutral" }],
 	};
 }
 

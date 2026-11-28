@@ -115,7 +115,7 @@ function armRunTimeout(seconds: number): HeadlessRunDeadline {
 }
 
 /**
- * True when an explicit --target override names a target that is not in
+ * True when an explicit --connection override names a target that is not in
  * effective settings.targets. Include project overlays just as the runtime
  * resolver does (providers.getTarget), so this mirrors its `target-not-found`
  * verdict without booting the providers domain. Unreadable/invalid settings
@@ -163,7 +163,7 @@ export async function borrowHeadlessRoute(
 		// The memory refusal is the whole answer; booting on would add the generic no-target line after it.
 		if (found.reservedForMemory !== undefined && model === undefined) {
 			writeRunDiagnostic(
-				`pancode run: the only usable saved target, ${found.reservedForMemory}, is reserved for memory (context.memory.target); add a chat target or pass --target <id>\n`,
+				`pancode run: the only usable saved connection, ${found.reservedForMemory}, is reserved for memory (context.memory.target); add a chat connection or pass --connection <id>\n`,
 			);
 			return 2;
 		}
@@ -171,7 +171,7 @@ export async function borrowHeadlessRoute(
 	}
 	if (found.kind === "several") {
 		const list = found.routes.map((route) => `${route.target.id} from ${route.source}`).join(", ");
-		writeRunDiagnostic(`pancode run: several routes are usable (${list}); choose one with --target <id>\n`);
+		writeRunDiagnostic(`pancode run: several routes are usable (${list}); choose one with --connection <id>\n`);
 		return 2;
 	}
 	if (found.kind === "needs-model") {
@@ -615,7 +615,7 @@ async function executeRunCommand(
 						writeLocalAnswer(preflight.display, parsed.json === true);
 						return 0;
 					}
-					// An explicit --target override is a one-run target; a missing id is an
+					// An explicit --connection override is a one-run target; a missing id is an
 					// operator config error, not an assistant response. Reject it before the
 					// headless turn so the resolver diagnostic never streams to stdout as a
 					// message_end/agent_end assistant turn.
@@ -649,14 +649,14 @@ async function executeRunCommand(
 						}
 						if (unconfigured) {
 							writeRunDiagnostic(
-								"pancode run: not configured: no model target is saved; run `pancode configure` or pass --target <id>\n",
+								"pancode run: not configured: no model connection is saved; run `pancode configure` or pass --connection <id>\n",
 								"not_configured",
 							);
 							return 2;
 						}
 					}
 					if (borrowed === null && parsed.target !== undefined && explicitTargetMissing(parsed.target)) {
-						writeRunDiagnostic(`pancode run: target '${parsed.target}' not found in settings.targets\n`);
+						writeRunDiagnostic(`pancode run: connection '${parsed.target}' not found in settings.targets\n`);
 						return 2;
 					}
 					// The boot path's graph loads here, after every pre-boot refusal above has had its say.
@@ -842,12 +842,12 @@ async function runDispatch(
 	}
 	if (parsed.target && parsed.agentProfile) {
 		process.stderr.write(
-			`pancode run: --target ${parsed.target} takes precedence; --agent-profile ${parsed.agentProfile} will be ignored\n`,
+			`pancode run: --connection ${parsed.target} takes precedence; --agent-profile ${parsed.agentProfile} will be ignored\n`,
 		);
 	}
 	if (parsed.target && parsed.agentRuntime) {
 		process.stderr.write(
-			`pancode run: --target ${parsed.target} takes precedence; --agent-runtime ${parsed.agentRuntime} will be ignored\n`,
+			`pancode run: --connection ${parsed.target} takes precedence; --agent-runtime ${parsed.agentRuntime} will be ignored\n`,
 		);
 	}
 
@@ -965,18 +965,18 @@ async function runDispatch(
 		const targetId =
 			parsed.target ?? profileTargetId ?? runtimeTargetId ?? settings.fleet?.default?.target ?? settings.chat?.target;
 		if (!targetId) {
-			writeRunDiagnostic("pancode run: --api-key supplied but no target resolved; pass --target <id>\n");
+			writeRunDiagnostic("pancode run: --api-key supplied but no connection resolved; pass --connection <id>\n");
 			return await stopDomains(2);
 		}
 		const target = providers.getTarget(targetId);
 		if (!target) {
-			writeRunDiagnostic(`pancode run: --api-key supplied but target '${targetId}' not found\n`);
+			writeRunDiagnostic(`pancode run: --api-key supplied but connection '${targetId}' not found\n`);
 			return await stopDomains(2);
 		}
 		// Dispatch refuses this target the same way, with exit 1, when no key is supplied.
 		const runtime = providers.getRuntime(target.runtime);
 		if (!runtime) {
-			writeRunDiagnostic(`pancode run: cannot use target '${target.id}': ${runtimeNotRegistered(target.runtime)}\n`);
+			writeRunDiagnostic(`pancode run: cannot use connection '${target.id}': ${runtimeNotRegistered(target.runtime)}\n`);
 			return await stopDomains(1);
 		}
 		providers.auth.setRuntimeOverrideForTarget(target, runtime, options.apiKey);
@@ -1315,7 +1315,7 @@ async function isAdmissionRefusal(
 	const spec = await import("../domains/agents/spec.js");
 	return (
 		(failedSpec ? spec.isUserOriginAudienceRefusal(failedSpec, msg) : false) ||
-		/target '.+' not found/.test(msg) ||
+		/connection '.+' not found/.test(msg) ||
 		msg.includes("unknown agent recipe") ||
 		msg.includes("admission") ||
 		msg.includes("capability") ||
@@ -1345,7 +1345,7 @@ function shadowStandInCommand(parsed: RunCliArgs, standIn: string): string {
 	const parts = ["pancode run", "--agent", standIn, "--read-only"];
 	if (parsed.cwd !== undefined) parts.push("--cwd", quote(parsed.cwd));
 	if (parsed.review !== undefined) parts.push("--review", quote(parsed.review));
-	if (parsed.target !== undefined) parts.push("--target", quote(parsed.target));
+	if (parsed.target !== undefined) parts.push("--connection", quote(parsed.target));
 	if (parsed.model !== undefined) parts.push("--model", quote(parsed.model));
 	if (parsed.thinking !== undefined) parts.push("--thinking", parsed.thinking);
 	parts.push('"<task>"');

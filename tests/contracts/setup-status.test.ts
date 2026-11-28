@@ -151,7 +151,7 @@ test("a chat route at an address a project chose says to define it in user setti
 	assert.ok(missing);
 	assert.deepEqual(describeMissing(missing), { sentence });
 	assert.equal(describeMissing(missing, { inSession: true }).sentence, sentence);
-	assert.equal(chatReadinessFinding(false, []).detail, `target 'lab-gateway', model 'gpt-x'; ${sentence}`);
+	assert.equal(chatReadinessFinding(false, []).detail, `connection 'lab-gateway', model 'gpt-x'; ${sentence}`);
 	const pure = setupStatus({
 		chat: { target: "t" },
 		target: { ...base, credential: { available: false, provider: "openai", envVariable: "LAB_KEY", projectUrl: url } },

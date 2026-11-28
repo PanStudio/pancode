@@ -129,7 +129,7 @@ it("shows the fleet default that targets use --fleet-model sets, with no profile
 	});
 	const unset = await stdoutOf(["profile", "list"]);
 	strictEqual(unset.code, 0);
-	match(unset.output, /^fleet default: not set\. run `pancode targets use <id> --fleet-model <model>`/mu);
+	match(unset.output, /^fleet default: not set\. run `pancode connections use <id> --fleet-model <model>`/mu);
 
 	updateSettings((value) => {
 		value.fleet.default = { target: "blade", model: "dynamo/fast", thinkingLevel: "off" };

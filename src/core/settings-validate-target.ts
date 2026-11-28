@@ -649,7 +649,7 @@ export function validateTarget(
 	}
 	if ("contextTier" in value) {
 		if (runtime !== "copilot-sdk") {
-			issues.add(`${path}.contextTier`, `applies only to copilot-sdk targets, not runtime ${describe(runtime)}`);
+			issues.add(`${path}.contextTier`, `applies only to copilot-sdk connections, not runtime ${describe(runtime)}`);
 		} else {
 			const v = expectEnum(issues, `${path}.contextTier`, value.contextTier, COPILOT_CONTEXT_TIERS);
 			if (v !== undefined) target.contextTier = v;

@@ -363,7 +363,7 @@ export function updateSettings(mutate: SettingsMutator, options: SettingsUpdateO
 }
 
 /**
- * Settings mutations shared by the `pancode targets …` CLI (inside
+ * Settings mutations shared by the `pancode connections …` CLI (inside
  * updateSettings) and the settings overlay's Fleet and Targets rows (on the
  * effective view, committed per leaf). Registry-backed eligibility checks stay with the caller.
  */
@@ -378,10 +378,10 @@ export interface UseTargetOptions {
 export type TargetSelectionRole = "chat" | "fleet" | "memory";
 
 /**
- * A role flag scopes `targets use` to the roles it names, and `--model` is only
+ * A role flag scopes `connections use` to the roles it names, and `--model` is only
  * the fallback for a selected role that has no model flag of its own. When no
  * selected role falls back to it, it would be dropped without a word, so the
- * call is refused instead. `targets use blade --model X --fleet-target Y
+ * call is refused instead. `connections use blade --model X --fleet-connection Y
  * --fleet-model Z` changed fleet alone and left chat where it was.
  */
 export function unusedSharedModelReason(targetId: string, options: UseTargetOptions): string | null {
@@ -400,7 +400,7 @@ export function unusedSharedModelReason(targetId: string, options: UseTargetOpti
 	const flags = [
 		options.orchestratorModel !== undefined ? "--orchestrator-model" : null,
 		options.backgroundModel !== undefined ? "--background-model" : null,
-		options.workerTargetId !== undefined ? "--fleet-target" : null,
+		options.workerTargetId !== undefined ? "--fleet-connection" : null,
 		options.workerModel !== undefined ? "--fleet-model" : null,
 	].filter((flag): flag is string => flag !== null);
 	return `--model '${options.model}' would not be used: ${flags.join(" and ")} select${flags.length === 1 ? "s" : ""} only the roles named, and none of them falls back to --model. To set the chat model, pass --orchestrator-model '${options.model}', or drop the role flags to set chat and fleet together.`;

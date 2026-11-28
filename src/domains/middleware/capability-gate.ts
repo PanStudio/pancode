@@ -56,7 +56,7 @@ export interface CapabilityGate {
 // PanCode target question reaches 0.58 for pancode_docs, a parquet summary 0.87 for data.
 const REMINDER_MIN_COVERAGE = 0.55;
 const PANCODE_SCOPED_CAPABILITIES = new Set(["pancode_docs", "pancode_hub", "configure_pancode", "report"]);
-const PANCODE_SCOPE = /\b(?:pancode(?:[\s-]coder)?|settings?|targets?|fleet|skills?|playbooks?)\b/iu;
+const PANCODE_SCOPE = /\b(?:pancode(?:[\s-]coder)?|settings?|targets?|connections?|fleet|skills?|playbooks?)\b/iu;
 
 /**
  * A ranked capability earns a per-turn hint only on a strong match, and PanCode's own

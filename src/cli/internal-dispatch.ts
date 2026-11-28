@@ -51,6 +51,6 @@ export function armInternalDispatchDeadline(
 			productCapped
 				? `${label} exceeded its ${Math.round(timeoutMs / 1000)}s latency ceiling and was aborted.`
 				: `${label} timed out after ${Math.round(timeoutMs / 1000)}s and was aborted. ` +
-					"Raise fleet.limits.internalRunTimeoutMs for slower targets.",
+					"Raise fleet.limits.internalRunTimeoutMs for slower connections.",
 	};
 }

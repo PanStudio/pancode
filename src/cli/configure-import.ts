@@ -50,11 +50,11 @@ function refuseUnknown(errors: string[], path: string, value: Record<string, unk
 function roleDefault(errors: string[], name: "chat" | "fleet", value: unknown, ids: string[]): RoleDefault | undefined {
 	if (value === undefined) return undefined;
 	if (!isRecord(value) || typeof value.target !== "string") {
-		errors.push(`${name} must name a target: ${name}: { target: <id>, model: <id> }`);
+		errors.push(`${name} must name a connection: ${name}: { target: <id>, model: <id> }`);
 		return undefined;
 	}
 	refuseUnknown(errors, `${name}.`, value, DEFAULT_KEYS);
-	if (!ids.includes(value.target)) errors.push(`${name}.target '${value.target}' is not a target in this file`);
+	if (!ids.includes(value.target)) errors.push(`${name}.target '${value.target}' is not a connection in this file`);
 	if (value.model !== undefined && typeof value.model !== "string") errors.push(`${name}.model must be a string`);
 	return { target: value.target, ...(typeof value.model === "string" ? { model: value.model } : {}) };
 }
@@ -67,11 +67,11 @@ export function parseSetupFile(text: string): SetupFileParse {
 	} catch (err) {
 		return { ok: false, errors: [`not valid YAML: ${err instanceof Error ? err.message : String(err)}`] };
 	}
-	if (!isRecord(raw)) return { ok: false, errors: ["expected a map with a targets list"] };
+	if (!isRecord(raw)) return { ok: false, errors: ["expected a map with a connections list"] };
 	const errors: string[] = [];
 	refuseUnknown(errors, "", raw, TOP_KEYS);
 	if (!Array.isArray(raw.targets) || raw.targets.length === 0)
-		return { ok: false, errors: [...errors, "targets must be a non-empty list"] };
+		return { ok: false, errors: [...errors, "connections must be a non-empty list"] };
 	for (const [index, target] of raw.targets.entries()) {
 		if (!isRecord(target)) {
 			errors.push(`targets[${index}] must be a map`);
@@ -220,13 +220,13 @@ function describePlan(file: SetupFile, plan: ImportPlan): string[] {
 	if (file.notes) lines.push(file.notes, "");
 	const verb = (target: TargetDescriptor) => (plan.replaced.includes(target) ? "replace" : "add");
 	for (const target of [...plan.added, ...plan.replaced]) {
-		lines.push(`  ${verb(target)} target ${target.id} (${target.runtime})`);
+		lines.push(`  ${verb(target)} connection ${target.id} (${target.runtime})`);
 		lines.push(`    prompts go to ${target.url ?? "the provider's default address"}`);
 		lines.push(`    model ${target.defaultModel ?? "not set"}; ${keySource(target)}`);
 		const warning = plainHttpWarning(target);
 		if (warning) lines.push(`    ${warning}`);
 	}
-	for (const target of plan.unchanged) lines.push(`  keep target ${target.id} (already saved, unchanged)`);
+	for (const target of plan.unchanged) lines.push(`  keep connection ${target.id} (already saved, unchanged)`);
 	if (plan.setsChat && file.chat)
 		lines.push(`  chat uses ${file.chat.target} / ${roleModel(file, file.chat) ?? "its default model"}`);
 	if (plan.setsFleet && file.fleet)
@@ -323,7 +323,7 @@ export async function runConfigureImport(source: string, options: ImportOptions)
 		process.stderr.write(`error: ${err instanceof Error ? err.message : String(err)}; nothing changed\n`);
 		return 1;
 	}
-	out.write(`Imported ${file.targets.length === 1 ? "1 target" : `${file.targets.length} targets`}.\n`);
+	out.write(`Imported ${file.targets.length === 1 ? "1 connection" : `${file.targets.length} connections`}.\n`);
 	out.write(`${status.join("\n")}\n`);
 	return 0;
 }

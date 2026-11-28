@@ -119,13 +119,13 @@ export function credentialMissing(settings: Readonly<PancodeSettings>, targetId:
 export function describeVerdict(verdict: DefaultTargetVerdict): string {
 	switch (verdict.kind) {
 		case "no-target":
-			return "No model target is configured.";
+			return "No model connection is configured.";
 		case "ineligible-runtime":
 			return describeMissing({ kind: "runtime", target: verdict.targetId, runtime: verdict.runtime }).sentence;
 		case "no-model":
 			return describeMissing({ kind: "model", target: verdict.targetId }).sentence;
 		default:
-			return "No usable default target is configured.";
+			return "No usable default connection is configured.";
 	}
 }
 

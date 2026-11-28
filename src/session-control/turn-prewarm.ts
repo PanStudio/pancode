@@ -174,9 +174,9 @@ function defaultWarmInputTokens(contextWindow: number): number {
 function unboundNotice(targetId: string, backend: WarmableBackend): string {
 	const requirement =
 		backend === "lmstudio"
-			? "set cache.deployment on the target with backend lmstudio, controlUrl and model, and set cache.warm.startup to true"
-			: "set cache.deployment on the target with backend llamacpp, controlUrl, model and build (the server's build_info)";
-	return `[PanCode] chat.prewarm is on, but target ${targetId} binds no cache.deployment, so PanCode does not prewarm it. To prewarm it, ${requirement}; otherwise set chat.prewarm to false.`;
+			? "set cache.deployment on the connection with backend lmstudio, controlUrl and model, and set cache.warm.startup to true"
+			: "set cache.deployment on the connection with backend llamacpp, controlUrl, model and build (the server's build_info)";
+	return `[PanCode] chat.prewarm is on, but connection ${targetId} binds no cache.deployment, so PanCode does not prewarm it. To prewarm it, ${requirement}; otherwise set chat.prewarm to false.`;
 }
 
 export function createTurnPrewarm(deps: TurnPrewarmDeps): TurnPrewarm {

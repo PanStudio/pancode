@@ -6,7 +6,7 @@ import type { PancodeSettings, updateSettings } from "../core/config.js";
 import { SEMANTIC_MODALITIES, type SemanticModality } from "../core/defaults.js";
 import { SEMANTIC_SOURCE_KINDS, type SemanticSourceKind } from "../domains/semantic/types.js";
 
-const SEMANTIC_HELP = `pancode semantic configure --target <id> --model <id> --asset-identity <identity>
+const SEMANTIC_HELP = `pancode semantic configure --connection <id> --model <id> --asset-identity <identity>
                             [--projector-identity <identity>] [--profile <id>] [--modality text|image|audio|mixed ...]
                             [--qualify] [--background]
 pancode semantic inbox add <root> --id <id> [--scope project|user]
@@ -19,7 +19,7 @@ pancode semantic search <query> [--limit <1..20>] [filters]
 pancode semantic status
 pancode semantic qualify
 
-Opt-in semantic indexing beta. Configure pins an explicit target, model and asset
+Opt-in semantic indexing beta. Configure pins an explicit connection, model and asset
 identity. Prefer sha256:<hash> for the GGUF/checkpoint and multimodal projector.
 Inbox add previews bounded workload and registers a root; refresh explicitly
 extracts and indexes registered sources. No command enables scans on startup.
@@ -86,7 +86,16 @@ interface Dependencies {
 }
 
 const FLAGS: Readonly<Record<SemanticCliRequest["command"], readonly string[]>> = {
-	configure: ["target", "model", "asset-identity", "projector-identity", "profile", "modality", "qualify", "background"],
+	configure: [
+		"connection",
+		"model",
+		"asset-identity",
+		"projector-identity",
+		"profile",
+		"modality",
+		"qualify",
+		"background",
+	],
 	"inbox-add": ["id", "scope"],
 	"inbox-list": [],
 	"inbox-remove": [],
@@ -181,7 +190,7 @@ export function parseSemanticArgs(
 			none();
 			request = {
 				command,
-				target: required("target"),
+				target: required("connection"),
 				model: required("model"),
 				assetIdentity: required("asset-identity"),
 				qualify,
@@ -296,7 +305,7 @@ export async function executeSemanticRequest(
 	if (request.command === "configure") {
 		const target = context.settings.targets.find((entry) => entry.id === request.target);
 		if (!target || !["llamacpp-embed", "litellm"].includes(target.runtime))
-			throw new Error("--target must name a configured llama.cpp embedding or LiteLLM target");
+			throw new Error("--connection must name a configured llama.cpp embedding or LiteLLM connection");
 		if (request.profile && request.profile !== "embeddinggemma-2-q8-768")
 			throw new Error("Only profile embeddinggemma-2-q8-768 is supported by this bridge");
 		const modalities = [...new Set<SemanticModality>(request.modalities ?? ["text"])];

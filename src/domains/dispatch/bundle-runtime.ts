@@ -145,9 +145,9 @@ export function createDispatchCore(context: DomainContext, options?: DispatchBun
 	function describeTargetBlock(targetId: string, block: TargetBreakerBlock | null): string | null {
 		if (block === null) return null;
 		if (block.kind === "probing") {
-			return `target '${targetId}' is cooling down while one probe run tests it after ${block.reason}`;
+			return `connection '${targetId}' is cooling down while one probe run tests it after ${block.reason}`;
 		}
-		return `target '${targetId}' is cooling down for ${Math.ceil(block.remainingMs / 1000)}s after ${block.reason}`;
+		return `connection '${targetId}' is cooling down for ${Math.ceil(block.remainingMs / 1000)}s after ${block.reason}`;
 	}
 
 	/** Read-only cooldown view for route planning; it never claims a half-open probe. */

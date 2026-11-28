@@ -212,7 +212,7 @@ export function validateResolvedModel(
 	if (validation.warning) process.stderr.write(`warning: ${validation.warning}\n`);
 	if (knownModels.length === 0 && inventory.models.length === 0 && runtime.kind === "http") {
 		process.stderr.write(
-			`warning: could not verify model '${modelId}': ${target.url ?? `target '${target.id}'`} returned no model list; it is saved as written\n`,
+			`warning: could not verify model '${modelId}': ${target.url ?? `connection '${target.id}'`} returned no model list; it is saved as written\n`,
 		);
 	}
 	return true;
@@ -350,12 +350,12 @@ export function setOrchestratorPointer(
 	const runtime = getRuntimeRegistry().get(descriptor.runtime);
 	if (!runtime) {
 		throw new Error(
-			`cannot use target '${descriptor.id}' as orchestrator target because ${runtimeNotRegistered(descriptor.runtime)}`,
+			`cannot use connection '${descriptor.id}' as orchestrator connection because ${runtimeNotRegistered(descriptor.runtime)}`,
 		);
 	}
 	if (!isOrchestratorEligibleRuntime(runtime)) {
 		throw new Error(
-			`cannot use target '${descriptor.id}' as orchestrator target because runtime '${runtime.id}' is not an HTTP/native runtime`,
+			`cannot use connection '${descriptor.id}' as orchestrator connection because runtime '${runtime.id}' is not an HTTP/native runtime`,
 		);
 	}
 	settings.chat.target = descriptor.id;
@@ -379,7 +379,7 @@ export function setBackgroundPointer(
 	const runtime = getRuntimeRegistry().get(descriptor.runtime);
 	if (!runtime || !isOrchestratorEligibleRuntime(runtime)) {
 		throw new Error(
-			`cannot use target '${descriptor.id}' as background target because runtime '${descriptor.runtime}' is not an HTTP/native runtime`,
+			`cannot use connection '${descriptor.id}' as background connection because runtime '${descriptor.runtime}' is not an HTTP/native runtime`,
 		);
 	}
 	settings.context.memory.target = descriptor.id;
@@ -392,11 +392,11 @@ export function assertOrchestratorReplacementEligible(settings: PancodeSettings,
 	const runtime = getRuntimeRegistry().get(descriptor.runtime);
 	if (!runtime) {
 		throw new Error(
-			`cannot update ${role} target '${descriptor.id}' because ${runtimeNotRegistered(descriptor.runtime)}`,
+			`cannot update ${role} connection '${descriptor.id}' because ${runtimeNotRegistered(descriptor.runtime)}`,
 		);
 	}
 	if (!isOrchestratorEligibleRuntime(runtime)) {
-		throw new Error(`cannot update ${role} target '${descriptor.id}' to non-HTTP/native runtime '${runtime.id}'`);
+		throw new Error(`cannot update ${role} connection '${descriptor.id}' to non-HTTP/native runtime '${runtime.id}'`);
 	}
 }
 
@@ -448,7 +448,7 @@ export function contextWindowUndiscovered(descriptor: TargetDescriptor, probe: P
 export function warnUndiscoveredContextWindow(descriptor: TargetDescriptor, probe: ProbeResult | null): void {
 	if (!contextWindowUndiscovered(descriptor, probe)) return;
 	process.stdout.write(
-		"  warning: the target reported no context window; PanCode will use the runtime default as a guess. Set one with --context-window.\n",
+		"  warning: the connection reported no context window; PanCode will use the runtime default as a guess. Set one with --context-window.\n",
 	);
 }
 
@@ -506,16 +506,16 @@ export function probeLines(descriptor: TargetDescriptor, probe: ProbeResult): st
 						? "run `agy` yourself and complete sign-in; PanCode never reads or manages that session"
 						: probe.failureKind === "unsupported-feature"
 							? "update `agy`; this integration requires its structured JSON model catalog"
-							: "run `agy` directly to inspect setup, then re-run `pancode targets --probe`";
+							: "run `agy` directly to inspect setup, then re-run `pancode connections --probe`";
 			return [`probe failed${latency}: ${probe.error ?? "unknown"}`, `  ${next}`];
 		}
 		if (descriptor.runtime === "copilot-sdk") {
 			const next =
 				probe.failureKind === "missing"
-					? "install the Copilot SDK component with `pancode programs install copilot-sdk`, then re-run `pancode targets --probe`"
+					? "install the Copilot SDK component with `pancode programs install copilot-sdk`, then re-run `pancode connections --probe`"
 					: probe.failureKind === "authentication"
 						? "sign in with `copilot login` or `gh auth login`; PanCode never signs in to Copilot itself. A login kept only in the system keychain is closed to headless runs; `pancode doctor` in a terminal shows which login the runtime sees"
-						: "check that `copilot login` succeeded and the account has Copilot models enabled, then re-run `pancode targets --probe`";
+						: "check that `copilot login` succeeded and the account has Copilot models enabled, then re-run `pancode connections --probe`";
 			return [`probe failed${latency}: ${probe.error ?? "unknown"}`, `  ${next}`];
 		}
 		const where = descriptor.url ? ` ${descriptor.url}` : "";
@@ -527,9 +527,9 @@ export function probeLines(descriptor: TargetDescriptor, probe: ProbeResult): st
 	const readings = probeReadings(probe);
 	if (readings.length > 0) return [`probe ok${latency} ${readings.join(", ")}`];
 	return [
-		`probe reachable${latency}, but the target answered no model list and no version`,
+		`probe reachable${latency}, but the connection answered no model list and no version`,
 		"  PanCode cannot verify the model id or the context window from here and will send both as written.",
-		"  re-read them once the server serves them with: pancode targets --probe",
+		"  re-read them once the server serves them with: pancode connections --probe",
 	];
 }
 
@@ -581,8 +581,8 @@ export function contextTierProblem(
 ): string | null {
 	if (tier === undefined || runtime?.id === "copilot-sdk") return null;
 	return runtime === null
-		? "--context-tier applies only to copilot-sdk targets; pass --runtime copilot-sdk"
-		: `--context-tier applies only to copilot-sdk targets, not runtime ${runtime.id}`;
+		? "--context-tier applies only to copilot-sdk connections; pass --runtime copilot-sdk"
+		: `--context-tier applies only to copilot-sdk connections, not runtime ${runtime.id}`;
 }
 
 /**

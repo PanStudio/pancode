@@ -30,7 +30,7 @@ const ROUTED_APIS: ReadonlySet<string> = new Set([
 const SETTING = "safety.workerIsolation: process";
 
 function unsupported(reason: string): string {
-	return `worker isolation unsupported: ${reason}. Set safety.workerIsolation to children in your user settings to run it with the worker holding its credential, or pick another target.`;
+	return `worker isolation unsupported: ${reason}. Set safety.workerIsolation to children in your user settings to run it with the worker holding its credential, or pick another connection.`;
 }
 
 interface IsolationFacts {
@@ -74,14 +74,14 @@ export function workerIsolationRefusal(facts: IsolationFacts): string | null {
 	if (runtime.tier === "local-native")
 		return unsupported(`${runtime.id} is a local model server whose residency control needs host loopback`);
 	if (!targetRequiresAuth(target, runtime))
-		return unsupported(`target ${target.id} needs no credential, so there is nothing to keep on the host`);
+		return unsupported(`connection ${target.id} needs no credential, so there is nothing to keep on the host`);
 	const route = workerModelOrigin(facts.target);
-	if (route === null) return unsupported(`target ${target.id} has no model URL to route`);
+	if (route === null) return unsupported(`connection ${target.id} has no model URL to route`);
 	if (!ROUTED_APIS.has(route.api))
 		return unsupported(`${runtime.id} speaks ${route.api}, whose authentication the model route does not carry`);
 	const host = new URL(route.origin).hostname.replace(/^\[|\]$/gu, "");
 	if (isLoopbackUrl(route.origin) || (isIP(host) !== 0 && isDeniedEgressAddress(host)))
-		return unsupported(`target ${target.id} is served from ${route.origin}, a local or private address`);
+		return unsupported(`connection ${target.id} is served from ${route.origin}, a local or private address`);
 	return null;
 }
 
@@ -108,7 +108,7 @@ export interface OpenWorkerModelRoute {
 
 function noCredential(target: TargetDescriptor, detail: string | null): Error {
 	return new Error(
-		`dispatch: worker isolation could not resolve a credential for target ${target.id}${detail ? `: ${detail}` : ""}`,
+		`dispatch: worker isolation could not resolve a credential for connection ${target.id}${detail ? `: ${detail}` : ""}`,
 	);
 }
 
@@ -122,7 +122,7 @@ export async function openWorkerModelRoute(
 	signal?: AbortSignal,
 ): Promise<OpenWorkerModelRoute> {
 	const upstream = workerModelOrigin(target);
-	if (upstream === null) throw new Error(`dispatch: target ${target.target.id} has no model URL to route`);
+	if (upstream === null) throw new Error(`dispatch: connection ${target.target.id} has no model URL to route`);
 	const resolve = async (rejectedApiKey?: string) => {
 		const auth = await providers.auth.resolveForTarget(target.target, target.runtime, {
 			...(signal !== undefined ? { signal } : {}),
@@ -139,7 +139,7 @@ export async function openWorkerModelRoute(
 	const surrogate = modelRouteSurrogate(upstream.api, first.apiKey);
 	if (surrogate === null)
 		throw new Error(
-			`dispatch: worker isolation needs the ChatGPT account in the ${target.runtime.id} login of target ${target.target.id}; sign in again with /login ${target.runtime.id}`,
+			`dispatch: worker isolation needs the ChatGPT account in the ${target.runtime.id} login of connection ${target.target.id}; sign in again with /login ${target.runtime.id}`,
 		);
 	const route = createModelRoute({ origin: upstream.origin, surrogate, resolve });
 	return {

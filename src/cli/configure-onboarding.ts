@@ -132,9 +132,9 @@ function applyAnswers(
 	const current = settings.targets.find((target) => target.id === descriptor.id);
 	if (answers.mode === "edit") {
 		if (JSON.stringify(current) !== JSON.stringify(answers.existing))
-			throw new Error("This target changed during setup; reopen Edit to keep those changes.");
+			throw new Error("This connection changed during setup; reopen Edit to keep those changes.");
 	} else if (current && JSON.stringify(current) !== JSON.stringify(answers.detectedChatRoute?.target)) {
-		throw new Error(`Target '${descriptor.id}' already exists; use Edit a target.`);
+		throw new Error(`Connection '${descriptor.id}' already exists; use Edit a connection.`);
 	}
 	assertOrchestratorReplacementEligible(settings, descriptor);
 	applyTarget(settings, descriptor);
@@ -195,10 +195,10 @@ export async function runOnboardingWizard(
 
 	presenter.header(
 		options.mode === "edit"
-			? `Edit target: ${options.target.id}`
+			? `Edit connection: ${options.target.id}`
 			: options.mode === "first"
 				? "Welcome to PanCode"
-				: "Add a target",
+				: "Add a connection",
 		"configure",
 	);
 	// A short terminal keeps the welcome and the line about Esc above the first question: at 15 rows this
@@ -419,7 +419,7 @@ async function finish(wizard: Wizard, answers: Answers): Promise<number> {
 			if (
 				wizard.host
 					? auth.damageReason() !== null
-					: credentialWriteFailed(auth, `credential for ${runtime.id} was not stored; target '${targetId}' not saved`)
+					: credentialWriteFailed(auth, `credential for ${runtime.id} was not stored; connection '${targetId}' not saved`)
 			) {
 				if (wizard.host) presenter.fail("Credential not stored", auth.damageReason() ?? "unknown");
 				presenter.done("Nothing written");
@@ -428,7 +428,7 @@ async function finish(wizard: Wizard, answers: Answers): Promise<number> {
 			// Inside the TUI the flag is not something the operator can type; the credential step's choice is.
 			presenter.warn(
 				wizard.host
-					? `API key stored unencrypted (${credentialFileProtection()}). Any process running as you can read it. Edit the target and choose Environment variable to keep the key off disk.`
+					? `API key stored unencrypted (${credentialFileProtection()}). Any process running as you can read it. Edit the connection and choose Environment variable to keep the key off disk.`
 					: `API key stored unencrypted (${credentialFileProtection()}). Any process running as you can read it. Use --api-key-env <VAR> to keep the key off disk.`,
 			);
 		}
@@ -444,7 +444,7 @@ async function finish(wizard: Wizard, answers: Answers): Promise<number> {
 					? auth.damageReason() !== null
 					: credentialWriteFailed(
 							auth,
-							`${answers.apiKeyEnv} was not stored for the desktop app; target '${targetId}' not saved`,
+							`${answers.apiKeyEnv} was not stored for the desktop app; connection '${targetId}' not saved`,
 						)
 			) {
 				if (wizard.host) presenter.fail("Credential not stored", auth.damageReason() ?? "unknown");
@@ -462,11 +462,11 @@ async function finish(wizard: Wizard, answers: Answers): Promise<number> {
 		wizard.host?.onTargetSaved?.();
 	} catch (error) {
 		presenter.fail("settings were not written", error instanceof Error ? error.message : String(error));
-		presenter.done("Target settings not saved");
+		presenter.done("Connection settings not saved");
 		return 1;
 	}
 
-	presenter.completedStep(`target ${targetId} saved, runtime ${runtime.id}`);
+	presenter.completedStep(`connection ${targetId} saved, runtime ${runtime.id}`);
 	if (answers.mode === "first" && chatEligible)
 		presenter.completedStep(`chat runs on ${targetId}${answers.model ? `, model ${answers.model}` : ""}`);
 	else if (!chatEligible)

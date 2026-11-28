@@ -404,7 +404,7 @@ export function buildModelItems(deps: {
 				thinkingNote: resolution?.thinkingNote ?? null,
 				streaming: decisions.streaming,
 				diagnostics: resolution?.diagnostics ?? [
-					{ severity: "error", code: "model-not-configured", message: `target '${target.id}' has no model configured` },
+					{ severity: "error", code: "model-not-configured", message: `connection '${target.id}' has no model configured` },
 				],
 				badges: capabilityBadges(rowCaps),
 				context: contextDecisionLabel(decisions),

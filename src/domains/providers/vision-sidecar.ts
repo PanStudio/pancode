@@ -70,9 +70,9 @@ const RESPONSE_SCHEMA = {
 
 function completionUrl(raw: string): string {
 	const url = new URL(raw);
-	if (url.protocol !== "http:" && url.protocol !== "https:") throw new Error("vision target needs an HTTP URL");
+	if (url.protocol !== "http:" && url.protocol !== "https:") throw new Error("vision connection needs an HTTP URL");
 	if (url.username || url.password || url.search || url.hash) {
-		throw new Error("vision target URL must not contain credentials, query, or fragment");
+		throw new Error("vision connection URL must not contain credentials, query, or fragment");
 	}
 	const root = `${url.origin}${url.pathname.replace(/\/+$/u, "")}`;
 	return `${root.endsWith("/v1") ? root : `${root}/v1`}/chat/completions`;
@@ -293,17 +293,18 @@ export function createVisionSidecar(input: {
 			});
 			if (!resolved.ok) {
 				throw new Error(
-					resolved.diagnostics.find((entry) => entry.severity === "error")?.message ?? "vision target cannot resolve",
+					resolved.diagnostics.find((entry) => entry.severity === "error")?.message ?? "vision connection cannot resolve",
 				);
 			}
 			const route = resolved.target;
-			if (route.runtimeId !== "llamacpp") throw new Error("vision sidecar currently requires a llama.cpp target");
-			if (!route.capabilityDecisions.vision) throw new Error("vision target does not advertise image input");
-			if (!route.target.url) throw new Error("vision target has no URL");
+			if (route.runtimeId !== "llamacpp") throw new Error("vision sidecar currently requires a llama.cpp connection");
+			if (!route.capabilityDecisions.vision) throw new Error("vision connection does not advertise image input");
+			if (!route.target.url) throw new Error("vision connection has no URL");
 			const credential = targetRequiresAuth(route.target, route.runtime)
 				? await input.providers.auth.resolveForTarget(route.target, route.runtime, signal ? { signal } : undefined)
 				: null;
-			if (credential?.refused) throw new Error(credential.detail ?? `credential refused for target '${route.targetId}'`);
+			if (credential?.refused)
+				throw new Error(credential.detail ?? `credential refused for connection '${route.targetId}'`);
 			const binding: VisionBinding = {
 				targetId: route.targetId,
 				model: route.wireModelId,

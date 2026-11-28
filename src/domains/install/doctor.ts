@@ -772,7 +772,7 @@ export function runDoctor(options: DoctorOptions = {}): DoctorFinding[] {
 		findings.push({
 			ok: true,
 			name: "credentials",
-			detail: "none saved; save a key with `pancode auth login <target>`",
+			detail: "none saved; save a key with `pancode auth login <connection>`",
 		});
 	} else {
 		try {
@@ -1143,8 +1143,8 @@ export async function runDoctorRuntimeChecks(): Promise<DoctorFinding[]> {
 			return {
 				ok: true,
 				level: "warn",
-				name: `target ${target.id}`,
-				detail: `${fingerprint.displayName} detected at ${url}; run \`pancode targets convert ${target.id} --runtime ${fingerprint.runtimeId}\` for proper resident-model lifecycle`,
+				name: `connection ${target.id}`,
+				detail: `${fingerprint.displayName} detected at ${url}; run \`pancode connections convert ${target.id} --runtime ${fingerprint.runtimeId}\` for proper resident-model lifecycle`,
 			};
 		}),
 	);
@@ -1363,7 +1363,7 @@ export async function runDoctorModelChecks(
 			.map((issue) => ({
 				ok: true,
 				level: "warn",
-				name: "project targets",
+				name: "project connections",
 				detail: formatSettingsLayerIssue(layered, issue),
 			}));
 	} catch {
@@ -1406,7 +1406,7 @@ export async function runDoctorModelChecks(
 				return [
 					{
 						ok: false,
-						name: `target ${target.id}`,
+						name: `connection ${target.id}`,
 						detail: `runtime '${target.runtime}' is unknown; ${replacement ? `use '${replacement}' instead` : "choose a registered runtime from `pancode configure --list`"} in settings.yaml`,
 					},
 				];
@@ -1667,7 +1667,7 @@ async function systemOneFindings(
 			...(unverified ? { level: "warn" as const } : {}),
 			name,
 			detail:
-				`${resolved.name} (${engine.kind}) → ${engine.target}/${engine.model ?? "target default"}` +
+				`${resolved.name} (${engine.kind}) → ${engine.target}/${engine.model ?? "connection default"}` +
 				(unverified ? `; connection ${engine.target} is not verified, so consult may give no answer` : ""),
 		});
 		findings.push(...(await systemOneEngineFindings(settings, [resolved.name], runtimes, observations, profiles)));
@@ -1702,10 +1702,10 @@ async function systemOneEngineFindings(
 		const window = engineWindow(profile, declared ?? runtime.defaultCapabilities.contextWindow);
 		const source =
 			declared === undefined
-				? `the ${runtime.id} runtime default; set capabilities.contextWindow on target ${target.id}`
+				? `the ${runtime.id} runtime default; set capabilities.contextWindow on connection ${target.id}`
 				: window !== declared
-					? `target ${target.id} declares ${declared}, profile ceiling ${profile.windowCeiling}`
-					: `declared on target ${target.id}`;
+					? `connection ${target.id} declares ${declared}, profile ceiling ${profile.windowCeiling}`
+					: `declared on connection ${target.id}`;
 		const counting =
 			profile.tokenizer === undefined
 				? ""

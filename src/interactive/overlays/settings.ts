@@ -1487,7 +1487,7 @@ export function openSettingsOverlay(tui: TUI, deps: OpenSettingsOverlayDeps): Se
 			});
 		});
 	};
-	// A target removed from user settings takes the key it owned, as `pancode targets remove` does;
+	// A target removed from user settings takes the key it owned, as `pancode connections remove` does;
 	// after it is gone no command can name that key.
 	const removedTargetCredential = (plan: SettingsChangePlan): string | null => {
 		const auth = deps.providers?.auth;

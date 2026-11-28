@@ -287,7 +287,7 @@ async function compactAndRetry(
 			refusedLocally
 				? "[PanCode] PanCode refused this request before sending it: it would leave too little of the context window for a reply; compacting and retrying once."
 				: windowUnknown
-					? "[PanCode] Server rejected this request for exceeding its context window. The serving limit is unknown; compacting and retrying once. Probe the target or configure its deployment limit to enable proactive compaction."
+					? "[PanCode] Server rejected this request for exceeding its context window. The serving limit is unknown; compacting and retrying once. Probe the connection or configure its deployment limit to enable proactive compaction."
 					: "[PanCode] Server rejected this request for exceeding its context window; compacting and retrying once.",
 		);
 		let compacted = false;
@@ -575,7 +575,7 @@ export function createTurnRecovery(deps: TurnRecoveryDeps): TurnRecovery {
 				phase: "retrying",
 				attempt: 1,
 				maxAttempts: 1,
-				errorMessage: `Refreshing OAuth authentication for target '${target.id}' and retrying once.`,
+				errorMessage: `Refreshing OAuth authentication for connection '${target.id}' and retrying once.`,
 			});
 			pruneFailedAssistantFromContext(agentRuntime.agent);
 			let refusal: string | null = null;
@@ -585,7 +585,7 @@ export function createTurnRecovery(deps: TurnRecoveryDeps): TurnRecovery {
 					...(signal ? { signal } : {}),
 				});
 				if (cancelled()) return true;
-				if (refreshed.refused) refusal = refreshed.detail ?? `credential refused for target '${target.id}'`;
+				if (refreshed.refused) refusal = refreshed.detail ?? `credential refused for connection '${target.id}'`;
 				if (refusal !== null || !refreshed.available || refreshed.apiKey === undefined) {
 					throw new Error(refreshed.detail ?? "OAuth credential could not be refreshed.");
 				}
@@ -595,7 +595,7 @@ export function createTurnRecovery(deps: TurnRecoveryDeps): TurnRecovery {
 				// A refusal is not fixed by logging in, so it keeps its own reason.
 				const errorMessage =
 					refusal ??
-					`OAuth credential for target '${target.id}' could not be refreshed. Run pancode auth login ${rejected.providerId} again.`;
+					`OAuth credential for connection '${target.id}' could not be refreshed. Run pancode auth login ${rejected.providerId} again.`;
 				persistFailure(errorMessage);
 				return true;
 			}

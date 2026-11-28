@@ -452,7 +452,7 @@ export function registerBootTools(input: BootToolsInput) {
 		else process.stderr.write(notice);
 	}
 	// A headless `--session`/`--continue` resumed before the route was seeded;
-	// restore it now, letting an explicit --target/--model/--thinking win.
+	// restore it now, letting an explicit --connection/--model/--thinking win.
 	if (resumedSessionAtBoot) {
 		const notice = restoreResumedRoute({
 			route: options.headless?.target !== undefined || options.headless?.model !== undefined,

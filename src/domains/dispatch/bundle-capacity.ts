@@ -92,7 +92,7 @@ export function createCapacityMachine(rt: DispatchRuntime) {
 	 * Endpoints still bound by the blind one-slot default have never been
 	 * probed by any process, or their record expired. A fresh home carried that
 	 * bound into its first batch and refused two tasks on a server running
-	 * four, until the operator happened to run `targets --probe`. Probe each
+	 * four, until the operator happened to run `connections --probe`. Probe each
 	 * such endpoint once per process, in the background and without the
 	 * inference-based reasoning check: the slot count is a header read, and the
 	 * model's first dispatch call is seconds away at the earliest. The probe
