@@ -52,6 +52,8 @@ import { createDispatchDomainModule } from "../domains/dispatch/module.js";
 import { callLevelUpstreamResponses, type RunResult } from "../domains/dispatch/types.js";
 import type { JobSpec } from "../domains/dispatch/validation.js";
 import { ExtensionsDomainModule } from "../domains/extensions/module.js";
+import { InteropDomainModule } from "../domains/interop/module.js";
+import { PluginsDomainModule } from "../domains/plugins/module.js";
 import { createPromptsDomainModule } from "../domains/prompts/module.js";
 import { canonicalizeWireModelId } from "../domains/providers/index.js";
 import { ProvidersDomainModule } from "../domains/providers/module.js";
@@ -1059,6 +1061,8 @@ async function loadWikiDispatch(): Promise<{
 	const loaded = await loadDomains([
 		ConfigDomainModule,
 		ExtensionsDomainModule,
+		PluginsDomainModule,
+		InteropDomainModule,
 		ResourcesDomainModule,
 		ContextDomainModule,
 		ProvidersDomainModule,
@@ -1112,7 +1116,15 @@ async function loadWikiDispatch(): Promise<{
  * matters when the primary target is unavailable. Best-effort and never throws.
  */
 export async function resolveDocumenterModelId(route: WikiModelRoute = {}): Promise<string> {
-	const loaded = await loadDomains([ConfigDomainModule, ResourcesDomainModule, ProvidersDomainModule]);
+	const loaded = await loadDomains([
+		ConfigDomainModule,
+		SafetyDomainModule,
+		ExtensionsDomainModule,
+		PluginsDomainModule,
+		AgentsDomainModule,
+		ResourcesDomainModule,
+		ProvidersDomainModule,
+	]);
 	try {
 		const config = loaded.getContract("config");
 		const providers = loaded.getContract("providers");

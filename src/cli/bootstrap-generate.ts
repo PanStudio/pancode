@@ -24,12 +24,15 @@ import type {
 	BootstrapStructuredOutput,
 } from "../domains/context/index.js";
 import { fallbackBootstrapOutput } from "../domains/context/index.js";
+import { createContextDomainModule } from "../domains/context/module.js";
 import type { DispatchContract } from "../domains/dispatch/contract.js";
 import { declaredScopeIntent } from "../domains/dispatch/intent.js";
 import { createDispatchDomainModule } from "../domains/dispatch/module.js";
 import { newRunId } from "../domains/dispatch/state.js";
 import type { RunResult } from "../domains/dispatch/types.js";
 import { ExtensionsDomainModule } from "../domains/extensions/module.js";
+import { InteropDomainModule } from "../domains/interop/module.js";
+import { PluginsDomainModule } from "../domains/plugins/module.js";
 import { createPromptsDomainModule } from "../domains/prompts/module.js";
 import type { ThinkingLevel } from "../domains/providers/index.js";
 import { ProvidersDomainModule } from "../domains/providers/module.js";
@@ -577,7 +580,11 @@ async function loadBootstrapDispatch(): Promise<{
 	const loaded = await loadDomains([
 		ConfigDomainModule,
 		ExtensionsDomainModule,
+		PluginsDomainModule,
+		InteropDomainModule,
 		ResourcesDomainModule,
+		// The worker hooks' middleware reads sister-repository compiles that context owns and stops.
+		createContextDomainModule({ noContextFiles: true }),
 		ProvidersDomainModule,
 		SafetyDomainModule,
 		createPromptsDomainModule({ noContextFiles: true }),

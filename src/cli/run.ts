@@ -862,6 +862,8 @@ async function runDispatch(
 	const { configureRunEventJournal } = await import("../domains/dispatch/run-event-journal.js");
 	const { WORKER_PROCESS_CLEANUP_BOUND_MS } = await import("../domains/dispatch/worker-spawn.js");
 	const { ExtensionsDomainModule } = await import("../domains/extensions/module.js");
+	const { InteropDomainModule } = await import("../domains/interop/module.js");
+	const { PluginsDomainModule } = await import("../domains/plugins/module.js");
 	const { ensurePancodeState } = await import("../domains/install/index.js");
 	const { buildDispatchMemorySection } = await import("../domains/memory/index.js");
 	const { createPromptsDomainModule } = await import("../domains/prompts/module.js");
@@ -885,6 +887,8 @@ async function runDispatch(
 	const loaded = await loadDomains([
 		ConfigDomainModule,
 		ExtensionsDomainModule,
+		PluginsDomainModule,
+		InteropDomainModule,
 		ResourcesDomainModule,
 		createContextDomainModule({
 			noContextFiles: options.noContextFiles === true,

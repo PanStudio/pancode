@@ -86,6 +86,8 @@ import { WRITE_BOUNDARY_VIOLATION_REASON } from "../domains/dispatch/write-bound
 import { preflightWriteBoundaries } from "../domains/dispatch/write-boundary-enforcer.js";
 import { ExtensionsDomainModule } from "../domains/extensions/module.js";
 import { ensurePancodeState } from "../domains/install/index.js";
+import { InteropDomainModule } from "../domains/interop/module.js";
+import { PluginsDomainModule } from "../domains/plugins/module.js";
 import { createPromptsDomainModule } from "../domains/prompts/module.js";
 import { foregroundStreamUsage } from "../domains/providers/index.js";
 import { ProvidersDomainModule } from "../domains/providers/module.js";
@@ -496,6 +498,8 @@ async function runFleetTracked(
 	const loaded = await loadDomains([
 		ConfigDomainModule,
 		ExtensionsDomainModule,
+		PluginsDomainModule,
+		InteropDomainModule,
 		ResourcesDomainModule,
 		ContextDomainModule,
 		ProvidersDomainModule,
