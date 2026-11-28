@@ -188,6 +188,17 @@ function isExternalPackage(specifier: string): boolean {
 	return !isBuiltin(packageRoot(specifier));
 }
 
+function compareText(left: string, right: string): number {
+	return left < right ? -1 : left > right ? 1 : 0;
+}
+
+/** Stable sort key for an esbuild output, separating dynamic-import facades from code chunks with the same source. */
+function outputSourceKey(name: string, built: Outputs[string] | undefined): string {
+	if (built?.entryPoint !== undefined) return `entry:${built.entryPoint}`;
+	const inputs = Object.keys(built?.inputs ?? {}).sort();
+	return inputs.length > 0 ? `inputs:${inputs.join("\n")}` : `output:${name}`;
+}
+
 /**
  * The file each esbuild output is merged into, keyed by metafile output name.
  * Outputs left out keep a file of their own; `entries` (the build's real entry
@@ -436,17 +447,8 @@ function planChunkGroups(outputs: Outputs, entries: ReadonlySet<string>): Map<st
 	// The fold order is fixed on the unmerged graph, so the grouping so far never steers it. Merging two chunks costs
 	// a load that needs one and not the other the bytes the other drags in that the load did not hold anyway; a
 	// pair's cost is the worst such share of an allowance. Ties fall to source paths, never to output order or hashes.
-	const sourceKey = names.map((name) => {
-		const built = outputs[name];
-		if (built?.entryPoint !== undefined) return built.entryPoint;
-		const inputs = Object.keys(built?.inputs ?? {}).sort();
-		return inputs.length > 0 ? inputs.join("\n") : name;
-	});
-	const byKey = (a: number, b: number): number => {
-		const left = sourceKey[a] ?? "";
-		const right = sourceKey[b] ?? "";
-		return left < right ? -1 : left > right ? 1 : 0;
-	};
+	const sourceKey = names.map((name) => outputSourceKey(name, outputs[name]));
+	const byKey = (a: number, b: number): number => compareText(sourceKey[a] ?? "", sourceKey[b] ?? "");
 	const minus = (set: ChunkSet, other: ChunkSet): ChunkSet => set.map((word, at) => word & ~(other[at] ?? 0));
 	const needs = units.map((unit) => (unit.from === -1 ? closure(unit.to) : minus(closure(unit.to), closure(unit.from))));
 	const seen = units.map((unit) => {
@@ -513,7 +515,7 @@ function planChunkGroups(outputs: Outputs, entries: ReadonlySet<string>): Map<st
 
 	const plan = new Map<string, string>();
 	const counters = new Map<string, number>();
-	const ordered = [...members.keys()].sort((a, b) => (names[a] ?? "").localeCompare(names[b] ?? "", "en"));
+	const ordered = [...members.keys()].sort((a, b) => byKey(a, b) || compareText(names[a] ?? "", names[b] ?? ""));
 	for (const id of ordered) {
 		const cell = cellOf[id] ?? "|";
 		const stage = cell.slice(0, cell.indexOf("|"));
@@ -598,12 +600,17 @@ async function mergeChunks(options: MergeOptions): Promise<{ files: BuiltFile[];
 	}
 
 	const input: Record<string, string> = {};
-	for (const entry of entries) input[relative(prefix, entry).slice(0, -".js".length)] = resolve(entry);
+	for (const entry of [...entries].sort(compareText)) input[relative(prefix, entry).slice(0, -".js".length)] = resolve(entry);
 	// A merged file exports only what another file imports, so a symbol every importer was merged with would stop
 	// being reachable from outside. One more entry that imports every chunk export keeps each one exported from
 	// the file it lands in, as esbuild's chunks exported them; its own output is discarded.
 	const everyExport = [...nameOf]
 		.filter(([, name]) => !entries.has(name))
+		.sort(
+			([, left], [, right]) =>
+				compareText(outputSourceKey(left, metafile.outputs[left]), outputSourceKey(right, metafile.outputs[right])) ||
+				compareText(left, right),
+		)
 		.map(([id, name], chunk) => {
 			const exported = (metafile.outputs[name]?.exports ?? []).map((binding, at) => `${binding} as e${chunk}_${at}`);
 			return `export{${exported.join(",")}}from${JSON.stringify(id)};`;
