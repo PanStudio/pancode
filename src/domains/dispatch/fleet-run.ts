@@ -227,6 +227,17 @@ async function settleFleetAssignment(
 	).catch(() => undefined);
 }
 
+/**
+ * A step's request keeps origin "user", since the operator approved the card; a model-started run's steps also name
+ * the dispatch call that asked for them, so they read as model-asked.
+ */
+function stepRequestOrigin(input: ExecuteFleetRunInput): Pick<DispatchRequest, "requestOrigin" | "parentToolCallId"> {
+	return {
+		requestOrigin: "user",
+		...(input.parentToolCallId !== undefined ? { parentToolCallId: input.parentToolCallId } : {}),
+	};
+}
+
 async function runFleetHoldingWorkspace(
 	input: ExecuteFleetRunInput,
 	place: FleetRunPlace,
@@ -592,8 +603,7 @@ async function runFleetHoldingWorkspace(
 									agentId,
 									task: step.task,
 									cwd: workspaceRoot,
-									requestOrigin: "user",
-									...(input.parentToolCallId !== undefined ? { parentToolCallId: input.parentToolCallId } : {}),
+									...stepRequestOrigin(input),
 									...(decisionRefs.length > 0 ? { decisionRefs } : {}),
 									readOnly: true,
 									lineage: { parentRunId: fleetRootId, rootRunId: fleetRootId, attempt: 0, depth: 1 },
@@ -679,8 +689,7 @@ async function runFleetHoldingWorkspace(
 					...(stepIntent === null ? {} : { intent: stepIntent }),
 					...(input.turnConstraints !== undefined ? { turnConstraints: input.turnConstraints } : {}),
 					predecessorHandoffs: handoffs,
-					requestOrigin: "user",
-					...(input.parentToolCallId !== undefined ? { parentToolCallId: input.parentToolCallId } : {}),
+					...stepRequestOrigin(input),
 					...(decisionRefs.length > 0 ? { decisionRefs } : {}),
 					lineage: {
 						parentRunId: parentReceipt?.runId ?? input.resume?.record.id ?? fleetRootId,
