@@ -23,7 +23,7 @@ import type { ToolSpec } from "../tools/tool-spec.js";
 import { createJobEventHub, jobEventRunResult, mcpEventJobRefusal } from "./job-events.js";
 import { createJobRuntime, jobAuthorityRefusal } from "./job-runtime.js";
 
-export interface JobHostDeps {
+interface JobHostDeps {
 	registry: ToolRegistry;
 	bus: TelemetryHub;
 	session?: Pick<SessionContract, "current" | "create" | "readEntries">;
@@ -53,7 +53,7 @@ export interface JobHostDeps {
 	mcpEvents?(): McpCapabilitySource | null;
 }
 
-export interface JobHost {
+interface JobHost {
 	tool: ToolSpec;
 	operations: JobOperations;
 	attachChat(chat: ChatLoop): void;

@@ -38,6 +38,7 @@ import type { PendingSkillRequest, PendingSkillToolPolicy, SkillDeclaredToolPoli
 import { proseAnnouncesCall, readTrailingWrittenCalls, stripDeadToolCallMarkup } from "../core/tool-call-markup.js";
 import { ToolNames } from "../core/tool-names.js";
 import { type TurnConstraints, turnAllowsTool } from "../core/turn-constraints.js";
+import { asRecord } from "../core/type-guards.js";
 import { describeMissing } from "../domains/lifecycle/setup-status.js";
 import { toContextOverflowError } from "../domains/providers/errors.js";
 import type { ResolvedRuntimeTarget } from "../domains/providers/index.js";
@@ -53,7 +54,7 @@ export interface AgentStateView {
 }
 
 /** Minimal structural view of the chat-loop runtime used by tool-surface helpers. */
-export interface RuntimeResolutionView {
+interface RuntimeResolutionView {
 	runtimeResolution: ResolvedRuntimeTarget;
 }
 
@@ -359,16 +360,16 @@ export const HOST_STATUS_NOTICE_KEY = "host.status";
 
 /** The notice key the status surface reads as the one re-prompt for a written-out tool call starting. */
 export const TOOL_MARKUP_REPROMPT_NOTICE_KEY = "turn.tool-markup-reprompt";
-export const TOOL_MARKUP_REPROMPT_NOTICE =
+const TOOL_MARKUP_REPROMPT_NOTICE =
 	"[PanCode] The model wrote its tool call as text, so it did not run. PanCode asked it to make the call properly.";
-export const TOOL_MARKUP_REPROMPT =
+const TOOL_MARKUP_REPROMPT =
 	"<system-reminder>Your last reply wrote a tool call as text, so it did not run and nothing happened. Calls written as text never run. If the work still needs a tool, make the call through the tool interface now. Otherwise answer in plain prose and say plainly what was not done.</system-reminder>";
 
 /** The notice key for the re-prompt after a reply that held neither an answer nor a tool call. */
 export const EMPTY_ANSWER_REPROMPT_NOTICE_KEY = "turn.empty-answer-reprompt";
-export const EMPTY_ANSWER_REPROMPT_NOTICE =
+const EMPTY_ANSWER_REPROMPT_NOTICE =
 	"[PanCode] The model ended its reply with no answer and no tool call. PanCode asked it to continue.";
-export const EMPTY_ANSWER_REPROMPT =
+const EMPTY_ANSWER_REPROMPT =
 	"<system-reminder>Your last reply was empty: it held no answer and no tool call, so nothing happened and the operator saw nothing. Act now: if the work still needs a tool, make the call through the tool interface; otherwise write your answer in plain prose and say plainly what was not done.</system-reminder>";
 
 /**
@@ -517,7 +518,7 @@ export function noteWrittenCalls(message: AgentMessage, onSurface: (tool: string
 }
 
 /** The tools a settled reply only wrote out, as {@link noteWrittenCalls} recorded them. */
-export function writtenCallsOf(message: unknown): ReadonlyArray<string> {
+function writtenCallsOf(message: unknown): ReadonlyArray<string> {
 	const stamped = (message as { pancodeWrittenCalls?: unknown } | null | undefined)?.pancodeWrittenCalls;
 	return Array.isArray(stamped) ? (stamped as string[]) : [];
 }
@@ -745,7 +746,7 @@ export function createAskUserToolPolicy(
  * A run's usage over its calls as the journal fold sums it, one fact sum per quantity (#434): a call that reported
  * nothing leaves a sum partial, never zero, and an estimate keeps its estimated coverage.
  */
-export interface RunUsageSummary {
+interface RunUsageSummary {
 	totals: CallTotals;
 	/** The calls' cost; `free` holds only when every call was a free target's measured zero. */
 	cost: PricingSum;
@@ -1018,17 +1019,11 @@ export function hasPersistableAssistantContent(
 	return false;
 }
 
-export function recordValue(value: unknown): Record<string, unknown> | null {
-	return value !== null && typeof value === "object" && !Array.isArray(value)
-		? (value as Record<string, unknown>)
-		: null;
-}
-
 function textFromToolResultContent(content: unknown): string {
 	if (!Array.isArray(content)) return "";
 	return content
 		.map((block) => {
-			const item = recordValue(block);
+			const item = asRecord(block);
 			if (item?.type !== "text" || typeof item?.text !== "string") return "";
 			return item.text;
 		})
@@ -1036,14 +1031,14 @@ function textFromToolResultContent(content: unknown): string {
 }
 
 export function toolResultSummary(result: unknown): Record<string, unknown> {
-	const obj = recordValue(result);
+	const obj = asRecord(result);
 	const text = textFromToolResultContent(obj?.content) || (typeof result === "string" ? result : "");
 	const bytes = Buffer.byteLength(text, "utf8");
-	const details = recordValue(obj?.details);
-	const size = recordValue(details?.resultSize);
-	const disposition = recordValue(details?.resultDisposition);
-	const truncation = recordValue(details?.truncation);
-	const observation = recordValue(details?.observation);
+	const details = asRecord(obj?.details);
+	const size = asRecord(details?.resultSize);
+	const disposition = asRecord(details?.resultDisposition);
+	const truncation = asRecord(details?.truncation);
+	const observation = asRecord(details?.observation);
 	const offloadPath =
 		typeof disposition?.offloadPath === "string"
 			? disposition.offloadPath
@@ -1130,7 +1125,6 @@ export {
 	OUTPUT_SCHEMA_REFUSAL_PREFIX,
 	outputSchemaInstruction,
 	outputSchemaSummaryInstruction,
-	type StructuredEnforcement,
 	type StructuredVerdict,
 	schemaMismatchMessage,
 	structuredRepairConstraints,

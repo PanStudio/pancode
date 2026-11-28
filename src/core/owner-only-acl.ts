@@ -24,7 +24,7 @@ import { tmpdir, userInfo } from "node:os";
 import { join, win32 } from "node:path";
 
 /** Runs one program with argv and returns its stdout; throws on failure or timeout. */
-export type AclExec = (program: string, args: readonly string[]) => string;
+type AclExec = (program: string, args: readonly string[]) => string;
 
 /** The platform and process seam; tests inject both, production passes nothing. */
 export interface AclHost {

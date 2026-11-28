@@ -23,7 +23,7 @@ import { effectiveToolCall, gatewayChainReceipts } from "../tools/surface.js";
  */
 
 /** Where the session stands: its id and the leaf turn of its active branch. */
-export interface StepPosition {
+interface StepPosition {
 	sessionId: string | null;
 	leafTurnId: string | null;
 }
@@ -49,7 +49,7 @@ interface StepChain {
  * for whoever stands there: a reopen resumes it, and a clear written on the leaf
  * being left is what navigating away and back finds.
  */
-export interface StepChainStore {
+interface StepChainStore {
 	/** The newest step-chain record on the active path through `leafTurnId`, or null. */
 	read(leafTurnId: string): StepChainData | null;
 	/** Append `data` under `parentTurnId` in the current session. */
@@ -82,7 +82,7 @@ export function sessionStepChainStore(
 	};
 }
 
-export interface StepStartTracker {
+interface StepStartTracker {
 	/**
 	 * A step turn is starting. Returns the checkpoint lead when this turn
 	 * follows a settled step turn of the same template and step tool, in the

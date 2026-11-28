@@ -13,7 +13,7 @@ import {
 	resolveRuntimeTarget,
 } from "../domains/providers/index.js";
 import { ProvidersDomainModule } from "../domains/providers/module.js";
-import { printError } from "./shared.js";
+import { printError } from "./argv.js";
 
 export interface ModelRow {
 	targetId: string;

@@ -15,13 +15,12 @@
  */
 
 import { sha256Hex } from "../../../core/hash.js";
-import type { EvictedItem, SessionEntry } from "../../session/entries.js";
+import type { EvictedItem, EvictionTrigger, SessionEntry } from "../../session/entries.js";
 import type {
 	ContextEvictionFields,
 	EvictedState,
 	EvictionCandidate,
 	EvictionPlan,
-	EvictionTrigger,
 	PolicyInput,
 	WorkingSetPolicy,
 	WorkingSetView,

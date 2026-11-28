@@ -16,12 +16,8 @@ export type { TelemetryDomain } from "./extension.js";
 export type {
 	DecisionRow,
 	DecisionsFold,
-	GateVerdictRow,
-	MemoryStepRow,
-	MemoryStepsFold,
-	ProcessHealthFold,
 } from "./fact-folds.js";
-export { decisionRow, foldDecisions, foldGateVerdicts, foldMemorySteps, foldProcessHealth } from "./fact-folds.js";
+export { decisionRow, foldDecisions } from "./fact-folds.js";
 export { publishGateDecision } from "./gate-publication.js";
 export { TelemetryManifest } from "./manifest.js";
 export { readTaskMemorySpendSummary } from "./memory-spend.js";
@@ -71,7 +67,7 @@ export type {
 	RouteReliabilityOutcome,
 	SettledRunFacts,
 } from "./route-history.js";
-export { createRouteHistoryFold, routeHistoryEntry, routeSettledLabel } from "./route-history.js";
+export { createRouteHistoryFold, routeSettledLabel } from "./route-history.js";
 export { runSettledDigest } from "./run-digest.js";
 export {
 	readDispatchHistory,
@@ -89,7 +85,6 @@ export {
 	readRunRecord,
 	readRunRecordAsync,
 	readSettledRun,
-	readSettledRunAsync,
 	readVerifiedRun,
 } from "./run-record.js";
 export { readSessionContextSnapshots, readSessionPromptCompiles } from "./session-artifacts.js";

@@ -1,10 +1,12 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import { equal, notEqual, ok } from "node:assert/strict";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { test } from "node:test";
+import { resolvePackageRoot } from "../../src/core/package-root.js";
+import { scaffoldExtension } from "../../src/domains/extensions/authoring/scaffold.js";
 import { testExtensionPackage } from "../../src/domains/extensions/authoring/test-runner.js";
 import { isolatePancodeEnv } from "../harness/scratch-env.js";
 
@@ -32,4 +34,40 @@ test("extensions test gives package tests a temp directory the run owns and remo
 	ok(seen.startsWith(path.join(tmpdir(), "pancode-extension-test-")), seen);
 	notEqual(seen, tmpdir());
 	equal(existsSync(seen), false);
+});
+
+/** Package directories under `parent` that carry their own `*.test.ts` runtime tests. */
+function packagesWithTests(parent: string): string[] {
+	return readdirSync(parent, { withFileTypes: true })
+		.filter((entry) => entry.isDirectory())
+		.map((entry) => path.join(parent, entry.name))
+		.filter((dir) =>
+			readdirSync(dir, { recursive: true, withFileTypes: true }).some(
+				(entry) => entry.isFile() && entry.name.endsWith(".test.ts"),
+			),
+		);
+}
+
+test("the PanHub extension packs, examples and scaffold templates pass their own tests", {
+	concurrency: true,
+}, async (t) => {
+	const env = await isolatePancodeEnv("pancode-extension-package-tests-");
+	t.after(() => env.restore());
+	const root = resolvePackageRoot();
+	const packages = [
+		...packagesWithTests(path.join(root, "hub/packs/extensions")),
+		...packagesWithTests(path.join(root, "examples/extensions")),
+		...readdirSync(path.join(root, "src/domains/extensions/authoring/templates")).map((template) =>
+			scaffoldExtension(`template-${template}`, { template, dir: path.join(env.dir, template), workspace: env.dir }),
+		),
+	];
+	ok(packages.length >= 8, packages.join(", "));
+	await Promise.all(
+		packages.map((dir) =>
+			t.test(
+				path.relative(env.dir, dir).startsWith("..") ? path.relative(root, dir) : `template ${path.basename(dir)}`,
+				async () => equal(await testExtensionPackage(dir), 0),
+			),
+		),
+	);
 });

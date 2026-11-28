@@ -101,7 +101,6 @@ import {
 	ACP_FLEET_MAX_REASON_BYTES,
 	ACP_FLEET_PREVIEW_METHOD,
 	ACP_FLEET_RUN_METHOD,
-	bounded as boundedFleetText,
 	projectFleetPreview,
 } from "./fleet-run.js";
 import type { AcpLiveTelemetry } from "./live-telemetry.js";
@@ -117,6 +116,7 @@ import { createAcpReadoutsEmitter } from "./readouts.js";
 import { ACP_MAX_JOBS } from "./runtime.js";
 import { createAcpRuntimeNoticeRelay, subscribeAcpNotices } from "./runtime-notice.js";
 import {
+	boundedText,
 	boundString,
 	requireBoundedClientString,
 	safeConfiguredIdentifier,
@@ -2565,7 +2565,7 @@ export async function servePancodeAcpAgent(options: PancodeAcpServerOptions): Pr
 			return {
 				status: "refused" as const,
 				name,
-				diagnostics: [boundedFleetText(started.reason, ACP_FLEET_MAX_REASON_BYTES)],
+				diagnostics: [boundedText(started.reason, ACP_FLEET_MAX_REASON_BYTES)],
 			};
 		}
 		const fleetRootId = boundString(started.fleetRootId, 128);
@@ -2575,7 +2575,7 @@ export async function servePancodeAcpAgent(options: PancodeAcpServerOptions): Pr
 				name,
 				planHash: result.preview.planHash,
 				fleetRootId,
-				reason: boundedFleetText(started.reason, ACP_FLEET_MAX_REASON_BYTES),
+				reason: boundedText(started.reason, ACP_FLEET_MAX_REASON_BYTES),
 			};
 		}
 		return {

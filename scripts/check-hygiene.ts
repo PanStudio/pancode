@@ -1062,6 +1062,8 @@ const ROOT_ONLY_RESOLVERS = new Set([
 	"src/domains/lifecycle/install-method.ts",
 	// Serves files under the root's src/ from dist/assets/source.pack, so it maps paths against the root itself.
 	"src/core/source-pack.ts",
+	// Shows the whole installation back, read-only, inside a sandbox that hides the operator's home.
+	"src/core/sandbox/home-reads.ts",
 ]);
 const PATH_JOINERS = new Set(["join", "resolve"]);
 

@@ -855,7 +855,6 @@ export class PancodeOverlayFrame implements Component {
 		 * decision treatment only while it is actually holding a decision.
 		 */
 		private readonly tone?: OverlayTone,
-		private readonly fullscreen = false,
 		private readonly awaitingInput?: boolean | (() => boolean),
 	) {}
 
@@ -896,20 +895,11 @@ export class PancodeOverlayFrame implements Component {
 		}
 		const side = pancodeFrame(GLYPH.rail, tone ?? "border");
 		const body = fitBody(childLines, this.rowBudget, contentWidth).map((line) => pancodeTheme().base("menuOption", line));
-		if (this.fullscreen) {
-			while (body.length < Math.max(0, this.rowBudget - 2)) body.push("");
-		}
-		const boxLines = this.fullscreen
-			? [
-					padAnsi(`  ${pancodeTitle(titleText, tone)}`, boxWidth),
-					...body.map((line) => `  ${padAnsi(line, contentWidth)}  `),
-					padAnsi(`  ${pancodeTheme().fg("keyboardHint", hint ?? "")}`, boxWidth),
-				]
-			: [
-					brandedTopBorder(titleText, contentWidth + 2, tone),
-					...body.map((line) => `${side} ${padAnsi(line, contentWidth)} ${side}`),
-					brandedBottomBorder(contentWidth + 2, hint, tone),
-				];
+		const boxLines = [
+			brandedTopBorder(titleText, contentWidth + 2, tone),
+			...body.map((line) => `${side} ${padAnsi(line, contentWidth)} ${side}`),
+			brandedBottomBorder(contentWidth + 2, hint, tone),
+		];
 		const slack = Math.max(0, width - boxWidth);
 		const lines = ((): string[] => {
 			if (slack === 0) return boxLines;
@@ -1046,8 +1036,6 @@ export function showPancodeOverlayFrame(
 		 * really is fixed and surface-specific.
 		 */
 		markerId: string;
-		/** Formerly covered the viewport; the dock ignores it. */
-		fullscreen?: boolean;
 		/** Keep the composer's draft editable beneath the body (the permission card). */
 		keepComposer?: boolean;
 		/** An approval: the editor's rails take the attention tone while it is open. */
@@ -1073,7 +1061,7 @@ export function showPancodeOverlayFrame(
 		ownsStatus,
 		...overlayOptions
 	} = options;
-	const frame = new PancodeOverlayFrame(child, title, footerHint, 0, "left", tone, false, awaitingInput);
+	const frame = new PancodeOverlayFrame(child, title, footerHint, 0, "left", tone, awaitingInput);
 	const entry = dockMount(
 		tui,
 		frame,

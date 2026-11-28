@@ -89,7 +89,7 @@ const WORKER_LOOP_BLOCK_FLOOR = 2;
  * times, a full model round and ~15k input tokens each, before the lockout.
  * Resending a call the guard has refused twice is not a spiral that recovers.
  */
-export const CONSECUTIVE_IDENTICAL_BLOCK_LIMIT = 3;
+const CONSECUTIVE_IDENTICAL_BLOCK_LIMIT = 3;
 
 /** One loop block tolerated per this many admitted calls in a worker run. */
 const WORKER_LOOP_BLOCK_CALLS_PER_BLOCK = 10;
@@ -119,7 +119,7 @@ export function workerLoopBlockBudget(toolCalls: number): number {
  * gathered; a model that keeps calling tools instead of answering is stopped
  * after this many further denials so a degenerate model cannot spin forever.
  */
-export const LOOP_SYNTHESIS_BACKSTOP_DENIALS = 2;
+const LOOP_SYNTHESIS_BACKSTOP_DENIALS = 2;
 
 /**
  * Floor for the run-level denial budget, sized to cover one wide parallel
@@ -128,14 +128,14 @@ export const LOOP_SYNTHESIS_BACKSTOP_DENIALS = 2;
  * die on it: the per-round bounds exist precisely so a wide batch gets one
  * synthesis round instead of a kill.
  */
-export const WIDE_BATCH_DENIAL_FLOOR = 32;
+const WIDE_BATCH_DENIAL_FLOOR = 32;
 
 /**
  * Hard ceiling sits this many calls above the soft budget. Reaching it
  * interrupts the turn outright instead of merely nudging, bounding a model
  * that ignores the directive to a small number of blocked retries.
  */
-export const ORCH_TURN_TOOL_CALL_HARD_MARGIN = 15;
+const ORCH_TURN_TOOL_CALL_HARD_MARGIN = 15;
 
 /** Bounded turn-id memory, matching the registry's dispatch-guard policy. */
 const LOOP_GUARD_TURN_LIMIT = 32;
@@ -165,7 +165,7 @@ const BASH_REPEAT_CREDIT_MS = 5_000;
  * trip the identical-call detector first; this catches the escalation cycle
  * (limit: 10000 -> 20000 -> 50000 -> ...) that varies args enough to evade it.
  */
-export const RESULT_STAGNATION_THRESHOLD = 3;
+const RESULT_STAGNATION_THRESHOLD = 3;
 const CROSS_ARGUMENT_RESULT_MIN_BYTES = 64;
 
 /**
@@ -300,7 +300,7 @@ export interface CreateLoopGuardRegistrationOptions {
 	now?: () => number;
 }
 
-export interface LoopGuardRegistration extends MiddlewareHookRegistration {
+interface LoopGuardRegistration extends MiddlewareHookRegistration {
 	/** Read-only attempt counter for tests and telemetry. */
 	callCount(): number;
 	/**

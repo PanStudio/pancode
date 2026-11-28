@@ -24,7 +24,7 @@
  * Largest automatic load context PanCode requests while another model is resident
  * on the same LM Studio server.
  */
-export const CO_RESIDENT_CONTEXT_CEILING = 131_072;
+const CO_RESIDENT_CONTEXT_CEILING = 131_072;
 
 /** Operator override for {@link CO_RESIDENT_CONTEXT_CEILING}; 0 or `off` disables clamping. */
 export function coResidentContextCeiling(env: NodeJS.ProcessEnv = process.env): number | undefined {
@@ -37,14 +37,14 @@ export function coResidentContextCeiling(env: NodeJS.ProcessEnv = process.env): 
 }
 
 /** One loaded instance as LM Studio reports it: a model key plus its instance identity. */
-export interface LmStudioResidentInstance {
+interface LmStudioResidentInstance {
 	modelKey: string;
 	/** Per-instance identifier. Two instances of one model key differ here. */
 	identifier?: string;
 	sizeBytes?: number;
 }
 
-export interface ContextFitInput {
+interface ContextFitInput {
 	/** Context length the load would otherwise request. */
 	requested: number;
 	/** Instances already resident on the target, including the requested model. */
@@ -56,7 +56,7 @@ export interface ContextFitInput {
 	explicit?: boolean;
 }
 
-export interface ContextFitResult {
+interface ContextFitResult {
 	/** Context length to load with. */
 	contextLength: number;
 	/** Set when the ceiling lowered the request; carries the original value. */

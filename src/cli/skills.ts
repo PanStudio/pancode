@@ -14,7 +14,7 @@ import {
 	skillAuthoringDiagnostics,
 	skillCatalogValidity,
 } from "../domains/resources/index.js";
-import { formatColumns } from "./shared.js";
+import { formatColumns } from "./argv.js";
 
 /** Runtime discovery is a read surface of PanHub; pack mutations live in hub.ts. */
 export function runSkillsRead(args: ReadonlyArray<string>): number {

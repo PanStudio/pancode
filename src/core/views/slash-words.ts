@@ -7,17 +7,17 @@
  */
 
 /** The grammar shape both the command registry and the ACP command catalog carry. */
-export interface SlashFlagShape {
+interface SlashFlagShape {
 	readonly name: string;
 	readonly takesValue?: boolean;
 	readonly values?: readonly string[];
 	readonly valueName?: string;
 }
-export interface SlashPositionalShape {
+interface SlashPositionalShape {
 	readonly name: string;
 	readonly required?: boolean;
 }
-export interface SlashArgsShape {
+interface SlashArgsShape {
 	readonly flags?: readonly SlashFlagShape[];
 	readonly positionals?: readonly SlashPositionalShape[];
 }
@@ -84,7 +84,7 @@ export function slashMatchClass(query: string, name: string, description = ""): 
 }
 
 /** A prompt template as a palette reads it: the terminal's loaded template, or the ACP catalog's row for one. */
-export interface SlashPromptShape {
+interface SlashPromptShape {
 	readonly description: string;
 	readonly argumentHint?: string | undefined;
 	/** Why the template cannot expand; its row refuses a pick. */

@@ -34,6 +34,7 @@ import {
 import { pancodeCachePath } from "../core/xdg.js";
 import { openStoreBackend, type StoreBackend } from "../domains/store/index.js";
 import { buildPutRecord, putHashObservation } from "../domains/store/provenance.js";
+import { printError, printOk } from "./argv.js";
 import { confirmAction } from "./kit/confirm.js";
 
 export type VerifyResult = StoreVerifyResult;
@@ -149,30 +150,30 @@ async function storeLogin(cwd: string): Promise<number> {
 	try {
 		bucket = configuredBucket();
 	} catch (error) {
-		shared.printError(`pancode store login: ${error instanceof Error ? error.message : String(error)}`);
+		printError(`pancode store login: ${error instanceof Error ? error.message : String(error)}`);
 		return 1;
 	}
 	const key = await readApiKey(`Secret key for S3 access key ${bucket.accessKeyId} (${bucket.endpoint})`);
 	if (key === null || key.length === 0) {
-		shared.printError(key === null ? "login cancelled" : "empty secret key");
+		printError(key === null ? "login cancelled" : "empty secret key");
 		return 1;
 	}
 	try {
 		await s3BackendWithKey(cwd, key).listTags();
 	} catch (error) {
 		const message = error instanceof Error ? error.message : String(error);
-		shared.printError(`pancode store login: ${message.replace(/\.$/u, "")}; the key was not stored`);
+		printError(`pancode store login: ${message.replace(/\.$/u, "")}; the key was not stored`);
 		return 1;
 	}
 	const storage = auth.openAuthStorage();
 	try {
 		storage.setApiKey(STORE_S3_CREDENTIAL_ID, key);
 	} catch (error) {
-		shared.printError(error instanceof Error ? error.message : String(error));
+		printError(error instanceof Error ? error.message : String(error));
 		return 1;
 	}
 	if (shared.credentialWriteFailed(storage, "the S3 secret key was not stored")) return 1;
-	shared.printOk(`stored the secret key for ${bucket.accessKeyId}; bucket ${bucket.bucket} answered`);
+	printOk(`stored the secret key for ${bucket.accessKeyId}; bucket ${bucket.bucket} answered`);
 	process.stderr.write(
 		`${chalk.yellow("warning:")} the secret key is stored unencrypted at ${auth.authStoragePath()} (${shared.credentialFileProtection()}); it is readable by any process running as you.\n`,
 	);
@@ -187,12 +188,12 @@ async function storeLogout(): Promise<number> {
 	]);
 	const storage = auth.openAuthStorage();
 	if (storage.get(STORE_S3_CREDENTIAL_ID) === undefined) {
-		shared.printOk("no S3 secret key is stored");
+		printOk("no S3 secret key is stored");
 		return 0;
 	}
 	storage.remove(STORE_S3_CREDENTIAL_ID);
 	if (shared.credentialWriteFailed(storage, "the S3 secret key was not removed")) return 1;
-	shared.printOk("removed the stored S3 secret key");
+	printOk("removed the stored S3 secret key");
 	return 0;
 }
 

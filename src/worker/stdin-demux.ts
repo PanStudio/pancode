@@ -12,7 +12,7 @@ import {
 } from "./protocol.js";
 import { parseWorkerSpec, type WorkerSpec } from "./spec-contract.js";
 
-export interface WorkerStdinDemux {
+interface WorkerStdinDemux {
 	feed(chunk: string): void;
 	eof(): void;
 	readSpec(): Promise<WorkerSpec>;
@@ -91,7 +91,7 @@ export interface WorkerDecisionBinding {
 	reason?: string;
 }
 
-export interface WorkerPermissionDecision {
+interface WorkerPermissionDecision {
 	requestId: string;
 	decision: "approve" | "deny";
 	binding?: WorkerDecisionBinding;
@@ -103,7 +103,7 @@ export interface WorkerPermissionDecision {
 }
 
 /** The parent answers the named ask within `holdMs` from now. */
-export interface WorkerPermissionHold {
+interface WorkerPermissionHold {
 	requestId: string;
 	holdMs: number;
 }
@@ -136,7 +136,7 @@ function parseDecisionBinding(value: unknown): WorkerDecisionBinding | null {
 	};
 }
 
-export interface WorkerSteerMessage {
+interface WorkerSteerMessage {
 	text: string;
 	/** Parent-assigned receipt-provenance sequence for exact acknowledgement. */
 	sequence: number;

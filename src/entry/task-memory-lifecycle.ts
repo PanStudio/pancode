@@ -4,7 +4,7 @@ import type { TelemetryHub } from "../core/telemetry/hub.js";
 import type { MemoryInterventionRegistration } from "../domains/memory/intervention-types.js";
 
 /** Saves the bank of a session being parked and hands it back when that session is resumed. */
-export interface TaskMemoryBankPersistence {
+interface TaskMemoryBankPersistence {
 	save(sessionId: string): void;
 	/** Hands the snapshot back once and retires it, so only the next park can write a newer one. */
 	restore(sessionId: string): void;

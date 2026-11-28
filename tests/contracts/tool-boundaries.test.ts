@@ -12,7 +12,6 @@ import { Type } from "typebox";
 import {
 	normalizePathBoundary,
 	normalizePathBoundaryEntry,
-	pathBoundariesOverlap,
 	pathBoundaryCovers,
 	writeRootsCover,
 } from "../../src/core/path-boundary.js";
@@ -53,8 +52,6 @@ describe("tool boundary contract", () => {
 		strictEqual(pathBoundaryCovers(["src/"], "src/domains/tool.ts"), true);
 		strictEqual(pathBoundaryCovers(["src"], "src/domains/tool.ts"), false);
 		strictEqual(pathBoundaryCovers(["src/"], "src-other/tool.ts"), false);
-		strictEqual(pathBoundariesOverlap(["src/"], ["src/domains/tool.ts"]), true);
-		strictEqual(pathBoundariesOverlap(["src/"], ["docs/"]), false);
 		for (const entry of ["/etc/passwd", "../outside", "src/**/*.ts", "src\\windows"]) {
 			throws(() => normalizePathBoundaryEntry(entry));
 		}

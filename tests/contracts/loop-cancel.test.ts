@@ -43,17 +43,15 @@ for (const count of [0, 1, 2]) {
 	});
 }
 
-test("other loop control verbs still require an id, stop --now preserves its id, and the retired spellings are refused", () => {
+test("other loop control verbs still require an id, stop --now preserves its id, and an unknown word lists the verbs", () => {
 	for (const verb of ["pause", "resume", "stop"]) strictEqual(parseLoopLine(verb).ok, false);
 	deepStrictEqual(parseLoopLine("stop chosen --now"), {
 		ok: true,
 		command: { kind: "control", action: "cancel", id: "chosen" },
 	});
-	for (const line of ["list", "cancel", "cancel chosen"]) {
-		const parsed = parseLoopLine(line);
-		ok(!parsed.ok);
-		match(parsed.reason, /Unrecognized interval .*status, pause, resume, stop$/u);
-	}
+	const parsed = parseLoopLine("frobnicate chosen");
+	ok(!parsed.ok);
+	match(parsed.reason, /Unrecognized interval .*status, pause, resume, stop$/u);
 });
 
 test("/loop status words a job's spend from the read model over the turns its ledger origin names", async () => {

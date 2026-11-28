@@ -17,7 +17,7 @@ import {
 } from "../domains/telemetry/paths.js";
 import { sessionTelemetry } from "../domains/telemetry/read-model-reports.js";
 import { describeSealMismatch, readTelemetryScopeFiles, verifyTelemetryScope } from "../domains/telemetry/seal.js";
-import { printError } from "./shared.js";
+import { printError } from "./argv.js";
 
 type ScopeKind = "session" | "run" | "process";
 

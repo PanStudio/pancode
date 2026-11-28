@@ -34,7 +34,7 @@ import {
 	selectReplayEntries,
 } from "./session-replay-messages.js";
 
-export interface HostInsertsDeps {
+interface HostInsertsDeps {
 	session?: Pick<SessionContract, "current" | "appendEntry" | "flushAppends"> | undefined;
 	readSessionEntries?: (() => ReadonlyArray<SessionEntry>) | undefined;
 	/** The message leaf the next record hangs from, so the active-path filter keeps it. */
@@ -42,11 +42,11 @@ export interface HostInsertsDeps {
 }
 
 /** The live history a push or a removal acts on. */
-export interface LiveHistory {
+interface LiveHistory {
 	agent: { state: { messages: AgentMessage[] } };
 }
 
-export interface HostInsertOptions {
+interface HostInsertOptions {
 	/** Place before this row instead of after the newest rendered one: restoration at submit only. */
 	before?: string;
 	/** Rows render omits because the record stands for them. */

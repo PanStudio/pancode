@@ -12,7 +12,8 @@
  * `rungs:<a>/<b>`), which the live settings enum never admits.
  */
 
-import type { WorkingSetPolicy, WorkingSetPolicyId } from "../contract.js";
+import type { WorkingSetPolicyId } from "../../../../core/defaults.js";
+import type { WorkingSetPolicy } from "../contract.js";
 import { ageHorizonPolicy } from "./age-horizon.js";
 import { resolveComposedPolicy } from "./compose.js";
 import { structuralPolicy, structuralV2Policy } from "./structural.js";

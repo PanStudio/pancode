@@ -16,8 +16,9 @@ import { DRAFT_LABELS, type DraftLabel } from "../core/views/draft-words.js";
 import { stripDeadToolCallMarkup } from "../engine/loop-guard.js";
 
 export { DRAFT_LABELS, type DraftLabel };
-export const DRAFT_MIN = 2;
-export const DRAFT_MAX = 4;
+
+const DRAFT_MIN = 2;
+const DRAFT_MAX = 4;
 export const DRAFT_DEFAULT = 3;
 
 /**
@@ -110,7 +111,7 @@ export function draftCandidateFromText(
 		: { status: "drafted", text };
 }
 
-export interface DraftRequest {
+interface DraftRequest {
 	count: number;
 	request: string;
 }

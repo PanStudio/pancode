@@ -59,21 +59,21 @@ const SNAPSHOT = {
 };
 
 /** A pane host stand-in that records what was asked of it. */
-function fakeMux(options: { available?: boolean; reason?: string } = {}) {
+function fakeMux() {
 	const calls: string[] = [];
 	const requests: MuxOpenUtilityPaneRequest[] = [];
 	const records: MuxPaneRecord[] = [];
 	let next = 0;
 	const mux = {
-		mode: options.available === false ? "none" : "guest",
-		available: () => options.available !== false,
+		mode: "guest",
+		available: () => true,
 		detection: () => ({
-			mode: options.available === false ? "none" : "guest",
+			mode: "guest",
 			socketPath: null,
 			server: null,
 			self: { workspaceId: null, tabId: null, paneId: "self" },
 			candidates: [],
-			reason: options.reason ?? "HERDR_ENV is not 1, so PanCode is not running inside a pane host",
+			reason: "HERDR_ENV is not 1, so PanCode is not running inside a pane host",
 			refused: false,
 		}),
 		list: () => records,
@@ -161,20 +161,6 @@ describe("contracts/panes files surface", () => {
 			const keys: ReadonlyArray<string> = Array.isArray(binding.defaultKeys) ? binding.defaultKeys : [binding.defaultKeys];
 			if (id !== "pancode.files.toggle") ok(!keys.includes("alt+e"), `${id} also claims alt+e`);
 		}
-	});
-
-	it("says why the pane layer is missing and what starts it", async () => {
-		const { mux } = fakeMux({ available: false });
-		const panes = createPanesRuntime({
-			mux,
-			getSettings: () => filesEnabled,
-			getDispatchSnapshot: () => SNAPSHOT,
-			getCwd: () => "/w",
-		});
-		const result = await panes.open({ preset: "shell" });
-		strictEqual(result.status, "unavailable");
-		match(result.reason, /HERDR_ENV is not 1/u);
-		match(result.reason, /pancode --with-panes/u);
 	});
 
 	it("explains an empty logs preset by the run state directory it watched", async () => {

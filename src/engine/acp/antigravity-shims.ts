@@ -50,7 +50,7 @@ const MAX_SIDEBAND_PAGES = 4;
 const MEDIATED_KINDS = new Set(["edit", "delete", "move", "fetch", "read", "search"]);
 
 /** The request that returns agy to `default`: the stable session mode, or a `mode` session config option. */
-export type AntigravityModeReset =
+type AntigravityModeReset =
 	| { method: "session/set_mode"; params: { sessionId: string; modeId: string } }
 	| { method: "session/set_config_option"; params: { sessionId: string; configId: string; value: string } };
 
@@ -65,7 +65,7 @@ export interface AntigravityQuestion {
 }
 
 /** What agy's own store says about the turn that just answered, beyond its ACP response. */
-export interface AntigravitySidebandOutcome {
+interface AntigravitySidebandOutcome {
 	/** The latest quota exhaustion recorded since the last read; the turn failed on it. */
 	usageLimit?: AcpUsageLimit;
 	/** Set once the session recorded an error that poisons it; it stays set for this session. */

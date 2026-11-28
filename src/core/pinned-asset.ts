@@ -21,7 +21,7 @@ export interface PinnedAsset {
 	path: string;
 }
 
-export interface PinnedAssetLoadOptions {
+interface PinnedAssetLoadOptions {
 	/** Bounds the whole download, connect phase included. */
 	timeoutMs: number;
 	/** After a failed download, refuse without fetching for this long, across processes. */

@@ -853,8 +853,6 @@ export type SessionEntry =
 	| HandoffTransactionEntry
 	| ContinuityCommitEntry;
 
-export type SessionFileEntry = SessionHeader | SessionEntry;
-
 /**
  * Canonical list of entry kinds. Exposed so consumers that switch on
  * `entry.kind` can assert exhaustive coverage in tests; keeping the list
@@ -886,8 +884,6 @@ export const SESSION_ENTRY_KINDS = [
 	"handoffTransaction",
 	"continuityCommit",
 ] as const;
-
-export type SessionEntryKind = (typeof SESSION_ENTRY_KINDS)[number];
 
 /**
  * Structural guard for the single accepted session ledger entry format.

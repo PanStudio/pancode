@@ -14,7 +14,7 @@ import {
 	readOnlyScratchDir,
 } from "../core/sandbox/main-session.js";
 import { invalidateWorkspaceSecretScans } from "../core/sandbox/secret-files.js";
-import type { SandboxLaunchWhy } from "../core/sandbox/types.js";
+import type { HomeReadList, SandboxEnvPolicy, SandboxLaunchWhy, UnixSocketMode } from "../core/sandbox/types.js";
 import type { ToolName } from "../core/tool-names.js";
 import { isMcpToolName, ToolNames } from "../core/tool-names.js";
 import type { TurnConstraints } from "../core/turn-constraints.js";
@@ -272,6 +272,20 @@ function refusesUncontainedLaunch(
 	return false;
 }
 
+/** The operator's sandbox environment, socket, and home-read choices a contained main shell command carries. */
+function shellSandboxScope(deps: RegistryDeps): {
+	env?: SandboxEnvPolicy;
+	unixSockets?: UnixSocketMode;
+	homeReads?: HomeReadList;
+} {
+	const homeReads = deps.sandboxHomeReads?.();
+	return {
+		...(deps.sandboxEnv !== undefined ? { env: deps.sandboxEnv() } : {}),
+		...(deps.sandboxUnixSockets !== undefined ? { unixSockets: deps.sandboxUnixSockets() } : {}),
+		...(homeReads !== undefined ? { homeReads } : {}),
+	};
+}
+
 export function createRegistry(deps: RegistryDeps): ToolRegistry {
 	const tools = new Map<ToolName, ToolSpec>();
 	/**
@@ -402,9 +416,7 @@ export function createRegistry(deps: RegistryDeps): ToolRegistry {
 		roots: { workspace: string; scratchRoots: ReadonlyArray<string>; readOnly?: true },
 		options: ToolInvokeOptions | undefined,
 	): MainSandboxPolicy => {
-		const env = deps.sandboxEnv !== undefined ? { env: deps.sandboxEnv() } : {};
-		const unixSockets = deps.sandboxUnixSockets !== undefined ? { unixSockets: deps.sandboxUnixSockets() } : {};
-		const scope = { workspace: roots.workspace, scratchRoots: roots.scratchRoots, ...env, ...unixSockets };
+		const scope = { workspace: roots.workspace, scratchRoots: roots.scratchRoots, ...shellSandboxScope(deps) };
 		return shellEgress.apply(
 			roots.readOnly === true
 				? readOnlyMainSandboxPolicy({

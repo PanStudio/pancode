@@ -19,6 +19,7 @@ import {
 	axisViewFromId,
 	mainApprovalRequestView,
 } from "../session-control/approval-request-facts.js";
+import type { ApprovalRequestView } from "../session-control/approval-request-view.js";
 import type { ToolApprovalStateEvent } from "../session-control/chat-loop.js";
 import { resolvePermission } from "../session-control/index.js";
 import type { NoticeSource } from "../session-control/notice-source.js";
@@ -27,12 +28,7 @@ import { approvalParkedNotice } from "./bus-notices.js";
 import type { NoticeLevel } from "./command-output.js";
 import { createMutationInspector, type MutationInspector } from "./mutation-preview.js";
 import type { OverlayState } from "./overlay-key-routing.js";
-import type {
-	ApprovalRequestView,
-	PermissionAdvisoryReader,
-	PermissionCountdownReader,
-	WorkerWindowReader,
-} from "./permission-overlay.js";
+import type { PermissionAdvisoryReader, PermissionCountdownReader, WorkerWindowReader } from "./permission-overlay.js";
 import { formatElapsed } from "./theme/index.js";
 import { startUnattendedCountdown, type UnattendedCountdown, type UnattendedTimers } from "./unattended-countdown.js";
 

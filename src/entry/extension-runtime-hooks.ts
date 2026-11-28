@@ -99,7 +99,7 @@ type ToolOrTurnPoint = "before_tool" | "after_tool" | "turn_start" | "turn_end";
  * between a turn's calls loses none of them. A run that names no session is held under the session current when it
  * ran, so a flush after a session switch never files it under the new one.
  */
-export interface QuietHookRuns {
+interface QuietHookRuns {
 	add(receipt: HookReceipt): void;
 	flush(): void;
 	/** Write what is held, and from now on every run as it settles: the process is stopping. */
@@ -170,7 +170,7 @@ export function createQuietHookRuns(sink: HookReceiptSink, sessionId?: () => str
 	};
 }
 
-export interface ExtensionRuntimeHookOptions {
+interface ExtensionRuntimeHookOptions {
 	generation: number;
 	recordReceipt: HookReceiptSink;
 	/** Where effect-free ok runs go instead of a receipt each; without it every run writes its own. */
@@ -329,7 +329,7 @@ function pointEvent(
  * root (its task worktree, or its cwd) in the worker's filesystem, and the
  * directory of the session's checkout it stands for.
  */
-export interface WorkerLandingWorkspace {
+interface WorkerLandingWorkspace {
 	workerRoot: string;
 	sourceRoot: string;
 }
@@ -604,7 +604,7 @@ export type WorkerHookEvaluator = (
 	workspace?: WorkerLandingWorkspace,
 ) => Promise<MiddlewareEffect[]>;
 
-export interface ExtensionRuntimeHooks {
+interface ExtensionRuntimeHooks {
 	registrations: MiddlewareHookRegistration[];
 	/** The tool hooks again by registration id, as dispatched workers' calls run them. */
 	workerEvaluators: Map<string, WorkerHookEvaluator>;
@@ -717,13 +717,13 @@ export function buildExtensionRuntimeHooks(
 }
 
 /** An extension's own `notify_operator` advisory, keyed so a later one with the key replaces it. */
-export interface ExtensionPromptAdvisory {
+interface ExtensionPromptAdvisory {
 	text: string;
 	key: string;
 }
 
 /** `notices` are the host's word on the gate (a refused rewrite, a rewrite made); `advisories` are the extensions'. */
-export type ExtensionPromptGateVerdict =
+type ExtensionPromptGateVerdict =
 	| { kind: "pass"; text: string; notices: string[]; advisories: ExtensionPromptAdvisory[] }
 	| { kind: "block"; reason: string; notices: string[]; advisories: ExtensionPromptAdvisory[] };
 

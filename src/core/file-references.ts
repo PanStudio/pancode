@@ -9,14 +9,14 @@ import { formatSize } from "../tools/truncate.js";
 import { formatDimensionNote, resizeImage } from "../utils/image-resize.js";
 import { expandConfigPath } from "./resolve-config-value.js";
 
-export interface FileReferenceDiagnostic {
+interface FileReferenceDiagnostic {
 	/** `info` marks a file that went in only in part, such as a PDF cut at the attachment cap. */
 	type: "warning" | "error" | "info";
 	message: string;
 	path?: string;
 }
 
-export interface FileReferenceResult {
+interface FileReferenceResult {
 	text: string;
 	images: ImageContent[];
 	diagnostics: FileReferenceDiagnostic[];
@@ -24,7 +24,7 @@ export interface FileReferenceResult {
 	referencedPaths: string[];
 }
 
-export interface FileReferenceOptions {
+interface FileReferenceOptions {
 	cwd?: string;
 	missing?: "error" | "leave";
 	includeImages?: boolean;

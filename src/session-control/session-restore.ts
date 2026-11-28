@@ -6,7 +6,7 @@ import type { AgentMessage } from "../engine/types.js";
 import type { ChatLoop } from "./chat-loop.js";
 import { buildModelReplayAgentMessagesFromTurns, withContinuityReplay } from "./model-session-replay.js";
 
-export interface SessionReplayPorts {
+interface SessionReplayPorts {
 	session: Pick<SessionContract, "current" | "leafId">;
 	chat: Pick<ChatLoop, "resetForSession">;
 	readEntries(id: string): ReadonlyArray<SessionEntry>;

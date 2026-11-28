@@ -42,7 +42,6 @@ import { StringEnum } from "../engine/ai.js";
 import { isSecretArgKey } from "../lib/secrets/redaction.js";
 import type { ToolSurface } from "./lazy-tool.js";
 import { runScriptCwd } from "./path-utils.js";
-import type { ToolInvokeOptions } from "./registry-contract.js";
 import type { ToolResult, ToolSpec } from "./tool-spec.js";
 import { formatSize } from "./truncate.js";
 import { byteLength } from "./truncate-utf8.js";
@@ -1240,6 +1239,3 @@ export function createRunScriptTool(deps: RunScriptToolDeps = {}): ToolSpec {
 		},
 	};
 }
-
-/** Exported for the bootstrap: the options a wrapped runner forwards unchanged. */
-export type RunScriptInvokeOptions = ToolInvokeOptions;

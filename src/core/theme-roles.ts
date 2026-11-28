@@ -2,11 +2,11 @@
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import { type Hex, type PaletteColor, paletteProjection, type ThemeBackground } from "./theme-token-hex.js";
 
-export type TextIntensity = "subdued" | "supporting" | "reading" | "focal" | "strong";
-export type AccentIntent = "neutral" | "ivory" | "cyan" | "turquoise" | "action" | "success" | "warning" | "error";
-export type ThemeSurface = "application" | "composer" | "composerDock";
+type TextIntensity = "subdued" | "supporting" | "reading" | "focal" | "strong";
+type AccentIntent = "neutral" | "ivory" | "cyan" | "turquoise" | "action" | "success" | "warning" | "error";
+type ThemeSurface = "application" | "composer" | "composerDock";
 export type RoleState = "normal" | "disabled" | "readOnly" | "selected" | "success" | "warning" | "error";
-export type ThemeMode = "normal" | "yolo";
+type ThemeMode = "normal" | "yolo";
 export interface ThemeContext {
 	readonly surface: ThemeSurface;
 	readonly mode: ThemeMode;
@@ -172,7 +172,7 @@ export const STRUCTURAL_ROLES = {
 } as const satisfies Record<string, PaletteColor>;
 
 /** Declared function vocabulary; caller data and outcomes keep their own roles. */
-export const FUNCTION_ROLES = {
+const FUNCTION_ROLES = {
 	builtin: "toolAction",
 	shell: "shellAction",
 	mutation: "toolAction",
@@ -189,7 +189,7 @@ export const FUNCTION_ROLES = {
 export type HarnessFunction = keyof typeof FUNCTION_ROLES;
 
 export type SemanticRole = keyof typeof TEXT_ROLES | keyof typeof STRUCTURAL_ROLES;
-export interface ResolvedRole {
+interface ResolvedRole {
 	readonly color: PaletteColor;
 	readonly bold?: boolean;
 }

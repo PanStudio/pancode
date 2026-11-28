@@ -26,9 +26,9 @@ export const WORKER_AGENT_LEDGER_POST_CAP = 20;
  * Refusal tokens shared with the orchestrator's append path, so a worker-local
  * refusal and the authoritative one a receipt counts read the same.
  */
-export type WorkerAgentLedgerRefusal = "invalid-body" | "per-run-cap" | "no-ledger";
+type WorkerAgentLedgerRefusal = "invalid-body" | "per-run-cap" | "no-ledger";
 
-export interface WorkerAgentLedgerMirror {
+interface WorkerAgentLedgerMirror {
 	/** Merge one pushed batch, deduping by sequence. */
 	apply(entries: ReadonlyArray<AgentLedgerEntry>): void;
 	entries(): ReadonlyArray<AgentLedgerEntry>;
@@ -36,7 +36,7 @@ export interface WorkerAgentLedgerMirror {
 	watermark(): number;
 }
 
-export function createWorkerAgentLedgerMirror(): WorkerAgentLedgerMirror {
+function createWorkerAgentLedgerMirror(): WorkerAgentLedgerMirror {
 	const bySequence = new Map<number, AgentLedgerEntry>();
 	let watermark = 0;
 	return {
@@ -56,7 +56,7 @@ export function createWorkerAgentLedgerMirror(): WorkerAgentLedgerMirror {
 	};
 }
 
-export interface WorkerAgentLedgerPortDeps {
+interface WorkerAgentLedgerPortDeps {
 	/** The spec's ledger field. Absent when this run has no ledger at all. */
 	ledger?: { id: string; sequence: number };
 	emitControlFrame: (frame: WorkerControlFrame) => void;
@@ -65,7 +65,7 @@ export interface WorkerAgentLedgerPortDeps {
 }
 
 /** The shared port plus the stdin-side entry point that feeds the mirror. */
-export interface WorkerAgentLedgerPort extends AgentLedgerPort {
+interface WorkerAgentLedgerPort extends AgentLedgerPort {
 	acceptDelta(entries: ReadonlyArray<AgentLedgerEntry>): void;
 }
 

@@ -110,7 +110,7 @@ export interface SafeCommandResult {
  * the output cap does not apply: the sink is the unbounded destination and
  * the retained windows are the memory bound.
  */
-export interface SafeCommandOutputSink {
+interface SafeCommandOutputSink {
 	onStdout?(chunk: Buffer): void;
 	onStderr?(chunk: Buffer): void;
 	/** Leading bytes of each stream kept on the result (default 4096). */
@@ -176,7 +176,7 @@ function trimLeadingUtf8Continuation(bytes: Buffer): Buffer {
 	return start === 0 ? bytes : bytes.subarray(start);
 }
 
-export interface RetainedStreamRendering {
+interface RetainedStreamRendering {
 	text: string;
 	/** True when the text carries every byte the stream produced. */
 	retained: boolean;
@@ -189,7 +189,7 @@ export interface RetainedStreamRendering {
  * head + tail + one chunk whatever the stream's length, and the rendering
  * names exactly how many bytes fell between the two windows.
  */
-export interface RetainedStreamWindow {
+interface RetainedStreamWindow {
 	append(chunk: Buffer): void;
 	readonly totalBytes: number;
 	render(): RetainedStreamRendering;
@@ -263,7 +263,7 @@ export interface ProcessGroupCleanupScheduler {
 	clearTimeout(handle: unknown): void;
 }
 
-export interface ProcessGroupCleanupHooks {
+interface ProcessGroupCleanupHooks {
 	/** Existence probe (`kill(-pgid, 0)`): true while any member remains, false only on ESRCH. */
 	probe(): boolean;
 	/**
@@ -282,7 +282,7 @@ export interface ProcessGroupCleanupHooks {
 	scheduler?: ProcessGroupCleanupScheduler | undefined;
 }
 
-export interface ProcessGroupCleanup {
+interface ProcessGroupCleanup {
 	readonly done: boolean;
 	readonly status: ProcessGroupCleanupStatus | null;
 	/** A kill was requested (timeout, cancellation, cap, sink failure): open the window with SIGTERM now. */
@@ -437,7 +437,7 @@ export function buildSafeToolEnv(
 	return applyToolEnvControls(env);
 }
 
-export interface LaunchDetachedOptions {
+interface LaunchDetachedOptions {
 	/** Environment the allowlist reads from (default `process.env`). */
 	source?: NodeJS.ProcessEnv;
 	/** Further variables passed by name, such as the display session a browser needs. */
@@ -834,7 +834,7 @@ export function runCommandVector(
 	});
 }
 
-export interface StagingCommandOptions {
+interface StagingCommandOptions {
 	cwd?: string;
 	/** Added to the safe environment; the caller names only what the command needs. */
 	env?: Record<string, string>;

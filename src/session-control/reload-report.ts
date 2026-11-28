@@ -3,7 +3,7 @@
 /** Shared command types; this leaf never loads the interactive runtime. */
 import type { OperatorReloadSummary } from "../domains/extensions/operator-extensions.js";
 
-export type ReloadClass = "settings" | "hub" | "extensions" | "prompts" | "mcp";
+type ReloadClass = "settings" | "hub" | "extensions" | "prompts" | "mcp";
 export type ReloadTarget = ReloadClass | "all";
 
 export interface ReloadReport {

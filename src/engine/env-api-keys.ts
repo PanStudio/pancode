@@ -6,9 +6,9 @@ import { join } from "node:path";
 
 import type { ProviderEnv } from "@earendil-works/pi-ai";
 
-export const ANTHROPIC_AUTH_TOKEN_ENV = "ANTHROPIC_AUTH_TOKEN";
-export const ANTHROPIC_OAUTH_TOKEN_ENV = "ANTHROPIC_OAUTH_TOKEN";
-export const ANTHROPIC_API_KEY_ENV = "ANTHROPIC_API_KEY";
+const ANTHROPIC_AUTH_TOKEN_ENV = "ANTHROPIC_AUTH_TOKEN";
+const ANTHROPIC_OAUTH_TOKEN_ENV = "ANTHROPIC_OAUTH_TOKEN";
+const ANTHROPIC_API_KEY_ENV = "ANTHROPIC_API_KEY";
 
 const ENV_KEYS: Readonly<Record<string, string>> = {
 	"ant-ling": "ANT_LING_API_KEY",

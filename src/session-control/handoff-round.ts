@@ -21,7 +21,7 @@ import { runOutOfTurnRound, type SideQuestionResult } from "./side-question.js";
  * not reused: it carries the working agreement for a turn that edits files and
  * calls tools, and this round does neither.
  */
-export const HANDOFF_SYSTEM_PROMPT = [
+const HANDOFF_SYSTEM_PROMPT = [
 	"You are extracting a handoff record from a coding session that is about to end.",
 	"The conversation above is read-only context.",
 	"Answer with one JSON object and nothing else: no prose, no code fence, no explanation.",
@@ -36,13 +36,13 @@ export const HANDOFF_SYSTEM_PROMPT = [
 ].join(" ");
 
 /** A handoff record is a list of short entries, so the budget is modest. */
-export const HANDOFF_MAX_TOKENS = 4096;
+const HANDOFF_MAX_TOKENS = 4096;
 
 /** The name the wire dialect gives the schema, where it takes one. */
-export const HANDOFF_SCHEMA_NAME = "handoff_record";
+const HANDOFF_SCHEMA_NAME = "handoff_record";
 
 /** Characters of the refused answer quoted back to the model in the repair round. */
-export const HANDOFF_REPAIR_QUOTE_CHARS = 600;
+const HANDOFF_REPAIR_QUOTE_CHARS = 600;
 
 /**
  * What the first round returned and why the parser refused it. The repair round
@@ -54,7 +54,7 @@ export interface HandoffRepairInput {
 	previous: string;
 }
 
-export interface HandoffRoundInput extends SideCallAuth {
+interface HandoffRoundInput extends SideCallAuth {
 	telemetry?: NonNullable<SideQuestionInput["telemetry"]>;
 	model: EngineModel;
 	/** Read-only. The round copies before appending its own message. */

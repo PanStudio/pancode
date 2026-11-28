@@ -27,11 +27,7 @@ import {
 	type OverlayPermissionLifecycle,
 } from "../../src/interactive/overlay-permission-lifecycle.js";
 import { permissionHintEntries, slashDraftUnderApprovalNotice } from "../../src/interactive/permission-hint.js";
-import {
-	type ApprovalRequestView,
-	createPermissionOverlayBody,
-	PERMISSION_OVERLAY_WIDTH,
-} from "../../src/interactive/permission-overlay.js";
+import { createPermissionOverlayBody, PERMISSION_OVERLAY_WIDTH } from "../../src/interactive/permission-overlay.js";
 import { permissionOverlayHint } from "../../src/interactive/permission-overlay-model.js";
 import { createPermissionSettleWindow, PERMISSION_SETTLE_MS } from "../../src/interactive/permission-settle.js";
 import { renderToolAwaitingApproval } from "../../src/interactive/renderers/tool-approval-cards.js";
@@ -48,6 +44,7 @@ import {
 import type { UnattendedTimers } from "../../src/interactive/unattended-countdown.js";
 import { CALL_TARGET_MAX_CHARS, describeCallTarget } from "../../src/lib/call-target/call-target.js";
 import { mainApprovalRequestView } from "../../src/session-control/approval-request-facts.js";
+import type { ApprovalRequestView } from "../../src/session-control/approval-request-view.js";
 import { createRegistry } from "../../src/tools/registry.js";
 import { writeTool } from "../../src/tools/write.js";
 

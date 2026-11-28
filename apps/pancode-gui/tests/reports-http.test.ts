@@ -7,7 +7,7 @@ import { test } from "node:test";
 import { UsageReport } from "../contracts/reports.js";
 import { reportCostDisplays } from "../server/services/cost-display.js";
 import { harness, json } from "./harness/app.js";
-import { seedReports } from "./harness/reports-fixture.js";
+import { seedReports } from "./harness/hub-fixture.js";
 
 test("usage DTO bridge reports canonical workspace usage and an empty workspace", async () => {
 	const h = await harness();

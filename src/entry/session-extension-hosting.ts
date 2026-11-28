@@ -7,7 +7,7 @@ import type { ExtensionHost } from "./extension-host.js";
 import type { ExtensionReloadOutcome } from "./extension-reload.js";
 import { createIdleDeferral } from "./idle-deferral.js";
 
-export interface SessionExtensionHostingDeps {
+interface SessionExtensionHostingDeps {
 	/** Null when no installed extension has a runtime to host. */
 	start(): Promise<ExtensionHost | null>;
 	/** Publish the next hook generation; the runtimes restart on it. */
@@ -23,7 +23,7 @@ export interface SessionExtensionHostingDeps {
  * The api 2 runtime host of a headless run or an ACP session. The TUI hosts its own runtimes, whose reload commits
  * the hooks itself; here the hooks commit first and the runtimes restart on that generation.
  */
-export interface SessionExtensionHosting {
+interface SessionExtensionHosting {
 	readonly current: ExtensionHost | null;
 	/** The running host, or one started now; a session that booted with nothing to host gets one once there is. */
 	ensure(): Promise<ExtensionHost | null>;

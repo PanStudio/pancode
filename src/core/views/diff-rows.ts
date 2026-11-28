@@ -16,7 +16,7 @@ export const WIRE_TRUNCATION_SUFFIX = "…[truncated]";
 /** Added to a mutation's result text when either side of the file is too large to diff. */
 export const DIFF_SKIPPED_NOTE = "diff skipped because the previous or new file exceeds 1 MiB";
 /** Widest diff line the producer keeps; the rest of a longer line is counted, not shown. */
-export const MAX_DIFF_LINE_CHARS = 500;
+const MAX_DIFF_LINE_CHARS = 500;
 
 const LINE_CAP = /… \(\+\d+ chars\)$/u;
 const REVIEW_ROW = /^([+\- ])( *\d+| +) (.*)$/u;
@@ -32,7 +32,7 @@ export function isCappedDiffLine(text: string): boolean {
 	return LINE_CAP.test(text);
 }
 
-export interface ReviewDiffRow {
+interface ReviewDiffRow {
 	readonly sign: "+" | "-" | " ";
 	/** The number column as written, padding kept so a gutter can reuse it; all blanks on an elision row. */
 	readonly numberField: string;

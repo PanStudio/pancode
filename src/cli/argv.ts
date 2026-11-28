@@ -4,9 +4,7 @@
  * Dependency-light CLI argument parsing and terminal formatting. This module
  * imports nothing from the domain graph (only `chalk` and a leaf of core), so `cli/index.ts` can
  * parse argv and dispatch without dragging provider/auth code (and its
- * transitive pi-* externals) into the eagerly loaded startup chunk. `shared.ts`
- * re-exports everything here for the command modules, which already pay for the
- * heavier graph.
+ * transitive pi-* externals) into the eagerly loaded startup chunk.
  */
 
 import { resolve } from "node:path";

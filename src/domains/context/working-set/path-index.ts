@@ -31,8 +31,7 @@ import { canonicalJson } from "../../../core/canonical-json.js";
 import { ToolNames } from "../../../core/tool-names.js";
 import { isRecord } from "../../../core/type-guards.js";
 import { effectiveToolCall, expandChainMessages } from "../../../tools/surface.js";
-import type { MessageEntry, SessionEntry } from "../../session/entries.js";
-import type { WorkingSetRef } from "./contract.js";
+import type { MessageEntry, SessionEntry, WorkingSetRef } from "../../session/entries.js";
 import { isTurnStart } from "./horizon.js";
 import { isRefusedVerdict, toolResultText } from "./payload.js";
 

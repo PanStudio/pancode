@@ -68,7 +68,7 @@ interface PackageIdentities {
 const SHA256 = /^[a-f0-9]{64}$/;
 
 /** The repository-root handbook files a `handbook` approval pins. */
-export const HANDBOOK_TRUST_FILES: ReadonlyArray<string> = ["PANCODE.override.md", "PANCODE.md", "PANCODE-DEV.md"];
+const HANDBOOK_TRUST_FILES: ReadonlyArray<string> = ["PANCODE.override.md", "PANCODE.md", "PANCODE-DEV.md"];
 
 function isPackageSurface(surface: ProjectTrustSurface): surface is PackageTrustSurface {
 	return surface === "extensions" || surface === "plugins";
@@ -466,7 +466,7 @@ export function projectPackagesTrusted(workspaceRoot: string, surface: "extensio
 	}
 }
 
-export interface ProjectPackageTrust {
+interface ProjectPackageTrust {
 	verdict: WorkspaceTrustVerdict;
 	/** Install-state ids whose own record is approved. Empty unless the surface is trusted. */
 	approvedIds: ReadonlySet<string>;

@@ -23,7 +23,7 @@ import { keepTargetOrigins } from "./project-target-urls.js";
 
 type SessionThinkingLevel = PancodeSettings["chat"]["thinkingLevel"];
 
-export interface SessionRoutingTarget {
+interface SessionRoutingTarget {
 	target: string | null;
 	model: string | null;
 	thinkingLevel: SessionThinkingLevel;
@@ -137,7 +137,7 @@ export function commitRoutingPatch(
 	}
 }
 
-export interface RoutingGestureDeps {
+interface RoutingGestureDeps {
 	/** The level Shift+Tab steps to from the active route's current one. */
 	nextThinkingLevel(): SessionThinkingLevel;
 	/** The next entry of the scoped model cycle, or null when the cycle is empty. */
@@ -145,7 +145,7 @@ export interface RoutingGestureDeps {
 	apply(patch: RoutingPatch, scope: "session" | "global"): void;
 }
 
-export interface RoutingGestures {
+interface RoutingGestures {
 	cycleThinking(): void;
 	cycleScopedModel(direction: "forward" | "backward"): boolean;
 }
@@ -182,7 +182,7 @@ export interface ResumedRoute {
 	thinkingSelection?: SessionThinkingLevel;
 }
 
-export interface ResumedRoutingPlan {
+interface ResumedRoutingPlan {
 	/** Session-scoped patch that puts the live route back on the session's own; null when nothing moves. */
 	patch: RoutingPatch | null;
 	/** Operator-facing line when the recorded route can no longer be restored. */
@@ -446,7 +446,7 @@ function externalRoutingDivergence(
 	return labels;
 }
 
-export interface RoutingChangeNotice {
+interface RoutingChangeNotice {
 	kind: "external-divergence" | "active-target-removed";
 	level: "info" | "warning";
 	text: string;

@@ -16,7 +16,7 @@ export function runtimeNarratesToolCalls(runtimeTier: string | undefined): boole
 	return runtimeTier === "local-native";
 }
 
-export interface ToolProseLoopInput {
+interface ToolProseLoopInput {
 	text: string;
 	activeToolNames: ReadonlyArray<string>;
 	/**
@@ -28,7 +28,7 @@ export interface ToolProseLoopInput {
 	hasStructuredToolCall?: boolean;
 }
 
-export type ToolProseLoopAssessment =
+type ToolProseLoopAssessment =
 	| { kind: "ok" }
 	| {
 			kind: "loop";

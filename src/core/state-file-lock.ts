@@ -84,7 +84,7 @@ interface LockOwner {
 }
 
 /** Who holds a lock, as its record states. A null `host` is this machine. */
-export interface StateFileLockHolder {
+interface StateFileLockHolder {
 	pid: number;
 	host: string | null;
 	self: boolean;

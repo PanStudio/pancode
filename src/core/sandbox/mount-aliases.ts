@@ -157,3 +157,30 @@ export function withMountAliases(
 	}
 	return result;
 }
+
+/**
+ * WSL's mounts of Windows drives (`/mnt/c` and the like, or wherever
+ * `automount.root` puts them): a 9p, drvfs or virtiofs mount whose source is a
+ * drive path such as `C:\`. An Error when the mount table cannot be read.
+ */
+export function windowsDriveMounts(mountinfo: string = MOUNTINFO): string[] | Error {
+	let text: string;
+	try {
+		text = readFileSync(mountinfo, "utf8");
+	} catch (error) {
+		return new Error(
+			`could not read the mount table ${mountinfo}: ${error instanceof Error ? error.message : String(error)}`,
+		);
+	}
+	const drives = new Set<string>();
+	for (const line of text.split("\n")) {
+		const [mount, tail] = line.split(" - ");
+		if (mount === undefined || tail === undefined) continue;
+		const mountPoint = mount.split(" ")[4];
+		const [fsType, source] = tail.split(" ");
+		if (mountPoint === undefined || fsType === undefined || source === undefined) continue;
+		if (!["9p", "drvfs", "virtiofs"].includes(fsType)) continue;
+		if (/^[A-Za-z]:(?:[\\/]|$)/u.test(decodeMountField(source))) drives.add(decodeMountField(mountPoint));
+	}
+	return [...drives];
+}
