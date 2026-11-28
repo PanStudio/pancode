@@ -17,7 +17,7 @@ import { gatewayRoutingObservationFromRecord, gatewayRoutingObservationLabel } f
 import { isHostAuthored, rememberMessageCalls } from "../core/message-accounting.js";
 import { applyModelAdmission, type ModelAdmissionEvent } from "../core/model-admission.js";
 import { projectTargetOrigin } from "../core/project-target-urls.js";
-import { type ModelRouteRefusal, modelRouteGuarded, modelRouteRefusalMessage } from "../core/response-model-id.js";
+import { modelRouteGuarded, modelRouteRefusalMessage } from "../core/response-model-id.js";
 import { requestedThinking } from "../core/telemetry/call-effort.js";
 import { mainAgent } from "../core/telemetry/context.js";
 import type { FailureCause } from "../core/telemetry/enums.js";
@@ -39,16 +39,8 @@ import { acceptsImageInput } from "../domains/providers/image-input.js";
 import {
 	applyModelCapabilityPatch,
 	canonicalEndpointKey,
-	modelOfferForStatus,
-	modelResidencyForStatus,
-	type ProvidersContract,
 	recordEndpointThroughput,
 	refineRuntimeTargetWithModelHints,
-	resolveRuntimeTarget,
-	runtimeListsModelsLive,
-	runtimeResolutionWarningsBesideThinkingNotice,
-	synthesizeTargetModel,
-	type TargetStatus,
 	targetRequiresAuth,
 } from "../domains/providers/index.js";
 import { journalAccountQuota, quotaReadingFromMessage } from "../domains/quota/index.js";
@@ -91,7 +83,7 @@ import {
 	type ToolRound,
 } from "../engine/provider-payload.js";
 import { createRequestStructures } from "../engine/request-structure.js";
-import type { AgentEvent, AgentMessage, CodexConfiguration, EngineModel, Usage } from "../engine/types.js";
+import type { AgentEvent, AgentMessage, CodexConfiguration, Usage } from "../engine/types.js";
 import type { resolveAgentTools, ToolFinishEvent, ToolTelemetry } from "../tools/agent-tools.js";
 import { closeAskUserInterviewOnAssistantTurn } from "../tools/ask-user.js";
 import {
@@ -122,7 +114,6 @@ import {
 	noteWrittenCalls,
 	rebaseToolMarkupReprompt,
 	sumRunUsage,
-	THINKING_CLAMP_NOTICE_KEY,
 	type ToolMarkupRepromptBudget,
 	terminalFailureFromAssistantMessage,
 	toolCallLabel,
@@ -147,9 +138,14 @@ import type { ModelRequestFacts } from "./status-types.js";
 import { assessToolProseLoop, runtimeNarratesToolCalls, shouldAssessToolProse } from "./tool-prose-loop.js";
 import { type ExpectedColdReason, OVERSIZED_RESULT_STOP } from "./turn-context.js";
 import { stalledRequestEnd } from "./turn-recovery.js";
+import { TurnAdmissionError } from "./turn-runtime/errors.js";
+import { createRouteControl } from "./turn-runtime/route.js";
+import type { TurnRuntimeScope } from "./turn-runtime/scope.js";
 import type { RunningCallWait, TurnRuntime, TurnRuntimeDeps } from "./turn-runtime-types.js";
-import { coldModelNotice, MODEL_SLOTS_SAMPLE_MS, modelRequestSlots, stallAbortReason } from "./turn-runtime-wait.js";
-import type { AgentRuntime, ChatLoopTarget, PreInvocationStage } from "./turn-state.js";
+import { MODEL_SLOTS_SAMPLE_MS, modelRequestSlots, stallAbortReason } from "./turn-runtime-wait.js";
+import type { AgentRuntime, PreInvocationStage } from "./turn-state.js";
+
+export { TurnAdmissionError };
 
 const LOCAL_API_KEY_FALLBACK = "pancode-local-target";
 /** The reason a reply cut off by shutdown carries in place of the transport's abort text (bt-26). */
@@ -180,22 +176,6 @@ function finalizeAttempt(
 	return synthesisLock || (choice.kind === "none" && request.options?.toolChoice === "auto")
 		? withLockedSynthesisDirective(request.context)
 		: request.context;
-}
-
-/**
- * A turn that never started, with a machine-readable reason attached. The
- * operator-facing message is unchanged prose; `reason` exists because the ACP
- * server has to tell a client *why* PanCode refused to admit the prompt, and
- * parsing that out of the prose would bind a wire contract to a sentence.
- */
-export class TurnAdmissionError extends Error {
-	constructor(
-		message: string,
-		readonly reason: string,
-	) {
-		super(message);
-		this.name = "TurnAdmissionError";
-	}
 }
 
 function isCollectedBatchResult(toolName: string, result: unknown): boolean {
@@ -281,15 +261,6 @@ export function createTurnRuntime(deps: TurnRuntimeDeps): TurnRuntime {
 		},
 	};
 
-	/**
-	 * Resolution warnings the operator has already been shown, keyed by
-	 * target+model+message. A resolution runs on every turn, so without this the
-	 * same context-window warning would print on every submit; without any
-	 * surfacing at all, it printed nowhere. Known template-option limitations
-	 * use a brief footer advisory; actionable resolution warnings retain their
-	 * transcript notice. Detailed diagnostics remain on the resolution.
-	 */
-	const announcedResolutionWarnings = new Set<string>();
 	const turnCalls = new Map<string, CallSettled[]>();
 	// Bare attended finishes refused per user turn (FX-40), journaled on that turn's turn.settled (CLI-P50).
 	const bareFinishRefusals = new Map<string, number>();
@@ -307,228 +278,40 @@ export function createTurnRuntime(deps: TurnRuntimeDeps): TurnRuntime {
 	let carriedColdReasons: ExpectedColdReason[] = [];
 	// Sessions already told that a capped route's spend is estimated because its calls report no usage.
 	const unreportedUsageSessions = new Set<string>();
-	const readTarget = (route?: { target: string; model: string }): ChatLoopTarget | null => {
-		const settings = deps.getSettings();
-		const targetId = (route?.target ?? settings.chat.target)?.trim();
-		const wireModelId = (route?.model ?? settings.chat.model)?.trim();
-		if (!targetId || !wireModelId) return null;
-		const resolved = resolveRuntimeTarget(deps.providers, {
-			targetId,
-			wireModelId,
-			requestedThinkingLevel: settings.chat.thinkingLevel ?? "off",
-			use: "orchestrator",
-			requireTools: false,
-			requireOutputBudget: true,
-		});
-		if (!resolved.ok) {
-			const failure = resolved.diagnostics.find((entry) => entry.severity === "error") ?? resolved.diagnostics[0];
-			throw new TurnAdmissionError(
-				`[PanCode] ${failure?.message ?? "orchestrator target resolution failed"}`,
-				failure?.code ?? "admission-failed",
-			);
-		}
-		for (const entry of resolved.diagnostics) {
-			if (entry.code !== "chat-template-kwargs-undeliverable") continue;
-			const key = `${targetId}|${wireModelId}|${entry.code}`;
-			if (announcedResolutionWarnings.has(key)) continue;
-			announcedResolutionWarnings.add(key);
-			deps.emitFooterNotice(
-				resolved.target.modelRuntime.request.undeliverableChatTemplateKwargs?.declaredUnsupported ? "info" : "warning",
-				`${resolved.target.runtime.id} ignores custom template options; continuing.`,
-				key,
-			);
-		}
-		// An unverified context window is a fact about the route, not a fault, so it travels as host status.
-		const routeStatus = new Set(
-			resolved.diagnostics.filter((entry) => entry.code === "context-window-unverified").map((entry) => entry.message),
-		);
-		// The TUI's thinking indicator owns coercion facts; other surfaces retain their notice.
-		for (const message of runtimeResolutionWarningsBesideThinkingNotice(
-			resolved.diagnostics.filter((entry) => entry.code !== "chat-template-kwargs-undeliverable"),
-			resolved.target.modelRuntime.thinking.notice,
-		)) {
-			const key = `${targetId}|${wireModelId}|${message}`;
-			if (announcedResolutionWarnings.has(key)) continue;
-			announcedResolutionWarnings.add(key);
-			deps.emitNotice(`[PanCode] ${message}`, "info", routeStatus.has(message) ? HOST_STATUS_NOTICE_KEY : undefined);
-		}
-		return {
-			target: resolved.target.target,
-			runtime: resolved.target.runtime,
-			wireModelId: resolved.target.wireModelId,
-			runtimeResolution: resolved.target,
-		};
+	const rt: TurnRuntimeScope = {
+		deps,
+		state,
+		context,
+		persistence,
+		disposed: false,
+		coldAtProbe: null,
+		runtimeTargetSettings: null,
+		get cleanupSessionResources() {
+			return cleanupSessionResources;
+		},
+		get ensureRuntime() {
+			return ensureRuntime;
+		},
 	};
+	const {
+		readTarget,
+		ensureLiveCapabilitiesForSelectedModel,
+		modelOfferRefusal,
+		synthesizeModel,
+		ensureReasoningProbe,
+		emitThinkingClampNotice,
+		previewRoute,
+		rebindRoute,
+	} = createRouteControl(rt);
 
-	/**
-	 * Refresh the selected route's server report on a short TTL. The key
-	 * includes target settings and wire model, so selection and endpoint edits
-	 * refresh immediately on the next poll or submit. A failed probe is retried
-	 * after the TTL and never extends a prior serving-window claim.
-	 *
-	 * Every tier but `cloud` is probed. A self-hosted OpenAI-compatible gateway
-	 * serves whatever context it was launched with, and that number lives on the
-	 * server. Restricting this to `local-native` meant an `openai-compat`
-	 * target ran the whole session on an assumed window while the server was
-	 * one HTTP GET away from reporting the real one. A hosted provider is asked
-	 * too when its runtime reports windows (`probeServingWindows`); the rest of
-	 * the cloud runtimes keep their labeled catalog fallback.
-	 */
-	const TARGET_PROBE_TTL_MS = 30_000;
 	const TARGET_PROBE_POLL_MS = 5_000;
-	let lastTargetProbe: { key: string; at: number } | null = null;
-	let disposed = false;
 	let clearCurrentWatchdog: () => void = () => {};
 	let callWait: () => RunningCallWait = () => "elsewhere";
-	const targetProbesInFlight = new Map<string, Promise<void>>();
-	const ensureLiveCapabilitiesForSelectedModel = async (options?: { silent?: boolean }): Promise<void> => {
-		if (disposed) return;
-		const settings = deps.getSettings();
-		const targetId = settings.chat.target?.trim();
-		const wireModelId = settings.chat.model?.trim();
-		if (!targetId || !wireModelId) return;
-		const target = deps.providers.getTarget(targetId);
-		if (!target) return;
-		const runtimeDesc = deps.providers.getRuntime(target.runtime);
-		if (!runtimeDesc || (runtimeDesc.tier === "cloud" && typeof runtimeDesc.probeServingWindows !== "function")) return;
-		const key = JSON.stringify([targetId, wireModelId, target]);
-		const inFlight = targetProbesInFlight.get(key);
-		if (inFlight) {
-			await inFlight;
-			return;
-		}
-		const now = Date.now();
-		if (lastTargetProbe?.key === key && now - lastTargetProbe.at < TARGET_PROBE_TTL_MS) return;
-		lastTargetProbe = { key, at: now };
-		const probe = (async (): Promise<void> => {
-			let status: Awaited<ReturnType<ProvidersContract["probeTarget"]>> = null;
-			try {
-				status = await deps.providers.probeTarget(targetId);
-			} catch {
-				// Unexpected provider-contract failures retry after the TTL.
-			}
-			if (disposed) return;
-			// Any probe's word counts for the rail, including the silent one that spends the TTL before a submit.
-			const probed = modelResidencyForStatus(status, wireModelId);
-			coldAtProbe = probed === "absent" || probed === "loading" ? { targetId, modelId: wireModelId, state: probed } : null;
-			if (!options?.silent) announceColdModel(status, targetId, wireModelId);
-			// A passive refresh must update the attached model and footer budget too;
-			// the provider status alone is otherwise invisible until the next submit.
-			if (
-				state.runtime &&
-				!state.streaming &&
-				deps.getSettings().chat.target === targetId &&
-				deps.getSettings().chat.model === wireModelId
-			) {
-				ensureRuntime({ silent: true });
-			}
-			context.refreshLiveBudget();
-		})();
-		targetProbesInFlight.set(key, probe);
-		try {
-			await probe;
-		} finally {
-			if (targetProbesInFlight.get(key) === probe) targetProbesInFlight.delete(key);
-		}
-	};
 	const selectedRoutePoll = setInterval(() => {
 		if (state.streaming) return;
 		void ensureLiveCapabilitiesForSelectedModel({ silent: true }).catch(() => {});
 	}, TARGET_PROBE_POLL_MS);
 	selectedRoutePoll.unref();
-
-	/**
-	 * Row 384, before any request: a guarded target whose list lacks the requested model refuses the turn, naming what
-	 * it offers. Only the provider's live answer refuses: a cached or absent list is asked live once (`fresh` passes any
-	 * runtime cache), and an offered or unknown answer is kept for the session so the check costs one listing.
-	 */
-	const settledModelOffers = new Set<string>();
-	const modelOfferRefusal = async (
-		targetId: string,
-		modelId: string,
-		signal: AbortSignal | undefined,
-	): Promise<ModelRouteRefusal | null> => {
-		const key = JSON.stringify([targetId, modelId]);
-		if (settledModelOffers.has(key)) return null;
-		const held = modelOfferForStatus(
-			deps.providers.list().find((status) => status.target.id === targetId),
-			modelId,
-		);
-		const runtime = deps.providers.getRuntime(deps.providers.getTarget(targetId)?.runtime ?? "");
-		if (held.kind === "offered" || !modelRouteGuarded(runtime) || !runtime || !runtimeListsModelsLive(runtime)) {
-			settledModelOffers.add(key);
-			return null;
-		}
-		let live: TargetStatus | null = null;
-		try {
-			live = await deps.providers.probeTarget(targetId, { fresh: true, ...(signal ? { signal } : {}) });
-		} catch {
-			// No answer is no evidence: the request goes as it would have.
-		}
-		const offer = modelOfferForStatus(live, modelId);
-		if (offer.kind !== "not-offered") {
-			settledModelOffers.add(key);
-			return null;
-		}
-		return { code: "model_unavailable", target: targetId, requested: modelId, available: offer.available };
-	};
-
-	/** The last probe's word on the selected model when it was not serving, until the target answers a request on it. */
-	let coldAtProbe: { targetId: string; modelId: string; state: "absent" | "loading" } | null = null;
-	/** One notice per target+model+state, so a repeated probe stays quiet. */
-	const announcedColdModels = new Set<string>();
-	const announceColdModel = (
-		status: Awaited<ReturnType<ProvidersContract["probeTarget"]>>,
-		targetId: string,
-		wireModelId: string,
-	): void => {
-		const notice = coldModelNotice(status, targetId, wireModelId);
-		if (!notice) return;
-		if (announcedColdModels.has(notice.key)) return;
-		announcedColdModels.add(notice.key);
-		deps.emitNotice(notice.message, "info", HOST_STATUS_NOTICE_KEY);
-	};
-
-	const synthesizeModel = (target: ChatLoopTarget): EngineModel => {
-		const { model, runtimeResolution } = synthesizeTargetModel(target.runtimeResolution, deps.providers.knowledgeBase);
-		target.runtimeResolution = runtimeResolution;
-		return model;
-	};
-
-	const ensureReasoningProbe = (target: ChatLoopTarget): void => {
-		if (deps.providers.getDetectedReasoning(target.target.id, target.wireModelId) !== null) return;
-		void deps.providers
-			.probeReasoningForModel(target.target.id, target.wireModelId)
-			.then((reasoning) => {
-				if (
-					reasoning !== null &&
-					state.runtime &&
-					state.runtime.targetId === target.target.id &&
-					state.runtime.wireModelId === target.wireModelId
-				) {
-					const refreshed = resolveRuntimeTarget(deps.providers, {
-						targetId: target.target.id,
-						wireModelId: target.wireModelId,
-						requestedThinkingLevel: deps.getSettings().chat.thinkingLevel ?? "off",
-						use: "orchestrator",
-						requireTools: false,
-						requireOutputBudget: true,
-					});
-					if (!refreshed.ok) return;
-					const liveModel = state.runtime.agent.state.model;
-					const runtimeResolution = liveModel
-						? refineRuntimeTargetWithModelHints(refreshed.target, liveModel, deps.providers.knowledgeBase)
-						: refreshed.target;
-					if (liveModel) applyModelCapabilityPatch(liveModel, runtimeResolution.capabilities);
-					state.runtime.agent.state.thinkingLevel = runtimeResolution.effectiveThinkingLevel;
-					state.runtime.runtimeResolution = runtimeResolution;
-				}
-			})
-			.catch(() => {
-				// Probe failures are non-fatal; the cache stays cold and /thinking
-				// keeps showing the runtime defaults until the next probe attempt.
-			});
-	};
 
 	const cleanupSessionResources = (sessionId: string | undefined): void => {
 		try {
@@ -538,39 +321,11 @@ export function createTurnRuntime(deps: TurnRuntimeDeps): TurnRuntime {
 		}
 	};
 
-	/**
-	 * One visible line when the requested thinking dial cannot apply as-is
-	 * (reasoning-class-never model, always-on model, on/off coercion). Emitted
-	 * where the dial takes effect, once per session, model and requested level; the
-	 * same facts stay inspectable in receipts via runtimeResolution.thinking.
-	 */
-	const announcedThinkingNotices = new Set<string>();
-	let thinkingNoticeSession: string | undefined;
-	const emitThinkingClampNotice = (resolution: ChatLoopTarget["runtimeResolution"]): void => {
-		if (deps.interactiveGuidance) return;
-		const sessionId = deps.sessionId?.();
-		// The first runtime can precede session creation; bind its notices to that session.
-		if (sessionId !== thinkingNoticeSession) {
-			if (thinkingNoticeSession !== undefined) announcedThinkingNotices.clear();
-			thinkingNoticeSession = sessionId;
-		}
-		const thinking = resolution.modelRuntime.thinking;
-		const notice = thinking.notice.trim();
-		if (thinking.noticeKind === "applied" || notice.length === 0) return;
-		const key = `${resolution.wireModelId}|${resolution.requestedThinkingLevel}`;
-		if (announcedThinkingNotices.has(key)) return;
-		announcedThinkingNotices.add(key);
-		deps.emitNotice(notice, "info", THINKING_CLAMP_NOTICE_KEY);
-	};
-
-	// A target id/model names the selection, not its current URL, auth, pricing
-	// or cache policy. Keep the constructed descriptor identity across calls.
-	let runtimeTargetSettings: string | null = null;
 	const ensureRuntime = (options?: { silent?: boolean }): AgentRuntime | null => {
 		const target = readTarget();
 		if (!target) return null;
 		const targetSettings = JSON.stringify(target.target);
-		const sameTargetSettings = runtimeTargetSettings === targetSettings;
+		const sameTargetSettings = rt.runtimeTargetSettings === targetSettings;
 		// Preflight and the wire budget share the session's effective settings,
 		// including overrides that never reach the saved providers snapshot.
 		setGlobalDefaultMaxOutputTokens(deps.getSettings().chat.maxOutputTokens);
@@ -825,7 +580,7 @@ export function createTurnRuntime(deps: TurnRuntimeDeps): TurnRuntime {
 									? "loop_guard"
 									: state.repetitionAbortReason !== null
 										? "repetition"
-										: disposed
+										: rt.disposed
 											? "shutdown"
 											: undefined;
 		const settleModelCall = async (
@@ -1070,8 +825,8 @@ export function createTurnRuntime(deps: TurnRuntimeDeps): TurnRuntime {
 							firstByteAt: null,
 							bytesObservable: tracking.observesResponses(),
 						};
-						if (coldAtProbe?.modelId === currentModel.id && coldAtProbe.targetId === localRuntime.targetId) {
-							facts.probedResidency = coldAtProbe.state;
+						if (rt.coldAtProbe?.modelId === currentModel.id && rt.coldAtProbe.targetId === localRuntime.targetId) {
+							facts.probedResidency = rt.coldAtProbe.state;
 						}
 						state.modelRequest = facts;
 						let slotsReadAt = 0;
@@ -1102,7 +857,7 @@ export function createTurnRuntime(deps: TurnRuntimeDeps): TurnRuntime {
 								if (args[0].status >= 200 && args[0].status < 300) {
 									attempt?.mark("firstByte");
 									if (state.modelRequest === facts) facts.firstByteAt ??= Date.now();
-									coldAtProbe = null;
+									rt.coldAtProbe = null;
 								}
 								await request.options?.onResponse?.(...args);
 							},
@@ -1563,7 +1318,7 @@ export function createTurnRuntime(deps: TurnRuntimeDeps): TurnRuntime {
 							? "first-output"
 							: "output";
 		const armStallTimer = (delayMs: number): void => {
-			if (disposed || !currentRun() || localRuntime.agent.signal?.aborted) return;
+			if (rt.disposed || !currentRun() || localRuntime.agent.signal?.aborted) return;
 			stallTimer = setTimeout(
 				() => {
 					stallTimer = null;
@@ -2019,7 +1774,7 @@ export function createTurnRuntime(deps: TurnRuntimeDeps): TurnRuntime {
 					// A shutdown (a `run --timeout` deadline, a signal, quitting) aborts the stream through dispose.
 					const harnessStop =
 						terminal.stopReason === "aborted" && state.activeInterruptReason === null
-							? (state.repetitionAbortReason ?? state.toolProseAbortReason ?? (disposed ? SHUTDOWN_STOP_REASON : null))
+							? (state.repetitionAbortReason ?? state.toolProseAbortReason ?? (rt.disposed ? SHUTDOWN_STOP_REASON : null))
 							: null;
 					if (harnessStop !== null)
 						Object.assign(message, {
@@ -2368,7 +2123,7 @@ export function createTurnRuntime(deps: TurnRuntimeDeps): TurnRuntime {
 		});
 
 		state.runtime = localRuntime;
-		runtimeTargetSettings = targetSettings;
+		rt.runtimeTargetSettings = targetSettings;
 		// Append a modelChange marker only when this rebuild replaces a prior
 		// runtime, which is the cross-target swap case (mid-session change of
 		// target or runtime id). On the initial build, the session header's
@@ -2379,39 +2134,6 @@ export function createTurnRuntime(deps: TurnRuntimeDeps): TurnRuntime {
 		return state.runtime;
 	};
 
-	const previewRoute: TurnRuntime["previewRoute"] = (route) => {
-		const target = readTarget(route);
-		return target ? { target, model: synthesizeModel(target) } : null;
-	};
-
-	const rebindRoute: TurnRuntime["rebindRoute"] = (target) => {
-		const runtime = state.runtime;
-		if (!runtime) return;
-		// Between turns another target gets a new agent. Mid-turn the submit and the ladder hold this one, and nothing it
-		// keeps is the route's own: Pi reads model, thinking, tools and messages from state at each run, and the closures
-		// above read the route through `localRuntime`.
-		const crossed = runtime.targetId !== target.target.id || runtime.runtimeId !== target.runtime.id;
-		const nextModel = synthesizeModel(target);
-		if (crossed) {
-			cleanupSessionResources(runtime.agent.sessionId);
-			const gatewaySession = target.runtime.id === "litellm" ? deps.sessionId?.() : undefined;
-			if (gatewaySession !== undefined) runtime.agent.sessionId = gatewaySession;
-			else delete runtime.agent.sessionId;
-		}
-		runtime.agent.state.model = nextModel;
-		runtime.agent.state.thinkingLevel = target.runtimeResolution.effectiveThinkingLevel;
-		runtime.targetId = target.target.id;
-		runtime.runtimeId = target.runtime.id;
-		runtime.wireModelId = target.wireModelId;
-		runtime.runtimeResolution = target.runtimeResolution;
-		delete runtime.lastAuthResolution;
-		delete runtime.lastProviderStatus;
-		runtimeTargetSettings = JSON.stringify(target.target);
-		emitThinkingClampNotice(target.runtimeResolution);
-		persistence.appendModelChangeEntry(target);
-		ensureReasoningProbe(target);
-	};
-
 	return {
 		callWait: () => callWait(),
 		previewRoute,
@@ -2419,7 +2141,7 @@ export function createTurnRuntime(deps: TurnRuntimeDeps): TurnRuntime {
 		ensureRuntime,
 		ensureLiveCapabilitiesForSelectedModel,
 		dispose: () => {
-			disposed = true;
+			rt.disposed = true;
 			clearCurrentWatchdog();
 			clearInterval(selectedRoutePoll);
 		},
