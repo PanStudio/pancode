@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import { randomUUID } from "node:crypto";
-import { formatCount } from "../core/format-time.js";
 import { isPlanOnlyRequest } from "../core/plan-request.js";
 import { hostFramedTexts } from "../core/reminder-framing.js";
 import { withModelSkillActivation } from "../core/skill-activation.js";
@@ -12,12 +11,9 @@ import {
 	snapshotTurnConstraints,
 	turnScopeGuidance,
 } from "../core/turn-constraints.js";
-import type { LiveBudgetView } from "../domains/context/budget/live-view.js";
-import { requestFits } from "../domains/context/budget/request-fit.js";
 import { stepCheckpointApplies } from "../domains/context/fold/contract.js";
 import { acceptsImageInput } from "../domains/providers/index.js";
 import { visionObservationText } from "../domains/providers/vision-sidecar.js";
-import type { ContextSnapshot } from "../domains/session/context-accounting.js";
 import { readPromptCompileRecords } from "../domains/session/prompt-manifest.js";
 import { activePath, findLastEntry } from "../domains/session/tree/active-path.js";
 import { countImageBlocks } from "../engine/image-context.js";
@@ -26,6 +22,7 @@ import type { TurnControlRecord } from "../lib/turn-control/index.js";
 import { resolveSessionTools } from "../tools/agent-tools.js";
 import { scopedCapabilityShapes, scopeShapesDelta } from "../tools/gateway/scope-shapes.js";
 import { commitSubmittedTurn } from "./chat-loop/submit-commit.js";
+import { fitSubmittedTurn } from "./chat-loop/submit-fit.js";
 import { runSubmittedTurn } from "./chat-loop/submit-run.js";
 import { settleSubmittedTurn } from "./chat-loop/submit-settle.js";
 import { INTERRUPT_CANCEL_REASON, type SubmitTurn, TRIAGE_INTERRUPT_REASON } from "./chat-loop/submit-turn.js";
@@ -40,37 +37,11 @@ import {
 	toolSignatureFromState,
 } from "./chat-loop-messages.js";
 import type { ChatLoopScope } from "./chat-loop-scope.js";
-import { withSettledHistory } from "./message-list-digest.js";
-import { resolveFitOutputReserve, turnAdmissionRemedy } from "./output-reserve.js";
-import { compactCommandHint, routeCommandHint } from "./surface-hints.js";
 import type { AwaitedTurnStart } from "./turn-middleware.js";
 import { DEFAULT_STEERING_MODE, type SteeringMode } from "./turn-queues.js";
 import { TurnAdmissionError } from "./turn-runtime.js";
 import type { AgentRuntime, ChatLoopSubmitState } from "./turn-state.js";
 import { isWorkerShareNote } from "./worker-share.js";
-
-/**
- * Why a forced compaction failed, in words: `compaction stream failed: 401: {"message":"invalid api key"}` reads
- * `the provider answered 401: invalid api key`.
- */
-export function compactionFailureReason(err: unknown): string {
-	const raw = (err instanceof Error ? err.message : String(err)).replace(/^compaction stream failed:\s*/u, "");
-	const status = /^(\d{3}):\s*/u.exec(raw);
-	const rest = status ? raw.slice(status[0].length) : raw;
-	let detail = rest.trim();
-	try {
-		const parsed: unknown = JSON.parse(detail);
-		const message =
-			parsed && typeof parsed === "object" && "message" in parsed && typeof parsed.message === "string"
-				? parsed.message
-				: null;
-		if (message !== null) detail = message;
-	} catch {
-		// Not JSON: the provider's text is already the reason.
-	}
-	detail = detail.replace(/[.\s]+$/u, "");
-	return status ? `The provider answered ${status[1]}: ${detail}` : `The summary call failed: ${detail}`;
-}
 
 /** The chat loop's `submit`: runs one submitted turn from admission to settlement. */
 export function createChatLoopSubmit(loop: ChatLoopScope, state: ChatLoopSubmitState): ChatLoop["submit"] {
@@ -81,7 +52,6 @@ export function createChatLoopSubmit(loop: ChatLoopScope, state: ChatLoopSubmitS
 		emit,
 		emitAdmissionNotice,
 		emitNotice,
-		endPreparationCompaction,
 		headlessObservation,
 		interruptRefusalReason,
 		markPreparationStep,
@@ -91,7 +61,6 @@ export function createChatLoopSubmit(loop: ChatLoopScope, state: ChatLoopSubmitS
 		noteTurnControlCollection,
 		nullRuntimeAdmissionReason,
 		operatorMemory,
-		prepareCompactionPaint,
 		queuedForTriage,
 		queues,
 		recordCanceledBeforeAdmission,
@@ -690,171 +659,24 @@ export function createChatLoopSubmit(loop: ChatLoopScope, state: ChatLoopSubmitS
 			}
 			let submittedText = composeSubmittedText();
 
-			// 2. Pre-submit auto-compaction trigger. Its stage figures price the request this turn sends, so a runtime
-			// a resume just built gets the session prompt first instead of the seeded fallback (bt-47 D1). Only such a
-			// runtime compiles here, so a submit whose prompt is applied reads memory once; step 3 owns the fallback replay.
-			if (context.sessionPromptPending?.(agentRuntime)) {
-				await context.ensureSessionPrompt(agentRuntime, false, undefined, true);
-				if (!admissionCurrent()) return;
-			}
-			const forceNow = process.env.PANCODE_FORCE_COMPACT === "1";
-			const paintCompaction = prepareCompactionPaint();
-			try {
-				setTurnPreparation("compacting");
-				await paintCompaction();
-				if (!admissionCurrent()) return;
-				await context.runAutoCompact(
-					agentRuntime,
-					forceNow,
-					undefined,
-					undefined,
-					submittedText,
-					pendingSkillPolicy,
-					undefined,
-					undefined,
-					options.requestContinuation !== true,
-					undefined,
-					reservedUserTurnId,
-				);
-			} catch (err) {
-				// A new session or a dispose since submit owns the transcript now; this turn's notice and outcome
-				// row belong to the session it left, as on the turn-control and overflow paths.
-				if (generation !== loop.submitGeneration || loop.disposed) return;
-				const tokens = context.contextUsage().tokens;
-				// The cheaper stages run before the summary and may have applied, so the size is stated, not "unchanged".
-				const size = tokens !== null ? `; context at ${formatCount(tokens)} tokens` : "";
-				const aborted = err instanceof Error && err.name === "AbortError";
-				// Worded as the operator's /context compact failure is: the size, why in words, and the way on (HS14).
-				// A failure here does not stop the turn, which goes out without a summary. A settled card already states a cancel.
-				if (!aborted) {
-					emitNotice(
-						`[PanCode] auto-compaction failed${size}. ${compactionFailureReason(err)}. This turn goes on without it; ${compactCommandHint(deps.headless === true, deps.session?.current()?.id)} tries again; ${routeCommandHint(deps.headless === true)} picks another route to summarize on.`,
-						"warning",
-					);
-				} else if (!context.lastCompactionCardSettled()) {
-					emitNotice(`[PanCode] auto-compaction cancelled${size}`);
-				}
-				if (aborted) {
-					await recordCanceledBeforeAdmission({
-						userTurnId: reservedUserTurnId,
-						continuation: options.requestContinuation === true,
-						control: turnControlRecord,
-						submittedAt,
-					});
-					return;
-				}
-			} finally {
-				endPreparationCompaction();
-			}
-
-			if (!admissionCurrent()) return;
-
-			// 3. Session prompt: recompiled only on an explicit event, otherwise the last compile
-			markPreparationStep("compile");
-			const compiledPrompt = await context.ensureSessionPrompt(agentRuntime, true, submittedText);
-			if (!admissionCurrent()) return;
-			submittedText = composeSubmittedText();
-
-			// 4. Preflight overflow check, before the user turn is committed.
-			// A blocked request must not leave a dangling user entry that the
-			// next replay would treat as an unanswered turn.
-			const compactionThreshold = deps.getSettings().context.compaction?.threshold ?? null;
-			const captureTurnSnapshot = (turnId: string): ContextSnapshot =>
-				context.captureRuntimeContextSnapshot(agentRuntime, turnId, compactionThreshold, {
-					promptSegments: compiledPrompt
-						? compiledPrompt.sections.map((s) => ({ id: s.id, tokenEstimate: s.tokenEstimate }))
-						: undefined,
-					pendingUserInput: submittedText,
-					images,
-					promptHash: compiledPrompt?.systemPromptHash,
-					toolSignature,
-				});
-
-			let turnSnapshot = captureTurnSnapshot("pending");
-			// The window-fit gate reads the A4 count, so a request Pi's clamp would refuse compacts first.
-			const fitInput = (view: LiveBudgetView): number | null =>
-				view.inputTokens === null
-					? null
-					: (context.overflowFitTokens?.(agentRuntime, submittedText, view.inputTokens) ?? view.inputTokens);
-			// The publication and the fit count read one history, so the second matches the first's check by identity (SC-6).
-			const admit = (): { view: LiveBudgetView; input: number | null } =>
-				withSettledHistory(() => {
-					const view = context.refreshLiveBudget(submittedText);
-					return { view, input: fitInput(view) };
-				});
-			const first = admit();
-			let admission = first.view;
-			// A window too small for the request's fixed part is refused before any call; compaction cannot help it.
-			const floorRefusal = context.contextFloorRefusal?.(agentRuntime, submittedText) ?? null;
-			if (floorRefusal !== null) {
-				emitAdmissionNotice(floorRefusal, "context-window-exceeded", "error");
-				return;
-			}
-			// The output reserve shrinks as input grows, so it is resolved at the count the gate chose.
-			const fitReserve = (input: number | null): number | null =>
-				input === null ? null : resolveFitOutputReserve(agentRuntime, input);
-			const firstInput = first.input;
-			if (
-				admission.effectiveWindow !== null &&
-				!requestFits(firstInput, fitReserve(firstInput), admission.effectiveWindow)
-			) {
-				const paintOverflow = prepareCompactionPaint();
-				setTurnPreparation("compacting");
-				let failure: string | undefined;
-				let canceled = false;
-				await paintOverflow()
-					.then(() => {
-						if (!admissionCurrent()) return false;
-						return context.runAutoCompact(
-							agentRuntime,
-							true,
-							undefined,
-							"overflow",
-							submittedText,
-							pendingSkillPolicy,
-							undefined,
-							undefined,
-							options.requestContinuation !== true,
-							undefined,
-							reservedUserTurnId,
-						);
-					})
-					.catch((error: unknown) => {
-						canceled = error instanceof Error && error.name === "AbortError";
-						failure = error instanceof Error ? error.message : String(error);
-					})
-					.finally(endPreparationCompaction);
-				if (generation !== loop.submitGeneration || loop.disposed) return;
-				// An operator cancel is not an admission failure: record it like the
-				// pre-admission cancels above and leave no window-exceeded notice.
-				// Stop aborts the submit owner too, so the owner check alone must
-				// not skip the reserved turn's outcome.
-				if (canceled || owner?.signal.aborted) {
-					await recordCanceledBeforeAdmission({
-						userTurnId: reservedUserTurnId,
-						continuation: options.requestContinuation === true,
-						control: turnControlRecord,
-						submittedAt,
-					});
-					return;
-				}
-				if (!admissionCurrent()) return;
-				submittedText = composeSubmittedText();
-				const admitted = admit();
-				admission = admitted.view;
-				const admittedInput = admitted.input;
-				const admittedReserve = fitReserve(admittedInput);
-				if (admission.effectiveWindow !== null && !requestFits(admittedInput, admittedReserve, admission.effectiveWindow)) {
-					const oversize = context.oversizedResult?.(agentRuntime, submittedText);
-					emitAdmissionNotice(
-						`[PanCode] Request exceeds the available context window (input ${admittedInput ?? "unknown"} + output ${admittedReserve ?? "unknown"}, window ${admission.effectiveWindow ?? "unknown"}).${failure ? ` ${failure}` : ""}${oversize ? ` ${oversize}` : ""} ${turnAdmissionRemedy(agentRuntime, admittedInput ?? 0)}`,
-						"context-window-exceeded",
-						"error",
-					);
-					return;
-				}
-				turnSnapshot = captureTurnSnapshot("pending");
-			}
+			const fitted = await fitSubmittedTurn(loop, {
+				options,
+				owner,
+				generation,
+				admissionCurrent,
+				submittedAt,
+				agentRuntime,
+				reservedUserTurnId,
+				images,
+				turnControlRecord,
+				pendingSkillPolicy,
+				toolSignature,
+				composeSubmittedText,
+				submittedText,
+			});
+			if (fitted === null) return;
+			submittedText = fitted.submittedText;
+			const { compiledPrompt, turnSnapshot } = fitted;
 
 			const committed = await commitSubmittedTurn(loop, state, turn, {
 				options,
