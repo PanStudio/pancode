@@ -2,10 +2,10 @@
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import type { PickerDetail } from "../../core/presentation-tier.js";
 import { isRoutingPath } from "../../core/session-routing.js";
+import { settingsChangeKind } from "../../core/settings-change-kind.js";
 import { settingControl } from "../../core/settings-controls.js";
 import type { SettingsOrigin } from "../../core/settings-layers.js";
 import { renderUsdLimit } from "../../core/telemetry/render.js";
-import { settingsChangeKind } from "../../domains/config/classify.js";
 import { stripTerminalSequences, visibleWidth, wrapTextWithAnsi } from "../../engine/tui.js";
 import { fitRows } from "../overlay-frame.js";
 import {

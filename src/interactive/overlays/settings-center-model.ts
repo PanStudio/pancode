@@ -8,7 +8,8 @@ import { getAtPath, isRoutingPath } from "../../core/session-routing.js";
 import type { SettingsAreaId as SettingsSectionId } from "../../core/settings-areas.js";
 import { SETTINGS_AREAS as SETTINGS_SECTIONS, settingsPlacementForRow } from "../../core/settings-areas.js";
 /** The settings center's row, section and item types, its layout constants, and the per-setting scope and default reads. */
-import { SETTINGS_LABELS_BY_ID, settingsPathForRow } from "../../core/settings-controls.js";
+import { settingsPathForRow } from "../../core/settings-controls.js";
+import { SETTINGS_LABELS_BY_ID } from "../../core/settings-copy.js";
 import type { RouteBreakerView } from "../../domains/dispatch/contract.js";
 import type { InteropProposal } from "../../domains/interop/index.js";
 import type { ProvidersContract } from "../../domains/providers/index.js";
@@ -67,7 +68,7 @@ export const SHIPPED_RESILIENCE_COOLDOWN_MS = DEFAULT_SETTINGS.fleet.retry.route
  */
 /**
  * Scope tells the operator where an edit lands. Derived from the config-change
- * classification (src/domains/config/classify.ts): hotReload/nextTurn knobs can
+ * classification (src/core/settings-change-kind.ts): hotReload/nextTurn knobs can
  * apply to the live session immediately, so they offer "this session only" vs
  * "save as the global default". restartRequired knobs cannot apply live, so the
  * overlay only offers a global save that a restart picks up.

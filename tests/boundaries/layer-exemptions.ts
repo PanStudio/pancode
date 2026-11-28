@@ -13,11 +13,7 @@ export const LAYER_EXEMPTIONS: {
 	/** rule25c, `<x> -> <y>`: imports between lifecycle domains that their dependsOn does not reach. */
 	dependsOn: ReadonlyMap<string, number>;
 } = {
-	core: new Map([
-		["src/core/settings-controls.ts -> src/domains/config", 1],
-		["src/core/settings-controls.ts -> src/domains/providers", 3],
-		["src/core/termination.ts -> src/engine", 1],
-	]),
+	core: new Map([["src/core/termination.ts -> src/engine", 1]]),
 	barrel: new Map([
 		["src/domains/agents -> src/domains/config", 1],
 		["src/domains/agents -> src/domains/mcp", 2],

@@ -781,7 +781,6 @@ const FUNCTION_LINE_CEILING = 500;
  */
 const FUNCTION_LINE_EXEMPTIONS: ReadonlyMap<string, number> = new Map([
 	["src/cli/modes/print.ts#runHeadlessMainAgent", 851],
-	["src/core/settings-validate.ts#validateSettings", 1270],
 	["src/domains/dispatch/admission.ts#createCapacityAdmissionController", 547],
 	["src/domains/dispatch/execution-scheduler.ts#executePlan", 662],
 	["src/domains/dispatch/fleet-run.ts#runFleetHoldingWorkspace", 1043],
@@ -818,7 +817,6 @@ const FUNCTION_LINE_EXEMPTIONS: ReadonlyMap<string, number> = new Map([
 	["src/interactive/overlays/settings-items.ts#buildSettingItems", 523],
 	["src/interactive/panes-runtime.ts#createPanesRuntime", 582],
 	["src/session-control/chat-loop-composition.ts#createChatLoopComposition", 662],
-	["src/session-control/chat-loop-state-machine.ts#createChatLoopStateMachine", 645],
 	["src/session-control/chat-loop-submit.ts#createChatLoopSubmit", 1483],
 	["src/session-control/chat-loop-submit.ts#createChatLoopSubmit.submit", 1439],
 	["src/session-control/chat-loop.ts#createChatLoop", 1570],
@@ -827,7 +825,7 @@ const FUNCTION_LINE_EXEMPTIONS: ReadonlyMap<string, number> = new Map([
 	["src/session-control/turn-context-prompt.ts#createTurnContextPrompt", 588],
 	["src/session-control/turn-context.ts#createTurnContext", 2787],
 	["src/session-control/turn-middleware.ts#createTurnMiddleware", 823],
-	["src/session-control/turn-recovery.ts#createTurnRecovery", 676],
+	["src/session-control/turn-recovery.ts#createTurnRecovery", 578],
 	["src/session-control/turn-runtime.ts#createTurnRuntime", 2222],
 	["src/session-control/turn-runtime.ts#createTurnRuntime.ensureRuntime", 1812],
 	["src/session-control/turn-runtime.ts#createTurnRuntime.ensureRuntime.onAgentEvent", 530],
