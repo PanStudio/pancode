@@ -69,6 +69,7 @@ export interface ChatLoopScope {
 	readonly headlessObservation: HeadlessObservationPool | null;
 	readonly missingOutputs: () => string[];
 	readonly hostRunContext: AsyncLocalStorage<ToolInvokeOptions["hostRun"]>;
+	readonly sideQuestionRound: NonNullable<CreateChatLoopDeps["runSideQuestion"]>;
 	readonly currentToolInvokeOptions: (toolCallId?: string) => Partial<ToolInvokeOptions>;
 	sessionToolLimits: TurnConstraints | undefined;
 	promptToolLimits: TurnConstraints | undefined;
@@ -117,6 +118,8 @@ export interface ChatLoopScope {
 	readonly requestBudgetRoll: ChatLoopComposition["requestBudgetRoll"];
 	readonly turnRuntime: ChatLoopComposition["turnRuntime"];
 	readonly steerInterrupter: ChatLoopComposition["steerInterrupter"];
+	readonly withEndpointSlot: ChatLoopStateMachine["withEndpointSlot"];
+	readonly prepareOutOfTurnRound: ChatLoopStateMachine["prepareOutOfTurnRound"];
 	readonly routeMoveWait: ChatLoopComposition["routeMoveWait"];
 	readonly routeFit: ChatLoopComposition["routeFit"];
 	readonly continuity: ChatLoopComposition["continuity"];

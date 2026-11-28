@@ -26,7 +26,7 @@ import type { WorkerContextSnapshot } from "../domains/context/worker/contract.j
 import { captureWorkerContext } from "../domains/context/worker/snapshot.js";
 import type { MemoryInterventionRegistration } from "../domains/memory/intervention-types.js";
 import type { MemoryPromptRequest } from "../domains/memory/prompt-cache.js";
-import { continueEngineWithoutInput, engineLiveTurnRequest, replaceEngineMessages } from "../engine/agent.js";
+import { continueEngineWithoutInput, replaceEngineMessages } from "../engine/agent.js";
 /**
  * The chat loop: one turn's state machine.
  *
@@ -94,6 +94,7 @@ import { createChatLoopCancel } from "./chat-loop/cancel.js";
 import { createChatLoopNotices } from "./chat-loop/notices.js";
 import { createTurnPreparation } from "./chat-loop/preparation.js";
 import { createChatLoopRouteMove } from "./chat-loop/route-move.js";
+import { createChatLoopSideRounds } from "./chat-loop/side-rounds.js";
 import { compactionFailureReason } from "./chat-loop/submit-fit.js";
 import { createChatLoopToolOptions, toolInvokeOptions } from "./chat-loop/tool-options.js";
 import { createChatLoopBus } from "./chat-loop-bus.js";
@@ -103,18 +104,11 @@ import type { ChatLoopScope } from "./chat-loop-scope.js";
 import { createChatLoopStateMachine } from "./chat-loop-state-machine.js";
 import { createChatLoopSteering } from "./chat-loop-steering.js";
 import { createChatLoopSubmit } from "./chat-loop-submit.js";
-import {
-	DRAFT_MAX_TOKENS,
-	DRAFT_TEMPERATURES,
-	draftCandidateFromText,
-	draftTemperature,
-	runDraftWithSamplerFallback,
-} from "./drafts.js";
-import { type HandoffRepairInput, runHandoffRound } from "./handoff-round.js";
+import type { HandoffRepairInput } from "./handoff-round.js";
 import { continuityRenderTime } from "./model-session-replay.js";
 import type { NoticeSource } from "./notice-source.js";
 import type { OperatorMemoryChip, OperatorMemoryCommands, OperatorMemoryStorePort } from "./operator-memory.js";
-import { type OutOfTurnRoute, runOutOfTurnRound, runSideQuestion, type SideQuestionResult } from "./side-question.js";
+import { type OutOfTurnRoute, runSideQuestion } from "./side-question.js";
 import type { AgentStatusEvent, ModelRequestFacts } from "./status-types.js";
 import type { TriageSystemOne } from "./steering-triage.js";
 import type { LiveContextUsage, TurnContextDeps } from "./turn-context.js";
@@ -421,7 +415,7 @@ export interface ChatCancelOptions {
 	atToolBoundary?: boolean;
 }
 
-interface SideQuestionOptions {
+export interface SideQuestionOptions {
 	/** Cancels the round. Esc and Ctrl+C in the overlay abort through it. */
 	signal?: AbortSignal;
 	/** Streamed answer text so the overlay fills as the provider produces it. */
@@ -430,7 +424,7 @@ interface SideQuestionOptions {
 	onRoute?: (route: OutOfTurnRoute) => void;
 }
 
-interface DraftOptions {
+export interface DraftOptions {
 	/** Cancels every candidate round. */
 	signal?: AbortSignal;
 	/** One candidate's streamed text, by index in start order. */
@@ -440,7 +434,7 @@ interface DraftOptions {
 }
 
 /** One `/draft` candidate: its text, or why its round produced none. */
-type DraftCandidate = ({ status: "drafted"; text: string } | { status: "failed"; reason: string }) & {
+export type DraftCandidate = ({ status: "drafted"; text: string } | { status: "failed"; reason: string }) & {
 	route?: OutOfTurnRoute;
 };
 
@@ -448,7 +442,7 @@ export type DraftOutcome =
 	| { status: "drafted"; candidates: DraftCandidate[]; aborted: boolean }
 	| { status: "refused"; reason: string };
 
-interface HandoffRoundOptions extends SideQuestionOptions {
+export interface HandoffRoundOptions extends SideQuestionOptions {
 	/**
 	 * Run the second and last extraction round, quoting the parser's complaint
 	 * and what the first round returned. Both rounds are journaled calls under
@@ -462,7 +456,7 @@ interface HandoffRoundOptions extends SideQuestionOptions {
  * in flight, or no orchestrator target is configured); `failed` is a round that
  * started and the provider rejected.
  */
-type SideQuestionOutcome =
+export type SideQuestionOutcome =
 	| { status: "answered"; text: string; route?: OutOfTurnRoute }
 	| { status: "aborted"; text: string }
 	| { status: "refused"; reason: string }
@@ -1048,6 +1042,7 @@ export function createChatLoop(deps: CreateChatLoopDeps): ChatLoop {
 		headlessObservation,
 		missingOutputs,
 		hostRunContext,
+		sideQuestionRound,
 		currentToolInvokeOptions: (toolCallId) => toolInvokeOptions(loop, state, toolCallId),
 		get sessionToolLimits() {
 			return sessionToolLimits;
@@ -1166,6 +1161,12 @@ export function createChatLoop(deps: CreateChatLoopDeps): ChatLoop {
 		},
 		get steerInterrupter() {
 			return steerInterrupter;
+		},
+		get withEndpointSlot() {
+			return withEndpointSlot;
+		},
+		get prepareOutOfTurnRound() {
+			return prepareOutOfTurnRound;
 		},
 		get routeMoveWait() {
 			return routeMoveWait;
@@ -1563,156 +1564,7 @@ export function createChatLoop(deps: CreateChatLoopDeps): ChatLoop {
 			middlewareToolChoice.reset();
 		},
 
-		async askSideQuestion(question: string, options: SideQuestionOptions = {}): Promise<SideQuestionOutcome> {
-			const text = question.trim();
-			if (text.length === 0) {
-				return { status: "refused", reason: "a side question needs a question" };
-			}
-			// Never queued and, since #415, never refused for a running turn. A side
-			// question exists to be answered now, beside a run the operator is
-			// watching; holding it until the run settles would deliver it after the
-			// moment it was asked in had passed.
-			const prepared = await prepareOutOfTurnRound(null, options.signal, false, false);
-			if (!prepared.ok) return { status: "refused", reason: prepared.reason };
-			const route = { targetId: prepared.runtime.targetId, wireModelId: prepared.runtime.wireModelId };
-			options.onRoute?.(route);
-			// A snapshot, taken now: a running turn keeps appending to the live list
-			// while this round awaits admission and streams.
-			const messages = [...prepared.runtime.agent.state.messages];
-			let result: SideQuestionResult;
-			try {
-				result = await withEndpointSlot(prepared.runtime, (slot) =>
-					sideQuestionRound({
-						...sideCallJournal(prepared.runtime, "btw", prepared.origin),
-						beforeRequest: sideCallAdmission(prepared.origin, slot, options.signal),
-						admitFlow: () => deps.admitFlow?.(prepared.runtime) ?? null,
-						model: prepared.runtime.agent.state.model,
-						// Read-only: the round appends its own message to this copy, so
-						// the live agent's history is untouched.
-						messages,
-						question: text,
-						midTurn: prepared.inFlight,
-						// The turn's own prompt and tools, so the round reads the prefix the turn already cached (S12).
-						livePrefix: (history, tail, signal) => engineLiveTurnRequest(prepared.runtime.agent, history, tail, signal),
-						// The level the session's own next turn would use.
-						thinkingLevel: prepared.runtime.agent.state.thinkingLevel ?? "off",
-						...(prepared.apiKey !== undefined ? { apiKey: prepared.apiKey } : {}),
-						...(prepared.refreshApiKey ? { refreshApiKey: prepared.refreshApiKey } : {}),
-						...(options.signal ? { signal: options.signal } : {}),
-						...(options.onDelta ? { onDelta: options.onDelta } : {}),
-					}),
-				);
-			} catch (err) {
-				return { status: "failed", reason: err instanceof Error ? err.message : String(err) };
-			}
-			return result.aborted
-				? { status: "aborted", text: result.text }
-				: {
-						status: "answered",
-						text: result.text,
-						route: { ...route, ...(result.reportedModel !== undefined ? { reportedModel: result.reportedModel } : {}) },
-					};
-		},
-
-		async draftCandidates(request: string, count: number, options: DraftOptions = {}): Promise<DraftOutcome> {
-			const text = request.trim();
-			if (text.length === 0) return { status: "refused", reason: "a draft needs a request" };
-			if (!Number.isInteger(count) || count < 1 || count > DRAFT_TEMPERATURES.length) {
-				return { status: "refused", reason: `draft count must be 1 to ${DRAFT_TEMPERATURES.length}` };
-			}
-			// Never queued, for the side question's reason, and run beside a turn in
-			// flight the same way (#415): the drafts answer the session as it stands now.
-			const prepared = await prepareOutOfTurnRound(null, options.signal, false, false);
-			if (!prepared.ok) return { status: "refused", reason: prepared.reason };
-			const route = { targetId: prepared.runtime.targetId, wireModelId: prepared.runtime.wireModelId };
-			options.onRoute?.(route);
-			const messages = [...prepared.runtime.agent.state.messages];
-			const candidates = await Promise.all(
-				DRAFT_TEMPERATURES.slice(0, count).map(async (temperature, index): Promise<DraftCandidate> => {
-					const samplingTemperature = draftTemperature(prepared.runtime.agent.state.model, temperature);
-					try {
-						// One endpoint slot per round: each is a full request against the
-						// same scheduler, and capacity has to count every one of them.
-						const result = await withEndpointSlot(prepared.runtime, (slot) =>
-							runDraftWithSamplerFallback(
-								index,
-								samplingTemperature,
-								(sampling) =>
-									runOutOfTurnRound({
-										...sideCallJournal(prepared.runtime, "helper", prepared.origin),
-										purpose: "draft",
-										beforeRequest: sideCallAdmission(prepared.origin, slot, options.signal),
-										admitFlow: () => deps.admitFlow?.(prepared.runtime) ?? null,
-										model: prepared.runtime.agent.state.model,
-										// One snapshot for every candidate, read-only as the side question's is.
-										messages,
-										systemPrompt: sampling.systemPrompt,
-										userText: text,
-										midTurn: prepared.inFlight,
-										maxTokens: DRAFT_MAX_TOKENS,
-										thinkingLevel: prepared.runtime.agent.state.thinkingLevel ?? "off",
-										...(sampling.temperature === undefined ? {} : { temperature: sampling.temperature }),
-										...(prepared.apiKey !== undefined ? { apiKey: prepared.apiKey } : {}),
-										...(prepared.refreshApiKey ? { refreshApiKey: prepared.refreshApiKey } : {}),
-										...(options.signal ? { signal: options.signal } : {}),
-										...(options.onCandidate ? { onDelta: (partial: string) => options.onCandidate?.(index, partial) } : {}),
-									}),
-								options.signal,
-							),
-						);
-						return {
-							...draftCandidateFromText(result.text),
-							route: { ...route, ...(result.reportedModel !== undefined ? { reportedModel: result.reportedModel } : {}) },
-						};
-					} catch (err) {
-						return { status: "failed", reason: err instanceof Error ? err.message : String(err), route };
-					}
-				}),
-			);
-			return { status: "drafted", candidates, aborted: options.signal?.aborted === true };
-		},
-
-		async extractHandoff(goal: string, options: HandoffRoundOptions = {}): Promise<SideQuestionOutcome> {
-			const text = goal.trim();
-			if (text.length === 0) {
-				return { status: "refused", reason: "a handoff needs a goal" };
-			}
-			// Refused, never queued: a handoff describes a session that has stopped
-			// working, and a turn still in flight is about to change what the
-			// document would say.
-			const prepared = await prepareOutOfTurnRound(
-				"a turn is in flight; /handoff cannot summarize a session that is still moving",
-				options.signal,
-				false,
-				false,
-			);
-			if (!prepared.ok) return { status: "refused", reason: prepared.reason };
-			options.onRoute?.({ targetId: prepared.runtime.targetId, wireModelId: prepared.runtime.wireModelId });
-			let result: SideQuestionResult;
-			try {
-				result = await withEndpointSlot(prepared.runtime, (slot) =>
-					runHandoffRound({
-						...sideCallJournal(prepared.runtime, "handoff", prepared.origin),
-						beforeRequest: sideCallAdmission(prepared.origin, slot, options.signal),
-						admitFlow: () => deps.admitFlow?.(prepared.runtime) ?? null,
-						model: prepared.runtime.agent.state.model,
-						// Read-only, exactly as the side-question round treats it.
-						messages: prepared.runtime.agent.state.messages,
-						goal: text,
-						// The runtime id is what decides whether the schema can be bound
-						// on the wire rather than only stated in the prompt.
-						runtimeId: prepared.runtime.runtimeResolution.runtime.id,
-						...(prepared.apiKey !== undefined ? { apiKey: prepared.apiKey } : {}),
-						...(prepared.refreshApiKey ? { refreshApiKey: prepared.refreshApiKey } : {}),
-						...(options.signal ? { signal: options.signal } : {}),
-						...(options.repair ? { repair: options.repair } : {}),
-					}),
-				);
-			} catch (err) {
-				return { status: "failed", reason: err instanceof Error ? err.message : String(err) };
-			}
-			return result.aborted ? { status: "aborted", text: result.text } : { status: "answered", text: result.text };
-		},
+		...createChatLoopSideRounds(loop),
 
 		requestSelfCompact: (note, toolCallId, signal) => continuity.request(note, toolCallId, signal),
 		async recoverHandoff(handoffId, action) {
