@@ -18,6 +18,7 @@ import type {
 	ContextFoldPayload,
 	ContextPrunedPayload,
 } from "../../src/core/telemetry/live-events.js";
+import { telemetrySessionDirectory } from "../../src/core/telemetry/paths.js";
 import { pancodeStateDir } from "../../src/core/xdg.js";
 import { planEviction } from "../../src/domains/context/working-set/engine.js";
 import { foldWorkingSet } from "../../src/domains/context/working-set/fold.js";
@@ -42,7 +43,6 @@ import { appendEntry, appendTurn, readCurrentEntries, startSession } from "../..
 import { ledgerUsageCalls } from "../../src/domains/session/usage.js";
 import { readCallJournal } from "../../src/domains/telemetry/call-journal.js";
 import { readSessionContextSnapshots } from "../../src/domains/telemetry/index.js";
-import { telemetrySessionDirectory } from "../../src/domains/telemetry/paths.js";
 import { createSessionJournals } from "../../src/domains/telemetry/session-journals.js";
 import { createEngineAgent } from "../../src/engine/agent.js";
 import { registerEngineApiProvider, registerEngineFauxProvider } from "../../src/engine/api-registry.js";

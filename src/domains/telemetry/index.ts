@@ -2,17 +2,6 @@
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 /** The read boundary every telemetry reader opens its paths through, for surfaces that report a store present (#434). */
 export { withinStateRoot } from "../../core/state-boundary.js";
-export type { AccountabilitySummary } from "./accountability.js";
-export { summarizeRunAccountability } from "./accountability.js";
-export type {
-	TelemetryContract,
-	TelemetryRunReaderBinder,
-	TelemetrySnapshot,
-	TokenThroughputSnapshot,
-} from "./contract.js";
-export { foldDecisions } from "./fact-folds.js";
-export { publishGateDecision } from "./gate-publication.js";
-export { readTaskMemorySpendSummary } from "./memory-spend.js";
 export {
 	isTelemetryJournalFile,
 	telemetryBundlePath,
@@ -25,7 +14,18 @@ export {
 	telemetryRunsDirectory,
 	telemetrySessionDirectory,
 	telemetrySessionsDirectory,
-} from "./paths.js";
+} from "../../core/telemetry/paths.js";
+export type { AccountabilitySummary } from "./accountability.js";
+export { summarizeRunAccountability } from "./accountability.js";
+export type {
+	TelemetryContract,
+	TelemetryRunReaderBinder,
+	TelemetrySnapshot,
+	TokenThroughputSnapshot,
+} from "./contract.js";
+export { foldDecisions } from "./fact-folds.js";
+export { publishGateDecision } from "./gate-publication.js";
+export { readTaskMemorySpendSummary } from "./memory-spend.js";
 export { explain, READ_MODEL_FOLD } from "./read-model.js";
 export { cacheReport } from "./read-model-cache.js";
 export { costReport, runCostReport } from "./read-model-cost.js";

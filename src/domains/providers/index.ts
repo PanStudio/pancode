@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
+
+export { runtimeEnforcement } from "../../core/runtime-enforcement.js";
 export type {
 	AuthResolution,
 	AuthStatus,
@@ -73,7 +75,6 @@ export {
 	type ResolvedModelRef,
 	resolveModelReference,
 } from "./resolver.js";
-export { runtimeEnforcement } from "./runtime-enforcement.js";
 export {
 	type ContextWindowDetails,
 	type ContextWindowSource,

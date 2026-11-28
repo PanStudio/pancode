@@ -10,6 +10,7 @@ import { validPayload } from "../../src/core/telemetry/events.js";
 import { telemetryHub } from "../../src/core/telemetry/hub.js";
 import { newCallId } from "../../src/core/telemetry/ids.js";
 import { factKnownValue } from "../../src/core/telemetry/known.js";
+import { telemetrySessionDirectory } from "../../src/core/telemetry/paths.js";
 import { pancodeStateDir } from "../../src/core/xdg.js";
 import type { DispatchContract } from "../../src/domains/dispatch/contract.js";
 import { createUnbackedWorkerClaimRegistration } from "../../src/domains/middleware/dispatch-nudge.js";
@@ -27,7 +28,6 @@ import type { SessionContract, TurnInput } from "../../src/domains/session/contr
 import type { SessionEntry } from "../../src/domains/session/entries.js";
 import { readCallJournal } from "../../src/domains/telemetry/call-journal.js";
 import type { TelemetryContract } from "../../src/domains/telemetry/contract.js";
-import { telemetrySessionDirectory } from "../../src/domains/telemetry/paths.js";
 import { createSessionJournals } from "../../src/domains/telemetry/session-journals.js";
 import { callRepeatsAsRead } from "../../src/engine/loop-guard.js";
 import type { AgentEvent, AgentMessage } from "../../src/engine/types.js";

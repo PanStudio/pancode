@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
-import { OBSERVED_COMMAND_PREFIX } from "../dispatch/run-findings.js";
+import { OBSERVED_COMMAND_PREFIX } from "../../core/telemetry/trust-vocabulary.js";
 import {
 	adaptRunTrustStatus,
 	type CanonicalTrustStatus,

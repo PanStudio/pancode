@@ -319,7 +319,7 @@ export function checkTelemetryProducer(file: string, source: string): string[] {
 
 /**
  * A path under the telemetry root, as a path expression spells it: a literal `telemetry` segment, or a helper from
- * src/domains/telemetry/paths.ts, the one module that builds those paths (`telemetryRoot`, `telemetryRunDirectory`,
+ * src/core/telemetry/paths.ts, the one module that builds those paths (`telemetryRoot`, `telemetryRunDirectory`,
  * `telemetryJournalPath`, ...).
  */
 const TELEMETRY_PATH = /[/"'`](telemetry)(?=[/"'`])|\b(telemetry\w*(?:Root|Directory|Path))\b/;

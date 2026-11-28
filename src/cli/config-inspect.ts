@@ -21,6 +21,7 @@ import { resolvePackageRoot } from "../core/package-root.js";
 import { formatSettingsLayerIssue } from "../core/settings-layer-diagnostics.js";
 import type { SettingsOrigin } from "../core/settings-layers.js";
 import { readLayeredSettings, settingsSourceFor, settingsValueFor } from "../core/settings-layers.js";
+import { telemetryRoot } from "../core/telemetry/paths.js";
 import { isRecord } from "../core/type-guards.js";
 import { pancodeDataDir, pancodeStateDir } from "../core/xdg.js";
 import { renderEffectivePromptContext } from "../domains/context/compiled-handbook.js";
@@ -39,7 +40,6 @@ import { defaultScopedResourceRoots } from "../domains/resources/common-loader.j
 import { createSafetyPolicyEngine } from "../domains/safety/policy-engine.js";
 import { ceilChars } from "../domains/session/context-accounting.js";
 import { HOOK_RUN_WINDOW_DAYS, workspaceHookRuns } from "../domains/telemetry/hook-runs.js";
-import { telemetryRoot } from "../domains/telemetry/paths.js";
 import { capturedHookSourcesFor } from "../entry/extension-hook-sources.js";
 
 export type CustomizationCategory =

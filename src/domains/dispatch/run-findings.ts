@@ -7,6 +7,7 @@
 
 import { canonicalJsonStrict } from "../../core/canonical-json.js";
 import { sha256Hex } from "../../core/hash.js";
+import { OBSERVED_COMMAND_PREFIX } from "../../core/telemetry/trust-vocabulary.js";
 import { sanitizeCallTargetText } from "../../lib/call-target/call-target.js";
 import { createRedactionTally, redactSecretsText } from "../../lib/secrets/redact.js";
 import { isVerifyListing } from "../../tools/verify/surface.js";
@@ -244,8 +245,6 @@ export function createRunResultQuality(input: CreateRunResultQualityInput): RunR
  * enter through the run-effects recorder instead.
  */
 const VALIDATION_TOOLS: ReadonlySet<string> = new Set(["verify"]);
-
-export const OBSERVED_COMMAND_PREFIX = "command:";
 
 /**
  * Observed checks as typed facts, judged against the final tree: only clean checks and failures observed since the

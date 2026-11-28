@@ -14,6 +14,7 @@ import type { AgentRole } from "../../src/core/telemetry/enums.js";
 import { makeTelemetryRecord, type TelemetryRecord } from "../../src/core/telemetry/envelope.js";
 import { telemetryHub } from "../../src/core/telemetry/hub.js";
 import { newAttemptId, newCallId } from "../../src/core/telemetry/ids.js";
+import { telemetryRunDirectory, telemetrySessionDirectory } from "../../src/core/telemetry/paths.js";
 import type { CallSettled, CallStarted } from "../../src/core/telemetry/schemas.js";
 import { encodeTelemetryLine, scanTelemetrySegment } from "../../src/core/telemetry/segment.js";
 import { ToolNames } from "../../src/core/tool-names.js";
@@ -33,7 +34,6 @@ import { loadTokenSourcesReport } from "../../src/domains/session/token-sources.
 import { readCallJournal } from "../../src/domains/telemetry/call-journal.js";
 import type { CallJournalOptions } from "../../src/domains/telemetry/call-scope.js";
 import type { TelemetryContract } from "../../src/domains/telemetry/contract.js";
-import { telemetryRunDirectory, telemetrySessionDirectory } from "../../src/domains/telemetry/paths.js";
 import { foldSideSurfaces } from "../../src/domains/telemetry/read-model-side-surfaces.js";
 import { createSessionJournals } from "../../src/domains/telemetry/session-journals.js";
 import { createEngineAgent } from "../../src/engine/agent.js";
