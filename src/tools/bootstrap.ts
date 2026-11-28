@@ -10,6 +10,7 @@ import type { WorkerContextSnapshot } from "../domains/context/worker/contract.j
 import type { DispatchContract } from "../domains/dispatch/contract.js";
 import type { AgentRoleFactsResolver } from "../domains/dispatch/execution-role.js";
 import { FLEET_PLACEMENT_HEADER, rememberSessionFleetNode } from "../domains/dispatch/fleet-placement-preference.js";
+import type { FleetRunLauncher } from "../domains/dispatch/fleet-run-launcher.js";
 import { DEFAULT_KILL_GRACE_MS, DEFAULT_TEARDOWN_BOUND_MS, type McpElicitationHost } from "../domains/mcp/index.js";
 import type { PanesOperations } from "../domains/mux/operations.js";
 import type { DecisionLedgerEntry } from "../domains/session/entries.js";
@@ -75,6 +76,8 @@ export interface ToolBootstrapDeps extends Omit<CoreToolBootstrapDeps, "mcpCapab
 	/** Which optional `dispatch` schema blocks this session advertises; absent means every block. */
 	getDispatchSchemaComposition?: () => DispatchSchemaComposition;
 	dispatchBackground?: DispatchBackgroundRegistry;
+	/** The session's fleet launcher: the playbook runs dispatch starts, and the roots monitor collects. */
+	fleetRuns?: FleetRunLauncher;
 	/** Live decision board snapshot; dispatch seals its active refs onto every request. */
 	getDecisionBoard?: () => ReadonlyArray<DecisionLedgerEntry>;
 	/** Optional herdr worktree lifecycle for compete candidates. */
@@ -250,6 +253,7 @@ export function registerAllTools(registry: ToolRegistry, deps: ToolBootstrapDeps
 						dispatch,
 						runEvents: dispatchRunEvents,
 						...(deps.jobs ? { jobs: deps.jobs } : {}),
+						...(deps.fleetRuns ? { fleetRuns: deps.fleetRuns } : {}),
 					}),
 				),
 				{
