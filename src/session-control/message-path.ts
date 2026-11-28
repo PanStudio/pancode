@@ -20,7 +20,7 @@ const UNOWNED_ROW_LIMIT = 64;
 /** Messages the run took and no sent request has carried yet; a run that dies keeps them for the next call. */
 const WAITING_LIMIT = 256;
 
-interface PathMessage {
+export interface PathMessage {
 	id: string;
 	submittedAt: number;
 }
