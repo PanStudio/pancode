@@ -39,6 +39,7 @@ import type {
 	PermissionDecisionFacts,
 } from "../../contracts/permissions.js";
 import { formatClock, formatDuration } from "../api/clock.js";
+import { fields, text } from "../api/narrow.js";
 import type { StatusTone } from "../design/status.js";
 import { readGateway } from "./gateway-model.js";
 import { dispatchTasks } from "./tool-presentation.js";
@@ -588,10 +589,6 @@ const DISPATCH_PREVIEW_RUNS = 8;
 const PREVIEW_MAX_CHARS = 16_000;
 const COMMAND_MAX_CHARS = 4_000;
 
-const record = (value: unknown): Readonly<Record<string, unknown>> =>
-	typeof value === "object" && value !== null ? (value as Record<string, unknown>) : {};
-const text = (value: unknown): string | null => (typeof value === "string" && value.length > 0 ? value : null);
-
 /**
  * `rawInput` is the harness's literal argument object and nothing upstream promised it is printable,
  * so control codes are stripped here rather than trusted. Newlines and tabs survive because a
@@ -613,7 +610,7 @@ function editsFrom(input: Readonly<Record<string, unknown>>): ProposedEdit[] {
 	const list = Array.isArray(input.edits) ? input.edits : [input];
 	const edits: ProposedEdit[] = [];
 	for (const entry of list) {
-		const edit = record(entry);
+		const edit = fields(entry);
 		const oldText = typeof edit.oldText === "string" ? edit.oldText : null,
 			newText = typeof edit.newText === "string" ? edit.newText : null;
 		if (oldText === null && newText === null) continue;
@@ -645,7 +642,7 @@ function gatedToolName(call: GatedCall, input: Readonly<Record<string, unknown>>
 }
 
 function writeRoots(intent: unknown): readonly string[] | null {
-	const roots = record(intent).write_roots;
+	const roots = fields(intent).write_roots;
 	if (!Array.isArray(roots)) return null;
 	return roots.filter((root): root is string => typeof root === "string" && root.trim().length > 0);
 }
@@ -656,7 +653,7 @@ function dispatchArgumentsPreview(input: Readonly<Record<string, unknown>>): Gat
 	const shared = writeRoots(input.intent);
 	const tasks = dispatchTasks(input as Record<string, unknown>);
 	const writes = (index: number) => {
-		const roots = writeRoots(record(entries[index]).intent) ?? shared;
+		const roots = writeRoots(fields(entries[index]).intent) ?? shared;
 		return roots === null
 			? null
 			: roots.length === 0

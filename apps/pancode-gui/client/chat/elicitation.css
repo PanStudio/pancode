@@ -42,7 +42,7 @@
 .elicitation__link {
 	display: grid;
 	grid-template-columns: max-content minmax(0, 1fr);
-	gap: 8px 16px;
+	gap: var(--space-2) var(--space-4);
 	margin: 0 0 var(--space-4);
 	padding: 14px 16px;
 	border: 1px solid var(--line-strong);
@@ -63,7 +63,7 @@
 .elicitation__link .elicitation__warning {
 	grid-column: 1 / -1;
 	display: flex;
-	gap: 8px;
+	gap: var(--space-2);
 	align-items: flex-start;
 	color: var(--status-warn-fg, var(--ink-strong));
 	font-size: var(--text-meta);
@@ -75,14 +75,14 @@
 }
 .elicitation__review dl {
 	display: grid;
-	gap: 12px;
+	gap: var(--space-3);
 	margin: 0;
 }
 .elicitation__review dl > div {
 	display: grid;
 	grid-template-columns: minmax(120px, 1fr) minmax(0, 2fr);
-	gap: 16px;
-	padding-bottom: 12px;
+	gap: var(--space-4);
+	padding-bottom: var(--space-3);
 	border-bottom: 1px solid var(--line);
 }
 .elicitation__review dt {

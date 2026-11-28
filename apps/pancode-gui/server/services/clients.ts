@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
-import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
+import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import type { ClientCredential, ClientIdentity } from "../../contracts/auth.js";
+import { sha256Hex } from "../launcher/fs-util.js";
 
 /**
  * Credentials live only in this process, so a restart or a stop revokes every one of them. A window
@@ -35,7 +36,6 @@ export interface ClientRecord extends ClientIdentity {
 }
 
 const secret = () => randomBytes(32).toString("base64url");
-const digest = (value: string) => createHash("sha256").update(value).digest("hex");
 
 export class ClientRegistry {
 	private readonly clients = new Map<string, ClientRecord>();
@@ -80,7 +80,7 @@ export class ClientRegistry {
 	/** The client a bearer credential belongs to, or null when no live credential matches it. */
 	authenticate(credential: string): ClientRecord | null {
 		const now = this.now();
-		const hash = digest(credential);
+		const hash = sha256Hex(credential);
 		const id = this.byCredential.get(hash);
 		const record = id === undefined ? undefined : this.clients.get(id);
 		if (!record) return null;
@@ -108,13 +108,13 @@ export class ClientRegistry {
 		// Oldest first: a client that floods tickets loses its own unused ones, not the bound.
 		while (this.tickets.size >= MAX_TICKETS) this.tickets.delete(this.tickets.keys().next().value as string);
 		const ticket = secret();
-		this.tickets.set(digest(ticket), { clientId: record.clientId, expiresAt: now + TICKET_TTL_MS });
+		this.tickets.set(sha256Hex(ticket), { clientId: record.clientId, expiresAt: now + TICKET_TTL_MS });
 		return { ticket, expiresIn: TICKET_TTL_MS / 1000 };
 	}
 
 	/** Single use: a ticket read from a log or a history entry opens nothing. */
 	redeem(ticket: string): ClientRecord | null {
-		const hash = digest(ticket);
+		const hash = sha256Hex(ticket);
 		const entry = this.tickets.get(hash);
 		this.tickets.delete(hash);
 		const now = this.now();
@@ -132,12 +132,12 @@ export class ClientRegistry {
 		while (this.launchTickets.size >= MAX_LAUNCH_TICKETS)
 			this.launchTickets.delete(this.launchTickets.keys().next().value as string);
 		const ticket = secret();
-		this.launchTickets.set(digest(ticket), now + LAUNCH_TICKET_TTL_MS);
+		this.launchTickets.set(sha256Hex(ticket), now + LAUNCH_TICKET_TTL_MS);
 		return { ticket, expiresIn: LAUNCH_TICKET_TTL_MS / 1000 };
 	}
 
 	redeemLaunch(ticket: string) {
-		const hash = digest(ticket);
+		const hash = sha256Hex(ticket);
 		const expiresAt = this.launchTickets.get(hash);
 		this.launchTickets.delete(hash);
 		return expiresAt !== undefined && expiresAt > this.now();
@@ -170,7 +170,7 @@ export class ClientRegistry {
 		const body = raw.subarray(0, CHALLENGE_NONCE_BYTES + 4);
 		if (!timingSafeEqual(raw.subarray(body.length), this.challengeMac(body))) return false;
 		const expiresAt = body.readUInt32BE(CHALLENGE_NONCE_BYTES) * 1000;
-		const hash = digest(challenge);
+		const hash = sha256Hex(challenge);
 		if (expiresAt <= now || this.spentChallenges.has(hash) || !prove()) return false;
 		this.spentChallenges.set(hash, expiresAt);
 		return true;
@@ -240,7 +240,7 @@ export class ClientRegistry {
 
 	private issue(record: ClientRecord, now: number): ClientCredential {
 		const credential = secret();
-		const hash = digest(credential);
+		const hash = sha256Hex(credential);
 		record.credential = { hash, expiresAt: now + CREDENTIAL_TTL_MS };
 		this.byCredential.set(hash, record.clientId);
 		return {

@@ -48,6 +48,8 @@ const httpModules = new Map([
 	["src/domains/safety/escape-scope.ts", new Set(["ESCAPE_SCOPE_OPTION_PREFIX"])],
 	// A file preview withholds the same secret names the agent's read tool and shell sandbox refuse.
 	["src/lib/secrets/secret-paths.ts", new Set(["WORKSPACE_SECRET_PATHS"])],
+	// A file preview withholds what the engine treats as secret, content checks included.
+	["src/core/sandbox/secret-files.ts", new Set(["isSecretPath"])],
 ]);
 // The read-model DTO schemas and types cross into the browser contract through wire-shims (#434). dto.ts keeps a
 // typebox-only value-import closure, which the closure test below holds for the whole contract directory.
@@ -125,6 +127,11 @@ const adapters = new Set([
 	"src/domains/session/telemetry-source.ts",
 	// The repository window `usage report` folds, so a repo reference explains to the CLI's number (#434 §11.4).
 	"src/domains/telemetry/usage-window.ts",
+	// The saved-task list row ACP `session/list` sends, so the ledger read redacts and bounds as the engine does.
+	"src/acp/session-list-row.ts",
+	"src/acp/server-bounds.ts",
+	// Settings inspection scrubs credential shapes from values as the engine does.
+	"src/lib/secrets/redaction.ts",
 ]);
 // Test-only root seams are intentionally enumerated independently of production.
 const testModules = new Set([

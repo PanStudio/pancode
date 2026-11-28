@@ -1,6 +1,5 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
-import { randomBytes } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import chalk from "chalk";
@@ -18,34 +17,25 @@ import type { AcpHandoffControl } from "../acp/server-options.js";
 import { createStdioServerTransport } from "../acp/transport.js";
 import { modelBootstrapGenerate, resolveBootstrapRoute } from "../cli/bootstrap-generate.js";
 import { writeHeadlessNoticesToStderr } from "../cli/headless-notices.js";
-import { mcpLiveStatuses } from "../cli/mcp.js";
-import { segmentUsageFromView } from "../cli/modes/json-stream.js";
-import { runHeadlessMainAgent } from "../cli/modes/print.js";
 import type { RunJsonMainSessionFrame } from "../cli/modes/run-json-schema.js";
 import { RUN_JSON_SCHEMA_VERSION } from "../cli/modes/run-json-schema.js";
-import { noteMainRunV2, startRunOutput, writeLocalAnswer, writeRunDiagnostic } from "../cli/run-failure.js";
+import { noteMainRunV2, writeRunDiagnostic } from "../cli/run-failure.js";
 import { setToolEnvAutonomy, startLoginEnvCapture } from "../core/bash-exec.js";
 import { formatBootTrace } from "../core/boot-trace.js";
 import { readPancodeVersionLabel } from "../core/build-info.js";
 import { type PancodeSettings, readSettings } from "../core/config.js";
-import {
-	DEFAULT_DELEGATION_PERMISSION_TIMEOUT_MS,
-	interfaceGuidanceEnabled,
-	type OutputStyle,
-} from "../core/defaults.js";
+import { interfaceGuidanceEnabled, type OutputStyle } from "../core/defaults.js";
 import { writeDiagnostic } from "../core/diagnostics.js";
 import { type LoadResult, loadDomains } from "../core/domain-loader.js";
 import { setAutonomousCommitProcess, setCommitDecisionRefsProvider } from "../core/git-commit-attribution.js";
 import { configureGuardrails, guardrailValuesFromSettings } from "../core/guardrails.js";
-import { HEADLESS_PERMISSION_DENIED_REASON } from "../core/headless-permission.js";
 import { installInternalGitPolicy } from "../core/internal-git.js";
-import { flushPackageActivities, recordPackageActivity } from "../core/package-activity.js";
+import { flushPackageActivities } from "../core/package-activity.js";
 import { readPancodeVersion } from "../core/package-root.js";
 import type { CatalogRanker } from "../core/precomputed-rank.js";
 import { ensureProjectIgnore } from "../core/project-root.js";
 import { hostFramedTexts } from "../core/reminder-framing.js";
 import { protectedResidencyModels } from "../core/residency-protection.js";
-import { armRestartHandoff } from "../core/restart-handoff.js";
 import { consumeRestartIntent } from "../core/restart-intent.js";
 import {
 	SAFE_EXEC_DEFAULT_KILL_GRACE_MS,
@@ -56,12 +46,7 @@ import { sandboxAvailability } from "../core/sandbox/availability.js";
 import { mainSandboxEnvPolicy } from "../core/sandbox/env-scrub.js";
 import { createGitHooksFingerprinter } from "../core/sandbox/git-hooks-fingerprint.js";
 import { mainShellContained, mainShellSandboxSettings, yoloScriptSandboxState } from "../core/sandbox/main-session.js";
-import {
-	resolveMemoryRoute,
-	routingChangeNotices,
-	type SessionOverrides,
-	seedSessionRouting,
-} from "../core/session-routing.js";
+import { type SessionOverrides, seedSessionRouting } from "../core/session-routing.js";
 import { StartupTimer } from "../core/startup-timer.js";
 import { captureAdmits } from "../core/telemetry/capture.js";
 import { sessionTelemetryContext } from "../core/telemetry/context.js";
@@ -71,7 +56,7 @@ import { getTerminationCoordinator, resolveShutdownHookBudgetMs } from "../core/
 import { yieldToEventLoop } from "../core/timers.js";
 import { ToolNames } from "../core/tool-names.js";
 import { surfaceSpecPlacement } from "../core/tool-surface.js";
-import { narrowTurnConstraints, templateTurnConstraints, turnAllowsTool } from "../core/turn-constraints.js";
+import { turnAllowsTool } from "../core/turn-constraints.js";
 import { captureProjectSurface, projectSurfaceTrustNotice } from "../core/workspace-trust.js";
 import { pancodeDataDir, pancodeStateDir } from "../core/xdg.js";
 import { autonomyCeilingRefusal, launchAutonomyRefusal, yoloRootRefusal } from "../core/yolo-host.js";
@@ -87,25 +72,13 @@ import { ConfigDomainModule, createConfigDomainModule } from "../domains/config/
 import { liveHistoryBudget } from "../domains/context/budget/inspection.js";
 import { bootstrapInputFromInitOptions } from "../domains/context/init-options.js";
 import { createContextDomainModule } from "../domains/context/module.js";
-import { runOperatorRecall } from "../domains/context/working-set/operator-recall.js";
 import { createSessionRereadPort } from "../domains/context/working-set/session-reread.js";
 import { createDispatchDedupRegistration } from "../domains/dispatch/dedup.js";
 import { agentRoleFactsResolver } from "../domains/dispatch/execution-role.js";
-import {
-	compileFleetRunPreview,
-	createWorktreeBootRecovery,
-	executeFleetRun,
-	fleetAdmissionRefusal,
-	fleetRouteResolver,
-	runUsageFromCallRecords,
-} from "../domains/dispatch/index.js";
+import { createWorktreeBootRecovery } from "../domains/dispatch/index.js";
 import { createDispatchDomainModule } from "../domains/dispatch/module.js";
 import { configureRunEventJournal } from "../domains/dispatch/run-event-journal.js";
-import {
-	createExtensionRuntimeHookBridge,
-	installedExtensionClaims,
-	isLoadableExtension,
-} from "../domains/extensions/index.js";
+import { createExtensionRuntimeHookBridge, isLoadableExtension } from "../domains/extensions/index.js";
 import { ExtensionsDomainModule } from "../domains/extensions/module.js";
 import {
 	describeUpgradeNotice,
@@ -135,11 +108,9 @@ import {
 	markMemoryOffRecording,
 	memoryRecordStanding,
 	primeMemoryRepositoryFingerprint,
-	readTaskMemorySpendSummary,
 	renderTaskMemoryHandoffSource,
 	seedTaskMemoryFromNewestHandoff,
 	type TaskMemoryHandoffSnapshot,
-	taskMemoryBankSize,
 	taskMemoryHandoffSeedOffer,
 } from "../domains/memory/index.js";
 import { MEMORY_INTERVENTION_ACTIVITY_LIMIT } from "../domains/memory/intervention.js";
@@ -152,7 +123,7 @@ import {
 	loadTaskBankSnapshot,
 	saveTaskBankSnapshot,
 } from "../domains/memory/task-bank-store.js";
-import { createHistoryReviewActivity, projectTaskMemoryActivity } from "../domains/memory/task-memory-status.js";
+import { createHistoryReviewActivity } from "../domains/memory/task-memory-status.js";
 import { type CapabilityMatch, capabilityCorpus, createCapabilityGate } from "../domains/middleware/capability-gate.js";
 import {
 	createDetachedDispatchNudgeRegistration,
@@ -178,7 +149,7 @@ import { createStaleBuildReminderRegistration } from "../domains/middleware/stal
 import { createTaskBoardReminderRegistration } from "../domains/middleware/task-board-reminder.js";
 import { createTaskNudgeRegistration } from "../domains/middleware/task-nudge.js";
 import { createWatchdogRegistration } from "../domains/middleware/watchdog.js";
-import { committedPluginSnapshot, pluginSnapshotFor } from "../domains/plugins/index.js";
+import { committedPluginSnapshot } from "../domains/plugins/index.js";
 import { PluginsDomainModule } from "../domains/plugins/module.js";
 import { createPromptsDomainModule } from "../domains/prompts/module.js";
 import { agentRoleToolWarnings } from "../domains/providers/agent-role-warnings.js";
@@ -194,10 +165,10 @@ import {
 } from "../domains/providers/one-shot.js";
 import { resolveModelReference } from "../domains/providers/resolver.js";
 import { LOCAL_API_KEY_FALLBACK, resolveSideCallAuth } from "../domains/providers/side-call-auth.js";
-import { resolveTarget, unpricedRunRoutes } from "../domains/providers/unpriced-routes.js";
+import { resolveTarget } from "../domains/providers/unpriced-routes.js";
 import { createVisionSidecar } from "../domains/providers/vision-sidecar.js";
 import { anthropicQuotaNotice, onAnthropicQuotaChange, watchCopilotStreamQuota } from "../domains/quota/index.js";
-import { lazyReportTextHost, reportWiring } from "../domains/report/wiring.js";
+import { reportWiring } from "../domains/report/wiring.js";
 import {
 	discoverMarketplaceSkills,
 	installedSkillNames,
@@ -205,12 +176,6 @@ import {
 	suggestableSkills,
 } from "../domains/resources/index.js";
 import { createResourcesDomainModule } from "../domains/resources/module.js";
-import {
-	expandSubmitReferences,
-	expandSubmitText,
-	mcpPromptSlashRows,
-	submitDisplay,
-} from "../domains/resources/submit-expansion.js";
 import { createCitationGroundingRegistration } from "../domains/safety/citation-grounding.js";
 import { createFinishContractRegistration } from "../domains/safety/finish-contract-registration.js";
 import { DEFAULT_RECENT_ENTRY_LIMIT } from "../domains/safety/finish-entries.js";
@@ -235,7 +200,6 @@ import { createProtectedArtifactsRegistration } from "../domains/safety/protecte
 import { SAFETY_JUDGE_CONSECUTIVE_BLOCKS, type SafetyJudgeSeat } from "../domains/safety/safety-judge.js";
 import { createSessionCodeConsent } from "../domains/safety/session-code-consent.js";
 import { unattendedWindowMs } from "../domains/safety/unattended.js";
-import { createRunCostCap, runCostCeilingUsd } from "../domains/scheduling/budget.js";
 import { createSchedulingDomainModule } from "../domains/scheduling/module.js";
 import type { CompactInput, CompactResult } from "../domains/session/compaction/compact.js";
 import {
@@ -251,7 +215,7 @@ import type { SessionContract, SessionMeta } from "../domains/session/contract.j
 import { activeDecisionRefs, createDecisionBoardStore } from "../domains/session/decision-board.js";
 import type { CompactionTrigger, SessionEntry } from "../domains/session/entries.js";
 import { commitHandoff, type HandoffServiceDeps, prepareHandoff } from "../domains/session/handoff-service.js";
-import { runHeadlessCompaction, SessionLiveError } from "../domains/session/index.js";
+import { SessionLiveError } from "../domains/session/index.js";
 import { SessionDomainModule } from "../domains/session/module.js";
 import { reconcilePendingProtectedArtifacts } from "../domains/session/protected-artifact-journal.js";
 import {
@@ -259,22 +223,16 @@ import {
 	protectedArtifactStateForCurrentSession,
 } from "../domains/session/protected-artifact-recording.js";
 import { sessionLedgersForRoots } from "../domains/session/related-ledgers.js";
-import { resumedSessionRoute } from "../domains/session/resumed-route.js";
 import {
 	appendSkillActivationRegistryEvent,
 	foldDispatchSkillActivations,
 } from "../domains/session/skill-activation-recording.js";
 import { createTaskBoardStore } from "../domains/session/task-board.js";
-import { writeTranscriptExport } from "../domains/session/transcript-export.js";
 import { activePath } from "../domains/session/tree/active-path.js";
 import { latestUserImages } from "../domains/session/vision-images.js";
-import { probeWorkspaceAsync } from "../domains/session/workspace/index.js";
-import { archiveCommandHost, shareArchiver } from "../domains/share/index.js";
 import type { SystemOneInstance } from "../domains/system-one/index.js";
 import { createSystemOne, parseRouteList } from "../domains/system-one/index.js";
-import { READ_MODEL_FOLD } from "../domains/telemetry/index.js";
 import { createTelemetryDomain } from "../domains/telemetry/module.js";
-import type { UserTaskAcceptance } from "../domains/user-tasks/acceptance.js";
 import { activeUserTaskAcceptance } from "../domains/user-tasks/active-acceptance.js";
 import { createUserTasksStore } from "../domains/user-tasks/store.js";
 import {
@@ -303,7 +261,6 @@ import {
 	effectiveYoloConfinement,
 	modelMayActivateSkills,
 } from "../lib/autonomy/autonomy.js";
-import { resizeImage } from "../lib/image/image-resize.js";
 import { createChatLoop, createTurnControlRunner, runOutOfTurnRound } from "../session-control/chat-loop.js";
 import {
 	answerExtensionLine,
@@ -316,11 +273,9 @@ import {
 	buildModelReplayAgentMessagesFromTurns,
 	continuityContextFromSession,
 } from "../session-control/model-session-replay.js";
-import type { ReloadTarget } from "../session-control/reload-report.js";
 import type { RunIo } from "../session-control/slash-command-types.js";
 import { createTurnOutcomeCollector } from "../session-control/turn-outcome-collector.js";
 import { effectiveToolNames } from "../tools/agent-tools.js";
-import { detectSupportedImageMimeType } from "../tools/file-references.js";
 import type { BootOptions } from "./boot-options.js";
 import { createExtensionReloadCoordinator, extensionHookReceiptSink } from "./extension-reload.js";
 import {
@@ -336,7 +291,6 @@ import { reloadPluginResourcesAndNotify } from "./plugin-reload.js";
 import { createReloadClasses } from "./reload-classes.js";
 import { applyRouteOverlay } from "./route-overlay.js";
 import { createJudgeScreen, createSafetyJudgeCompletion, createSafetyJudgeHost } from "./safety-judge-host.js";
-import { createSessionExtensionHosting } from "./session-extension-hosting.js";
 import { createSessionSettingsView } from "./session-settings-view.js";
 import { createSideRequestAdmission } from "./side-request-admission.js";
 import { createSystemOneControl } from "./system-one-control.js";
@@ -345,7 +299,6 @@ import { bindTaskMemoryLifecycle } from "./task-memory-lifecycle.js";
 export type { BootOptions, HeadlessSamplingOverrides } from "./boot-options.js";
 
 import { emitApproval } from "../core/telemetry/approvals.js";
-import type { PluginsReloadedPayload } from "../core/telemetry/live-events.js";
 import {
 	type AutonomyHalt,
 	autonomousCaps,
@@ -382,6 +335,10 @@ import { createFileMutationObserver, createSkillActivationObserver } from "../to
 import { createRegistry } from "../tools/registry.js";
 import { acpHostReadOnlySource } from "../tools/registry-verdicts.js";
 import { startToolOffloadSweep } from "../tools/result-shaping.js";
+import { runAcpSurface } from "./boot/acp-surface.js";
+import { runHeadlessSurface } from "./boot/headless-surface.js";
+import { runInteractiveSurface } from "./boot/interactive-surface.js";
+import type { BootSurfaceCells, BootSurfaceInput, BootSurfaceSeams } from "./boot/surface.js";
 
 export interface BootResult {
 	exitCode: number;
@@ -3058,1208 +3015,152 @@ export async function bootOrchestrator(options: BootOptions = {}): Promise<BootR
 		return host;
 	};
 
-	if (options.acp) {
-		recordBoot();
-		// ACP-served sessions get the same routing isolation as interactive
-		// ones, but ACP v1 has no channel for agent-initiated advisory text:
-		// the session/update union (agent_message_chunk, agent_thought_chunk,
-		// tool_call*, plan, …) carries turn content, and notifications outside
-		// an active session/prompt would break strict clients (see the matching
-		// note in src/acp/server-tool-updates.ts). The external-divergence and
-		// target-removed notices therefore go to the session ledger as `custom`
-		// entries, where /resume and session tooling can surface them.
-		// ACP is operatorless too: bound a runaway turn with the shared
-		// interrupt->stop subscriber, the same way the headless path does.
-		const unsubscribeAcpLoopGuardStop = subscribeLoopGuardStop(bus, chat);
-		const unsubscribeAcpRoutingNotices = bus.subscribe("config.next_turn_scheduled", (payload) => {
-			const evt = payload as { diff?: { nextTurn?: string[] }; settings?: Readonly<PancodeSettings> } | null | undefined;
-			if (!evt?.settings || !Array.isArray(evt.diff?.nextTurn)) return;
-			if (!session?.current()) return;
-			const notices = routingChangeNotices(evt.diff.nextTurn, evt.settings, getCurrentSettings());
-			for (const notice of notices) {
-				try {
-					session.appendEntry({
-						kind: "custom",
-						customType: "pancode.routing-notice",
-						parentTurnId: null,
-						data: { kind: notice.kind, level: notice.level, text: notice.text },
-					});
-				} catch {
-					// Advisory only; a ledger write failure must not affect the
-					// ACP turn loop.
-				}
-			}
-		});
-		const acpWorkerRuns = followWorkerRuns(bus, undefined, (id) => agents?.getSpec(id)?.traits ?? []);
-		const acpHostToolEvents = createHostToolEvents();
-		// A client that answers no interviews gets each tool interview cancelled
-		// with reason headless, the way a run without an operator does.
-		const acpExtensionAsk = acpInterviews ? askUserBridge : undefined;
-		const acpExtensions = createSessionExtensionHosting({
-			start: () => startSessionExtensionHost("acp", acpExtensionAsk),
-			commit: commitExtensionHooks,
-			idle: chatIdle,
-			bus,
-			report: (line) => process.stderr.write(`[pancode:acp] ${line}\n`),
-		});
-		await acpExtensions.ensure();
-		let acpQuotaService: import("../domains/quota/service.js").QuotaService | undefined;
-		let acpQuotaRead: Promise<void> | undefined;
-		const refreshAcpQuota = (): Promise<void> => {
-			acpQuotaRead ??= (async () => {
-				const { createQuotaService } = await import("../domains/quota/service.js");
-				acpQuotaService ??= createQuotaService();
-				await acpQuotaService.read();
-			})().finally(() => {
-				acpQuotaRead = undefined;
-			});
-			return acpQuotaRead;
-		};
-		// The fleet this ACP agent started and has not seen settle. A second start
-		// is refused while one runs, as the terminal's /fleet run refuses it, since
-		// two fleets would race over one workspace.
-		let acpFleetInFlight: { name: string; fleetRootId: string } | null = null;
-		const [{ acpCommandControl }, { servePancodeAcpAgent }] = await Promise.all([
-			import("../acp/commands.js"),
-			import("../acp/server.js"),
-		]);
-		try {
-			const transport = options.acp.transport ?? createStdioServerTransport(options.acp.transportOptions);
-			const code = await servePancodeAcpAgent({
-				transport,
-				...(options.acp.handshake ? { handshake: options.acp.handshake } : {}),
-				...(options.acp.onReady ? { onReady: options.acp.onReady } : {}),
-				...(acpInterviewChannel ? { interviews: acpInterviewChannel } : {}),
-				...(acpElicitationChannel ? { elicitation: acpElicitationChannel } : {}),
-				...(acpWorkerPermissions && dispatch?.resolveWorkerPermission
-					? {
-							workerPermissions: {
-								resolve: (runId: string, requestId: string, decision: "approve" | "deny") =>
-									dispatch.resolveWorkerPermission?.(runId, requestId, decision),
-							},
-						}
-					: {}),
-				chat,
-				...(session
-					? {
-							session: {
-								...session,
-								create(input) {
-									const meta = session.create(input);
-									persistCurrentThinkingLevel();
-									return meta;
-								},
-							},
-						}
-					: {}),
-				...(session
-					? {
-							readSessionEntries: readSessionEntriesForCompact,
-							// Ownership is read at call time, not captured: an ACP client
-							// can switch sessions between turns, and a fork opened this way
-							// must separate its own transactions from the ones it inherited
-							// exactly as the interactive path does.
-							// `upto` is the /tree switch's historical cut, the same option the
-							// terminal passes there; a live leaf keeps sidecars written after it.
-							buildReplayMessages: (
-								entries: ReadonlyArray<SessionEntry>,
-								leafTurnId: string | null,
-								scope: "leaf" | "upto" = "leaf",
-							) =>
-								buildModelReplayAgentMessagesFromTurns(entries, {
-									...(leafTurnId === null
-										? {}
-										: scope === "upto"
-											? { uptoTurnId: leafTurnId }
-											: { activeLeafTurnId: leafTurnId }),
-									continuity: continuityContextFromSession(session),
-								}),
-						}
-					: {}),
-				// /fleet run's approval, split across preview and run. Both compile
-				// through the dispatch domain exactly as the terminal overlay does.
-				...(agents
-					? {
-							fleet: {
-								preview: (name: string, vars: Readonly<Record<string, string>>, resume?: string) => {
-									const roleFacts = agentRoleFactsResolver((id: string) => agents.getSpec(id));
-									const budget = result.getContract("scheduling")?.preflight();
-									return compileFleetRunPreview({
-										workspaceRoot: process.cwd(),
-										name,
-										vars,
-										getAgentSpec: (agentId) => agents.getSpec(agentId),
-										roleFacts,
-										...(budget ? { budget } : {}),
-										...(resume !== undefined ? { resume } : {}),
-										resolveRoute: fleetRouteResolver(dispatch.preview, roleFacts, undefined, chat.toolLimits?.()),
-									});
-								},
-								run: (preview, turnConstraints) =>
-									new Promise((resolve) => {
-										if (acpFleetInFlight !== null) {
-											// No root is minted for a run that never starts; the running
-											// root is named in the reason, not reported as this run's id.
-											resolve({
-												status: "refused",
-												reason: `fleet ${acpFleetInFlight.name} (root=${acpFleetInFlight.fleetRootId}) is still running; a new fleet run is refused until it settles. Nothing was dispatched`,
-											});
-											return;
-										}
-										const admissionRefusal = fleetAdmissionRefusal();
-										if (admissionRefusal !== null) {
-											resolve({ status: "refused", reason: `${admissionRefusal}. Nothing was dispatched` });
-											return;
-										}
-										const fleetRootId = `fleet-${randomBytes(6).toString("hex")}`;
-										// Read before the single-run guard is taken: a throw here would
-										// otherwise leave it set and refuse every later fleet run.
-										const fleetSettings = getCurrentSettings();
-										const attributionEnabled = fleetSettings.integrations.git.commitAttribution;
-										acpFleetInFlight = { name: preview.name, fleetRootId };
-										let admitted = false;
-										let started = false;
-										let admissionCap: ReturnType<typeof setTimeout> | undefined;
-										const admit = () => {
-											if (admitted) return;
-											admitted = true;
-											clearTimeout(admissionCap);
-											resolve({ status: "started", fleetRootId });
-										};
-										// A first step that waits on proposals or endpoint capacity is running, not
-										// failed; the answer stops waiting before a client's own deadline does. The
-										// cap starts with the run, so a slow workspace lock never reads as started.
-										const onStarted = () => {
-											started = true;
-											admissionCap = setTimeout(admit, 30_000);
-											admissionCap.unref?.();
-										};
-										const refuse = (reason: string) => {
-											if (admitted) return false;
-											admitted = true;
-											clearTimeout(admissionCap);
-											resolve({ status: "failed", fleetRootId, reason });
-											return true;
-										};
-										// Progress reaches the client as dispatch events; a run that ends before its
-										// first step answers the request with why, as the terminal's notice does.
-										void executeFleetRun({
-											plan: preview.plan,
-											playbookName: preview.name,
-											commands: preview.commands,
-											workspaceRoot: process.cwd(),
-											fleetRootId,
-											dispatch,
-											agents: { getSpec: (agentId) => agents.getSpec(agentId) },
-											getDecisionBoard: () => decisionBoard.snapshot(),
-											attributionEnabled,
-											settings: fleetSettings,
-											vars: preview.vars,
-											...(preview.resume !== undefined
-												? { resume: { record: preview.resume.record, replayed: preview.resume.replayed } }
-												: {}),
-											...(turnConstraints !== undefined ? { turnConstraints } : {}),
-											onStarted,
-											onStepDispatched: admit,
-											onNotice: (text) => process.stderr.write(`[pancode:acp] fleet ${preview.name}: ${text}\n`),
-										})
-											.then(
-												(outcome) => {
-													refuse(
-														`the run ended before dispatching a step: ${outcome.succeededStepCount}/${outcome.requiredStepCount} steps succeeded`,
-													);
-												},
-												(error: unknown) => {
-													const message = error instanceof Error ? error.message : String(error);
-													// The run never started: another process's fleet holds this
-													// workspace, the lock timed out, the birth token was missing, or
-													// admission refused its reservation. The minted id is not reported.
-													if (!started && !admitted) {
-														admitted = true;
-														clearTimeout(admissionCap);
-														resolve({ status: "refused", reason: message });
-														return;
-													}
-													if (!refuse(message)) process.stderr.write(`[pancode:acp] fleet ${preview.name} failed: ${message}\n`);
-												},
-											)
-											.finally(() => {
-												acpFleetInFlight = null;
-											});
-									}),
-							},
-						}
-					: {}),
-				// /handoff runs the lifecycle the terminal runs. The successor is minted
-				// the way session/new mints one, so its route matches a fresh session.
-				...(session
-					? {
-							handoff: bindAcpHandoff({
-								session,
-								extract: (goal, extractOptions) => chat.extractHandoff(goal, extractOptions ?? {}),
-								readEntries: readSessionEntriesForCompact,
-								isTurnInFlight: () => chat.isStreaming(),
-								createSession: () => {
-									createRoutedSession();
-									taskBoard.snapshot();
-								},
-								getDecisionBoard: () => decisionBoard.snapshot(),
-								absorbFlow: (set) => flowLedger.absorb(set, { tool: "handoff" }),
-							}),
-						}
-					: {}),
-				providers,
-				// The fleet controls `_pancode/dispatch/steer` reaches. The server
-				// takes the two operations by structure, never the whole contract, so
-				// no ACP client can enqueue or route dispatch work through it.
-				dispatch: {
-					steer: (runId, text) => {
-						dispatch.steer(runId, text);
-					},
-					abort: (runId) => {
-						dispatch.abort(runId);
-					},
-					snapshot: () => dispatch.snapshot(),
-				},
-				settings: {
-					read: readAcpSafeSettings,
-					commit: commitAcpSafeSettings,
-				},
-				// A request typed in an ACP client means what it means in the terminal: skills,
-				// prompt templates and `@path` references expand the same way. Attached images
-				// are judged by their bytes, never by the client's label, and resized like a
-				// referenced image file before the model sees them.
-				expandPrompt: async (text, attached, signal) => {
-					const expansion = await expandSubmitText(text, resources, process.cwd(), {
-						...(signal ? { signal } : {}),
-						...(mcpSubmit ? { mcp: mcpSubmit } : {}),
-					});
-					// The literal `/name` line of a refused prompt is never sent to the model.
-					if (expansion.promptRefusal !== undefined) throw new Error(expansion.promptRefusal);
-					const images = [...expansion.images];
-					for (const image of attached) {
-						const mimeType = detectSupportedImageMimeType(Buffer.from(image.data, "base64"));
-						if (!mimeType) throw new Error("An attached file is not a PNG, JPEG, GIF or WebP image.");
-						const resized = await resizeImage({ type: "image", mimeType, data: image.data });
-						images.push(
-							resized
-								? { type: "image", mimeType: resized.mimeType, data: resized.data }
-								: { type: "image", mimeType, data: image.data },
-						);
-					}
-					return { ...expansion, images };
-				},
-				// The read half of the terminal's /tasks, /decisions and /memory views.
-				board: () => {
-					const memory = getCurrentSettings().context.memory;
-					return {
-						operatorTasks: userTasks.snapshot(),
-						plan: taskBoard.cachedSnapshot(),
-						decisions: decisionBoard.snapshot(),
-						memory: {
-							enabled: memory.enabled,
-							tier: taskMemoryTier(),
-							bank: taskMemoryBank.snapshot(),
-							stepInFlight: memoryIntervention.stepInFlight(),
-							observations: memoryOwner.contract.observationStatus(),
-							retention: memoryOwner.contract.retentionStatus(),
-						},
-					};
-				},
-				// The operator-command host. Only the members the thirteen
-				// allowlisted commands actually reach are passed; every TUI-only
-				// member stays absent, which is what makes the registry take its
-				// documented non-TUI fallback instead of trying to draw an overlay.
-				//
-				// A command that submits a user turn (`/share`, `/oracle`,
-				// `/skill <name>`, `/tasks hand`) is refused by the server while a
-				// prompt is active. Outside one, the turn is persisted to the ledger
-				// and replayed on the next `session/load`, but it emits no live
-				// `session/update`: ACP v1 has no channel for agent content outside a
-				// prompt, the same constraint recorded above for routing notices.
-				...(dispatch && providers
-					? {
-							commands: acpCommandControl({
-								jobs: jobHost.operations,
-								dispatch,
-								bus,
-								providers,
-								cwd: process.cwd(),
-								runDoctor: async ({ deep }) => {
-									const { collectDoctorFindings, doctorNotice } = await import("../cli/doctor.js");
-									return doctorNotice(
-										await collectDoctorFindings({
-											workspaceRoot: process.cwd(),
-											deep: deep ? { providers, autonomy: resolveBaselineAutonomy() } : false,
-										}),
-									);
-								},
-								clearSkillSurface: () => chat.clearSkillSurface(),
-								eggsCommand: (action, id) => chat.eggsCommand?.(action, id) ?? "No active eggs.",
-								// Narrowed exactly as `interactive-slash-runtime.ts` narrows it:
-								// the store's `note` parameter has no command-line spelling, and
-								// a handoff is attributed to the session that asked for it.
-								userTasks: {
-									add: (title: string, acceptance?: UserTaskAcceptance) => userTasks.add(title, undefined, acceptance),
-									hand: (id: string) => userTasks.hand(id, chat.getSessionId() ?? undefined),
-									done: (id: string) => userTasks.done(id),
-									drop: (id: string) => userTasks.drop(id),
-								},
-								getDecisionBoard: () => decisionBoard.snapshot(),
-								isTurnInFlight: () => chat.isStreaming(),
-								standingTurnConstraints: () => chat.toolLimits?.(),
-								seedTaskMemory: seedCurrentTaskMemoryFromHandoff,
-								// Recovery continues the engine without new input. It runs inside the
-								// prompt turn that asked for it, so its output streams there, and the
-								// reply waits for it so the next prompt cannot race it.
-								runHandoffRecovery: async (handoffId: string, action: "reduce" | "deliver"): Promise<AcpHostReport> => {
-									if (chat.isStreaming())
-										return { level: "error", text: "Wait for the current turn to settle before recovery." };
-									await chat.recoverHandoff(handoffId, action);
-									return {
-										level: "success",
-										text: action === "deliver" ? "Handoff delivered." : "Handoff reduced; the paused turn continued.",
-									};
-								},
-								// `/council` enters the registry as the dispatch call a model makes, under
-								// a call id the turn announces, so its plan approval binds to that call.
-								runCouncilDispatch: (args, turnConstraints) =>
-									runHostDispatch(toolRegistry, acpHostToolEvents, args, turnConstraints),
-								// `/share` picks from the runs this process watched, folded from the
-								// dispatch lifecycle exactly as the terminal's worker blocks are.
-								listWorkerRuns: () => acpWorkerRuns.list(),
-								reloadClasses: async (target: ReloadTarget): Promise<AcpHostReport> => {
-									const report = await reloadClasses.run(target, () => acpExtensions.reloadStep());
-									return { level: report.failed ? "warn" : "info", text: report.text };
-								},
-								...(session
-									? {
-											exportTranscript: (path?: string): AcpHostReport =>
-												writeTranscriptExport({
-													sessionId: chat.getSessionId(),
-													leafTurnId: (id) => session.leafId(id),
-													readEntries: readSessionEntriesForCompact,
-													cwd: process.cwd(),
-													...(path === undefined ? {} : { path }),
-												}),
-										}
-									: {}),
-								...archiveCommandHost(shareArchiver),
-								// `/report` previews as text and sends only on a second `/report send <id>`.
-								reportHost: lazyReportTextHost(reportSession),
-								getChatTarget: () => getCurrentSettings().chat.target,
-								getChatModel: () => getCurrentSettings().chat.model,
-								getFleetAgentProfiles: () => getCurrentSettings().fleet.agentProfiles,
-								getAutonomy: resolveEffectiveAutonomy,
-								...(session
-									? {
-											oracleBriefing: () => {
-												const sessionId = chat.getSessionId();
-												if (sessionId === null) return { decisions: [], tasks: [], compactionSummary: null };
-												return oracleBriefingFromEntries(
-													readSessionEntriesForCompact(sessionId),
-													session.leafId(sessionId) ?? undefined,
-												);
-											},
-										}
-									: {}),
-								// The context verbs the TUI reaches through its hub. Each answers the
-								// wire client with how it ended, because nothing else reaches one.
-								...(session
-									? {
-											runCompact: async (instructions: string | undefined): Promise<AcpHostReport> => {
-												// Compaction rewrites the context a running turn is reading.
-												if (chat.isStreaming())
-													return { level: "error", text: "Wait for the current turn to finish before compacting." };
-												// chat.compact says nothing when it compacts. Every notice it raises
-												// is a refusal, a failure, or an empty cut, so none reads as success.
-												const notices: string[] = [];
-												let failed = false;
-												const stop = chat.onEvent((event) => {
-													if (event.type !== "notice") return;
-													notices.push(event.text);
-													if (event.level === "error") failed = true;
-												});
-												try {
-													await chat.compact(instructions);
-												} finally {
-													stop();
-												}
-												if (notices.length === 0)
-													return { level: "success", text: "Context compacted. The next request starts from the summary." };
-												const empty = notices.every((text) => text.includes("nothing to compact"));
-												return { level: failed ? "error" : empty ? "info" : "warn", text: notices.join("\n") };
-											},
-											runContextRecall: async (ref: string): Promise<AcpHostReport> => {
-												const outcome = runOperatorRecall(ref, {
-													getSessionId: () => session.current()?.id ?? null,
-													onActivity: (event) => bus.emit("context.activity_changed", event),
-													hasSession: () => session.current() !== null,
-													readEntries: readCurrentSessionEntries,
-													activeLeafTurnId: () => {
-														const meta = session.current();
-														return meta ? (session.leafId(meta.id) ?? undefined) : undefined;
-													},
-													appendEntry: (entry) => session.appendEntry(entry),
-													onRecalled: (payload) =>
-														bus.emit("context.recalled", payload, sessionTelemetryContext(session.current()?.id)),
-												});
-												// The body answers the person; like the TUI's replay block it never becomes model context.
-												return outcome.ok
-													? { level: "success", text: `${outcome.headline}\n${outcome.body}` }
-													: { level: "error", text: outcome.message };
-											},
-										}
-									: {}),
-								...(contextDomain
-									? {
-											runContextRefresh: async (): Promise<AcpHostReport> => {
-												const capture = captureRunIo();
-												await contextDomain.runContextRefresh({ cwd: process.cwd(), io: capture.io });
-												return capture.report("Project context refreshed.");
-											},
-											// The terminal confirms a reset in its chooser; over ACP the operator's
-											// confirmation is the --yes flag, checked by the command bridge.
-											runContextClear: async (clear: {
-												all?: boolean;
-												confirmed?: boolean;
-												confirmedAll?: boolean;
-											}): Promise<AcpHostReport> => {
-												// The command bridge refuses an unconfirmed reset before it gets here.
-												if (clear.confirmed !== true) return { level: "warn", text: "Nothing was changed." };
-												if (chat.isStreaming())
-													return { level: "error", text: "Wait for the current turn to finish before resetting context." };
-												const capture = captureRunIo();
-												await contextDomain.runContextClear({
-													cwd: process.cwd(),
-													all: clear.all === true,
-													io: capture.io,
-													confirmContext: () => true,
-													confirmAll: () => clear.confirmedAll === true,
-												});
-												return capture.report(
-													clear.all === true ? "Project context and PANCODE.md reset." : "Project context reset.",
-												);
-											},
-											runInit: async (initOptions: Parameters<typeof runContextInit>[0]): Promise<AcpHostReport> => {
-												const capture = captureRunIo();
-												await runContextInit(initOptions, capture.io);
-												return capture.report("Project context initialized.");
-											},
-										}
-									: {}),
-								...(agents ? { getAgentRoleFacts: agentRoleFactsResolver((id: string) => agents.getSpec(id)) } : {}),
-								...(config ? { getWorkerRosters: () => config.get().fleet.rosters } : {}),
-								...(resources
-									? {
-											parsePendingSkillRequests: (text: string, commandCwd?: string) =>
-												resources.parsePendingSkillRequests(text, commandCwd ?? process.cwd()),
-											// The prompt screen asks the same question the terminal editor
-											// does before refusing a `/name` line: does a loaded template own it.
-											expandPromptTemplate: (text: string, commandCwd?: string) =>
-												resources.expandPromptTemplate(text, commandCwd ?? process.cwd()),
-											listPromptsForDisplay: () => resources.promptsForDisplay(process.cwd()).items,
-											listPrompts: () => resources.prompts(process.cwd()).items,
-										}
-									: {}),
-								operatorExtensions: () => acpExtensions.current?.operator,
-								...(mcpSubmit
-									? {
-											mcpPrompts: () => mcpPromptSlashRows(mcpSubmit, resources?.promptsForDisplay(process.cwd()).items ?? []),
-										}
-									: {}),
-								submitTurn: (text, submitOptions) => {
-									void chat
-										.submit(
-											text,
-											submitOptions.pendingSkillRequests === undefined
-												? {}
-												: { pendingSkillRequests: [...submitOptions.pendingSkillRequests] },
-										)
-										.catch(() => undefined);
-								},
-								submitOperatorNote: (text) => {
-									void chat.submit(text).catch(() => undefined);
-								},
-								...(chat.operatorMemory ? { operatorMemory: chat.operatorMemory } : {}),
-							}),
-						}
-					: {}),
-				toolRegistry,
-				labelOperatorCommand: flowLedger.labelCommand,
-				beforeShellEntryRecorded,
-				hostToolEvents: acpHostToolEvents,
-				...(session
-					? {
-							boardActions: bindBoardActions({
-								decisionBoard,
-								taskBank: () => taskMemoryBank.snapshot(),
-								currentSession: () => session.current(),
-								dataDir: pancodeDataDir(),
-								sessionFlowRestricted: (sessionId) => flowLedger.isRestricted(sessionId),
-							}),
-						}
-					: {}),
-				contextLedger: () => chat.contextLedger(),
-				...(contextDomain
-					? {
-							startupHints: () => contextDomain.startupHints(),
-							cancelContextOperation: (sessionId: string, cwd: string, operationId?: string) =>
-								contextDomain.cancelOperation?.(sessionId, cwd, operationId) ?? false,
-						}
-					: {}),
-				// The plan rows the standard `plan` update carries, and the Git facts
-				// the terminal footer shows, pushed instead of polled.
-				plan: () => taskBoard.snapshot(),
-				workspace: (cwd) => probeWorkspaceAsync(cwd),
-				// /view's providers, bound to the session this host is running.
-				...(session
-					? {
-							artifacts: {
-								deps: (sessionId: string) => {
-									const meta = session.current();
-									if (!meta || meta.id !== sessionId) return null;
-									return {
-										stateDir: pancodeStateDir(),
-										dataDir: pancodeDataDir(),
-										...(dispatch ? { dispatch } : {}),
-										sessionMeta: meta,
-										readSessionEntries: readCurrentSessionEntries,
-									};
-								},
-							},
-						}
-					: {}),
-				...(extensions
-					? {
-							extensions: {
-								list: () => extensions.list(process.cwd(), { all: true }),
-								// The runtimes restart on the generation this commit published.
-								reload: () => acpExtensions.reload(),
-							},
-						}
-					: {}),
-				...(telemetry?.read
-					? {
-							telemetryReadModel: telemetry.read,
-							bindTelemetrySession: (id: string) => telemetry.resetSession(id),
-							refreshQuota: refreshAcpQuota,
-						}
-					: {}),
-				// /btw and /draft run the chat loop's own out-of-turn rounds.
-				aside: {
-					ask: (question, signal) => chat.askSideQuestion(question, { signal }),
-					draft: (request, count, signal) => chat.draftCandidates(request, count, { signal }),
-				},
-				// The same reload /reload hub runs, with the generation change the
-				// PluginsReloaded event reports. A throw is a failed reload.
-				hubReload: () => {
-					let reloaded: PluginsReloadedPayload | null = null;
-					reloadPluginResourcesAndNotify(process.cwd(), (event) => {
-						reloaded = event;
-						bus.emit("plugin.reloaded", event);
-					});
-					const event = reloaded as PluginsReloadedPayload | null;
-					if (event === null) throw new Error("plugin reload reported no generation");
-					return { generation: event.generation, previousGeneration: event.previousGeneration, changed: event.changed };
-				},
-				...(toolBootstrap.mcpCapabilities ? { mcpCapabilities: toolBootstrap.mcpCapabilities } : {}),
-				...(options.toolLimits ? { operatorToolLimits: options.toolLimits } : {}),
-				bus,
-				autonomy: resolveBaselineAutonomy,
-				routing: () => {
-					const settings = getCurrentSettings();
-					return {
-						target: settings.chat.target,
-						model: settings.chat.model,
-					};
-				},
-				setSessionRouting: (patch, source) => {
-					const current = getCurrentSettings();
-					const target = patch.target ?? current.chat.target;
-					const model = patch.model ?? current.chat.model;
-					if (target && model && (patch.target !== undefined || patch.model !== undefined)) {
-						selectAtScope({ target, model, thinkingLevel: patch.thinkingLevel }, "session", source);
-						// ACP acknowledges choices before a turn; resume must see them even without inference (Y4 finding 4).
-						const meta = session?.current();
-						if (session && meta) {
-							const recorded = resumedSessionRoute(meta, session.readEntries());
-							if (recorded.target !== target || recorded.model !== model) {
-								session.appendEntry({
-									kind: "modelChange",
-									parentTurnId: session.leafId(meta.id),
-									provider: providers.getTarget(target)?.runtime ?? target,
-									target,
-									modelId: model,
-								});
-								session.flushAppends?.();
-							}
-						}
-					} else {
-						clampAtScope(patch, "session", source);
-					}
-				},
-				onActiveSessionAutonomyChange: (level) => {
-					activeAcpSessionAutonomy = level;
-				},
-				yoloRefusal: () => yoloRefusal,
-				autonomyPosture: () => ({
-					confinement: effectiveYoloConfinement(getCurrentSettings().safety),
-					osSandbox: mainShellContained(getCurrentSettings().safety.sandbox, sandboxAvailability()),
-				}),
-				cwd: process.cwd(),
-				version: readPancodeVersionLabel(),
-				// Stdout belongs to JSON-RPC. Text this process did not author, such
-				// as a provider's failure body, is kept off the wire and written to
-				// the unstructured stderr tail instead.
-				diagnostics: (line) => {
-					process.stderr.write(`[pancode:acp] ${line}\n`);
-				},
-				permissionTimeoutMs:
-					options.acp.permissionTimeoutMs ??
-					config?.get().integrations.externalAgents.defaults.permissionTimeoutMs ??
-					DEFAULT_DELEGATION_PERMISSION_TIMEOUT_MS,
-			});
-			// Same ordering the termination drain hook relies on: an aborted turn's
-			// tool results still land and persist through the run's subscribers,
-			// and the session writer stops in result.stop() below. Awaiting
-			// settlement here makes a session append after session stop impossible
-			// by ordering rather than by timing.
-			await beginChatSettlement();
-			// The drain hook that disposes the extension host never runs on this
-			// path either, and its runtime children would keep the process alive
-			// after the client left. Disposal is idempotent.
-			await acpExtensions.dispose();
-			unsubscribeChatShutdown();
-			unsubscribeDispatchShutdown?.();
-			await dispatch.drain();
-			await toolBootstrap.close();
-			// A client that closes the session ends ACP here, outside the
-			// termination coordinator, so its terminate hook never runs. Release
-			// the Ollama models this process and its workers loaded on this path
-			// too (#379); SIGINT and SIGTERM still reach the hook. The release
-			// bounds itself by EXIT_RELEASE_MS and never throws.
-			await releasePancodeLoadedModelsOnExit();
-			await result.stop();
-			return { exitCode: code, bootTimeMs: timer.snapshot().totalMs };
-		} finally {
-			// A throw from the serve loop or settlement skips the disposal above,
-			// and the runtime children would still hold the process open.
-			await acpExtensions.dispose();
-			acpWorkerRuns.dispose();
-			unsubscribeAcpRoutingNotices();
-			unsubscribeAcpLoopGuardStop();
-		}
-	}
-
-	if (options.headless) {
-		recordBoot();
-		if (options.headless.compact) return runHeadlessCompaction(chat, options.headless.compact, { termination, timer });
-		dispatch?.primeRouteQuota?.();
-		// Operatorless: there is no TUI subscriber to turn a loop-guard interrupt
-		// into a run stop, so a degenerate local model would spin until an
-		// external timeout (each call blocked, the agent loop never aborted). Wire
-		// the shared interrupt->stop subscriber so the run ends with the same
-		// durable closing turn the interactive surface produces.
-		const unsubscribeLoopGuardStop = subscribeLoopGuardStop(bus, chat);
-		const headlessPermissionReason = HEADLESS_PERMISSION_DENIED_REASON;
-		const headlessExtensions = createSessionExtensionHosting({
-			start: () => startSessionExtensionHost("headless", options.headless?.answers?.interview),
-			commit: commitExtensionHooks,
-			idle: chatIdle,
-			bus,
-			report: (line) => process.stderr.write(`pancode: ${line}\n`),
-		});
-		// `--max-cost-usd` bounds what this run adds, so a continued session's
-		// earlier spend does not count against it. It becomes the session
-		// ceiling every paid request already passes: the main agent's, each
-		// compaction's and each dispatch's admission. A lower configured
-		// ceiling still holds. The start is read the way admission reads spend, so the cap counts only this run (#434).
-		const runCostCap =
-			options.headless.maxCostUsd === undefined
-				? null
-				: createRunCostCap((await telemetry?.settledSessionSpend())?.usd ?? 0, options.headless.maxCostUsd);
-		if (runCostCap !== null) {
-			startupOverrides.set(
-				"safety.limits.sessionCostUsd",
-				runCostCeilingUsd({
-					spentUsd: runCostCap.startUsd,
-					runMaxUsd: runCostCap.maxUsd,
-					configuredUsd: getCurrentSettings().safety.limits.sessionCostUsd,
-				}),
-			);
-			bumpSessionState();
-			result.getContract("scheduling")?.setRunCostCap?.(runCostCap);
-		}
-		const unpricedRoutes = runCostCap === null ? [] : unpricedRunRoutes(getCurrentSettings(), providers);
-		if (unpricedRoutes.length > 0) {
-			process.stderr.write(
-				`pancode run: --max-cost-usd does not bound unpriced routes: ${unpricedRoutes.join(", ")}; declare targets[].pricing to bound them\n`,
-			);
-		}
-		const unsubscribeHeadlessPermission = toolRegistry.onPermissionRequired((call, decision, meta) => {
-			void resolvePermission(
-				{ bus, registry: toolRegistry },
-				{
-					action: "stop",
-					payload: {
-						status: "denied",
-						requestId: meta.requestId,
-						origin: "main",
-						decidedBy: "policy:no-operator",
-						tool: call.tool,
-						actionClass: decision.classification.actionClass,
-						reason: headlessPermissionReason,
-						requestedBy: "headless",
-					},
-				},
-			);
-		});
-		try {
-			// WTF-P F04: `/ext:<id>:<cmd>` and a `replaces: prompt` takeover run in the
-			// extension runtime with no model turn, as they do in the terminal.
-			const typed = parseSlashCommand(options.headless.prompt);
-			if (typed.kind === "unknown-command" && installedExtensionClaims(typed.token, process.cwd())) {
-				const headlessExtensionHost = await headlessExtensions.ensure();
-				await headlessExtensionHost?.ready.catch(() => undefined);
-				const answer = await answerExtensionLine(
-					options.headless.prompt,
-					typed.token,
-					headlessExtensionHost?.operator,
-					resources?.prompts(process.cwd()).items ?? [],
-				);
-				if (answer !== null) {
-					if (answer.ok) writeLocalAnswer(answer.text, (options.headless.mode ?? "text") !== "text");
-					else writeRunDiagnostic(`pancode: ${answer.message}\n`);
-					await termination.shutdown(answer.ok ? 0 : 1);
-					return { exitCode: answer.ok ? 0 : 1, bootTimeMs: timer.snapshot().totalMs };
-				}
-			}
-			const parsedSkillRequest = resources?.parsePendingSkillRequests(options.headless.prompt, process.cwd()) ?? {
-				text: options.headless.prompt,
-				pendingSkillRequests: [],
-			};
-			const promptExpansion = resources?.expandPromptTemplate(parsedSkillRequest.text, process.cwd());
-			if (promptExpansion?.expanded && promptExpansion.template.sourceInfo.owner)
-				recordPackageActivity({
-					type: "pancode_plugin_resource_use",
-					kind: "prompt",
-					owner: promptExpansion.template.sourceInfo.owner,
-					outcome: "expanded",
-					details: { name: promptExpansion.template.name },
-				});
-			// A prompt named as `/name` is a request for that template. When the
-			// template refuses, the run says why and stops; sending the literal
-			// `/name` on to the model spends a turn answering a command it cannot
-			// run, and the operator never sees the refusal.
-			if (promptExpansion?.expanded === false && promptExpansion.refusal) {
-				writeRunDiagnostic(`pancode: ${promptExpansion.refusal.message}\n`);
-				await termination.shutdown(1);
-				return { exitCode: 1, bootTimeMs: timer.snapshot().totalMs };
-			}
-			// A display-only template that reached boot (the CLI preflight answers
-			// most of them earlier) is printed for the operator and the run ends;
-			// its body was never model text.
-			if (promptExpansion?.expanded === false && promptExpansion.display) {
-				writeLocalAnswer(promptExpansion.display.text, (options.headless.mode ?? "text") !== "text");
-				await termination.shutdown(0);
-				return { exitCode: 0, bootTimeMs: timer.snapshot().totalMs };
-			}
-			// Started only for a run that reaches the model, so the early exits
-			// above spawn no runtime. Only a --answers file answers here; without
-			// one a tool's interview is cancelled with reason headless.
-			// The first turn's turn_start reaches a runtime only once the startup
-			// generation has committed. A run whose startup failed goes on without runtimes.
-			await (await headlessExtensions.ensure())?.ready.catch(() => undefined);
-			// SIGINT while an `@path` in the prompt is read ends the run before any
-			// request; aborting kills poppler, a detached child that would outlive it (#438).
-			const attachmentRead = new AbortController();
-			const stopAttachmentRead = bus.subscribe("shutdown.requested", () => attachmentRead.abort());
-			// An MCP prompt's text is the server's: it is sent as the prompt gave it, never read for `@path`.
-			const mcpPrompt =
-				promptExpansion?.expanded || !mcpSubmit
-					? null
-					: await mcpSubmit.expandPrompt(parsedSkillRequest.text, attachmentRead.signal);
-			if (mcpPrompt?.ok === false) {
-				stopAttachmentRead();
-				writeRunDiagnostic(`pancode: ${mcpPrompt.error}\n`);
-				await termination.shutdown(1);
-				return { exitCode: 1, bootTimeMs: timer.snapshot().totalMs };
-			}
-			const fileExpansion = await (mcpPrompt?.ok
-				? Promise.resolve({
-						text: mcpPrompt.text,
-						images: mcpPrompt.images,
-						diagnostics: [],
-						referencedPaths: [],
-						notes: [mcpPrompt.note],
-					})
-				: expandSubmitReferences(
-						promptExpansion?.expanded ? promptExpansion.text : parsedSkillRequest.text,
-						process.cwd(),
-						{ signal: attachmentRead.signal, ...(mcpSubmit ? { mcp: mcpSubmit } : {}) },
-					)
-			)
-				.catch((err: unknown) => {
-					if (!attachmentRead.signal.aborted) throw err;
-					return null;
-				})
-				.finally(stopAttachmentRead);
-			if (fileExpansion === null || attachmentRead.signal.aborted) {
-				writeRunDiagnostic("pancode run: interrupted while reading file attachments; nothing was sent\n");
-				await termination.shutdown(130);
-				return { exitCode: 130, bootTimeMs: timer.snapshot().totalMs };
-			}
-			// A template's tool scope and budget narrow the run's --allow-tools, --delegate-tools and limits, never widen.
-			const template = promptExpansion?.expanded ? promptExpansion.template : undefined;
-			const constraints = narrowTurnConstraints(
-				options.headless.constraints,
-				template ? templateTurnConstraints(template) : undefined,
-			);
-			// A headless template and its flags bind once for the whole run (#423).
-			chat.setToolCeiling?.([constraints]);
-			const images = [...(options.headless.images ?? []), ...fileExpansion.images];
-			const workingContextPaths = [...(options.headless.workingContextPaths ?? []), ...fileExpansion.referencedPaths];
-			// prompt_submit hooks judge the line the operator typed, as in the TUI and ACP.
-			const display = submitDisplay({
-				typed: options.headless.prompt,
-				parsedText: parsedSkillRequest.text,
-				...(promptExpansion?.expanded
-					? { template: { name: promptExpansion.template.name, text: promptExpansion.text } }
-					: {}),
-				referencedPaths: fileExpansion.referencedPaths,
-				diagnostics: fileExpansion.diagnostics,
-				cwd: process.cwd(),
-				mcpNotes: fileExpansion.notes,
-			});
-			startRunOutput();
-			// R-11: a main turn that ended on PanCode's own fault earns one stderr line after the run.
-			let internalFault = false;
-			const unsubscribeInternalFault = bus.subscribe("turn.settled", (payload, context) => {
-				if (context?.agent.role === "main" && payload.terminal.cause === "internal") internalFault = true;
-			});
-			const code = await runHeadlessMainAgent(chat, {
-				prompt: fileExpansion.text,
-				...(display ? { display } : {}),
-				...(constraints ? { constraints } : {}),
-				...(images.length > 0 ? { images } : {}),
-				...(workingContextPaths.length > 0 ? { workingContextPaths } : {}),
-				...(options.headless.sampling ? { sampling: options.headless.sampling } : {}),
-				...(parsedSkillRequest.pendingSkillRequests.length > 0
-					? { pendingSkillRequests: parsedSkillRequest.pendingSkillRequests }
-					: {}),
-				mode: options.headless.mode ?? "text",
-				...(options.headless.routeNotice ? { routeNotice: options.headless.routeNotice } : {}),
-				...(options.headless.steerChannel
-					? {
-							steerChannel: options.headless.steerChannel,
-							reload: (target: ReloadTarget) => reloadClasses.run(target, () => headlessExtensions.reloadStep()),
-						}
-					: {}),
-				...(options.headless.failOnNoop === true ? { failOnNoop: true } : {}),
-				...(options.headless.failOnVerify === true ? { failOnVerify: true } : {}),
-				...(options.headless.outputSchema !== undefined ? { outputSchema: options.headless.outputSchema } : {}),
-				unpricedRoutes: (reach) => unpricedRunRoutes(getCurrentSettings(), providers, reach),
-				...(options.headless.onPermission === "fail" ? { onPermission: "fail" as const } : {}),
-				...(options.headless.deadline !== undefined ? { deadline: options.headless.deadline } : {}),
-				...(options.headless.answers !== undefined ? { answers: options.headless.answers } : {}),
-				...(options.headless.verify !== undefined
-					? { verify: { ...options.headless.verify, credited: () => creditedRunChecks } }
-					: {}),
-				...(dispatch ? { dispatch } : {}),
-				autonomyHalt: () => lastAutonomyHalt,
-				readEntries: activePathEntries,
-				scratchRoots: getCurrentSettings().safety.scratchRoots,
-				onRunGitHelpers: headlessGitHelpers.note,
-				autonomy: () => autonomyWindow.report(true),
-				scopeNotices: (listener) => bus.subscribe("run.scope_notice_raised", listener),
-				sessionCostCeilingUsd: () => getCurrentSettings().safety.limits.sessionCostUsd,
-				...(telemetry
-					? {
-							runUsage: async (from: string, roles = ["main", "compaction"]) => {
-								// Every queued settlement is written and the live fold seeded before the calls are read (#434).
-								await telemetry.settledSessionSpend();
-								const view = telemetry.read?.live();
-								// The run's own turn calls and the compactions it ran, folded as the read model folds them.
-								return view ? runUsageFromCallRecords(view.callRecords({ roles, from }), READ_MODEL_FOLD) : null;
-							},
-							// The same calls, folded by the economy projection; a run carries no period fees (S11).
-							runEconomy: async (from: string, roles) => {
-								await telemetry.settledSessionSpend();
-								return telemetry.read?.live()?.economy(roles ? { roles, from } : { from }) ?? null;
-							},
-							segmentUsage: async (messages) => {
-								// The segment's calls are journaled and the live fold seeded before they are read (#434).
-								await telemetry.settledSessionSpend();
-								const view = telemetry.read?.live();
-								return view ? segmentUsageFromView(view, messages) : null;
-							},
-						}
-					: {}),
-				...(runCostCap !== null ? { costCap: { maxUsd: runCostCap.maxUsd, unpricedRoutes } } : {}),
-				getSessionHeader: () => printJsonSessionHeader(session?.current() ?? null, getCurrentSettings().chat),
-			});
-			unsubscribeInternalFault();
-			if (internalFault) {
-				try {
-					const { HEADLESS_OFFER_LINE, takeHeadlessOffer } = await import("../domains/report/index.js");
-					const offered = takeHeadlessOffer({
-						stateDir: pancodeStateDir(),
-						sessionId: session?.current()?.id ?? null,
-						offers: getCurrentSettings().report?.offers ?? "ask",
-						mode: options.headless.mode ?? "text",
-						env: process.env,
-						now: new Date(),
-					});
-					if (offered) process.stderr.write(`${HEADLESS_OFFER_LINE}\n`);
-				} catch {
-					// The offer line is a courtesy; a ledger that cannot be read or written leaves the run's exit as it was.
-				}
-			}
-			if (code === 0) {
-				const deadline = options.headless.deadline;
-				await memoryOwner.retainTask(
-					"headless",
-					deadline?.expired() ? 0 : Math.min(5000, deadline?.remainingMs?.() ?? 5000),
-				);
-				const meta = session?.current();
-				if (meta) saveTaskBankSnapshot(pancodeStateDir(), meta.id, taskMemoryBank.snapshot());
-			}
-			await termination.shutdown(code);
-			return { exitCode: code, bootTimeMs: timer.snapshot().totalMs };
-		} finally {
-			unsubscribeHeadlessPermission();
-			unsubscribeLoopGuardStop();
-			// A run that throws skips the termination drain; the host's runtime
-			// children would otherwise keep the process alive. Disposal is idempotent.
-			await headlessExtensions.dispose();
-		}
-	}
-
-	if (options.terminalLease) {
-		for (const diagnostic of options.terminalLease.takeDiagnostics()) {
-			const text = diagnostic.text.trimEnd();
-			if (text.length > 0) initialNotices.push(text);
-		}
-	}
-
-	const activePluginIds = () =>
-		pluginSnapshotFor(process.cwd())
-			.packages.filter((p) => p.loadable && (p.kind === undefined || p.kind === "plugin"))
-			.map((p) => p.id);
-	let dashboardPlugins = activePluginIds();
-	const unsubscribeDashboardPlugins = bus.subscribe("plugin.reloaded", () => {
-		dashboardPlugins = activePluginIds();
-	});
-	termination.onTerminate(() => unsubscribeDashboardPlugins());
-	const { startInteractive } = await import("../interactive/index.js");
-	await startInteractive({
-		jobs: jobHost.operations,
-		getConnections: () => ({
-			mcp: toolBootstrap.mcpCapabilities?.connectedIds({ readyOnly: true }) ?? [],
-			plugins: dashboardPlugins,
-		}),
-		...(mcpSubmit ? { mcpSubmit } : {}),
+	// The surface tails in src/entry/boot/ read the wired session through `surface`. `cells` reaches the lets
+	// closures here still assign, and `seams` carries what only this file may import (rule6).
+	const cells: BootSurfaceCells = {
+		get activeAcpSessionAutonomy() {
+			return activeAcpSessionAutonomy;
+		},
+		set activeAcpSessionAutonomy(value) {
+			activeAcpSessionAutonomy = value;
+		},
+		get askUserHandler() {
+			return askUserHandler;
+		},
+		set askUserHandler(value) {
+			askUserHandler = value;
+		},
+		get creditedRunChecks() {
+			return creditedRunChecks;
+		},
+		get lastAutonomyHalt() {
+			return lastAutonomyHalt;
+		},
+		get reportReviewOpener() {
+			return reportReviewOpener;
+		},
+		set reportReviewOpener(value) {
+			reportReviewOpener = value;
+		},
+		get resumedSessionAtBoot() {
+			return resumedSessionAtBoot;
+		},
+		get unsubscribeDispatchShutdown() {
+			return unsubscribeDispatchShutdown;
+		},
+		get yoloHeldAtBoot() {
+			return yoloHeldAtBoot;
+		},
+	};
+	const surface: BootSurfaceInput = {
+		acpElicitationChannel,
+		acpInterviewChannel,
+		acpInterviews,
+		acpWorkerPermissions,
+		activePathEntries,
+		agents,
+		applySettingsBlob,
+		askUserBridge,
+		autonomyWindow,
+		beforeShellEntryRecorded,
+		beginChatSettlement,
+		bindAcpHandoff,
+		bumpSessionState,
 		bus,
-		providers,
+		captureRunIo,
+		chat,
+		chatIdle,
+		clampAtScope,
+		commitAcpSafeSettings,
+		commitExtensionHooks,
+		commitSetting,
+		config,
+		contextDomain,
+		createRoutedSession,
+		decisionBoard,
 		dispatch,
-		...(agents ? { agents } : {}),
-		...(() => {
-			const scheduling = result.getContract("scheduling");
-			return scheduling ? { scheduling } : {};
-		})(),
+		dispatchBackground,
+		extensions,
+		flowLedger,
+		getCurrentSettings,
+		getTaskMemorySeedOffer,
+		guardianState,
+		headlessGitHelpers,
+		historyReviews,
+		hookDrift,
+		initialNotices,
+		interop,
+		jobHost,
+		mcpSubmit,
+		memoryIntervention,
+		memoryOwner,
+		mux,
+		options,
+		panes,
+		persistCurrentThinkingLevel,
+		printJsonSessionHeader,
+		providers,
+		readAcpSafeSettings,
+		readCurrentSessionEntries,
+		readSessionEntriesForCompact,
+		recordBoot,
+		reloadClasses,
+		reloadPlugins,
+		reportSession,
+		resolveBaselineAutonomy,
+		resolveEffectiveAutonomy,
+		resources,
+		result,
+		routingGestures,
+		runContextInit,
+		runtimeHooks,
+		seedCurrentTaskMemoryFromHandoff,
+		selectAtScope,
+		session,
+		settingOrigin,
+		startSessionExtensionHost,
+		startupOverrides,
 		systemOne,
 		systemOneControl,
+		taskBoard,
+		taskMemoryBank,
+		taskMemoryTier,
 		telemetry,
-		...(telemetryRunReaders ? { telemetryRunReaders } : {}),
-		chat,
-		...(options.sessionFile === undefined ? {} : { sessionFile: options.sessionFile }),
-		...(options.terminalLease
-			? {
-					terminalLease: options.terminalLease,
-					onHydratedFrameCommit: (frameId: number | null, interactivity: BootInteractivity) => {
-						timer.mark("Stage 1 hydration", frameId === null ? undefined : `frameId=${frameId}`);
-						const line = formatBootTrace("Stage 0 input blocked", `max=${interactivity.inputBlockedMaxMs.toFixed(1)}ms`);
-						if (line) options.terminalLease?.deferDiagnostic("stderr", line);
-						recordBoot(interactivity);
-						// Every reload subscriber exists now; a settings write held
-						// during hydration reloads here.
-						config?.releaseReloads?.();
-						void worktreeRecovery.start();
-					},
-				}
-			: {
-					onFirstFrameCommit: () => {
-						timer.mark("first TUI paint");
-						recordBoot();
-						void worktreeRecovery.start();
-					},
-				}),
-		...(initialNotices.length > 0 ? { initialNotices } : {}),
-		yoloRefusal,
-		...(yoloHeldAtBoot ? { yoloHeldAtBoot: true } : {}),
-		...(resources ? { resources } : {}),
-		...(extensions ? { extensions } : {}),
-		runtimeHooks,
-		reloadExtensions: commitExtensionHooks,
-		reloadPlugins,
-		...(toolBootstrap.mcpCapabilities
-			? { mcpStatuses: () => mcpLiveStatuses(toolBootstrap.mcpCapabilities?.catalog().servers ?? []) }
-			: {}),
-		reloadClasses,
-		armRestartHandoff: () => armRestartHandoff(pancodeStateDir(), termination),
-		...(interop ? { interop } : {}),
-		share: shareArchiver,
-		...(mux ? { mux } : {}),
-		...(panes ? { panes } : {}),
-		...(panes ? { attachYaziBridge: (bridge) => panes.attachYazi(bridge) } : {}),
-		// The interactive surface never imports the panes glue itself; the
-		// factories arrive only on an active boot, through the same dynamic
-		// import that loaded the mux domain.
-		...(withPanes
-			? {
-					createMuxBridge: withPanes.createMuxBridge,
-					createPeerInbox: withPanes.createPeerInbox,
-					createYaziBridge: withPanes.createYaziBridge,
-					createWatchPane: withPanes.createWatchPaneController,
-				}
-			: {}),
-		...(panes ? { attachWatchPane: (controller) => panes.attachWatch(controller) } : {}),
+		telemetryRunReaders,
+		termination,
+		timer,
+		toolBootstrap,
 		toolRegistry,
-		...(session ? { session } : {}),
-		...(session ? { readSessionEntries: readCurrentSessionEntries } : {}),
-		gitHookChanges: () => hookDrift.sessionChanges(),
-		autonomy: () => autonomyWindow.report(),
-		labelOperatorCommand: flowLedger.labelCommand,
-		beforeShellEntryRecorded,
-		getTaskBoard: () => taskBoard.cachedSnapshot(),
-		getDecisionBoard: () => decisionBoard.snapshot(),
-		absorbFlow: (set) => flowLedger.absorb(set, { tool: "handoff" }),
-		sessionFlowRestricted: (sessionId) => flowLedger.isRestricted(sessionId),
-		supersedeDecision: (interviewId, key, correction) => decisionBoard.supersede(interviewId, key, correction),
+		unsubscribeChatShutdown,
 		userTasks,
-		getTaskMemoryStatus: () => {
-			const settings = getCurrentSettings();
-			const bank = memoryOwner.contract.taskSnapshot();
-			return {
-				enabled: settings.context.memory.enabled,
-				tier: taskMemoryTier(),
-				route: resolveMemoryRoute(settings),
-				size: taskMemoryBankSize(bank),
-				bank,
-				...projectTaskMemoryActivity(
-					memoryOwner.contract.interventionStatus(),
-					historyReviews.recent(session?.current()?.id ?? null),
-					MEMORY_INTERVENTION_ACTIVITY_LIMIT,
-				),
-				stepInFlight: memoryIntervention.stepInFlight(),
-				guardian: guardianState.current(),
-				observations: memoryOwner.contract.observationStatus(),
-				retention: memoryOwner.contract.retentionStatus(),
-				promptSelection: memoryOwner.contract.promptSelection?.() ?? null,
-				// Fold retained memory decisions and call facts across the telemetry journals (#434).
-				// Lazy because the footer composes this status on every refresh and never reads
-				// spend: any journal write misses the fold's fingerprint, so an eager read rescanned
-				// every retained journal on the input thread several times per turn.
-				get spend() {
-					return readTaskMemorySpendSummary(pancodeStateDir());
-				},
-			};
-		},
-		getTaskMemorySeedOffer,
-		seedTaskMemory: seedCurrentTaskMemoryFromHandoff,
-		stateDir: pancodeStateDir(),
-		dataDir: pancodeDataDir(),
-		registerReportReviewOpener: (open) => {
-			reportReviewOpener = open;
-			return () => {
-				if (reportReviewOpener === open) reportReviewOpener = null;
-			};
-		},
-		registerAskUserHandler: (handler) => {
-			askUserHandler = handler;
-			return () => {
-				if (askUserHandler === handler) askUserHandler = null;
-			};
-		},
-		getSettings: getCurrentSettings,
-		getFleetNodes: () => result.getContract("scheduling")?.fleet?.list() ?? [],
-		getRouteBreakers: () => result.getContract("dispatch")?.routeBreakers?.() ?? [],
-		onBackgroundDispatch: () => dispatchBackground.backgroundNewest(),
-		// A boot-time resume opens onto an existing conversation, so the welcome
-		// header starts collapsed rather than offering fresh-start onboarding.
-		...(resumedSessionAtBoot ? { startsResumed: true } : {}),
-		...(options.resume?.kind === "picker" ? { opensResumePicker: true } : {}),
-		...(session ? { getSessionId: () => session.current()?.id ?? null } : {}),
-		...(contextDomain
-			? {
-					getContextState: (cwd?: string) => contextDomain.contextState(cwd),
-					onInit: runContextInit,
-					onContextClear: async (options: { all?: boolean; confirmed?: boolean; confirmedAll?: boolean }, runIo?: RunIo) => {
-						await contextDomain.runContextClear({
-							cwd: process.cwd(),
-							all: options.all === true,
-							...(runIo ? { io: runIo } : {}),
-							confirmContext: () => options.confirmed === true,
-							confirmAll: () => options.confirmedAll === true,
-						});
-					},
-					onContextRefresh: async (runIo?: RunIo) => {
-						await contextDomain.runContextRefresh({
-							cwd: process.cwd(),
-							...(runIo ? { io: runIo } : {}),
-						});
-					},
-				}
-			: {}),
-		// An unscoped caller gets the scope that cannot outlive this session.
-		onSetThinkingLevel: (level, scope, source) =>
-			clampAtScope({ thinkingLevel: level }, scope ?? "session", source ?? "settings-ui"),
-		onCycleThinking: () => routingGestures.cycleThinking(),
-		onSelectModel: ({ target, model }, scope, source) => selectAtScope({ target, model }, scope, source ?? "settings-ui"),
-		// An edit names its surface; one that names none came from an overlay.
-		writeSettings: (next) => applySettingsBlob(next, "settings-ui"),
-		commitSetting: (id, next, scope, source) => commitSetting(id, next, scope, source ?? "settings-ui"),
-		settingOrigin,
-		...(session
-			? {
-					onResumeSession: (sessionId) => {
-						try {
-							session.resume(sessionId);
-							taskBoard.snapshot();
-						} catch (err) {
-							process.stderr.write(
-								`[/resume] failed to resume ${sessionId}: ${err instanceof Error ? err.message : String(err)}\n`,
-							);
-						}
-					},
-					onNewSession: () => {
-						createRoutedSession();
-						taskBoard.snapshot();
-					},
-					onForkSession: (parentTurnId) => {
-						try {
-							session.fork(parentTurnId);
-							taskBoard.snapshot();
-						} catch (err) {
-							process.stderr.write(
-								`[/fork] failed at turn ${parentTurnId}: ${err instanceof Error ? err.message : String(err)}\n`,
-							);
-						}
-					},
-					onRecoverHandoff: (handoffId, action) => chat.recoverHandoff(handoffId, action),
-					onCompact: async (instructions) => {
-						await chat.compact(instructions);
-					},
-				}
-			: {}),
-		onCycleScopedModelForward: () => routingGestures.cycleScopedModel("forward"),
-		onCycleScopedModelBackward: () => routingGestures.cycleScopedModel("backward"),
-		onShutdown: async () => {
-			await termination.shutdown(0);
-		},
-	});
-	return { exitCode: 0, bootTimeMs: timer.snapshot().totalMs };
+		withPanes,
+		worktreeRecovery,
+		yoloRefusal,
+		cells,
+	};
+	const seams: BootSurfaceSeams = {
+		answerExtensionLine,
+		bindBoardActions,
+		buildModelReplayAgentMessagesFromTurns,
+		continuityContextFromSession,
+		createHostToolEvents,
+		createStdioServerTransport,
+		followWorkerRuns,
+		loadAcpCommands: () => import("../acp/commands.js"),
+		loadAcpServer: () => import("../acp/server.js"),
+		loadInteractiveIndex: () => import("../interactive/index.js"),
+		oracleBriefingFromEntries,
+		parseSlashCommand,
+		releasePancodeLoadedModelsOnExit,
+		resolvePermission,
+		runHostDispatch,
+		subscribeLoopGuardStop,
+	};
+
+	if (options.acp) return runAcpSurface(surface, seams, options.acp);
+
+	if (options.headless) return runHeadlessSurface(surface, seams, options.headless);
+	return runInteractiveSurface(surface, seams);
 }
 
 /** The shared handoff service, bound to one host's session and chat for the ACP server. */

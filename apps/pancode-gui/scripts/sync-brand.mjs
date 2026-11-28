@@ -149,9 +149,70 @@ const formatted = execFileSync(pnpm, formatArgs, {
 	encoding: "utf8",
 	cwd: fileURLToPath(file("../")),
 });
+// Files that cannot read brand.css at run time carry their own copies of a few palette colours. Each copy is
+// rewritten in place from the same roles, and a pattern that no longer matches the file is an error, not a skip.
+const colour = (name, token) => hex(design.themes[name][roles[token]]);
+// Each pattern's odd groups are kept as they are and its even groups are the colours, in the order given.
+const swap = (path, text, pattern, colours) => {
+	let found = false;
+	const next = text.replace(pattern, (...match) => {
+		found = true;
+		return match
+			.slice(1, -2)
+			.map((part, i) => (i % 2 === 0 ? part : colours[(i - 1) / 2]))
+			.join("");
+	});
+	if (!found) throw new Error(`GUI brand copy not found in ${path}: ${pattern}`);
+	return next;
+};
+const offlineTokens = ["paper", "ink", "ink-muted", "accent", "secondary", "on-accent", "focus"];
+const offlineBlock = (text, name) =>
+	offlineTokens.reduce(
+		(block, token) =>
+			swap("client/public/offline.css", block, new RegExp(`(\\t--${token}: )(#[0-9a-fA-F]{3,8})(;)`, "g"), [
+				colour(name, token),
+			]),
+		text,
+	);
+const copies = {
+	"client/public/offline.css": (text) => {
+		const dark = text.indexOf("@media (prefers-color-scheme: dark)");
+		if (dark < 0) throw new Error("GUI brand copy not found in client/public/offline.css: its dark palette");
+		return offlineBlock(text.slice(0, dark), "light") + offlineBlock(text.slice(dark), "dark");
+	},
+	"client/design/navigation.tsx": (text) =>
+		swap(
+			"client/design/navigation.tsx",
+			text,
+			/(THEME_COLORS[^=]*= \{\s*light: ")(#[0-9a-fA-F]{3,8})(",\s*dark: ")(#[0-9a-fA-F]{3,8})(")/,
+			[colour("light", "paper"), colour("dark", "paper")],
+		),
+	"client/index.html": (text) =>
+		swap(
+			"client/index.html",
+			text,
+			/(<meta name="theme-color" content=")(#[0-9a-fA-F]{3,8})(" data-light=")(#[0-9a-fA-F]{3,8})(" data-dark=")(#[0-9a-fA-F]{3,8})(")/,
+			[colour("light", "paper"), colour("light", "paper"), colour("dark", "paper")],
+		),
+	"client/public/manifest.webmanifest": (text) =>
+		swap(
+			"client/public/manifest.webmanifest",
+			text,
+			/("background_color": ")(#[0-9a-fA-F]{3,8})(",\s*"theme_color": ")(#[0-9a-fA-F]{3,8})(")/,
+			[colour("dark", "paper"), colour("dark", "paper")],
+		),
+};
+const synced = await Promise.all(
+	Object.entries(copies).map(async ([path, sync]) => {
+		const current = await readFile(file(`../${path}`), "utf8");
+		return { path, current, next: sync(current) };
+	}),
+);
 if (process.argv.includes("--check")) {
 	if ((await readFile(target, "utf8")) !== formatted)
 		throw new Error("GUI brand tokens drifted. Run scripts/sync-brand.mjs.");
+	for (const { path, current, next } of synced)
+		if (current !== next) throw new Error(`GUI brand colours in ${path} drifted. Run scripts/sync-brand.mjs.`);
 	const provenance = JSON.parse(await readFile(file("../client/public/brand/provenance.json"), "utf8"));
 	if (provenance.projection.designSha256 !== createHash("sha256").update(source).digest("hex"))
 		throw new Error("GUI brand snapshot is stale. Export the canonical brand again.");
@@ -178,4 +239,7 @@ if (process.argv.includes("--check")) {
 				.digest("hex")
 	)
 		throw new Error("GUI canonical mark provenance differs.");
-} else await writeFile(target, formatted);
+} else {
+	await writeFile(target, formatted);
+	for (const { path, current, next } of synced) if (current !== next) await writeFile(file(`../${path}`), next);
+}

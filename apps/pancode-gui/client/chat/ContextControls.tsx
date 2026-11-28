@@ -2,7 +2,6 @@
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useId, useState } from "react";
-import { routes } from "../../contracts/runtime-routes.js";
 import type { CommandRequest } from "../../contracts/steering.js";
 import type { Client } from "../api/client.js";
 import type { CommandFields } from "./command-model.js";
@@ -16,6 +15,7 @@ import {
 	planContextCommand,
 } from "./context-controls-model.js";
 import "./context-work.css";
+import { sessionCommandsQuery } from "../api/queries.js";
 
 /** The Context view hosts only the operations this ACP peer actually offers. */
 export function ContextControls({
@@ -35,11 +35,7 @@ export function ContextControls({
 	const [fields, setFields] = useState<CommandFields>({});
 	const [error, setError] = useState<string | null>(null);
 	const catalog = useQuery({
-		queryKey: ["session-commands", sessionId],
-		queryFn: ({ signal }) =>
-			client.call(routes.sessionCommands, { params: { id: sessionId }, query: {}, body: {} }, undefined, signal),
-		staleTime: 30_000,
-		retry: false,
+		...sessionCommandsQuery(client, sessionId),
 	});
 	const command = contextCommand(catalog.data);
 	const actions = contextActions(command);

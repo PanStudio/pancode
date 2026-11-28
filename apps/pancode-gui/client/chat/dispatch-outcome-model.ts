@@ -3,11 +3,12 @@
 // Where a dispatch's runs stand, for the line under its transcript row. Pure; `DispatchOutcome.tsx` draws it.
 
 import type { TimelineItem } from "../../contracts/sessions.js";
+import { record, text as str } from "../api/narrow.js";
 import type { StatusTone } from "../design/status.js";
 import type { FleetRun, FleetRunState } from "./fleet-facts.js";
 import { isLiveRun } from "./fleet-facts.js";
 import { toolNameOf } from "./gateway-model.js";
-import { readWire, record, str } from "./tool-presentation.js";
+import { readWire } from "./tool-presentation.js";
 
 /**
  * The runs a settled dispatch started, as its result details name them (`src/tools/dispatch-output.ts`, `src/tools/dispatch-detach.ts`): a detached
