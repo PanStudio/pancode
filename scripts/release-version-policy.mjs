@@ -64,4 +64,4 @@ export function readmeInstallVersion({ version, changelog }) {
 }
 
 /** Published channel versions; checkout -dev versions never enter npm. */
-export const RC_VERSION = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)-rc\.(0|[1-9]\d*)$/;
+const RC_VERSION = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)-rc\.(0|[1-9]\d*)$/;

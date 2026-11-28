@@ -25,7 +25,7 @@ const CHECKER = "tests/boundaries/check-boundaries.ts";
 // ---------------------------------------------------------------------------
 
 /** Top-level numbered items and bullets of a Markdown handbook, continuation lines joined, fences skipped. */
-export function handbookRules(markdown) {
+function handbookRules(markdown) {
 	const rules = [];
 	let current = null;
 	let fenced = false;
@@ -395,7 +395,7 @@ function loadTasks(dir) {
 }
 
 /** Keywords found in the answer and files in the diff, less traps; or the replay score. Normalized to 0..1. */
-export function scoreRun(task, answer, touched) {
+function scoreRun(task, answer, touched) {
 	if (Array.isArray(task.key)) return scoreReplay(task.key, touched);
 	const text = answer.toLowerCase();
 	const checks = [

@@ -261,12 +261,12 @@ function portabilityVerdict(directory: string, manifest: PortableManifest): { pu
 	return { publish: true };
 }
 
-export interface GenerateMarketplaceOptions {
+interface GenerateMarketplaceOptions {
 	root?: string;
 	check?: boolean;
 }
 
-export interface GenerateMarketplaceResult {
+interface GenerateMarketplaceResult {
 	ok: boolean;
 	path: string;
 	content: string;

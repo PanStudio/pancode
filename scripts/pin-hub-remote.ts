@@ -31,10 +31,10 @@ import { type HubPackageValidationResult, validateHubPackage } from "../src/doma
 export type RegistryRow = Record<string, unknown> & { kind: string; name: string };
 
 /** Where a row's tree comes from: a directory under `hub/`, or an exact commit of a community repository. */
-export type RowLocation = { sourceUrl: string } | { source: HubRowSource };
+type RowLocation = { sourceUrl: string } | { source: HubRowSource };
 
 /** Who answers for a row, as the row states it. */
-export interface RowTrust {
+interface RowTrust {
 	publisher: string;
 	tier: HubTier;
 	/** The row's licence; a first-party row reads it from the pack manifest instead. */
@@ -249,7 +249,7 @@ export interface CommunityFetchDeps {
 
 const defaultDeps: CommunityFetchDeps = { fetchPluginCommit, validateHubPackage };
 
-export type CommunityRowResult = { ok: true; row: RegistryRow } | { ok: false; error: string };
+type CommunityRowResult = { ok: true; row: RegistryRow } | { ok: false; error: string };
 
 function sameValue(a: unknown, b: unknown): boolean {
 	return JSON.stringify(a) === JSON.stringify(b);
@@ -307,11 +307,11 @@ export function refreshCommunityRow(row: RegistryRow, deps: CommunityFetchDeps =
  * row file names is repeated exactly. `hub:check` uses this to hold the index to
  * its row files without fetching.
  */
-export function indexRowMatches(stated: RegistryRow, indexed: RegistryRow): boolean {
+function indexRowMatches(stated: RegistryRow, indexed: RegistryRow): boolean {
 	return Object.keys(stated).every((field) => sameValue(stated[field], indexed[field]));
 }
 
-export interface CommunityMergeResult {
+interface CommunityMergeResult {
 	/** Index rows for the community files: regenerated, or the committed row kept unverified on failure. */
 	entries: RegistryRow[];
 	/** Schema and identity errors, and in check mode every row file the index does not hold. */
