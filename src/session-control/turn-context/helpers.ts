@@ -107,3 +107,12 @@ export const continuationContextUpdate = (agentRuntime: AgentRuntime) => ({
 });
 
 export const tokenCount = (value: number): number => (Number.isFinite(value) ? Math.max(0, Math.round(value)) : 0);
+
+/**
+ * The error name of the post-tool guard's clean stops: one tool result alone still overflows after compaction, the
+ * compacted request with its tool results still does not fit the window, or the compaction a fit needed failed. Pi keeps only the message, so the turn runtime reads the name off the throw to journal the harness's own cause.
+ */
+export const OVERSIZED_RESULT_STOP = "PancodeOversizedResultStop";
+
+export const oversizedResultStop = (message: string): Error =>
+	Object.assign(new Error(message), { name: OVERSIZED_RESULT_STOP });

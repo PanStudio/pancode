@@ -15,8 +15,10 @@ import type { PrewarmStats, PromptCacheStats } from "../domains/session/context-
 import type { EvictionAnchor, SessionEntry } from "../domains/session/entries.js";
 import type { SessionPromptCompileRecord } from "../domains/session/prompt-manifest.js";
 import type { AgentMessage } from "../engine/types.js";
+import type { createContextFold } from "./context-fold.js";
 import type { MessageListDigests } from "./message-list-digest.js";
 import type { PostureGeneration } from "./posture-policy.js";
+import type { BoundBatchOutcome } from "./turn-context/fit.js";
 import type {
 	CompactionRouteView,
 	ExpectedColdReason,
@@ -41,6 +43,17 @@ export interface TurnContextScope {
 	readonly memoryOrigin: (runtime: AgentRuntime) => string;
 	readonly classifyCall: ClassifyCall;
 	readonly budgetProducer: LiveBudgetProducer;
+	readonly contextFold: ReturnType<typeof createContextFold>;
+	readonly bindMemoryScope: () => {
+		sessionId: string;
+		branchAnchorTurnId: TurnContextScope["branchAnchorTurnId"];
+	} | null;
+	readonly unsubscribeColdReasonSources: ReadonlyArray<(() => void) | null>;
+	readonly refreshAgentMessagesFromSession: TurnContext["refreshAgentMessagesFromSession"];
+	readonly runAutoCompact: TurnContext["runAutoCompact"];
+	readonly anchoredInputTokens: (agentRuntime: AgentRuntime, history?: MessageListDigests) => number | null;
+	readonly overflowStop: (agentRuntime: AgentRuntime) => string | null;
+	readonly boundBatchToFit: (agentRuntime: AgentRuntime) => BoundBatchOutcome;
 	readonly liveStreamingOutputTokens: () => number;
 	readonly routeSuperseded: (targetId: string | null | undefined, modelId: string | null | undefined) => boolean;
 	readonly previewCompactionRoute: (

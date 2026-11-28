@@ -1,29 +1,12 @@
-// SPDX-License-Identifier: LicenseRef-PanCode-1.0
-// SPDX-FileCopyrightText: 2026 Anthony Kougkas
-import { assistantOutputChars } from "../core/assistant-output.js";
 import { isHostPolicyMessage } from "../core/host-policy-message.js";
-import { providerCheckpointFromMessage, providerFallbackDigests } from "../core/provider-checkpoint-handle.js";
 import type { SandboxAvailability } from "../core/sandbox/types.js";
-import { mainAgent } from "../core/telemetry/context.js";
-import { telemetryHub } from "../core/telemetry/hub.js";
-import { pancodeStateDir } from "../core/xdg.js";
 import type { SuccessfulMemoryContextCommit } from "../domains/memory/commit-state.js";
 import type { MemoryInterventionRegistration } from "../domains/memory/intervention-types.js";
-import { readSessionContextSnapshots } from "../domains/telemetry/index.js";
-import {
-	engineCodexUserTurn,
-	engineInitialSystemPrompt,
-	setEngineCodexConfiguration,
-	setEngineCodexUserTurn,
-	setEngineProviderCheckpointObserver,
-	setEngineProviderCompactionPolicy,
-	setEngineProviderReplayFallback,
-} from "../engine/agent.js";
 import { callRepeatsAsRead } from "../engine/loop-guard.js";
 import { effectiveCallIdentity } from "../engine/loop-guard-repeat.js";
 import type { ContinuityReductionHooks } from "./continuity-controller.js";
 import type { MessageListDigests } from "./message-list-digest.js";
-import { createMessageListFold, withSettledHistory } from "./message-list-digest.js";
+import { createMessageListFold } from "./message-list-digest.js";
 /**
  * Turn context ownership: the session-prompt compile cache, context-snapshot
  * accounting, prompt-cache honesty, and compaction. `runAutoCompact` is the
@@ -49,8 +32,6 @@ import {
 	type LiveBudgetOutcomeProjection,
 	type LiveBudgetView,
 } from "../domains/context/budget/live-view.js";
-import { requestFits } from "../domains/context/budget/request-fit.js";
-import { supersededStageApplies } from "../domains/context/fold/contract.js";
 import type { planEviction } from "../domains/context/working-set/engine.js";
 import type { ClassifyCall } from "../domains/context/working-set/superseded.js";
 import { type PinnedContextBlock, pinnedContextDelta } from "../domains/extensions/pinned-context.js";
@@ -61,45 +42,37 @@ import type { PromptsContract } from "../domains/prompts/contract.js";
 import type { ProvidersContract } from "../domains/providers/index.js";
 import { AutoCompactionTrigger } from "../domains/session/compaction/auto.js";
 import type { CompactInput, CompactResult } from "../domains/session/compaction/compact.js";
-import {
-	type CaptureContextSnapshotInput,
-	type ContextSnapshot,
-	type ContextUsageSnapshot,
-	captureContextSnapshot,
-	ceilChars,
-	type estimateAgentContextBreakdown,
+import type {
+	CaptureContextSnapshotInput,
+	ContextSnapshot,
+	ContextUsageSnapshot,
+	estimateAgentContextBreakdown,
 } from "../domains/session/context-accounting.js";
 import type { ContextLedger, PrewarmStats } from "../domains/session/context-ledger.js";
 import type { SessionContract } from "../domains/session/contract.js";
-import {
-	type CompactionTrigger,
-	type SessionEntry,
-	withProviderCheckpointMeasurements,
-} from "../domains/session/entries.js";
-import { readPromptCompileRecords, type SessionPromptCompileRecord } from "../domains/session/prompt-manifest.js";
-import { activePath, findLastEntry } from "../domains/session/tree/active-path.js";
+import type { CompactionTrigger, SessionEntry } from "../domains/session/entries.js";
+import type { SessionPromptCompileRecord } from "../domains/session/prompt-manifest.js";
+import { activePath } from "../domains/session/tree/active-path.js";
 import type { TelemetryContract } from "../domains/telemetry/contract.js";
 import type {
 	AgentMessage,
 	AnthropicResponseObservation,
-	CodexConfiguration,
 	CodexTransportObservation,
 	ResponsesCacheDiagnostic,
 	Usage,
 } from "../engine/types.js";
 import type { AutonomyLevel } from "../lib/autonomy/autonomy.js";
 import type { ToolRegistry } from "../tools/registry-contract.js";
-import { extractUserText } from "./chat-loop-messages.js";
-import { codexEffortGeneration, codexEffortUpdates } from "./codex-effort.js";
 import type { HostInserts } from "./host-inserts.js";
-import { contextFloorRefusal, resolveFitOutputReserve, turnAdmissionRemedy } from "./output-reserve.js";
-import { extractTurnText } from "./session-replay-messages.js";
+import { contextFloorRefusal } from "./output-reserve.js";
 import { createTurnContextAnchor } from "./turn-context/anchor.js";
 import { createTurnContextBudget } from "./turn-context/budget.js";
 import { createTurnContextCache } from "./turn-context/cache.js";
 import { createTurnContextFit } from "./turn-context/fit.js";
-import { continuationContextUpdate, memoryOrigin, tokenCount, toolResultTail } from "./turn-context/helpers.js";
+import { memoryOrigin } from "./turn-context/helpers.js";
+import { createTurnContextProvider } from "./turn-context/provider.js";
 import { createTurnContextRoute } from "./turn-context/route.js";
+import { createTurnContextSession } from "./turn-context/session.js";
 import { createTurnContextUsage } from "./turn-context/usage.js";
 import { createTurnContextCompaction } from "./turn-context-compaction.js";
 import { createTurnContextMemory } from "./turn-context-memory.js";
@@ -436,85 +409,7 @@ export interface TurnContext {
 	dispose(): void;
 }
 
-/** The newest reduction on `path`, in the shape a live commit notes it. */
-function compactionEventOnPath(
-	path: ReadonlyArray<SessionEntry>,
-): { stage: string; tokensBefore: number; tokensAfter: number; trigger: string } | null {
-	for (let index = path.length - 1; index >= 0; index -= 1) {
-		const entry = path[index];
-		if (entry?.kind === "contextEviction") {
-			const stage = entry.trigger === "superseded" ? "superseded" : "working_set";
-			return { stage, tokensBefore: entry.tokensBefore, tokensAfter: entry.tokensAfter, trigger: entry.trigger };
-		}
-		if (entry?.kind === "compactionSummary") {
-			if (entry.tokensAfter === undefined) return null;
-			const stage = entry.trigger === "step" ? "step_checkpoint" : "llm_summary";
-			return {
-				stage,
-				tokensBefore: entry.tokensBefore,
-				tokensAfter: entry.tokensAfter,
-				trigger: entry.trigger ?? "unknown",
-			};
-		}
-	}
-	return null;
-}
-
-/** The persisted snapshot's split as a journal record, under the real session and turn (#434). */
-function recordContextSnapshot(sessionId: string, snapshot: ContextSnapshot): void {
-	const split = snapshot.categories;
-	telemetryHub().emit(
-		"context.snapshotted",
-		{
-			snapshotId: snapshot.snapshotId,
-			providerId: snapshot.providerId,
-			runtimeId: snapshot.runtimeId,
-			modelId: snapshot.modelId,
-			splits: snapshot.sources.splits,
-			...(snapshot.promptSegments ? { promptSegments: snapshot.promptSegments } : {}),
-			...(snapshot.promptHash ? { promptHash: snapshot.promptHash } : {}),
-			...(snapshot.toolSignature ? { toolSignature: snapshot.toolSignature } : {}),
-			...(snapshot.messageRange ? { messageRange: snapshot.messageRange } : {}),
-			...(snapshot.divergenceRatio !== undefined ? { divergenceRatio: snapshot.divergenceRatio } : {}),
-			categories: {
-				system: tokenCount(split.system),
-				tools: tokenCount(split.tools),
-				...(split.toolResults !== undefined ? { toolResults: tokenCount(split.toolResults) } : {}),
-				agents: tokenCount(split.agents),
-				skills: tokenCount(split.skills),
-				memory: tokenCount(split.memory),
-				project: tokenCount(split.project),
-				messages: tokenCount(split.messages),
-				reserve: tokenCount(split.reserve),
-				free: tokenCount(split.free),
-				streaming: tokenCount(split.streaming),
-			},
-			window: {
-				desired: tokenCount(snapshot.desiredContextWindow),
-				effective: tokenCount(snapshot.effectiveContextWindow),
-				source: snapshot.contextWindowSource || "unknown",
-			},
-			source: snapshot.sources.total,
-			...(snapshot.estimatedTokens !== undefined ? { estimatedTokens: tokenCount(snapshot.estimatedTokens) } : {}),
-			...(snapshot.reconciledTokens !== undefined ? { reconciledTokens: tokenCount(snapshot.reconciledTokens) } : {}),
-		},
-		{
-			sessionId,
-			agent: mainAgent(sessionId),
-			...(snapshot.turnId ? { turnId: snapshot.turnId } : {}),
-			...(snapshot.callId && snapshot.attemptId ? { callId: snapshot.callId, attemptId: snapshot.attemptId } : {}),
-		},
-	);
-}
-
-/**
- * The error name of the post-tool guard's clean stops: one tool result alone still overflows after compaction, the
- * compacted request with its tool results still does not fit the window, or the compaction a fit needed failed. Pi keeps only the message, so the turn runtime reads the name off the throw to journal the harness's own cause.
- */
-export const OVERSIZED_RESULT_STOP = "PancodeOversizedResultStop";
-
-const oversizedResultStop = (message: string): Error =>
-	Object.assign(new Error(message), { name: OVERSIZED_RESULT_STOP });
+export { OVERSIZED_RESULT_STOP } from "./turn-context/helpers.js";
 
 /** What a compaction trigger reads of a route: a built runtime, or the route in settings before one is built. */
 export type CompactionRouteView = Pick<AgentRuntime, "targetId" | "wireModelId" | "runtimeResolution"> & {
@@ -603,13 +498,13 @@ export function createTurnContext(deps: TurnContextDeps): TurnContext {
 			return cache.noteColdReason;
 		},
 		get persistContextSnapshot() {
-			return persistContextSnapshot;
+			return sessionState.persistContextSnapshot;
 		},
 		get captureRuntimeContextSnapshot() {
-			return captureRuntimeContextSnapshot;
+			return sessionState.captureRuntimeContextSnapshot;
 		},
 		get lastRecordedPromptHash() {
-			return lastRecordedPromptHash;
+			return sessionState.lastRecordedPromptHash;
 		},
 		get reconciledHistoryTokens() {
 			return anchors.reconciledHistoryTokens;
@@ -642,10 +537,10 @@ export function createTurnContext(deps: TurnContextDeps): TurnContext {
 			return anchors.carryReconciledAnchorThroughProjection;
 		},
 		get bindProviderCompaction() {
-			return bindProviderCompaction;
+			return providerReplay.bindProviderCompaction;
 		},
 		get syncCodexConfiguration() {
-			return syncCodexConfiguration;
+			return providerReplay.syncCodexConfiguration;
 		},
 		compactionController: null,
 		disposed: false,
@@ -713,7 +608,7 @@ export function createTurnContext(deps: TurnContextDeps): TurnContext {
 			return notifyMemoryCommit;
 		},
 		get resolveProviderReplay() {
-			return resolveProviderReplay;
+			return providerReplay.resolveProviderReplay;
 		},
 		get controller() {
 			return controller;
@@ -731,10 +626,10 @@ export function createTurnContext(deps: TurnContextDeps): TurnContext {
 		},
 		overflowPinArmed,
 		get pendingUserInputTokens() {
-			return pendingUserInputTokens;
+			return sessionState.pendingUserInputTokens;
 		},
 		get liveStreamingOutputTokens() {
-			return liveStreamingOutputTokens;
+			return sessionState.liveStreamingOutputTokens;
 		},
 		get routeSuperseded() {
 			return routing.routeSuperseded;
@@ -742,135 +637,35 @@ export function createTurnContext(deps: TurnContextDeps): TurnContext {
 		get previewCompactionRoute() {
 			return routing.previewCompactionRoute;
 		},
+		get refreshAgentMessagesFromSession() {
+			return refreshAgentMessagesFromSession;
+		},
+		get runAutoCompact() {
+			return runAutoCompact;
+		},
+		get anchoredInputTokens() {
+			return fitting.anchoredInputTokens;
+		},
+		get overflowStop() {
+			return fitting.overflowStop;
+		},
+		get boundBatchToFit() {
+			return fitting.boundBatchToFit;
+		},
+		get contextFold() {
+			return contextFold;
+		},
+		get bindMemoryScope() {
+			return bindMemoryScope;
+		},
+		get unsubscribeColdReasonSources() {
+			return cache.unsubscribeColdReasonSources;
+		},
 	};
 
 	const cache = createTurnContextCache(shared);
 
-	const persistContextSnapshot = (snapshot: ContextSnapshot): void => {
-		const currentSession = deps.session?.current();
-		if (!currentSession) {
-			shared.snapshotPersistPending = true;
-			return;
-		}
-		if (snapshot.sessionId !== null && snapshot.sessionId !== currentSession.id) return;
-		snapshot.sessionId = currentSession.id;
-		recordContextSnapshot(currentSession.id, snapshot);
-		shared.snapshotPersistPending = false;
-	};
-
-	/**
-	 * Capture a context snapshot from the runtime's live agent state. All
-	 * capture sites (turn submit, both compaction paths) flow through this
-	 * helper so window resolution and category decomposition stay identical.
-	 */
-	const captureRuntimeContextSnapshot = (
-		agentRuntime: AgentRuntime,
-		turnId: string,
-		compactionThreshold: number | null,
-		extra: Partial<CaptureContextSnapshotInput> = {},
-	): ContextSnapshot => {
-		const details = agentRuntime.runtimeResolution.contextWindowDetails;
-		const systemPrompt = engineInitialSystemPrompt(agentRuntime.agent);
-		// The compiled prompt the agent carries splits itself, so a capture that names no
-		// segments (a checkpoint, an eviction) keeps the Agent fleet and Project rows
-		// instead of folding the whole prompt into System prompt (bt-48).
-		const compiled =
-			shared.sessionPrompt !== null && shared.sessionPrompt.systemPrompt === systemPrompt ? shared.sessionPrompt : null;
-		// The snapshot row belongs to the named PanCode session whose ledger it is
-		// appended to; the engine agent's own sessionId is unset in practice.
-		return captureContextSnapshot({
-			sessionId: deps.session?.current()?.id ?? null,
-			turnId,
-			providerId: agentRuntime.targetId,
-			runtimeId: agentRuntime.runtimeId,
-			modelId: agentRuntime.wireModelId,
-			systemPrompt,
-			conversationMessages: agentRuntime.agent.state.messages.filter(
-				(message) => message.role !== "system" || isHostPolicyMessage(message),
-			),
-			activeToolSchemas: agentRuntime.agent.state.tools,
-			desiredContextWindow: details.desiredContextWindow,
-			effectiveContextWindow: details.effectiveContextWindow,
-			contextWindowSource: details.contextWindowSource,
-			compactionThreshold,
-			...extra,
-			...(compiled
-				? {
-						promptSegments: compiled.sections.map((s) => ({ id: s.id, tokenEstimate: s.tokenEstimate })),
-						promptHash: compiled.systemPromptHash,
-					}
-				: {}),
-		});
-	};
-
-	/**
-	 * Output tokens of the in-flight response. While streaming, estimate from
-	 * the partial assistant tail; once the turn settles, the reconciled
-	 * snapshot carries the provider-reported value.
-	 */
-	const liveStreamingOutputTokens = (): number => {
-		if (!state.runtime) return 0;
-		if (state.streaming) {
-			const partial = state.runtime.agent.state.streamingMessage;
-			if (partial?.role === "assistant") {
-				return ceilChars(assistantOutputChars(partial));
-			}
-			return 0;
-		}
-		return shared.currentContextSnapshot?.categories.streaming || 0;
-	};
-
-	/**
-	 * Tokens for the submitted text that the snapshot has not yet counted.
-	 * The turn snapshot is captured before the user message joins the
-	 * conversation, so until the provider reconciles (or a fresh capture sees
-	 * the text in the conversation) the pending input occupies window space
-	 * that no category covers. Zero once reconciled or once the text landed.
-	 */
-	const pendingUserInputTokens = (): number => {
-		const snapshot = shared.currentContextSnapshot;
-		if (!snapshot?.pendingUserInput) return 0;
-		if (snapshot.sources.total === "reconciled") return 0;
-		if (snapshot.turnId !== "pending") {
-			const pending = snapshot.pendingUserInput;
-			const landed = (snapshot.conversationMessages ?? []).some(
-				(message) => extractUserText(message as AgentMessage) === pending,
-			);
-			if (landed) return 0;
-		}
-		return ceilChars(snapshot.pendingUserInput.length);
-	};
-
-	/**
-	 * The window the next turn will resolve to, read the way ensureRuntime
-	 * reads it but without building an agent. Before the first turn of a
-	 * process, /resume included, state.runtime is null, and the ledger and the
-	 * footer meter said `context window unknown · 0 tokens` until a turn ran
-	 * (issue #189). Null when no target is configured or it does not resolve,
-	 * and the overlay's "unknown" is then true.
-	 */
-	/**
-	 * The prompt hash this session last recorded, for the first compile of a
-	 * resumed process. Without it a resume reports `previousHash: null`, which
-	 * reads as "there was no prompt before" when in fact there was one and it
-	 * is exactly what a reader needs to attribute the cold cache to: a layout
-	 * bump, a fragment edit, or a moved context window (issue #249).
-	 */
-	const lastRecordedPromptHash = (): string | null => {
-		if (shared.resumedPromptHashRead) return shared.resumedPromptHash;
-		shared.resumedPromptHashRead = true;
-		const currentSession = deps.session?.current();
-		if (!currentSession) {
-			// No session to read; leave the lookup open for the next compile.
-			shared.resumedPromptHashRead = false;
-			return null;
-		}
-		const records = readPromptCompileRecords(currentSession);
-		const previous = records[records.length - 1];
-		shared.resumedPromptHash = previous?.systemPromptHash ?? null;
-		shared.previousPromptSections = previous?.sections ?? null;
-		return shared.resumedPromptHash;
-	};
+	const sessionState = createTurnContextSession(shared);
 
 	const routing = createTurnContextRoute(shared);
 
@@ -880,114 +675,7 @@ export function createTurnContext(deps: TurnContextDeps): TurnContext {
 
 	const budgeting = createTurnContextBudget(shared);
 
-	const bindProviderCompaction = (runtime: AgentRuntime): void => {
-		setEngineProviderCompactionPolicy(
-			runtime.agent,
-			() => deps.getSettings().context.compaction.provider === "native" && runtime.runtimeId === "openai-codex",
-		);
-		const origin = deps.session?.current()?.id;
-		setEngineProviderReplayFallback(runtime.agent, async (reason) => {
-			if (origin !== deps.session?.current()?.id) throw new DOMException("Replay ownership changed", "AbortError");
-			await resolveProviderReplay(runtime, reason);
-		});
-		setEngineProviderCheckpointObserver(runtime.agent, (handle, inputTokens) => {
-			if (origin !== deps.session?.current()?.id) return;
-			const entries = withProviderCheckpointMeasurements(activeEntries());
-			const checkpoint = entries.find(
-				(entry) => entry.kind === "compactionSummary" && entry.providerCheckpoint?.digest === handle.digest,
-			);
-			if (checkpoint?.kind !== "compactionSummary" || checkpoint.providerCheckpoint?.replayInputTokens !== undefined)
-				return;
-			// The full inclusive request is a measured upper bound; it never underprices opaque input (#423).
-			deps.session?.appendEntry({
-				kind: "custom",
-				parentTurnId: state.lastTurnId,
-				customType: "pancode_provider_checkpoint_input",
-				data: { version: 1, checkpointDigest: handle.digest, inputTokens, measurement: "inclusive-request-upper-bound" },
-			});
-			deps.session?.flushAppends?.();
-			runtime.agent.state.messages = runtime.agent.state.messages.map((message) => {
-				const marker = providerCheckpointFromMessage(message);
-				return marker?.digest === handle.digest
-					? { ...message, pancodeProviderCheckpoint: { ...marker, replayInputTokens: inputTokens } }
-					: message;
-			});
-		});
-	};
-
-	// Ledger boundaries, rather than request retries, own Codex effort changes (#423).
-	const syncCodexConfiguration = (runtime: AgentRuntime): void => {
-		bindProviderCompaction(runtime);
-		const model = runtime.agent.state.model;
-		shared.thinkingUsesConfigurationUpdate = false;
-		if (model?.api !== "openai-codex-responses") {
-			setEngineCodexConfiguration(runtime.agent, undefined);
-			return;
-		}
-		const effortFor = (level: string): string => {
-			const map = model.thinkingLevelMap as Record<string, string | null> | undefined;
-			return map?.[level] ?? (level === "off" ? "none" : level);
-		};
-		const currentEffort = effortFor(runtime.runtimeResolution.effectiveThinkingLevel);
-		const entries = activeEntries();
-		const generation = codexEffortGeneration(entries);
-		const start = entries.length - generation.length;
-		const baseline = generation.find((entry) => entry.kind === "thinkingLevelChange" && entry.configurationInitial);
-		let initialEffort = baseline?.kind === "thinkingLevelChange" ? baseline.effectiveEffort : undefined;
-		if (initialEffort === undefined) {
-			const meta = deps.session?.current();
-			const firstCompile = start === 0 && meta ? readPromptCompileRecords(meta)[0] : undefined;
-			initialEffort = firstCompile?.thinkingLevel ? effortFor(firstCompile.thinkingLevel) : currentEffort;
-			if (meta) {
-				deps.session?.appendEntry({
-					kind: "thinkingLevelChange",
-					parentTurnId: state.lastTurnId,
-					thinkingLevel: runtime.runtimeResolution.effectiveThinkingLevel,
-					effectiveEffort: initialEffort,
-					configurationInitial: true,
-				});
-			}
-		}
-		const available = new Set<string>();
-		const usersByTime = new Map<number, Array<SessionEntry>>();
-		for (const entry of entries) {
-			if (entry.kind !== "message" || entry.role !== "user") continue;
-			const time = Date.parse(entry.timestamp);
-			const group = usersByTime.get(time) ?? [];
-			group.push(entry);
-			usersByTime.set(time, group);
-		}
-		// Resume/refresh already built these messages; never construct another replay (#423).
-		for (const message of runtime.agent.state.messages) {
-			if (message.role !== "user") continue;
-			const bound = engineCodexUserTurn(message);
-			if (bound) {
-				available.add(bound);
-				continue;
-			}
-			const text = extractUserText(message);
-			const entry = usersByTime.get(message.timestamp)?.find((candidate) => {
-				if (candidate.kind !== "message" || available.has(candidate.turnId)) return false;
-				const original = extractTurnText(candidate.payload);
-				return text === original;
-			});
-			if (entry) {
-				setEngineCodexUserTurn(message, entry.turnId);
-				available.add(entry.turnId);
-			}
-		}
-		// The admitted user is appended to Pi after commitMemoryTurn; message_end binds it (#423).
-		if (state.activeUserTurnId) available.add(state.activeUserTurnId);
-		const updates = codexEffortUpdates(
-			generation,
-			initialEffort,
-			available,
-			(entry) => entry.effectiveEffort ?? effortFor(entry.thinkingLevel),
-		);
-		const configuration: CodexConfiguration = { initialEffort, updates };
-		setEngineCodexConfiguration(runtime.agent, configuration);
-		shared.thinkingUsesConfigurationUpdate = updates.at(-1)?.position === state.activeUserTurnId;
-	};
+	const providerReplay = createTurnContextProvider(shared);
 
 	const { contextFold, refreshAgentMessagesFromSession, runAutoCompact, runStepCheckpoint } =
 		createTurnContextCompaction(shared);
@@ -995,60 +683,6 @@ export function createTurnContext(deps: TurnContextDeps): TurnContext {
 	const { bindMemoryScope, installMemoryRestoration, memoryTurnMethods, notifyMemoryCommit } =
 		createTurnContextMemory(shared);
 
-	const resolveProviderReplay = async (
-		runtime: AgentRuntime,
-		reason: string,
-		pendingUserText?: string,
-		pendingIsOperator = true,
-	): Promise<void> => {
-		const origin = deps.session?.current()?.id;
-		const navigation = shared.navigationEpoch;
-		const signal = deps.turnSignal?.();
-		const active = activeEntries();
-		const checkpoint = findLastEntry(active, (entry) => entry.kind === "compactionSummary");
-		if (checkpoint?.kind !== "compactionSummary" || !checkpoint.providerCheckpoint) {
-			refreshAgentMessagesFromSession(runtime);
-			return;
-		}
-		if (!providerFallbackDigests(active).has(checkpoint.providerCheckpoint.digest)) {
-			let changed = false;
-			let resolutionReason = reason;
-			try {
-				changed = await runAutoCompact(
-					runtime,
-					true,
-					undefined,
-					"force",
-					pendingUserText,
-					undefined,
-					signal,
-					undefined,
-					pendingIsOperator,
-					reason,
-				);
-			} catch (error) {
-				if (signal?.aborted || (error instanceof Error && error.name === "AbortError")) throw error;
-				resolutionReason = `${reason}:portable-summary-failed`;
-				deps.emitNotice("Portable compaction failed; continuing from the original session history.");
-			}
-			if (signal?.aborted || origin !== deps.session?.current()?.id || navigation !== shared.navigationEpoch)
-				throw new DOMException("Replay ownership changed", "AbortError");
-			if (!changed) {
-				deps.session?.appendEntry({
-					kind: "custom",
-					parentTurnId: state.lastTurnId,
-					customType: "pancode_provider_fallback",
-					data: {
-						version: 1,
-						checkpointDigest: checkpoint.providerCheckpoint.digest,
-						providerFallbackReason: resolutionReason,
-					},
-				});
-				deps.session?.flushAppends?.();
-			}
-		}
-		refreshAgentMessagesFromSession(runtime);
-	};
 	const promptMethods = createTurnContextPrompt(shared);
 
 	const usageView = createTurnContextUsage(shared);
@@ -1058,12 +692,12 @@ export function createTurnContext(deps: TurnContextDeps): TurnContext {
 		installMemoryRestoration,
 		prepareMemoryTurn: memoryTurnMethods.prepareMemoryTurn,
 
-		syncRouteConfiguration: syncCodexConfiguration,
+		syncRouteConfiguration: providerReplay.syncCodexConfiguration,
 
 		commitMemoryTurn: memoryTurnMethods.commitMemoryTurn,
 
-		captureRuntimeContextSnapshot,
-		persistContextSnapshot,
+		captureRuntimeContextSnapshot: sessionState.captureRuntimeContextSnapshot,
+		persistContextSnapshot: sessionState.persistContextSnapshot,
 		liveContextEstimate: fitting.liveContextEstimate,
 
 		refreshLiveBudget: budgeting.refreshLiveBudget,
@@ -1138,135 +772,7 @@ export function createTurnContext(deps: TurnContextDeps): TurnContext {
 			return true;
 		},
 
-		async postToolContinuationGuard(
-			agentRuntime: AgentRuntime,
-			signal?: AbortSignal,
-			contextChanged = false,
-			settledTail?: () => void,
-		) {
-			if (signal?.aborted || (!contextChanged && !toolResultTail(agentRuntime))) {
-				settledTail?.();
-				return undefined;
-			}
-			// A host tail appended before this guard is a durable insert: a compaction
-			// that rebuilds the messages re-issues it after the checkpoint when the
-			// cut took its anchor, so the rebuild itself carries it.
-			// The tool batch appended results the last publication predates, and the
-			// guard is about to decide on them. Publish before that inspection, not
-			// after it, from the same history observation and estimate it decides on.
-			let history: MessageListDigests | undefined;
-			let knownWindow = false;
-			let mustFit = false;
-			let compacted = false;
-			// Eviction rebuilds the messages before the summary call, so a failed summary can still leave them changed.
-			const messagesBefore = agentRuntime.agent.state.messages;
-			// Until a compaction attempt yields, nothing touches the messages, so the checks read `history` instead of
-			// walking every message again; a check after an attempt starts observes afresh (SC-6).
-			let attemptStarted = false;
-			const settled = (): MessageListDigests | undefined => (attemptStarted ? undefined : history);
-			// The A4 count (overflowFitTokens) decides whether the request fits; the fit line's reserve is A5's, read at that count.
-			const a4Fits = (view: LiveBudgetView): boolean => {
-				const input = fitting.overflowFitTokens(agentRuntime, undefined, view.inputTokens ?? 0, settled());
-				const reserve = view.outputReserveTokens === null ? null : resolveFitOutputReserve(agentRuntime, input);
-				return requestFits(input, reserve, view.effectiveWindow);
-			};
-			// The view's figures, or with a measured anchor the anchored count admission sends on (bt3 drv-rv5).
-			const fitFigures = (view: LiveBudgetView): { input: number | null; reserve: number | null } => {
-				const anchored = fitting.anchoredInputTokens(agentRuntime, settled());
-				if (anchored === null) return { input: view.inputTokens, reserve: view.outputReserveTokens };
-				const reserve = view.outputReserveTokens === null ? null : resolveFitOutputReserve(agentRuntime, anchored);
-				return { input: anchored, reserve };
-			};
-			const viewFits = (view: LiveBudgetView): boolean => {
-				const { input, reserve } = fitFigures(view);
-				return requestFits(input, reserve, view.effectiveWindow);
-			};
-			const compact = async (requireFit: boolean): Promise<void> => {
-				attemptStarted = true;
-				try {
-					const done = await runAutoCompact(
-						agentRuntime,
-						requireFit,
-						undefined,
-						requireFit ? "overflow" : "auto",
-						undefined,
-						undefined,
-						signal,
-					);
-					compacted = compacted || done;
-				} catch (err) {
-					const reason = err instanceof Error ? err.message : String(err);
-					const aborted = signal?.aborted || (err instanceof Error && err.name === "AbortError");
-					const oversize = requireFit && !aborted ? fitting.overflowStop(agentRuntime) : null;
-					// One tool result is what overflows: finish() bounds it, or stops naming it when no cut fits.
-					if (oversize !== null) return;
-					if (requireFit || aborted) {
-						const stop = `[PanCode] post-tool context guard could not compact before continuation: ${reason}`;
-						// The request needs a fit it cannot get: the harness's stop, not the route's (FX-22c). A cancel stays a plain error.
-						throw aborted ? new Error(stop) : oversizedResultStop(stop);
-					}
-					// Optional compaction: the request still fits, so the run goes on and the fit check below stays the stop.
-					deps.emitNotice(
-						`[PanCode] automatic compaction failed: ${reason.replace(/[.\s]+$/u, "")}. This turn goes on without it.`,
-					);
-				}
-			};
-			// The mid-run settled tool-batch boundary: whatever the guard did or
-			// declined to do, this is the context the continuation will send. The
-			// caller's settled tail (the memory install) runs last, in the same
-			// stretch as this view's publication, so it reads that walk (SC-6).
-			const finish = (afterView: LiveBudgetView): ReturnType<typeof continuationContextUpdate> | undefined => {
-				let view = afterView;
-				// Compaction is spent and the latest batch is what overflows: bound it rather than end the turn, on every surface.
-				const overflowing = (mustFit && fitting.overflowStop(agentRuntime) !== null) || (knownWindow && !viewFits(view));
-				const bound = overflowing ? fitting.boundBatchToFit(agentRuntime) : null;
-				if (bound?.kind === "short") throw oversizedResultStop(bound.stop);
-				if (bound?.kind === "fit") {
-					attemptStarted = true;
-					view = budgeting.refreshLiveBudget();
-				}
-				const oversize = mustFit ? fitting.overflowStop(agentRuntime) : null;
-				if (oversize !== null) throw oversizedResultStop(oversize);
-				const after = fitFigures(view);
-				if (knownWindow && !requestFits(after.input, after.reserve, view.effectiveWindow)) {
-					// The guard's own stop, like the oversized-result one: the harness cause, not a route failure (CLI-3).
-					// Compaction already ran, so the remedy names what it cannot shrink, in terms every surface accepts.
-					throw oversizedResultStop(
-						`[PanCode] post-tool context guard stopped continuation before provider call: estimated input ${after.input} plus reserved output ${after.reserve} tokens does not fit context window ${view.effectiveWindow}. ${turnAdmissionRemedy(agentRuntime, after.input ?? 0)} Ask for narrower reads or smaller tool output in a follow-up turn.`,
-					);
-				}
-				const update =
-					compacted || agentRuntime.agent.state.messages !== messagesBefore
-						? continuationContextUpdate(agentRuntime)
-						: undefined;
-				settledTail?.();
-				return update;
-			};
-			// One settled stretch from the first observation to the decision; without an attempt the guard never yields or
-			// touches the messages, so the first publication already describes the context and the tail runs in it too.
-			const decision = withSettledHistory(() => {
-				history = observeHistory(agentRuntime);
-				const before = fitting.liveContextEstimate(agentRuntime, undefined, undefined, history);
-				const beforeView =
-					agentRuntime === state.runtime
-						? budgeting.refreshLiveBudget(undefined, history, before)
-						: budgeting.refreshLiveBudget();
-				knownWindow = before.contextWindow > 0;
-				const verdict = routing.routeCompaction(agentRuntime, deps.getSettings()).shouldCompact(before.tokens);
-				// An automatic pass the trigger asks for runs first (A5); the A4 count then decides the overflow pass.
-				mustFit = knownWindow && (!viewFits(beforeView) || (!verdict.shouldCompact && !a4Fits(beforeView)));
-				// S0 commits under the trigger on an uncached route, so the guard asks there too (SPEC §3.4).
-				const attempted = mustFit || verdict.shouldCompact || supersededStageApplies(agentRuntime.runtimeResolution);
-				return attempted ? { attempted: true as const } : { attempted: false as const, update: finish(beforeView) };
-			});
-			if (!decision.attempted) return decision.update;
-			await compact(mustFit);
-			if (!mustFit && knownWindow && !a4Fits(budgeting.refreshLiveBudget())) {
-				mustFit = true;
-				await compact(true);
-			}
-			return withSettledHistory(() => finish(budgeting.refreshLiveBudget()));
-		},
+		postToolContinuationGuard: providerReplay.methods.postToolContinuationGuard,
 
 		contextUsage: usageView.methods.contextUsage,
 
@@ -1290,105 +796,11 @@ export function createTurnContext(deps: TurnContextDeps): TurnContext {
 
 		noteRunCacheSummary: cache.methods.noteRunCacheSummary,
 
-		resetForSession(incomingBranchAnchorTurnId: string | null = null): void {
-			shared.cacheCallBaseline = null;
-			shared.cacheCallBaselineLoaded = false;
-			shared.cacheGeneration += 1;
-			if (state.runtime) setEngineCodexConfiguration(state.runtime.agent, undefined);
-			shared.thinkingUsesConfigurationUpdate = false;
-			shared.cacheRequestToolChoice = "auto";
-			shared.sentToolChoice = undefined;
-			shared.priorSentToolChoice = undefined;
-			shared.nextChangedSection = undefined;
-			shared.previousPromptSections = null;
-			shared.postureGeneration = null;
-			shared.postureGenerationPersisted = false;
-			shared.pendingPosture = null;
-			shared.memoryTurn = null;
-			shared.memoryAuthorityEpoch += 1;
-			shared.compactionController?.abort();
-			// An in-process switch replaces the whole prefix: the backend's slot
-			// still holds the outgoing session's prompt and history, so the first
-			// turn on the incoming one is expected-cold on every tier, exactly as
-			// a recompile is. The manifest can no longer say so on its own once
-			// provenance follows the session, because the incoming session's last
-			// recorded hash usually equals its fresh compile, so the stamp comes
-			// from here. Only when this process had actually applied a prompt:
-			// before the first compile there is nothing in the slot to have lost.
-			if (shared.sessionPromptHash !== null) cache.noteColdReason("prompt_recompiled");
-			shared.frozenMemorySection = null;
-			shared.frozenRouteSources = undefined;
-			shared.frozenRouteIdentity = "";
-			shared.frozenMemorySessionId = "";
-			shared.sessionPromptDelta = "";
-			shared.lastPromptCache = null;
-			shared.lastPrewarm = null;
-			shared.lastSystemPromptReused = false;
-			shared.sessionPromptHash = null;
-			shared.sessionPromptKey = null;
-			shared.sessionPromptInvalidated = false;
-			shared.resumedPromptHashRead = false;
-			shared.resumedPromptHash = null;
-			sessionWorkingContextPaths.clear();
-			shared.pendingPromptLogEntry = null;
-			shared.pendingPromptLogMemory = null;
-			shared.memoryRestoredSessionId = null;
-			shared.cacheRequestSystemPromptHash = undefined;
-			shared.sentSystemPrompt = undefined;
-			shared.priorSentSystemPrompt = undefined;
-			shared.latestPromptCompile = null;
-			shared.emptyAutoCompactContextKey = null;
-			shared.autoCompactFailures = 0;
-			shared.summaryRearm = null;
-			shared.summaryRearmSeededFor = null;
-			shared.noGainSummaryDigest = null;
-			shared.noUsefulCutBasisKey = null;
-			contextFold.resetAutoHold();
-			shared.reconciledAnchor = null;
-			shared.rehydrationMiss = null;
-			// The last reduction /context and ACP name is the one on the path now current, not the branch left.
-			shared.lastCompactionEvent = compactionEventOnPath(activeEntries());
-			// Real branch navigation. The epoch separates two visits to the same
-			// leaf id, so an advisory announced on the branch this session left is
-			// re-armed rather than treated as already said.
-			shared.branchAnchorTurnId = incomingBranchAnchorTurnId;
-			shared.navigationEpoch += 1;
-			bindMemoryScope();
-			budgetProducer.reset();
-			const session = deps.session?.current();
-			const snapshots = session ? readSessionContextSnapshots(pancodeStateDir(), session.id) : [];
-			const persisted = snapshots.at(-1) ?? null;
-			// The figure the session was last measured at, so the journal can set the resumed projection beside it: the
-			// newest reconciled snapshot, since a submit cancelled before usage leaves an estimated one after it.
-			let measured: (typeof snapshots)[number] | undefined;
-			for (let index = snapshots.length - 1; index >= 0 && measured === undefined; index -= 1) {
-				const snapshot = snapshots[index];
-				if (snapshot?.sources.total === "reconciled" && snapshot.reconciledTokens !== undefined) measured = snapshot;
-			}
-			shared.resumedBudget = session
-				? {
-						sessionId: session.id,
-						priorTokens:
-							measured?.reconciledTokens !== undefined ? measured.reconciledTokens + measured.categories.streaming : null,
-					}
-				: null;
-			// The session's latest capture may describe the branch just left; a runtime captures the history now in place.
-			shared.currentContextSnapshot = state.runtime
-				? captureRuntimeContextSnapshot(
-						state.runtime,
-						incomingBranchAnchorTurnId ?? "session",
-						deps.getSettings().context.compaction?.threshold ?? null,
-					)
-				: persisted;
-		},
+		resetForSession: sessionState.methods.resetForSession,
 
 		journalResumedBudget: usageView.methods.journalResumedBudget,
 
-		dispose(): void {
-			shared.disposed = true;
-			shared.compactionController?.abort();
-			for (const unsubscribe of cache.unsubscribeColdReasonSources) unsubscribe?.();
-		},
+		dispose: sessionState.methods.dispose,
 	};
 	return controller;
 }

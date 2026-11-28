@@ -22,7 +22,7 @@ const BOUNDED_RESULT_MIN_CHARS = 2_048;
 const BOUNDED_RESULT_SLACK_CHARS = 1_024;
 
 /** What bounding the latest tool batch came to: it fits, there was nothing to cut, or even the cut floor overflows. */
-type BoundBatchOutcome = { kind: "fit" } | { kind: "none" } | { kind: "short"; stop: string };
+export type BoundBatchOutcome = { kind: "fit" } | { kind: "none" } | { kind: "short"; stop: string };
 
 export function createTurnContextFit(shared: TurnContextScope) {
 	const liveContextEstimate = (
