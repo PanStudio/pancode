@@ -23,7 +23,6 @@ import type { WorkerContextSnapshot } from "../domains/context/worker/contract.j
 import { captureWorkerContext } from "../domains/context/worker/snapshot.js";
 import type { MemoryInterventionRegistration } from "../domains/memory/intervention-types.js";
 import type { MemoryPromptRequest } from "../domains/memory/prompt-cache.js";
-import { replaceEngineMessages } from "../engine/agent.js";
 /**
  * The chat loop: one turn's state machine.
  *
@@ -76,12 +75,10 @@ import type { CompactInput, CompactResult } from "../domains/session/compaction/
 import type { ContextLedger } from "../domains/session/context-ledger.js";
 import type { SessionContract } from "../domains/session/contract.js";
 import type { CompactionTrigger, SessionEntry } from "../domains/session/entries.js";
-import { protectedArtifactStateFromSessionEntries } from "../domains/session/protected-artifacts.js";
 import type { TelemetryContract } from "../domains/telemetry/contract.js";
 import { createEngineAgent } from "../engine/agent.js";
 import type { AgentEvent, AgentMessage, ImageContent } from "../engine/types.js";
 import type { AutonomyLevel } from "../lib/autonomy/autonomy.js";
-import { ensureDetailLedgerForSession } from "../tools/extension-runtime-tools.js";
 import type { AskUserToolPolicy, ToolInvokeOptions, ToolRegistry } from "../tools/registry-contract.js";
 import type { VisionSidecar } from "../tools/vision-sidecar.js";
 import type { ApprovalRequestView } from "./approval-request-view.js";
@@ -90,6 +87,7 @@ import { createChatLoopContextCommands } from "./chat-loop/context-commands.js";
 import { createChatLoopNotices } from "./chat-loop/notices.js";
 import { createTurnPreparation } from "./chat-loop/preparation.js";
 import { createChatLoopRouteMove } from "./chat-loop/route-move.js";
+import { createChatLoopSessionReset } from "./chat-loop/session-reset.js";
 import { createChatLoopSideRounds } from "./chat-loop/side-rounds.js";
 import { createChatLoopToolOptions, toolInvokeOptions } from "./chat-loop/tool-options.js";
 import { createChatLoopBus } from "./chat-loop-bus.js";
@@ -99,7 +97,6 @@ import { createChatLoopStateMachine } from "./chat-loop-state-machine.js";
 import { createChatLoopSteering } from "./chat-loop-steering.js";
 import { createChatLoopSubmit } from "./chat-loop-submit.js";
 import type { HandoffRepairInput } from "./handoff-round.js";
-import { continuityRenderTime } from "./model-session-replay.js";
 import type { NoticeSource } from "./notice-source.js";
 import type { OperatorMemoryChip, OperatorMemoryCommands, OperatorMemoryStorePort } from "./operator-memory.js";
 import { type OutOfTurnRoute, runSideQuestion } from "./side-question.js";
@@ -924,20 +921,6 @@ export interface CreateChatLoopDeps {
 	registerPrewarmEndpointSlot?: (runtime: AgentRuntime) => (() => void) | null;
 }
 
-function reloadProtectedArtifactsForSession(
-	protectedArtifacts: NonNullable<CreateChatLoopDeps["protectedArtifacts"]>,
-	readSessionEntries: (() => ReadonlyArray<SessionEntry>) | undefined,
-): void {
-	try {
-		const entries = readSessionEntries ? readSessionEntries() : [];
-		protectedArtifacts.replace(protectedArtifactStateFromSessionEntries(entries));
-	} catch (error) {
-		protectedArtifacts.markDegraded(
-			`session protection history could not be read: ${error instanceof Error ? error.message : String(error)}`,
-		);
-	}
-}
-
 /**
  * How the last step pipeline ended, for a headless caller: `done` when its step
  * tool said `pipelineDone`; otherwise `stoppedBy` says whether the yolo
@@ -1035,6 +1018,8 @@ export function createChatLoop(deps: CreateChatLoopDeps): ChatLoop {
 		sideQuestionRound,
 		enterPreparation,
 		leavePreparation,
+		eggs,
+		sessionResetListeners,
 		currentToolInvokeOptions: (toolCallId) => toolInvokeOptions(loop, state, toolCallId),
 		get sessionToolLimits() {
 			return sessionToolLimits;
@@ -1153,6 +1138,15 @@ export function createChatLoop(deps: CreateChatLoopDeps): ChatLoop {
 		},
 		get steerInterrupter() {
 			return steerInterrupter;
+		},
+		get prewarm() {
+			return prewarm;
+		},
+		get prepareNextRequest() {
+			return prepareNextRequest;
+		},
+		get cancelTriage() {
+			return cancelTriage;
 		},
 		get withEndpointSlot() {
 			return withEndpointSlot;
@@ -1441,85 +1435,7 @@ export function createChatLoop(deps: CreateChatLoopDeps): ChatLoop {
 		whenSettled: () => loop.activeSubmit,
 		whenPrewarmSettled: () => prewarm.settled(),
 		nextRequestReady: () => loop.nextRequestPrepared,
-		onSessionReset(handler): () => void {
-			sessionResetListeners.add(handler);
-			return () => {
-				sessionResetListeners.delete(handler);
-			};
-		},
-
-		resetForSession(leafTurnId: string | null, replayMessages?: ReadonlyArray<AgentMessage>): void {
-			loop.submitOwner?.abort();
-			loop.submitGeneration += 1;
-			// An interview another session or branch closed never answers this one's continuations (C-25).
-			loop.promptInterview = undefined;
-			turnRuntime.cancelRunWatchdog();
-			loop.sessionResetSettlement = loop.activeSubmit;
-			state.streaming = false;
-			loop.pendingPreTurnRead?.abort();
-			context.cancelCompaction();
-			for (const listener of sessionResetListeners) {
-				try {
-					listener();
-				} catch {
-					// A host observer must not interrupt canonical replay and state cleanup.
-				}
-			}
-			// Local shell completion and tree navigation also refresh the same transcript.
-			eggs.syncConversation();
-			loop.operatorTurnsBefore = null;
-			lastHistoricalImageNoticeKey = null;
-			loop.pendingVisionSidecar?.abort();
-			loop.pendingCompactionPaint?.abort();
-			continuity.cancel();
-			void continuity.pause();
-			state.currentTurnConstraints = sessionToolLimits;
-			// The leaf being left is still `state.lastTurnId`; a navigation clears the chain there.
-			stepStarts.reset({ sessionId: deps.session?.current()?.id ?? null, leafTurnId: state.lastTurnId }, leafTurnId);
-			state.activeSkillSurface = undefined;
-			state.currentPendingSkillPolicy = undefined;
-			if (state.runtime) {
-				state.runtime.agent.abort();
-				(state.runtime.agent as { clearAllQueues?: () => void } | undefined)?.clearAllQueues?.();
-				turnRuntime.cleanupSessionResources(state.runtime.agent.sessionId);
-			}
-			recovery.cancelRetryCountdown();
-			cancelTriage();
-			const sessionId = api.getSessionId();
-			if (deps.toolRegistry) ensureDetailLedgerForSession(deps.toolRegistry, sessionId);
-			queues.reset({ keepOperator: sessionId !== null && sessionId === loop.queueSessionId });
-			loop.queueSessionId = sessionId;
-			middleware.clearPendingReminders();
-			// The turn the reset cut off never reaches its turn_end hook: what its requests carried settles with it now.
-			outcomeCollector.closeSession();
-			middlewareToolChoice.reset();
-			state.lastTurnId = leafTurnId;
-			state.lastRunSnapshot = null;
-			// In place before the context resets, so it republishes on the history of the leaf arrived at.
-			state.replayedContextMessages = replayMessages ? [...replayMessages] : [];
-			state.continuityAtMs = continuityRenderTime(replayMessages) ?? null;
-			if (state.runtime) replaceEngineMessages(state.runtime.agent, [...state.replayedContextMessages]);
-			// The incoming leaf is the advisory branch identity for the new session.
-			// Ordinary appends advance `state.lastTurnId` from here without re-arming
-			// an advisory; arriving here at all is the navigation that does.
-			context.resetForSession(leafTurnId);
-			loop.nextRequestNavigation += 1;
-			loop.nextRequestPrepared =
-				replayMessages && replayMessages.length > 0 ? prepareNextRequest(loop.nextRequestNavigation) : Promise.resolve();
-			// The resumed ledger renders before the first new turn (issue #189),
-			// and the window it renders against should be the probed one rather
-			// than the catalog's, so the live capability probe the first submit
-			// would run runs now, under the same TTL; the footer refreshes on the
-			// provider-health event the probe publishes.
-			void turnRuntime.ensureLiveCapabilitiesForSelectedModel().catch(() => {});
-			if (deps.protectedArtifacts) {
-				reloadProtectedArtifactsForSession(deps.protectedArtifacts, deps.readSessionEntries);
-			}
-			// A resume replays a history the backend has never seen; a fresh session
-			// replays nothing but still compiles a prompt and a tool surface. Both
-			// leave a prefix the next turn will pay for unless it is sent now.
-			prewarm.schedule(replayMessages && replayMessages.length > 0 ? "resume" : "session-start");
-		},
+		...createChatLoopSessionReset(loop, state),
 
 		dispose(): void {
 			loop.disposed = true;

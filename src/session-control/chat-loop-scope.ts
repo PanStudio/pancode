@@ -4,6 +4,7 @@ import type { AsyncLocalStorage } from "node:async_hooks";
 import type { PendingSkillRequest, PendingSkillToolPolicy, SkillSurfaceChange } from "../core/skill-activation.js";
 import type { TurnConstraints } from "../core/turn-constraints.js";
 import type { MiddlewareToolChoiceControl } from "../domains/middleware/index.js";
+import type { createConversationEggs } from "../domains/session/easter-eggs.js";
 import type { RetrySettings } from "../domains/session/retry.js";
 import type { EngineAgentHandle, EngineAgentOptions } from "../engine/agent.js";
 import type { TurnFailureRecord } from "../lib/turn-control/outcome.js";
@@ -69,6 +70,8 @@ export interface ChatLoopScope {
 	readonly headlessObservation: HeadlessObservationPool | null;
 	readonly missingOutputs: () => string[];
 	readonly hostRunContext: AsyncLocalStorage<ToolInvokeOptions["hostRun"]>;
+	readonly sessionResetListeners: Set<() => void>;
+	readonly eggs: ReturnType<typeof createConversationEggs>;
 	readonly leavePreparation: () => void;
 	readonly enterPreparation: () => void;
 	readonly sideQuestionRound: NonNullable<CreateChatLoopDeps["runSideQuestion"]>;
@@ -120,6 +123,9 @@ export interface ChatLoopScope {
 	readonly requestBudgetRoll: ChatLoopComposition["requestBudgetRoll"];
 	readonly turnRuntime: ChatLoopComposition["turnRuntime"];
 	readonly steerInterrupter: ChatLoopComposition["steerInterrupter"];
+	readonly prewarm: ChatLoopStateMachine["prewarm"];
+	readonly prepareNextRequest: ChatLoopStateMachine["prepareNextRequest"];
+	readonly cancelTriage: ChatLoopSteering["cancelTriage"];
 	readonly withEndpointSlot: ChatLoopStateMachine["withEndpointSlot"];
 	readonly prepareOutOfTurnRound: ChatLoopStateMachine["prepareOutOfTurnRound"];
 	readonly routeMoveWait: ChatLoopComposition["routeMoveWait"];

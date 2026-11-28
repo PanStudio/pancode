@@ -738,6 +738,27 @@ export type ChatLoopContextCommandsState = TurnStateView<
 	| "streaming"
 >;
 
+/** chat-loop/session-reset: clears the turn when the session under the loop changes. */
+export type ChatLoopSessionResetState = TurnStateView<
+	| "activeSkillSurface"
+	| "continuityAtMs"
+	| "currentPendingSkillPolicy"
+	| "currentTurnConstraints"
+	| "lastRunSnapshot"
+	| "lastTurnId"
+	| "replayedContextMessages"
+	| "runtime"
+	| "streaming",
+	| "activeSkillSurface"
+	| "continuityAtMs"
+	| "currentPendingSkillPolicy"
+	| "currentTurnConstraints"
+	| "lastRunSnapshot"
+	| "lastTurnId"
+	| "replayedContextMessages"
+	| "streaming"
+>;
+
 /**
  * The thinking level argument is ignored: the agent state owns the level and
  * turn state keeps no copy. The parameter stays optional because existing test
