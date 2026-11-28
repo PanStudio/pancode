@@ -7,15 +7,15 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
 import { DEFAULT_SETTINGS } from "../../src/core/defaults.js";
-import { validateSettings } from "../../src/core/settings-validate.js";
-import { ToolNames } from "../../src/core/tool-names.js";
-import { createAdmissionQueue } from "../../src/domains/dispatch/admission-queue.js";
 import {
 	budgetLimitWords,
 	cloneRunToolBudgetEnvelope,
 	resolveToolBudgetEnvelope,
 	workerBudgetFromEnvelope,
-} from "../../src/domains/dispatch/budget-envelope.js";
+} from "../../src/core/run-budget-envelope.js";
+import { validateSettings } from "../../src/core/settings-validate.js";
+import { ToolNames } from "../../src/core/tool-names.js";
+import { createAdmissionQueue } from "../../src/domains/dispatch/admission-queue.js";
 import { resolveRunWall, runWallCapMs, wallClockMessage } from "../../src/domains/dispatch/run-limits.js";
 import type { RunNodeIdentity } from "../../src/domains/dispatch/types.js";
 import anthropic from "../../src/domains/providers/runtimes/cloud/anthropic.js";

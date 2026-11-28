@@ -20,6 +20,7 @@ import { isUserVisibleAgent } from "../domains/agents/spec.js";
 import type { ContextState } from "../domains/context/index.js";
 import { renderEffectivePromptContext } from "../domains/context/index.js";
 import type { DispatchContract } from "../domains/dispatch/contract.js";
+import { summarizeTrustStatus } from "../domains/evidence/index.js";
 import type { TaskMemoryOperatorStatus } from "../domains/memory/index.js";
 import { PANES_PRESETS } from "../domains/mux/operations.js";
 import { selectProjectPreload } from "../domains/prompts/preload.js";
@@ -365,6 +366,11 @@ function welcomeShellSandbox(safety: Readonly<PancodeSettings>["safety"]): Welco
 	};
 }
 
+/** Run readers that need no presentation state: durable result facts and the evidence domain's trust summary. */
+const STATIC_RUN_READERS = {
+	readRunResult: (runId: string) => readWorkerRunResultFacts(runId),
+	summarizeTrust: summarizeTrustStatus,
+};
 /**
  * Construct the terminal-independent presentation graph around an injected
  * TUI. The composition root retains process/session ownership; this unit owns
@@ -546,7 +552,7 @@ export function createInteractivePresentation(deps: InteractivePresentationDeps)
 	});
 	const unbindRunReaders = deps.telemetryRunReaders?.bindRunReaders({
 		dispatchSnapshot: () => deps.dispatch.snapshot(),
-		readRunResult: (runId) => readWorkerRunResultFacts(runId),
+		...STATIC_RUN_READERS,
 	});
 	const dispatchBoardStore = factories.createDispatchBoardStore(
 		deps.telemetry,

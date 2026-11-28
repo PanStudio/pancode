@@ -3,7 +3,6 @@
 import { basename } from "node:path";
 import { tierPolicy } from "../../core/presentation-tier.js";
 import type { SessionContract, SessionMeta } from "../../domains/session/index.js";
-import { liveSessionOwner } from "../../domains/session/live-owner.js";
 import type { TuiMouseEvent, TuiMouseEventResult } from "../../engine/tui.js";
 import {
 	getKeybindings,
@@ -17,6 +16,7 @@ import {
 	truncateToWidth,
 } from "../../engine/tui.js";
 import { sanitizeCallTargetText } from "../../lib/call-target/call-target.js";
+import { liveSessionOwner } from "../../lib/heartbeat/live-owner.js";
 import { backOutOneLayer, type EscapeLayers, escapeHintEntry } from "../escape-layers.js";
 import { relative } from "../format-time.js";
 import {

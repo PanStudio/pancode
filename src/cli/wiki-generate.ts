@@ -7,6 +7,7 @@ import { loadDomains } from "../core/domain-loader.js";
 import { formatElapsed } from "../core/format-time.js";
 import { sha256Hex } from "../core/hash.js";
 import { asDirectoryPathBoundary } from "../core/path-boundary.js";
+import { cloneRunToolBudgetEnvelope, formatEffectiveBudget } from "../core/run-budget-envelope.js";
 import { safeResourceWrite } from "../core/safe-resource-write.js";
 import type { Fact, FactSum } from "../core/telemetry/fact.js";
 import {
@@ -44,7 +45,6 @@ import {
 	observedWikiSources,
 	wikiSourcesMatch,
 } from "../domains/context/wiki/source-content.js";
-import { cloneRunToolBudgetEnvelope, formatEffectiveBudget } from "../domains/dispatch/budget-envelope.js";
 import type { DispatchContract } from "../domains/dispatch/contract.js";
 import { DISPATCH_INTENT_PATH_LIST_CAP } from "../domains/dispatch/index.js";
 import { declaredScopeIntent } from "../domains/dispatch/intent.js";
@@ -61,9 +61,10 @@ import { ResourcesDomainModule } from "../domains/resources/module.js";
 import { SafetyDomainModule } from "../domains/safety/module.js";
 import { SchedulingDomainModule } from "../domains/scheduling/module.js";
 import { SessionDomainModule } from "../domains/session/module.js";
-import { TelemetryDomainModule } from "../domains/telemetry/module.js";
+import { createTelemetryDomainModule } from "../domains/telemetry/module.js";
 import { runsCost, runsTotal } from "../domains/telemetry/read-model-cost.js";
 import { wrapTextWithAnsi } from "../engine/text-wrap.js";
+import { retentionPruners } from "../entry/retention-pruners.js";
 import { redactSecretString } from "../lib/secrets/redaction.js";
 import { armInternalDispatchDeadline } from "./internal-dispatch.js";
 import { createCliWorkerHooks } from "./worker-extension-hooks.js";
@@ -1072,7 +1073,7 @@ async function loadWikiDispatch(): Promise<{
 		AgentsDomainModule,
 		workerHooks.middlewareModule,
 		SessionDomainModule,
-		TelemetryDomainModule,
+		createTelemetryDomainModule({ retention: retentionPruners }),
 		SchedulingDomainModule,
 		createDispatchDomainModule({ journalRunEvents: true, workerHooks: workerHooks.workerHooks }),
 	]);

@@ -15,7 +15,7 @@ import {
 	HEADLESS_PERMISSION_DENIED_MARKER,
 	HEADLESS_PERMISSION_DENIED_REASON,
 } from "../../src/core/headless-permission.js";
-import { WORKER_OUTPUT_MAX_BYTES } from "../../src/domains/dispatch/event-pump.js";
+import { WORKER_OUTPUT_MAX_BYTES } from "../../src/core/worker-output.js";
 
 import type { SafetyBlockedAttempt } from "../../src/domains/dispatch/types.js";
 import { inspectRunEvidence } from "../../src/domains/evidence/run-evidence.js";

@@ -5,15 +5,7 @@ import { Value } from "typebox/value";
 import { validateSettingsFile } from "../../../../../src/core/config.js";
 import { cwdHash } from "../../../../../src/core/cwd-hash.js";
 import { pancodeStateDir } from "../../../../../src/core/xdg.js";
-import type { RunListCursor } from "../../../../../src/domains/session/index.js";
-import {
-	listRunTelemetrySources,
-	loadRunCallsTelemetrySource,
-	loadRunScopeFiles,
-	loadRunTelemetrySource,
-	loadSessionTelemetrySource,
-	runTelemetryDirectoryExists,
-} from "../../../../../src/domains/session/index.js";
+import type { RunListCursor } from "../../../../../src/domains/telemetry/index.js";
 import {
 	cacheReport,
 	callsReport,
@@ -21,9 +13,15 @@ import {
 	explain,
 	explainRepoRef,
 	isRepoRef,
+	listRunTelemetrySources,
+	loadRunCallsTelemetrySource,
+	loadRunScopeFiles,
+	loadRunTelemetrySource,
+	loadSessionTelemetrySource,
 	runCostReport,
 	runRowTelemetry,
 	runTelemetry,
+	runTelemetryDirectoryExists,
 	runTimeline,
 	sessionOperatorMetrics,
 	sessionTelemetry,
