@@ -24,7 +24,7 @@ import {
 } from "../../core/store-paths.js";
 import { ToolNames } from "../../core/tool-names.js";
 import type { McpPathArgumentAccess } from "../../domains/mcp/index.js";
-import type { HostEffectCall } from "../registry-contract.js";
+import type { HostEffectCall } from "../registry/contract.js";
 import { prepareStoreAdmissionArguments, type StoreAccess, storeAccessRefusal } from "../store/surface.js";
 
 /** What a session may write in the store: the shape the `store` tool and a worker grant use. */

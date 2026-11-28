@@ -13,7 +13,7 @@ import { prepareBoundedImage } from "../file-references.js";
 import { escapeRegExp } from "../ignore-policy.js";
 import { resolveReadPath } from "../path-utils.js";
 import { readMaxBytes } from "../read.js";
-import type { ToolInvokeOptions } from "../registry-contract.js";
+import type { ToolInvokeOptions } from "../registry/contract.js";
 import { maxOutputArg, timeoutArg, trimOutputHeadTail } from "../safe-exec.js";
 import type { ToolResult, ToolResultDetails } from "../tool-spec.js";
 import { truncateUtf8 } from "../truncate-utf8.js";

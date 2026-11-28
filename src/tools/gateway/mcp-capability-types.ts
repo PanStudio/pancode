@@ -34,7 +34,7 @@ import type { ActionClass } from "../../domains/safety/action-classifier.js";
 import type { WorkerMcpAttestation } from "../../domains/safety/worker-permit.js";
 import type { StoreBackend } from "../../domains/store/index.js";
 import type { McpSkillLoading } from "../context/mcp-skills.js";
-import type { ToolRegistry } from "../registry-contract.js";
+import type { ToolRegistry } from "../registry/contract.js";
 import type { ToolSpec } from "../tool-spec.js";
 import type { McpStoreAccess } from "./mcp-store-references.js";
 

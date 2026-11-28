@@ -22,7 +22,7 @@ import { modelMayActivateSkills } from "../../lib/autonomy/autonomy.js";
 import type { TurnControlRecord } from "../../lib/turn-control/index.js";
 import { resolveSessionTools } from "../../tools/agent-tools.js";
 import { scopedCapabilityShapes, scopeShapesDelta } from "../../tools/gateway/scope-shapes.js";
-import type { AskUserToolPolicy } from "../../tools/registry-contract.js";
+import type { AskUserToolPolicy } from "../../tools/registry/contract.js";
 import { visionObservationText } from "../../tools/vision-sidecar.js";
 import type { ChatSubmitOptions } from "../chat-loop.js";
 import {

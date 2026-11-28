@@ -53,7 +53,7 @@ import { parseWorkerSpec, type WorkerSpec } from "../../src/lib/worker-wire/spec
 import { formatDispatchOutput } from "../../src/tools/dispatch-output.js";
 import type { McpCapabilitySource } from "../../src/tools/gateway/index.js";
 import { createMcpCapabilitySource } from "../../src/tools/gateway/mcp-capabilities.js";
-import type { RegistryVerdict, ToolRegistry } from "../../src/tools/registry-contract.js";
+import type { RegistryVerdict, ToolRegistry } from "../../src/tools/registry/contract.js";
 import { makeDispatchBundle, observedReadEvents } from "../harness/dispatch.js";
 import { dispatchStubContext } from "../harness/dispatch-stub-context.js";
 import { closeServer, readRequestBody } from "../harness/openai-compat-fixture.js";

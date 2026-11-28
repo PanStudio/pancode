@@ -65,7 +65,7 @@ import type {
 	Usage,
 } from "../engine/types.js";
 import type { AutonomyLevel } from "../lib/autonomy/autonomy.js";
-import type { ToolRegistry } from "../tools/registry-contract.js";
+import type { ToolRegistry } from "../tools/registry/contract.js";
 import type { HostInserts } from "./host-inserts.js";
 import { contextFloorRefusal } from "./output-reserve.js";
 import { createTurnContextAnchor } from "./turn-context/anchor.js";

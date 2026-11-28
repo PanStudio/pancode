@@ -48,7 +48,7 @@ import {
 import { canonicalProjectRoot } from "../domains/mcp/trust.js";
 import type { McpCapabilitySource } from "../tools/gateway/mcp-capability-types.js";
 import { isMcpPromptCommandName } from "../tools/gateway/mcp-resources.js";
-import type { RegistryVerdict } from "../tools/registry-contract.js";
+import type { RegistryVerdict } from "../tools/registry/contract.js";
 import { printError } from "./argv.js";
 import { mcpEditOutput, mcpLoginOutput, mcpLogoutOutput } from "./mcp-credentials.js";
 

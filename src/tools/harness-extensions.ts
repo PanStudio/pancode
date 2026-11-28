@@ -15,7 +15,7 @@ import { listExtensionEntries } from "../domains/extensions/listing.js";
 import type { LoadableExtension } from "../domains/extensions/types.js";
 import { isLoadableExtension } from "../domains/extensions/types.js";
 import { UNSANDBOXED_REASON_ARG, UNSANDBOXED_REASON_DESCRIPTION } from "../domains/safety/unsandboxed-reason.js";
-import type { ToolRegistry } from "./registry-contract.js";
+import type { ToolRegistry } from "./registry/contract.js";
 import type { ToolSpec } from "./tool-spec.js";
 
 const MAX_INPUT_BYTES = 64 * 1024;
