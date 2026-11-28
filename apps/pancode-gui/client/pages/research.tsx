@@ -601,7 +601,7 @@ function NewCampaign({
 								set({ target: event.target.value, model: next?.defaultModel ?? next?.models[0] ?? "" });
 							}}
 						>
-							<option value="">Workspace default</option>
+							<option value="">Project default</option>
 							{targets.data?.targets.map((item) => (
 								<option key={item.id} value={item.id}>
 									{item.id}

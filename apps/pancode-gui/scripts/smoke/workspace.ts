@@ -38,7 +38,7 @@ export async function workspaceSteps(run: SmokeRun) {
 		await revealSidebar();
 		await page
 			.locator(".wb-sidebar")
-			.getByRole("button", { name: /^Open workspace/ })
+			.getByRole("button", { name: /^Open project/ })
 			.click();
 		await openDialog.getByLabel("Project folder", { exact: true }).fill(h.home.path);
 		await openDialog.getByRole("button", { name: "Open", exact: true }).click();
@@ -68,7 +68,7 @@ export async function workspaceSteps(run: SmokeRun) {
 		await revealSidebar();
 		await page
 			.locator(".wb-sidebar")
-			.getByRole("button", { name: /^Open workspace/ })
+			.getByRole("button", { name: /^Open project/ })
 			.click();
 		await openDialog.getByLabel("Project folder", { exact: true }).fill(join(h.home.path, "does-not-exist"));
 		await openDialog.getByRole("button", { name: "Open", exact: true }).click();

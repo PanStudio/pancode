@@ -483,7 +483,7 @@ export function InteropPage({ client }: { client: Client }) {
 												<dd>{agent.skillCount ?? "Not reported"}</dd>
 											</div>
 											<div className="fact">
-												<dt>Workspace resources</dt>
+												<dt>Project resources</dt>
 												<dd>{agent.projectArtifacts ?? "Not reported"}</dd>
 											</div>
 										</dl>

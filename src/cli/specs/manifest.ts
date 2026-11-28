@@ -319,7 +319,7 @@ export const NESTED_LEAVES: ReadonlyArray<readonly [string, string, string]> = [
 		"",
 		"telemetry calls <session> [--run <run-id>] [--role <r,..>] [--disposition <d,..>] [--turn <id,..>] [--from <iso>] [--to <iso>] [--limit <n>] [--json]",
 	],
-	["telemetry consent", "", "telemetry consent [--workspace <dir>] [--revoke | --list]"],
+	["telemetry consent", "", "telemetry consent [--project <dir>] [--revoke | --list]"],
 	[
 		"telemetry cost",
 		"",

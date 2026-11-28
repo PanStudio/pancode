@@ -35,7 +35,7 @@ export interface HelpMatch {
 export const VIEW_GUIDE: Readonly<Record<NavPath, { title: string; meaning: string }>> = {
 	"/": {
 		title: "New session",
-		meaning: "Choose a workspace and start a session. PanCode starts when you send your first message.",
+		meaning: "Choose a project and start a session. PanCode starts when you send your first message.",
 	},
 	"/sessions": {
 		title: "Sessions",

@@ -230,7 +230,7 @@ export function contextWorkView(
 	if (live && current) rows.push({ term: "Now", text: current, code: true });
 	rows.push({ term: "Operation", text: operation.id, code: true });
 	rows.push({ term: "Started", text: operation.startedAt, code: true });
-	rows.push({ term: "Workspace", text: operation.cwd, code: true });
+	rows.push({ term: "Project", text: operation.cwd, code: true });
 
 	return {
 		id: operation.id,

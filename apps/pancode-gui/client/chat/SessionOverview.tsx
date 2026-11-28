@@ -595,7 +595,7 @@ export function SessionOverview({
 						</Section>
 
 						{workspace ? (
-							<Section id="pane-workspace" title="Workspace" icon="folder">
+							<Section id="pane-workspace" title="Project" icon="folder">
 								<p className="pane-path" title={workspace.cwd}>
 									<bdi dir="ltr">{workspace.cwd}</bdi>
 								</p>

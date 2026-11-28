@@ -233,21 +233,21 @@ export function SessionSidebar({
 						</NavLink>
 						<button type="button" className="wb-action" onClick={onOpenWorkspace}>
 							<Icon name="folderOpen" />
-							<span>Open workspace</span>
+							<span>Open project</span>
 						</button>
 					</nav>
 
 					{/* Up and Down (j and k) move between task rows, as Help says. */}
 					{/* biome-ignore lint/a11y/noNoninteractiveTabindex: keyboard users scroll the task list independently. */}
-					<section className="wb-side__tasks" tabIndex={0} aria-label="Sessions by workspace" onKeyDown={moveTaskFocus}>
+					<section className="wb-side__tasks" tabIndex={0} aria-label="Sessions by project" onKeyDown={moveTaskFocus}>
 						<div className="wb-side__heading">
-							<h2>Workspaces</h2>
+							<h2>Projects</h2>
 						</div>
 
-						{workspaces.isPending ? <p className="wb-note">Loading workspaces…</p> : null}
+						{workspaces.isPending ? <p className="wb-note">Loading projects…</p> : null}
 						{workspaces.error ? (
 							<p className="wb-note" role="alert">
-								Workspaces unavailable.{" "}
+								Projects unavailable.{" "}
 								<button type="button" className="wb-link" onClick={() => void workspaces.refetch()}>
 									Retry
 								</button>
@@ -256,7 +256,7 @@ export function SessionSidebar({
 						{!workspaces.isPending && !workspaces.error && ordered.length === 0 ? (
 							<div className="wb-side__empty">
 								<PancodeEmptyMark />
-								<p className="wb-note">Open a workspace to start your first session.</p>
+								<p className="wb-note">Open a project to start your first session.</p>
 							</div>
 						) : null}
 						{ordered.slice(0, shown).map((workspace) => (

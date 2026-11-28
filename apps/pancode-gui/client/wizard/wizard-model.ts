@@ -24,7 +24,7 @@ export const STAGE_LABELS: Readonly<Record<StageId, string>> = {
 	connect: "Connect",
 	model: "Model",
 	test: "Test",
-	workspace: "Workspace",
+	workspace: "Project",
 };
 
 export type WizardMode = "first" | "add" | "repair";

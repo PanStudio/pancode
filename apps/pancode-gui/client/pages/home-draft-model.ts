@@ -192,13 +192,12 @@ export function workspaceNotice(workspaces: {
 	/** The chosen workspace is not in a loaded list. */
 	missing: boolean;
 }): { text: string; alert: boolean } | null {
-	if (workspaces.pending)
-		return { text: "Loading workspaces. You can keep writing while PanCode checks.", alert: false };
+	if (workspaces.pending) return { text: "Loading projects. You can keep writing while PanCode checks.", alert: false };
 	if (workspaces.failed)
-		return { text: "Workspaces could not be loaded. Your draft is kept; retry to check them again.", alert: true };
+		return { text: "Projects could not be loaded. Your draft is kept; retry to check them again.", alert: true };
 	if (workspaces.missing && workspaces.listed > 0)
 		return {
-			text: "Your chosen workspace is no longer listed. Retry, choose another workspace, or reopen its folder.",
+			text: "Your chosen project is no longer listed. Retry, choose another project, or reopen its folder.",
 			alert: false,
 		};
 	return null;

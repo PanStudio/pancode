@@ -28,7 +28,7 @@ export function OpenWorkspaceDialog({
 		if (target.trim()) launch.open(target.trim(), false);
 	};
 	return (
-		<Dialog title="Open workspace" eyebrow="A folder on this machine" onClose={onClose} initialFocus={field}>
+		<Dialog title="Open project" eyebrow="A folder on this machine" onClose={onClose} initialFocus={field}>
 			<p className="wb-open__intro">Choose a project folder. You can browse its work before starting a session.</p>
 			<form
 				className="wb-open"
@@ -48,7 +48,7 @@ export function OpenWorkspaceDialog({
 			</form>
 			{launch.error ? <p role="alert">{launch.error.message}</p> : null}
 			{path.trim() === "" && (recents.data?.length ?? 0) > 0 ? (
-				<section className="wb-open__recents" aria-label="Recent workspaces">
+				<section className="wb-open__recents" aria-label="Recent projects">
 					<h3>Recent</h3>
 					<ul>
 						{workspacesByRecency(recents.data ?? [])

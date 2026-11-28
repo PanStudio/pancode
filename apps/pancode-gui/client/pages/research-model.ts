@@ -11,10 +11,10 @@ import type {
 import { eyebrow, type PanelCopy } from "../design/panel-model.js";
 
 export const RESEARCH_PANEL: PanelCopy = {
-	eyebrow: eyebrow("Research campaigns", "this workspace", "hill climb"),
+	eyebrow: eyebrow("Research campaigns", "this project", "hill climb"),
 	title: "Research",
 	boundary:
-		"Campaigns, raw samples and verdicts live under .pancode/data/research in this workspace. Candidates run in isolated worktrees; only the research branch moves, never your checkout.",
+		"Campaigns, raw samples and verdicts live under .pancode/data/research in this project. Candidates run in isolated worktrees; only the research branch moves, never your checkout.",
 };
 
 const signed = (value: number) => `${value >= 0 ? "+" : ""}${(value * 100).toFixed(2)}%`;

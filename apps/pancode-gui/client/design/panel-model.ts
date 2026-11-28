@@ -82,7 +82,7 @@ export const PANELS = {
 			"Values are read from the configuration layers on this machine. Credentials, executable arguments and structured collections stay in those files; what crosses is that they are configured.",
 	},
 	configMap: {
-		eyebrow: eyebrow("Effective PanCode", "one workspace", READ_ONLY),
+		eyebrow: eyebrow("Effective PanCode", "one project", READ_ONLY),
 		title: "Why PanCode behaves this way",
 		boundary:
 			"Source contents, hook arguments and environment maps stay in their files on this machine. What crosses is each surface's scope, precedence, trust, apply timing and its numeric facts.",
@@ -130,10 +130,10 @@ export const PANELS = {
 			"The record is reproduced from the ledger on this machine as it was sealed. Reading it re-runs nothing, and a valid integrity mark authenticates the record rather than the work it describes.",
 	},
 	sessions: {
-		eyebrow: eyebrow("Your work", "workspaces on this machine", "open, resume and delete"),
+		eyebrow: eyebrow("Your work", "projects on this machine", "open, resume and delete"),
 		title: "Sessions",
 		boundary:
-			"Session history is read from the session store on this machine, and deleting a closed session removes it from that store for good. Opening a workspace records its path in PanCode's own state and changes nothing inside the folder.",
+			"Session history is read from the session store on this machine, and deleting a closed session removes it from that store for good. Opening a project records its path in PanCode's own state and changes nothing inside the folder.",
 	},
 } as const satisfies Record<string, PanelCopy>;
 

@@ -58,7 +58,7 @@ export interface ContextFact {
 
 export function contextWorkspaceFacts(workspace: SessionWorkspace): ContextFact[] {
 	return [
-		{ label: "Workspace", value: null, note: workspace.cwd },
+		{ label: "Project", value: null, note: workspace.cwd },
 		{
 			label: "Repository",
 			value: null,

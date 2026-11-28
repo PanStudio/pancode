@@ -193,9 +193,9 @@ export function appCommands(situation: CommandSituation, handlers: CommandHandle
 	if (openWorkspace)
 		commands.push({
 			id: "workspace.open",
-			title: "Open workspace",
+			title: "Open project",
 			group: "Session",
-			keywords: ["project", "folder", "directory", "add"],
+			keywords: ["workspace", "folder", "directory", "add"],
 			binding: "openWorkspace",
 			available: true,
 			run: openWorkspace,

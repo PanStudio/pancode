@@ -255,7 +255,7 @@ export const KEYBINDINGS = {
 		key: "o",
 		modifiers: ["primary"],
 		scope: "global",
-		action: "Open workspace folder",
+		action: "Open project folder",
 		where: "No dialog open",
 	},
 	sessionPanel: {

@@ -72,10 +72,10 @@ function WorkspaceMenu({
 		<details className="ws-menu" ref={menu}>
 			<summary className="wb-chip" title={current?.path}>
 				<Icon name="folder" />
-				<span>{current?.name ?? "Choose a workspace"}</span>
+				<span>{current?.name ?? "Choose a project"}</span>
 				<Icon name="chevronDown" />
 			</summary>
-			<fieldset className="ws-menu__panel" aria-label="Workspaces">
+			<fieldset className="ws-menu__panel" aria-label="Projects">
 				{workspaces.map((workspace) => (
 					<button
 						key={workspace.id}
@@ -440,7 +440,7 @@ export function Home({ client }: { client: Client }) {
 							<details>
 								<summary>Earlier request</summary>
 								<p className="newtask__request">{pending.exactTurnBody.text}</p>
-								<p>Workspace: {list.find((item) => item.id === pending.workspaceId)?.name ?? pending.workspaceId}</p>
+								<p>Project: {list.find((item) => item.id === pending.workspaceId)?.name ?? pending.workspaceId}</p>
 							</details>
 							<div className="newtask__recovery-actions">
 								{!epochChanged ? (

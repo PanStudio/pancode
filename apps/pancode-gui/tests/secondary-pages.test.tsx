@@ -220,7 +220,7 @@ test("read-only project inspection never describes a save and an empty project l
 	assert.doesNotMatch(html, /saves go|user settings/);
 	cache.setQueryData(["workspaces"], []);
 	const empty = render(cache, "/usage", <ProjectPicker />);
-	assert.match(empty, /href="\/"[^>]*>Open a workspace/);
+	assert.match(empty, /href="\/"[^>]*>Open a project/);
 	assert.doesNotMatch(empty, /href="\/sessions"/);
 });
 
