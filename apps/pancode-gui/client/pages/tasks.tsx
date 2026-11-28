@@ -166,7 +166,7 @@ export function Sessions({ client }: { client: Client }) {
 					onClick={() => actions.newTask(workspaceId)}
 				>
 					<Icon name="compose" />
-					New task
+					New session
 				</button>
 			</TopBar>
 			<div className="taskpage">
@@ -211,17 +211,17 @@ export function Sessions({ client }: { client: Client }) {
 					<div className="taskpage__toolbar">
 						<label className="taskpage__search">
 							<Icon name="search" />
-							<span className="sr-only">Find a task</span>
+							<span className="sr-only">Find a session</span>
 							<input
 								type="search"
 								value={searchBox.value}
 								maxLength={256}
 								onChange={searchBox.onChange}
-								placeholder="Search tasks, models or connections…"
+								placeholder="Search sessions, models or connections…"
 							/>
 						</label>
 						<label>
-							<span className="sr-only">Sort tasks</span>
+							<span className="sr-only">Sort sessions</span>
 							<select
 								value={sort}
 								onChange={(event) => set("sort", event.target.value === "recent" ? "" : event.target.value)}
@@ -232,7 +232,7 @@ export function Sessions({ client }: { client: Client }) {
 							</select>
 						</label>
 					</div>
-					<nav className="taskpage__filters" aria-label="Project task activity">
+					<nav className="taskpage__filters" aria-label="Project session activity">
 						{PROJECT_TASK_FILTERS.map((item) => (
 							<button
 								type="button"
@@ -295,7 +295,7 @@ export function Sessions({ client }: { client: Client }) {
 												className="taskpage__main"
 												disabled={actions.resuming !== null || actions.launch.busy}
 												onClick={() => actions.resume(row.id, row.workspaceId)}
-												title="Resume this saved task"
+												title="Resume this saved session"
 											>
 												{body}
 											</button>
@@ -312,7 +312,7 @@ export function Sessions({ client }: { client: Client }) {
 							<PancodeEmptyMark />
 							<h2>
 								{query || filter !== "all"
-									? "No tasks match this view"
+									? "No sessions match this view"
 									: history.error
 										? "No open sessions here"
 										: "Your next discovery starts here"}
@@ -322,7 +322,7 @@ export function Sessions({ client }: { client: Client }) {
 									? "Try another search or activity filter."
 									: history.error
 										? "No open sessions were reported. Saved conversations may still exist in the unavailable history."
-										: "Describe a task to start working in this project."}
+										: "Start a session to begin working in this project."}
 							</p>
 							{query || filter !== "all" ? (
 								<button type="button" onClick={() => setSearch({})}>
@@ -335,17 +335,23 @@ export function Sessions({ client }: { client: Client }) {
 									disabled={!workspace.data}
 									onClick={() => actions.newTask(workspaceId)}
 								>
-									Start a task
+									Start a session
 									<Icon name="plus" />
 								</button>
 							)}
 						</div>
 					) : null}
 					{loading ? null : inventory.shown.length || !inventory.counts.all ? (
-						<InventoryMore total={inventory.shown.length} limit={page.limit} label="tasks" list={list} onMore={page.more} />
+						<InventoryMore
+							total={inventory.shown.length}
+							limit={page.limit}
+							label="sessions"
+							list={list}
+							onMore={page.more}
+						/>
 					) : (
 						<div className="inventory-more">
-							<p role="status">Showing 0 of {inventory.counts.all} tasks</p>
+							<p role="status">Showing 0 of {inventory.counts.all} sessions</p>
 						</div>
 					)}
 					<footer className="taskpage__scope">

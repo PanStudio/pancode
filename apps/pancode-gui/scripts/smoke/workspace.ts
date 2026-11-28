@@ -43,18 +43,18 @@ export async function workspaceSteps(run: SmokeRun) {
 		await openDialog.getByLabel("Project folder", { exact: true }).fill(h.home.path);
 		await openDialog.getByRole("button", { name: "Open", exact: true }).click();
 		await page.waitForURL(/\/workspaces\/[^/]+\/sessions$/);
-		await page.locator("main button.primary", { hasText: "New task" }).click();
+		await page.locator("main button.primary", { hasText: "New session" }).click();
 		await page.waitForURL(`${origin}/`);
 		await page.getByLabel("Message PanCode", { exact: true }).fill("Summarize this project.");
-		await page.getByRole("button", { name: "Start task", exact: true }).click();
+		await page.getByRole("button", { name: "Start session", exact: true }).click();
 		await page.waitForURL(/\/sessions\/[^/]+$/);
 		await page.getByLabel("Message PanCode", { exact: true }).waitFor();
 		run.noticeSessionUrl = page.url();
 		// The bar also holds the transcript detail picker, so the task's menu is found by its name.
-		await page.locator('.conversation .wb-bar .wb-menu:has(> summary[aria-label="Task actions"]) summary').click();
-		await page.getByRole("menuitem", { name: /^All tasks in / }).click();
+		await page.locator('.conversation .wb-bar .wb-menu:has(> summary[aria-label="Session actions"]) summary').click();
+		await page.getByRole("menuitem", { name: /^All sessions in / }).click();
 		await page.waitForURL(/\/workspaces\/[^/]+\/sessions$/);
-		await page.locator("main button.primary", { hasText: "New task" }).waitFor();
+		await page.locator("main button.primary", { hasText: "New session" }).waitFor();
 		await page
 			.locator("main")
 			.getByRole("heading", { name: /^Your work in / })

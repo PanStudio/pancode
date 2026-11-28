@@ -19,10 +19,10 @@ test("recorded sessions are named by their task's title, the id only when no tas
 test("the scope note names the tasks the metrics leave out and says why", () => {
 	assert.equal(
 		metricsScopeNote({ recorded: ["seeded-1", "seeded-2", "fresh-1"], recordedCount: 3, tasks, project: true }),
-		"Covers all of this project's 3 tasks.",
+		"Covers all of this project's 3 sessions.",
 	);
 	const missing = metricsScopeNote({ recorded: ["seeded-1", "seeded-2"], recordedCount: 2, tasks, project: true });
-	assert.match(missing ?? "", /^Covers 2 of this project's 3 tasks\. Not counted.*“New work”\.$/u);
+	assert.match(missing ?? "", /^Covers 2 of this project's 3 sessions\. Not counted.*“New work”\.$/u);
 	const older = metricsScopeNote({ recorded: ["seeded-1"], recordedCount: 5, tasks, project: false });
 	assert.match(older ?? "", /^Shows the 1 most recent of 5 recorded sessions\./u);
 	assert.equal(metricsScopeNote({ recorded: [], recordedCount: 0, tasks: [], project: true }), null);
@@ -33,7 +33,7 @@ test("the scope note names the tasks the metrics leave out and says why", () => 
 			tasks,
 			project: true,
 		}),
-		"Covers all of this project's 3 tasks. 1 more recorded session is not in the task list, so it is named by id.",
+		"Covers all of this project's 3 sessions. 1 more recorded session is not in the session list, so it is named by id.",
 	);
 });
 
@@ -44,7 +44,7 @@ test("metrics read for one task never count the project's other tasks as missing
 	);
 	assert.equal(
 		metricsScopeNote({ recorded: [], recordedCount: 0, tasks, project: false, session: "fresh-1" }),
-		"PanCode has no usage record for this task yet.",
+		"PanCode has no usage record for this session yet.",
 	);
 });
 

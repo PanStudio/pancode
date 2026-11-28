@@ -72,7 +72,7 @@ export function HomeAside({ client, workspace }: { client: Client; workspace: Wo
 								</h2>
 								{workspace ? (
 									<Link className="pane-link" to={`/workspaces/${workspace.id}/sessions`}>
-										All tasks
+										All sessions
 									</Link>
 								) : null}
 							</header>
@@ -84,7 +84,7 @@ export function HomeAside({ client, workspace }: { client: Client; workspace: Wo
 									</p>
 								</>
 							) : (
-								<p className="pane-empty">Open a workspace to start a task in it.</p>
+								<p className="pane-empty">Open a workspace to start a session in it.</p>
 							)}
 						</section>
 
@@ -154,7 +154,7 @@ export function HomeAside({ client, workspace }: { client: Client; workspace: Wo
 									))}
 								</ul>
 							) : (
-								<p className="pane-empty">No task is running.</p>
+								<p className="pane-empty">No session is running.</p>
 							)}
 						</section>
 					</div>

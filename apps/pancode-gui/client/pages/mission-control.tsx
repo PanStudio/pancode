@@ -243,7 +243,7 @@ export function MissionControl({ client }: { client: Client }) {
 							<p>
 								{items.length
 									? "Try another project, search, or activity filter."
-									: "Saved tasks stay in each project's task list and in the sidebar, where you can resume them. A task you start or resume appears here with its progress and agents."}
+									: "Saved sessions stay in each project's session list and in the sidebar, where you can resume them. A session you start or resume appears here with its progress and agents."}
 							</p>
 							{items.length ? (
 								<button type="button" onClick={() => setSearch({})}>
@@ -260,7 +260,7 @@ export function MissionControl({ client }: { client: Client }) {
 					{/* Below the cards only once they are read, so their arrival pushes nothing that was already painted. */}
 					{items || overview.error ? (
 						<footer className="mission__scope">
-							Sessions held by this PanCode server. Saved project history stays in each project's task list. SSH worker
+							Sessions held by this PanCode server. Saved project history stays in each project's session list. SSH worker
 							activity appears within its owning session.
 						</footer>
 					) : null}

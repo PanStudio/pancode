@@ -55,8 +55,8 @@ export function LiveElsewhereTask({
 				<h1>{label}</h1>
 				<p>{takeOverExplanation(live)}</p>
 				{takeOver.data && !takeOver.data.released ? <p>{takeOver.data.message}</p> : null}
-				{takeOver.error ? <p role="alert">Could not take this task over. {takeOver.error.message}</p> : null}
-				{resumeError ? <p role="alert">Could not resume this task. {resumeError.message}</p> : null}
+				{takeOver.error ? <p role="alert">Could not take this session over. {takeOver.error.message}</p> : null}
+				{resumeError ? <p role="alert">Could not resume this session. {resumeError.message}</p> : null}
 				<div className="task-state__actions">
 					<button type="button" className="primary" disabled={!live.canTakeOver || busy} onClick={() => takeOver.mutate()}>
 						{takeOver.isPending ? "Taking over…" : resuming ? "Resuming…" : "Take over"}
@@ -64,7 +64,7 @@ export function LiveElsewhereTask({
 					<button type="button" disabled={busy} onClick={onRecheck}>
 						Check again
 					</button>
-					<Link to="/">Back to a new task</Link>
+					<Link to="/">Back to a new session</Link>
 				</div>
 			</div>
 			<section className="live-elsewhere__history" aria-label="Saved history">
@@ -82,7 +82,7 @@ export function LiveElsewhereTask({
 				)}
 			</section>
 			<form className="live-elsewhere__composer" aria-label="Message" onSubmit={(event) => event.preventDefault()}>
-				<textarea disabled aria-label="Message" placeholder="Take over to send a message in this task." />
+				<textarea disabled aria-label="Message" placeholder="Take over to send a message in this session." />
 				<button type="submit" disabled>
 					Send
 				</button>

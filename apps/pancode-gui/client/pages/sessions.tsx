@@ -373,18 +373,18 @@ function SessionView({ client, id }: { client: Client; id: string }) {
 				<TopBar />
 				<div className="task-state" role={located.data ? "alert" : "status"}>
 					<Icon name="warn" />
-					<h1>This task is not open</h1>
+					<h1>This session is not open</h1>
 					{located.data === undefined ? (
 						<p>Looking for it in your projects…</p>
 					) : found ? (
 						<p>It is saved in {found.name}. Resuming starts PanCode for it and continues the conversation.</p>
 					) : (
 						<p>
-							None of your projects has a saved task with this link.
+							None of your projects has a saved session with this link.
 							{unread > 0 ? ` ${unread} ${unread === 1 ? "project" : "projects"} could not be read.` : ""}
 						</p>
 					)}
-					{resume.error ? <p>Could not resume this task. {resume.error.message}</p> : null}
+					{resume.error ? <p>Could not resume this session. {resume.error.message}</p> : null}
 					<div className="task-state__actions">
 						{found ? (
 							<button
@@ -393,14 +393,14 @@ function SessionView({ client, id }: { client: Client; id: string }) {
 								disabled={resume.isPending || controlling}
 								onClick={() => resume.mutate(found.id)}
 							>
-								{resume.isPending ? "Resuming…" : "Resume task"}
+								{resume.isPending ? "Resuming…" : "Resume session"}
 							</button>
 						) : located.data ? (
 							<button type="button" className="primary" disabled={located.isFetching} onClick={() => void located.refetch()}>
 								{located.isFetching ? "Looking again…" : "Look again"}
 							</button>
 						) : null}
-						<Link to="/">Back to a new task</Link>
+						<Link to="/">Back to a new session</Link>
 					</div>
 				</div>
 			</>
@@ -510,12 +510,12 @@ function SessionView({ client, id }: { client: Client; id: string }) {
 								<StatusMark tone={memoryMark.tone} label={memoryMark.label} title={memoryMark.title} live={memoryMark.live} />
 							) : null}
 							{/* The task's own actions sit with its name, not with the view controls at the far end. */}
-							<Menu label="Task actions">
+							<Menu label="Session actions">
 								<MenuItem icon="search" onClick={() => setOutline(true)}>
 									Find in conversation
 								</MenuItem>
 								<MenuItem icon="pencil" disabled={renameBlocked !== null} onClick={() => setRenaming(true)}>
-									{renameBlocked ? "Rename task · after the first answer" : "Rename task"}
+									{renameBlocked ? "Rename session · after the first answer" : "Rename session"}
 								</MenuItem>
 								<MenuItem icon="external" onClick={() => openAppWindow(`/sessions/${snapshot.id}`)}>
 									Open in new window
@@ -524,7 +524,7 @@ function SessionView({ client, id }: { client: Client; id: string }) {
 									Project settings
 								</MenuItem>
 								<MenuItem icon="folder" onClick={() => void navigate(`/workspaces/${snapshot.workspaceId}/sessions`)}>
-									All tasks in {workspaceName}
+									All sessions in {workspaceName}
 								</MenuItem>
 								{snapshot.state === "open"
 									? menuActions(capabilities.data).map((spec) => (
@@ -569,7 +569,7 @@ function SessionView({ client, id }: { client: Client; id: string }) {
 									disabled={!canClose || controlling}
 									onClick={() => requestClose({ id, workspaceId: snapshot.workspaceId, title, currentTurnId: null })}
 								>
-									Close task
+									Close session
 								</MenuItem>
 							</Menu>
 							<Suspense fallback={null}>
@@ -578,7 +578,7 @@ function SessionView({ client, id }: { client: Client; id: string }) {
 							<Link
 								className="wb-chip wb-chip--place"
 								to={`/workspaces/${snapshot.workspaceId}/sessions`}
-								title={workspaceRoot ? `All tasks in ${workspaceRoot}` : "All tasks in this project"}
+								title={workspaceRoot ? `All sessions in ${workspaceRoot}` : "All sessions in this project"}
 							>
 								<Icon name="folder" />
 								<span>{workspaceName}</span>
@@ -626,7 +626,7 @@ function SessionView({ client, id }: { client: Client; id: string }) {
 							{connection === "Reconnecting…" || connection === "Not connected" || session.error ? (
 								<ConversationBanner
 									tone="warn"
-									title={session.error ? "Could not refresh this task." : "Live updates are reconnecting."}
+									title={session.error ? "Could not refresh this session." : "Live updates are reconnecting."}
 									action={
 										<button type="button" disabled={session.isFetching} onClick={() => void session.refetch()}>
 											{session.isFetching ? "Refreshing…" : "Refresh"}
@@ -643,12 +643,12 @@ function SessionView({ client, id }: { client: Client; id: string }) {
 									tone="quiet"
 									title={
 										snapshot.state === "closed"
-											? "This task is closed."
+											? "This session is closed."
 											: snapshot.state === "unknown"
-												? "PanCode is no longer connected to this task."
-												: "This task could not continue."
+												? "PanCode is no longer connected to this session."
+												: "This session could not continue."
 									}
-									action={<Link to={`/workspaces/${snapshot.workspaceId}/sessions`}>Reopen from the task list</Link>}
+									action={<Link to={`/workspaces/${snapshot.workspaceId}/sessions`}>Reopen from the session list</Link>}
 								>
 									The recorded conversation is still available below.
 								</ConversationBanner>
@@ -663,7 +663,7 @@ function SessionView({ client, id }: { client: Client; id: string }) {
 											disabled={resume.isPending || controlling}
 											onClick={() => resume.mutate(snapshot.workspaceId)}
 										>
-											{resume.isPending ? "Resuming…" : "Resume task"}
+											{resume.isPending ? "Resuming…" : "Resume session"}
 										</button>
 									}
 								>
@@ -671,7 +671,7 @@ function SessionView({ client, id }: { client: Client; id: string }) {
 								</ConversationBanner>
 							) : null}
 							{resume.error ? (
-								<ConversationBanner tone="warn" title="Could not resume this task.">
+								<ConversationBanner tone="warn" title="Could not resume this session.">
 									{resume.error.message}
 								</ConversationBanner>
 							) : null}
@@ -757,7 +757,7 @@ function SessionView({ client, id }: { client: Client; id: string }) {
 									view={contextView}
 									compact
 									cancelling={stopContext.stopping === contextView.id}
-									cancelLabel={running ? "Stop task and context work" : "Stop context work"}
+									cancelLabel={running ? "Stop session and context work" : "Stop context work"}
 									{...(contextView.live
 										? { onCancel: () => stopContext.stop(contextView.id) }
 										: {

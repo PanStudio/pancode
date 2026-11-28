@@ -13,7 +13,7 @@ type AsideCapability = NonNullable<AgentCapabilities["aside"]>;
 // A running turn does not block it: the agent answers over a snapshot of the history (#415).
 export function asideBlock(capability: AsideCapability | undefined, sessionOpen: boolean): string | null {
 	if (!capability) return "This PanCode build cannot answer beside the conversation.";
-	if (!sessionOpen) return "This task is not open. Open it to ask beside it.";
+	if (!sessionOpen) return "This session is not open. Open it to ask beside it.";
 	return null;
 }
 

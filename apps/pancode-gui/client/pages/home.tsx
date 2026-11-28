@@ -192,7 +192,7 @@ export function Home({ client }: { client: Client }) {
 				: draft.textIssue === "invalid"
 					? "The saved draft text could not be restored."
 					: text.trim().length > PROMPT_TEXT_MAX_CHARACTERS
-						? "A request can contain up to 32,000 characters. Shorten the draft before starting a task."
+						? "A request can contain up to 32,000 characters. Shorten the draft before starting a session."
 						: null;
 	const setText = (value: string) => updateHomeDraft({ text: value });
 	const setChosen = (workspaceId: string) => {
@@ -279,7 +279,7 @@ export function Home({ client }: { client: Client }) {
 						// Steps finish in order, so the caption names the first open one even when a later one is already done.
 						done={setup.isSuccess && workspaces.isSuccess ? (ready ? (needsWorkspace ? 1 : 2) : 0) : null}
 					/>
-					<h1 className="newtask__title">{onboarding ? "Set up your workspace" : "Start a task"}</h1>
+					<h1 className="newtask__title">{onboarding ? "Set up your workspace" : "Start a session"}</h1>
 					{!onboarding ? <p className="newtask__intro">Describe a change to make or a question about your code.</p> : null}
 					{onboarding ? (
 						<Onboarding
@@ -378,10 +378,10 @@ export function Home({ client }: { client: Client }) {
 									className="composer__submit primary"
 									type="submit"
 									disabled={!canSend}
-									aria-label={busy ? "Starting task…" : "Start task"}
+									aria-label={busy ? "Starting session…" : "Start session"}
 								>
 									{busy ? <PancodePulse size={PULSE_SIZE.row} /> : <Icon name="arrowUp" />}
-									<span>{busy ? "Starting…" : "Start task"}</span>
+									<span>{busy ? "Starting…" : "Start session"}</span>
 								</button>
 							</div>
 						</div>
@@ -408,7 +408,7 @@ export function Home({ client }: { client: Client }) {
 								)}
 							</span>
 							<span className="newtask__context-label">
-								Task settings <Icon name="chevronDown" />
+								Session settings <Icon name="chevronDown" />
 							</span>
 						</summary>
 						<dl>
@@ -440,9 +440,9 @@ export function Home({ client }: { client: Client }) {
 						<div className="newtask__notice newtask__recovery" role="status">
 							<p>
 								{busy
-									? "Starting your task. Your request is kept until PanCode confirms it."
+									? "Starting your session. Your request is kept until PanCode confirms it."
 									: epochChanged
-										? "PanCode restarted. The earlier request may have been accepted. Review the task before making a new request."
+										? "PanCode restarted. The earlier request may have been accepted. Review the session before making a new request."
 										: "The earlier request has no confirmed outcome. Retry sends that original request; edits above stay separate."}
 							</p>
 							<details>
@@ -460,25 +460,25 @@ export function Home({ client }: { client: Client }) {
 									{reconcile.isPending ? "Checking…" : "Check status"}
 								</button>
 								{pending.sessionId ? (
-									<Link to={`/sessions/${pending.sessionId}`}>Review task</Link>
+									<Link to={`/sessions/${pending.sessionId}`}>Review session</Link>
 								) : (
-									<Link to="/sessions">Review tasks</Link>
+									<Link to="/sessions">Review sessions</Link>
 								)}
 							</div>
 							{reconcile.isSuccess ? (
 								<p>
 									{reconcile.data
-										? `The task is ${reconcile.data.state}, with ${reconcile.data.turns.length} reported ${reconcile.data.turns.length === 1 ? "turn" : "turns"}. Review it to check the earlier request.`
-										: "No session was confirmed in this tab. Review the workspace’s tasks; the earlier creation may have succeeded."}{" "}
+										? `The session is ${reconcile.data.state}, with ${reconcile.data.turns.length} reported ${reconcile.data.turns.length === 1 ? "turn" : "turns"}. Review it to check the earlier request.`
+										: "No session was confirmed in this tab. Review the workspace’s sessions; the earlier creation may have succeeded."}{" "}
 									Matching text does not confirm this request’s outcome.
 								</p>
 							) : null}
 							{reconcile.error ? (
-								<p>The earlier task could not be checked. Review saved tasks before starting again.</p>
+								<p>The earlier session could not be checked. Review saved sessions before starting again.</p>
 							) : null}
 							{!busy && !reconcile.isPending ? (
 								<>
-									<p>Discarding this record does not stop a task already accepted.</p>
+									<p>Discarding this record does not stop a session already accepted.</p>
 									<button
 										type="button"
 										onClick={() => {

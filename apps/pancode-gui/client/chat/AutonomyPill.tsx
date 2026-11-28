@@ -104,7 +104,7 @@ export function AutonomyPill({
 				<Icon name="chevronDown" />
 			</summary>
 			<fieldset className="autonomy__panel">
-				<legend className="autonomy__title">Working freedom for this task</legend>
+				<legend className="autonomy__title">Working freedom for this session</legend>
 				{menu.rows.map((row) => (
 					<button
 						key={row.level}

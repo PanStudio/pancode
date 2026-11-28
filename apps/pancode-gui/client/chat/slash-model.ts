@@ -142,7 +142,7 @@ const PANES: readonly PaneSpec[] = [
 		id: "decisions",
 		name: "decisions",
 		view: { view: "board", section: "decisions" },
-		summary: "Open this task's decisions beside the conversation",
+		summary: "Open this session's decisions beside the conversation",
 		supported: (capabilities) => !!capabilities.board,
 	},
 	{
@@ -157,7 +157,7 @@ const PANES: readonly PaneSpec[] = [
 		id: "memory",
 		name: "memory",
 		view: { view: "board", section: "memory" },
-		summary: "Open what PanCode learned in this task beside the conversation",
+		summary: "Open what PanCode learned in this session beside the conversation",
 		supported: (capabilities) => !!capabilities.board,
 	},
 ];
@@ -381,7 +381,7 @@ export const SLASH_ALIASES: readonly SlashAliasSpec[] = [
 	},
 	{
 		names: ["init"],
-		summary: "Run /context init in this task",
+		summary: "Run /context init in this session",
 		target: { kind: "command", command: "context", subcommand: "init", passRest: false },
 		available: (facts) => hasSubcommand(facts, "context", "init"),
 	},
@@ -390,7 +390,11 @@ export const SLASH_ALIASES: readonly SlashAliasSpec[] = [
 		summary: "Choose the model and thinking level for this conversation",
 		target: { kind: "control", control: "model" },
 	},
-	{ names: ["new", "clear"], summary: "Start a new task in this project", target: { kind: "control", control: "new" } },
+	{
+		names: ["new", "clear"],
+		summary: "Start a new session in this project",
+		target: { kind: "control", control: "new" },
+	},
 	{
 		names: ["status", "cost", "usage"],
 		summary: "Open usage and cost beside the conversation",
@@ -418,22 +422,22 @@ export const SLASH_ALIASES: readonly SlashAliasSpec[] = [
 	},
 	{
 		names: ["resume"],
-		summary: "Open Sessions to continue another task",
+		summary: "Open Sessions to continue another session",
 		target: { kind: "navigate", path: "/sessions" },
 	},
 	{ names: ["hub"], summary: "Open the hub", target: { kind: "navigate", path: "/hub" } },
 	{ names: ["research"], summary: "Open Research", target: { kind: "navigate", path: "/research" } },
 	{
 		names: ["quit", "exit"],
-		summary: "Close this task from the task menu",
+		summary: "Close this session from the session menu",
 		target: {
 			kind: "notice",
-			message: "Close this task from the task menu, or close the window. PanCode keeps running.",
+			message: "Close this session from the session menu, or close the window. PanCode keeps running.",
 		},
 	},
 	{
 		names: ["rename"],
-		summary: "Rename this task",
+		summary: "Rename this session",
 		hint: "<name>",
 		needsText: true,
 		target: { kind: "control", control: "rename" },
@@ -461,13 +465,13 @@ export const SLASH_ALIASES: readonly SlashAliasSpec[] = [
 	},
 	{
 		names: ["reload"],
-		summary: "Reload this task's extension runtimes",
+		summary: "Reload this session's extension runtimes",
 		target: { kind: "action", action: "extensions" },
 		available: (facts) => !!facts.capabilities?.extensions,
 	},
 	{
 		names: ["view"],
-		summary: "Open this task's artifacts beside the conversation",
+		summary: "Open this session's artifacts beside the conversation",
 		target: { kind: "pane", view: "artifacts" },
 		available: (facts) => facts.paneAvailable,
 	},
@@ -478,7 +482,7 @@ export const SLASH_ALIASES: readonly SlashAliasSpec[] = [
 	},
 	{
 		names: ["trust"],
-		summary: "Review the project files this task ignored, in the task overview",
+		summary: "Review the project files this session ignored, in the session overview",
 		target: { kind: "pane", view: "session" },
 		available: (facts) => facts.paneAvailable,
 	},
@@ -525,7 +529,10 @@ export function resolveAlias(text: string, facts: SlashFacts): { alias: SlashAli
 	const after = pair && second !== undefined ? rest.slice(second.length).trim() : rest;
 	if (spec.available && !spec.available(facts))
 		return {
-			alias: { ...aliasFor(name, spec), target: { kind: "notice", message: `/${name} is not available in this task.` } },
+			alias: {
+				...aliasFor(name, spec),
+				target: { kind: "notice", message: `/${name} is not available in this session.` },
+			},
 			rest: after,
 		};
 	return { alias: aliasFor(name, spec), rest: after };

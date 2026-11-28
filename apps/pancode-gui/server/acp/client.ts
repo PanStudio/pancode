@@ -187,8 +187,8 @@ export function acpProblem(error: unknown) {
 			return new AppProblem(
 				"conflict",
 				code === "shell_active"
-					? "A shell line is running in this task. Wait for it or stop it."
-					: "A turn is already running in this task. Wait for it or stop it before changing the conversation.",
+					? "A shell line is running in this session. Wait for it or stop it."
+					: "A turn is already running in this session. Wait for it or stop it before changing the conversation.",
 			);
 		if (code === "shell_failed")
 			return new AppProblem("upstream_acp", "PanCode could not run or record that shell line. (shell_failed)");

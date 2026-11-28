@@ -22,7 +22,7 @@ export function controlState(control: SessionControl | undefined): ControlState 
 /** What a viewing window says above the conversation. */
 export function viewerBanner(controller: ClientIdentity) {
 	return {
-		title: `${controller.label} controls this task.`,
+		title: `${controller.label} controls this session.`,
 		detail:
 			"You can follow it here. Take control from the message box to send messages, answer approvals or change it from this window.",
 	};
@@ -47,7 +47,7 @@ export function lostControlNotice(
 	const { controller, previous } = payload;
 	if (!you || !controller || previous?.clientId !== you || controller.clientId === you) return null;
 	return {
-		title: `${controller.label} took control of a task`,
-		detail: "This window can still follow it. Take control again from the task to act on it here.",
+		title: `${controller.label} took control of a session`,
+		detail: "This window can still follow it. Take control again from the session to act on it here.",
 	};
 }

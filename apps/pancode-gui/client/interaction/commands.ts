@@ -183,8 +183,8 @@ export function appCommands(situation: CommandSituation, handlers: CommandHandle
 	if (newTask)
 		commands.push({
 			id: "task.new",
-			title: "New task",
-			group: "Task",
+			title: "New session",
+			group: "Session",
 			keywords: ["start", "conversation", "chat", "session", "compose"],
 			binding: "newTask",
 			available: true,
@@ -194,7 +194,7 @@ export function appCommands(situation: CommandSituation, handlers: CommandHandle
 		commands.push({
 			id: "workspace.open",
 			title: "Open workspace",
-			group: "Task",
+			group: "Session",
 			keywords: ["project", "folder", "directory", "add"],
 			binding: "openWorkspace",
 			available: true,
@@ -206,14 +206,14 @@ export function appCommands(situation: CommandSituation, handlers: CommandHandle
 				id: `task.${task.id}`,
 				title: task.title,
 				group: task.project,
-				keywords: [task.project, task.open ? "open" : "saved", "task", "conversation"],
+				keywords: [task.project, task.open ? "open" : "saved", "session", "conversation"],
 				available: task.id !== sessionId,
 				run: () => openTask(task.id),
 			});
 	if (sessionId !== null && handlers.openWindow)
 		commands.push({
 			id: "session.window",
-			title: "Open this task in a new window",
+			title: "Open this session in a new window",
 			group: "Session",
 			keywords: ["second", "another", "split", "side"],
 			binding: "newWindow",
@@ -281,7 +281,7 @@ export function appCommands(situation: CommandSituation, handlers: CommandHandle
 				id: `task-command.${row.name}`,
 				// A row that will ask for more says so, the way a menu item that opens a dialog does.
 				title: row.needsArgs ? `${row.summary}…` : row.summary,
-				group: "This task",
+				group: "This session",
 				keywords: [row.name, ...row.name.split(" "), "command"],
 				available: true,
 				run: () => (row.needsArgs ? fillTaskCommand(row.name) : runTaskCommand(row.name)),

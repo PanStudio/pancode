@@ -206,7 +206,7 @@ test("the reference lists the conversation chords and the message-box keys", () 
 	assert.ok(keyboard.entries.some((entry) => entry.meaning.includes("Shift + Enter")));
 	const commands = HELP_SECTIONS.find((section) => section.id === "commands");
 	assert.ok(commands);
-	assert.match(commands.lede, /^Type \/ in the message box to see this task's commands\./u);
+	assert.match(commands.lede, /^Type \/ in the message box to see this session's commands\./u);
 	assert.ok(commands.entries.some((entry) => entry.term === "/compact [instructions]"));
 	assert.ok(commands.entries.some((entry) => entry.term.includes("/extensions dev")));
 	// One name for stopping, so searching the reference for it finds the chord and Esc, Esc.

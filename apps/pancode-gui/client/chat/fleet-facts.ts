@@ -464,7 +464,7 @@ export function fleetEvidence(items: readonly FleetItemLike[]): readonly FleetEv
  */
 export const STEER_REFUSALS: Readonly<Record<string, string>> = {
 	"dispatch-unavailable": "This PanCode build has no dispatch domain to steer.",
-	"fleet-unavailable": "The fleet control channel is not available in this task.",
+	"fleet-unavailable": "The fleet control channel is not available in this session.",
 	"run-not-active": "That run is no longer active, so there is nothing to steer.",
 	"cancel-failed": "PanCode could not stop that run. It may already be settling.",
 	"empty-message": "Guidance needs some text.",

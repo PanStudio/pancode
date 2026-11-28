@@ -125,7 +125,7 @@ export function CommandPaletteBody({
 			<small role="status">{query.trim().length === 0 ? "" : `${results.length} of ${total} commands`}</small>
 			{results.length === 0 ? (
 				<p className="palette__empty">
-					No command matches. Type a view name such as traces, or an action such as new task.
+					No command matches. Type a view name such as traces, or an action such as new session.
 				</p>
 			) : (
 				<div className="palette__list" id={listId} role="listbox" aria-label="Commands">

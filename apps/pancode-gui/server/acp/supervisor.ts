@@ -743,7 +743,7 @@ export class Supervisor {
 		if (entry.rebase) throw new AppProblem("conflict", "The conversation is moving to another branch.");
 		if (entry.drafting) throw new AppProblem("conflict", "PanCode is drawing up a handoff for this conversation.");
 		if (entry.contextCommand || this.snapshot(id).contextWork?.active)
-			throw new AppProblem("conflict", "Context work is running in this task. Wait for it or stop it.");
+			throw new AppProblem("conflict", "Context work is running in this session. Wait for it or stop it.");
 		if (images.length > 0 && !entry.client.capabilities.images)
 			throw new AppProblem("conflict", "This PanCode build does not accept images with a request.");
 		if (files.length > 0 && !entry.client.capabilities.embeddedContext)
@@ -1207,7 +1207,7 @@ export class Supervisor {
 	}
 	decide(id: string, permissionId: string, decision: PermissionDecision) {
 		const permissions = this.active(id).permissions;
-		if (!permissions) throw new AppProblem("conflict", "This task has no approval waiting.");
+		if (!permissions) throw new AppProblem("conflict", "This session has no approval waiting.");
 		permissions.decide(permissionId, decision);
 		return {};
 	}
@@ -2142,7 +2142,7 @@ export class Supervisor {
 	private snapshotting(id: string) {
 		const entry = this.active(id);
 		const methods = entry.client.capabilities.snapshots;
-		if (!methods) throw new AppProblem("conflict", "File snapshots are not available for this task.");
+		if (!methods) throw new AppProblem("conflict", "File snapshots are not available for this session.");
 		return { entry, methods };
 	}
 }

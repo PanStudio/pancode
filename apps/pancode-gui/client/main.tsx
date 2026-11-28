@@ -75,7 +75,7 @@ function RouteError() {
 					<PancodeWordmark />
 				</p>
 				<h1>PanCode has no page at this address.</h1>
-				<p>The link may be old or mistyped. Your tasks and projects are where you left them.</p>
+				<p>The link may be old or mistyped. Your sessions and projects are where you left them.</p>
 				<a className="primary" href={`${prefix}/`}>
 					Go to Home
 				</a>

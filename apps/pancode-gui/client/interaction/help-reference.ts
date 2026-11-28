@@ -34,8 +34,8 @@ export interface HelpMatch {
 /** One sentence per route. A route added without a guide entry fails to compile. */
 export const VIEW_GUIDE: Readonly<Record<NavPath, { title: string; meaning: string }>> = {
 	"/": {
-		title: "New task",
-		meaning: "Choose a workspace and describe a task. PanCode starts when you send your first message.",
+		title: "New session",
+		meaning: "Choose a workspace and start a session. PanCode starts when you send your first message.",
 	},
 	"/sessions": {
 		title: "Sessions",
@@ -96,7 +96,7 @@ const VIEW_ENTRIES: readonly HelpEntry[] = Object.values(VIEW_GUIDE).map((view) 
 export const COMPOSER_NOTES: readonly { term: string; action: string; where: string }[] = [
 	{ term: "Esc, Esc", action: "Stop the running turn", where: "Message box · press twice while a turn runs" },
 	{ term: "Up / Down", action: "Recall sent messages", where: "Message box · Up with the caret at the start" },
-	{ term: "F2", action: "Rename the task", where: "Task name in the header focused" },
+	{ term: "F2", action: "Rename the session", where: "Session name in the header focused" },
 ];
 
 const KEYBOARD_ENTRIES: readonly HelpEntry[] = [
@@ -232,7 +232,7 @@ export const HELP_SECTIONS: readonly HelpSection[] = [
 	{
 		id: "commands",
 		title: "Commands",
-		lede: "Type / in the message box to see this task's commands. These terminal names work here too.",
+		lede: "Type / in the message box to see this session's commands. These terminal names work here too.",
 		entries: COMMAND_ENTRIES,
 	},
 	{

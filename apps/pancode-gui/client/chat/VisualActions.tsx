@@ -79,7 +79,7 @@ export function VisualActions({
 	}, [opening, loading, allItems]);
 	const items = actionCategoryRows(allItems, category);
 	const changesMatch = paneAvailable && matchesChanges(query);
-	const showChanges = changesMatch && (category === "All actions" || category === "Task details");
+	const showChanges = changesMatch && (category === "All actions" || category === "Session details");
 
 	return (
 		<Dialog
@@ -127,7 +127,7 @@ export function VisualActions({
 								{group}
 								<span>
 									{actionCategoryRows(allItems, group).length +
-										(changesMatch && (group === "All actions" || group === "Task details") ? 1 : 0)}
+										(changesMatch && (group === "All actions" || group === "Session details") ? 1 : 0)}
 								</span>
 							</button>
 						))}
@@ -153,7 +153,7 @@ export function VisualActions({
 					<div className="visual-actions__groups">
 						{ACTION_GROUPS.map((group) => {
 							const rows = items.filter((item) => item.group === group);
-							if (!rows.length && !(group === "Task details" && showChanges)) return null;
+							if (!rows.length && !(group === "Session details" && showChanges)) return null;
 
 							return (
 								<section key={group} className="visual-actions__group" aria-label={group}>
@@ -176,7 +176,7 @@ export function VisualActions({
 												<Icon name="chevronRight" />
 											</button>
 										))}
-										{group === "Task details" && showChanges ? (
+										{group === "Session details" && showChanges ? (
 											<button type="button" className="visual-actions__row" onClick={onShowChanges}>
 												<Icon name="fileDiff" />
 												<span>

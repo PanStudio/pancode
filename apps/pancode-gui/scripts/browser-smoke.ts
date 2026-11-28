@@ -372,10 +372,10 @@ try {
 		async function closePane() {
 			if (!(await pane.count())) return;
 			// Docked or as a slide-over, one control closes the task details.
-			await pane.getByRole("button", { name: "Close task details", exact: true }).click();
+			await pane.getByRole("button", { name: "Close session details", exact: true }).click();
 			await pane.waitFor({ state: "detached" });
 		}
-		const taskMenu = page.locator('.conversation .wb-bar .wb-menu:has(> summary[aria-label="Task actions"])');
+		const taskMenu = page.locator('.conversation .wb-bar .wb-menu:has(> summary[aria-label="Session actions"])');
 		const slashList = page.getByRole("listbox", { name: "Slash commands", exact: true });
 		async function slashPane(name: string) {
 			await composerField.fill(`/${name}`);

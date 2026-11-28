@@ -58,13 +58,13 @@ export function TaskUnavailable({
 			<TopBar />
 			<div className="task-state" role="alert">
 				<Icon name="warn" />
-				<h1>This task could not be opened</h1>
+				<h1>This session could not be opened</h1>
 				<p>{message}</p>
 				<div className="task-state__actions">
 					<button type="button" className="primary" disabled={retrying} onClick={onRetry}>
 						{retrying ? "Trying again…" : "Try again"}
 					</button>
-					<Link to="/">Back to a new task</Link>
+					<Link to="/">Back to a new session</Link>
 				</div>
 			</div>
 		</>

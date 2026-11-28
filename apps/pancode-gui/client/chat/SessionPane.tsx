@@ -165,22 +165,22 @@ export const SessionPane = memo(function SessionPane({
 					<h3>
 						{gate === "checking"
 							? capabilities.error
-								? "Task capabilities unavailable"
+								? "Session capabilities unavailable"
 								: "Checking this connection"
 							: gate === "closed"
-								? "This task is closed"
+								? "This session is closed"
 								: `${paneViewLabel(id)} is unavailable`}
 					</h3>
 					<p>
 						{gate === "checking"
 							? capabilities.error
 								? "Retry the capability read to find out which views this connection supports."
-								: "Reading the capabilities reported by this task before requesting its data."
+								: "Reading the capabilities reported by this session before requesting its data."
 							: gate === "closed"
-								? "Live details require an open task. Recorded progress and file changes remain in the overview."
+								? "Live details require an open session. Recorded progress and file changes remain in the overview."
 								: id === "artifacts"
 									? "This connection does not expose saved artifacts. You can still review file edits and paths reported in the conversation."
-									: "This connection has not announced support for this view. Return to the task overview to inspect the facts it reports."}
+									: "This connection has not announced support for this view. Return to the session overview to inspect the facts it reports."}
 					</p>
 					{gate !== "checking" || capabilities.error ? (
 						<button type="button" onClick={() => onViewChange(id === "artifacts" ? "changes" : ROOT_VIEW)}>
@@ -314,8 +314,8 @@ export const SessionPane = memo(function SessionPane({
 						type="button"
 						className="wb-icon wb-icon--text"
 						onClick={() => onViewChange(ROOT_VIEW)}
-						aria-label="Back to task details"
-						title="Back to task details (Esc)"
+						aria-label="Back to session details"
+						title="Back to session details (Esc)"
 					>
 						<Icon name="arrowLeft" />
 						<span>Back</span>
@@ -323,26 +323,30 @@ export const SessionPane = memo(function SessionPane({
 				) : null}
 				<h2 className="pane__title" id={`${headId}-title`} tabIndex={-1}>
 					<Icon name={PANE_VIEWS.find((entry) => entry.id === view)?.icon ?? "sessions"} />
-					{view === ROOT_VIEW ? "Task details" : view === "artifacts" ? "Task files" : paneViewLabel(view)}
+					{view === ROOT_VIEW ? "Session details" : view === "artifacts" ? "Session files" : paneViewLabel(view)}
 				</h2>
 				<button
 					type="button"
 					className="wb-icon"
 					onClick={onClose}
-					aria-label="Close task details"
-					title="Close task details"
+					aria-label="Close session details"
+					title="Close session details"
 				>
 					<Icon name={wide ? "panelRight" : "close"} />
 				</button>
 			</header>
 			<label className="pane-inspection-switcher">
 				<span>Inspect</span>
-				<select aria-label="Inspect task" value={view} onChange={(event) => onViewChange(event.target.value as PaneView)}>
+				<select
+					aria-label="Inspect session"
+					value={view}
+					onChange={(event) => onViewChange(event.target.value as PaneView)}
+				>
 					{PANE_GROUPS.map((group) => (
 						<optgroup key={group.label} label={group.label}>
 							{group.views.map((id) => (
 								<option key={id} value={id}>
-									{id === ROOT_VIEW ? "Task overview" : id === "artifacts" ? "Task files" : paneViewLabel(id)}
+									{id === ROOT_VIEW ? "Session overview" : id === "artifacts" ? "Session files" : paneViewLabel(id)}
 								</option>
 							))}
 						</optgroup>
@@ -365,7 +369,7 @@ export const SessionPane = memo(function SessionPane({
 				</div>
 			)}
 			{/* biome-ignore lint/a11y/noNoninteractiveTabindex: the body scrolls, so keyboard users must reach it even when a view holds no control. */}
-			<section className="pane__body" aria-label="Task details content" tabIndex={0}>
+			<section className="pane__body" aria-label="Session details content" tabIndex={0}>
 				{PANE_VIEWS.map(({ id }) => (
 					<Activity key={`${sessionId}-${id}`} mode={open && view === id ? "visible" : "hidden"}>
 						<section className="pane__panel" aria-labelledby={`${headId}-title`}>
@@ -389,7 +393,7 @@ export const SessionPane = memo(function SessionPane({
 		// nothing to draw, and never a modal.
 		if (!slot) return null;
 		return createPortal(
-			<aside className="pane" aria-label="Task details" hidden={!open} ref={aside}>
+			<aside className="pane" aria-label="Session details" hidden={!open} ref={aside}>
 				{content}
 			</aside>,
 			slot,
@@ -400,7 +404,7 @@ export const SessionPane = memo(function SessionPane({
 			<dialog
 				ref={dialog}
 				className="pane__dialog"
-				aria-label="Task pane"
+				aria-label="Session pane"
 				onKeyDown={(event) => {
 					if (matchesKeybinding(KEYBINDINGS.sessionPanel, event)) {
 						event.preventDefault();
@@ -472,8 +476,8 @@ export const PaneToggles = memo(function PaneToggles({
 				type="button"
 				className="wb-icon wb-icon--text"
 				aria-expanded={open}
-				aria-label={`${open ? "Hide" : "Show"} task details${trustAttention ? ", project files need review" : ""}`}
-				title="Task details (Ctrl/Cmd + Shift + \)"
+				aria-label={`${open ? "Hide" : "Show"} session details${trustAttention ? ", project files need review" : ""}`}
+				title="Session details (Ctrl/Cmd + Shift + \)"
 				onClick={() => onToggle(view, ids.pane)}
 			>
 				<Icon name="panelRight" />

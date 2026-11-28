@@ -678,13 +678,13 @@ export const Composer = memo(function Composer({
 		if (target.kind === "command") {
 			const line = `/${target.command} ${target.subcommand}${target.passRest && rest !== "" ? ` ${rest}` : ""}`;
 			const parsed = parseSlashLine(line, commandCatalog.data);
-			if (parsed === null) return note(`/${alias.name} is not available in this task.`);
+			if (parsed === null) return note(`/${alias.name} is not available in this session.`);
 			if (parsed.kind === "invalid") return note(parsed.error);
 			runCommand(parsed.plan, store.snapshot().text);
 			return;
 		}
 		if (target.kind === "control" && target.control === "rename") {
-			if (rest === "") return note("Type a name after /rename, or click the task title.");
+			if (rest === "") return note("Type a name after /rename, or click the session title.");
 			renameTask.mutate(
 				{ sessionId, workspaceId, label: rest },
 				{ onError: (error) => setAliasNote({ text: store.snapshot().text, message: error.message }) },

@@ -160,9 +160,11 @@ export const SessionBoardPanel = memo(function SessionBoardPanel({
 	const act = (id: string, action: OperatorTaskAction) => change.mutate([action, id]);
 	return (
 		<div ref={panel} className="pane-drill drill board-panel">
-			{!sessionOpen ? <p className="pane-empty">This task is not open. Open it to read its tasks and decisions.</p> : null}
+			{!sessionOpen ? (
+				<p className="pane-empty">This session is not open. Open it to read its tasks and decisions.</p>
+			) : null}
 			{sessionOpen && !supported ? (
-				<p className="pane-empty">PanCode does not report a task list or decisions for this task.</p>
+				<p className="pane-empty">PanCode does not report a task list or decisions for this session.</p>
 			) : null}
 			{board.isPending && sessionOpen && supported ? <p className="pane-empty">Reading the board…</p> : null}
 			{board.error ? (
@@ -249,7 +251,7 @@ export const SessionBoardPanel = memo(function SessionBoardPanel({
 					<section className="drill__section" aria-labelledby={`${titleId}-plan`}>
 						<h3 id={`${titleId}-plan`}>PanCode's plan</h3>
 						{view.plan === null ? (
-							<p className="pane-empty">No plan has been made in this task.</p>
+							<p className="pane-empty">No plan has been made in this session.</p>
 						) : (
 							<>
 								<p className="board-panel__plan-title">{view.plan.title}</p>

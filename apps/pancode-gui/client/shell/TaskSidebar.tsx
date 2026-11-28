@@ -171,7 +171,7 @@ export function TaskSidebar({
 					type="button"
 					className="wb-action"
 					onClick={(event) => onSearch(event.currentTarget)}
-					title="Search tasks and commands"
+					title="Search sessions and commands"
 				>
 					<Icon name="search" />
 					<span>Search</span>
@@ -216,10 +216,10 @@ export function TaskSidebar({
 								actions.newTask(activeWorkspaceId ?? undefined);
 								focusComposerSoon();
 							}}
-							title="Open your task composer"
+							title="Open your session composer"
 						>
 							{actions.launch.busy ? <PancodePulse size={PULSE_SIZE.row} /> : <Icon name="compose" />}
-							<span>{actions.launch.busy ? "Starting…" : "New task"}</span>
+							<span>{actions.launch.busy ? "Starting…" : "New session"}</span>
 						</button>
 						<NavLink to="/sessions" end className="wb-action" onClick={onNavigate}>
 							<Icon name="sessions" />
@@ -233,7 +233,7 @@ export function TaskSidebar({
 
 					{/* Up and Down (j and k) move between task rows, as Help says. */}
 					{/* biome-ignore lint/a11y/noNoninteractiveTabindex: keyboard users scroll the task list independently. */}
-					<section className="wb-side__tasks" tabIndex={0} aria-label="Tasks by workspace" onKeyDown={moveTaskFocus}>
+					<section className="wb-side__tasks" tabIndex={0} aria-label="Sessions by workspace" onKeyDown={moveTaskFocus}>
 						<div className="wb-side__heading">
 							<h2>Workspaces</h2>
 						</div>
@@ -250,7 +250,7 @@ export function TaskSidebar({
 						{!workspaces.isPending && !workspaces.error && ordered.length === 0 ? (
 							<div className="wb-side__empty">
 								<PancodeEmptyMark />
-								<p className="wb-note">Open a workspace to start your first task.</p>
+								<p className="wb-note">Open a workspace to start your first session.</p>
 							</div>
 						) : null}
 						{ordered.slice(0, shown).map((workspace) => (
@@ -370,8 +370,8 @@ function ProjectGroup({
 				<button
 					type="button"
 					className="wb-icon wb-icon--small wb-project__new"
-					aria-label={`New task in ${workspace.name}`}
-					title={`New task in ${workspace.name}`}
+					aria-label={`New session in ${workspace.name}`}
+					title={`New session in ${workspace.name}`}
 					disabled={actions.launch.busy}
 					onClick={() => {
 						actions.newTask(workspace.id);
@@ -403,10 +403,10 @@ function ProjectGroup({
 							{/* A list item may not carry the status role; the note inside it can. */}
 							<span role="status">
 								{problemCode(history.error) === "unsupported" ? (
-									"Saved tasks aren't available with this connection."
+									"Saved sessions aren't available with this connection."
 								) : (
 									<>
-										Saved tasks could not be refreshed.{" "}
+										Saved sessions could not be refreshed.{" "}
 										<button
 											type="button"
 											className="wb-link"
@@ -426,7 +426,9 @@ function ProjectGroup({
 							<Icon name="chevronRight" />
 						</Link>
 					</li>
-					{!history.isPending && !history.isError && rows.length === 0 ? <li className="wb-note">No tasks yet.</li> : null}
+					{!history.isPending && !history.isError && rows.length === 0 ? (
+						<li className="wb-note">No sessions yet.</li>
+					) : null}
 					{rows.length > visible ? (
 						<li>
 							<button type="button" className="wb-more" onClick={() => setLimit(visible + TASKS_PER_PROJECT)}>
@@ -543,7 +545,7 @@ function TaskItem({
 				<button
 					type="button"
 					className="wb-task__main"
-					title={`${title} · Load this saved task`}
+					title={`${title} · Load this saved session`}
 					disabled={busy || actions.launch.busy}
 					onClick={() => actions.resume(row.id, row.workspaceId)}
 				>
@@ -567,7 +569,7 @@ function TaskItem({
 									actions.close({ id: row.id, workspaceId: row.workspaceId, title: row.title, currentTurnId: null })
 								}
 							>
-								Close task
+								Close session
 							</MenuItem>
 						) : (
 							<MenuItem icon="trash" tone="danger" disabled={busy} onClick={() => setConfirming(true)}>

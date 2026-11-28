@@ -49,7 +49,7 @@ export interface TaskRow {
 	readonly liveElsewhere?: LiveElsewhere;
 }
 
-const NEW_TASK_TITLE = "New task";
+const NEW_TASK_TITLE = "New session";
 
 /** What the sidebar and the top bar call a task: its reported label, else the first request. */
 export function taskTitle(
@@ -189,7 +189,7 @@ export function taskRows(
 				(row): TaskRow => ({
 					id: row.id,
 					workspaceId,
-					title: row.name?.trim() || row.firstMessagePreview?.replace(/\s+/g, " ").trim() || "Saved task",
+					title: row.name?.trim() || row.firstMessagePreview?.replace(/\s+/g, " ").trim() || "Saved session",
 					open: false,
 					state: "idle",
 					at: row.lastActivityAt ?? row.createdAt,

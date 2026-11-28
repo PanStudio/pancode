@@ -580,7 +580,7 @@ export async function sessionActionSteps(run: SmokeRun) {
 	await step("handoff", async () => {
 		// Handoff: a draft is reviewed and edited before anything is written; starting the new
 		// conversation moves there.
-		const handoffDialog = await slashAction("handoff", "Hand off to a new conversation", "Continue in a new task");
+		const handoffDialog = await slashAction("handoff", "Hand off to a new conversation", "Continue in a new session");
 		const handoff = handoffDialog.locator(".handoff-panel");
 		await handoff
 			.getByLabel("What should the next conversation accomplish?", { exact: true })
@@ -614,7 +614,10 @@ export async function sessionActionSteps(run: SmokeRun) {
 		const viewerNote = viewer.locator(".composer__delivery-note");
 		const viewing = (note: typeof viewerNote) => note.locator("strong", { hasText: /^Viewing$/ });
 		await viewing(viewerNote).waitFor();
-		assert.match(await viewerNote.innerText(), /^Viewing\s+Browser window( \d+)? controls this task\.\s+Take control$/);
+		assert.match(
+			await viewerNote.innerText(),
+			/^Viewing\s+Browser window( \d+)? controls this session\.\s+Take control$/,
+		);
 		const viewerField = viewer.getByLabel("Message PanCode", { exact: true });
 		assert.ok(await viewerField.isDisabled(), "a viewing window's message box takes input the server refuses");
 		assert.ok(await viewer.locator(".composer__submit").isDisabled(), "a viewing window offers Send");
@@ -642,14 +645,14 @@ export async function sessionActionSteps(run: SmokeRun) {
 		// Close lives in the top bar's Task actions menu, away from the composer's Stop.
 		await settled();
 		await taskMenu.locator("summary").click();
-		await taskMenu.getByRole("menuitem", { name: "Close task", exact: true }).click();
+		await taskMenu.getByRole("menuitem", { name: "Close session", exact: true }).click();
 		// Closing is a session control request; it is confirmed before it is sent.
 		await page
 			.getByRole("dialog", { name: "Close this session?", exact: true })
 			.getByRole("button", { name: "Close session", exact: true })
 			.click();
 		await page.locator('.wb-chip--status[data-tone="quiet"]', { hasText: "Closed" }).waitFor();
-		await page.getByText("This task is closed.", { exact: true }).waitFor();
+		await page.getByText("This session is closed.", { exact: true }).waitFor();
 		await check("closed");
 	});
 }

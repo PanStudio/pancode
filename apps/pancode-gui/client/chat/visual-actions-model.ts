@@ -3,7 +3,7 @@
 import type { IconName } from "../design/icons.js";
 import type { SlashEntry } from "./slash-model.js";
 
-export const ACTION_GROUPS = ["Conversation", "Task details", "More actions"] as const;
+export const ACTION_GROUPS = ["Conversation", "Session details", "More actions"] as const;
 export type ActionGroup = (typeof ACTION_GROUPS)[number];
 export interface VisualAction {
 	readonly entry: SlashEntry;
@@ -30,12 +30,12 @@ const ACTION_COPY: Readonly<Record<string, { title: string; description: string 
 	tree: { title: "Conversation history", description: "Return to an earlier point or try another direction" },
 	fork: { title: "Try another direction", description: "Start a separate conversation from an earlier reply" },
 	handoff: {
-		title: "Continue in a new task",
+		title: "Continue in a new session",
 		description: "Review a summary and carry your work into a fresh conversation",
 	},
 	btw: { title: "Side question", description: "Ask a quick question without interrupting the main conversation" },
 	draft: { title: "Compare approaches", description: "Explore different ways to tackle your request" },
-	extensions: { title: "Tools and add-ons", description: "See the tools available to this task" },
+	extensions: { title: "Tools and add-ons", description: "See the tools available to this session" },
 	"fleet-run": { title: "Run a workflow", description: "Choose a saved workflow and review it before starting" },
 };
 // Every command the engine offers gets a written title; a bare command name ("Mcp", "Oracle") reads as jargon.
@@ -101,7 +101,7 @@ export function visualActions(entries: readonly SlashEntry[], query: string): re
 				title: action?.title ?? pane?.title ?? COMMAND_TITLES[entry.name] ?? actionLabel(entry.name),
 				description: action?.description ?? entry.summary,
 				icon: entry.kind === "action" ? (ACTION_ICONS[entry.action] ?? "overview") : (pane?.icon ?? "bolt"),
-				group: entry.kind === "action" ? "Conversation" : entry.kind === "pane" ? "Task details" : "More actions",
+				group: entry.kind === "action" ? "Conversation" : entry.kind === "pane" ? "Session details" : "More actions",
 			};
 		})
 		.filter((item) =>

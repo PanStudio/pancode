@@ -29,7 +29,7 @@ export function useFirstTask(client: Client) {
 	return useMutation({
 		mutationFn: async () => {
 			settleStarted();
-			if (!acquireFirstRequest()) throw new Error("This tab is already starting a task.");
+			if (!acquireFirstRequest()) throw new Error("This tab is already starting a session.");
 			let handedOff = false;
 			// Warm the task route while the requests run, so navigating does not wait on its chunk.
 			// Name the export: a bare import() keeps every export of the module alive and defeats tree-shaking.
@@ -39,11 +39,11 @@ export function useFirstTask(client: Client) {
 				let request = draft.pending;
 				const workspaceId = request?.workspaceId ?? draft.workspaceId;
 				if (!workspaceId || (!request && !draft.text.trim()))
-					throw new Error("Choose a workspace and describe the task first.");
+					throw new Error("Choose a workspace and enter a message first.");
 				if (request) {
 					const meta = await freshMeta(client, queries);
 					if (request.epoch !== meta.epoch)
-						throw new Error("PanCode restarted. Review the earlier task before starting another request.");
+						throw new Error("PanCode restarted. Review the earlier session before starting another request.");
 				} else {
 					// Setup resolves and validates this workspace; neither read needs to wait on the other.
 					const [meta, status] = await Promise.all([
@@ -51,7 +51,7 @@ export function useFirstTask(client: Client) {
 						client.call(routes.setupStatus, setupStatusInput(workspaceId)),
 					]);
 					queries.setQueryData(["setup-status", workspaceId], status);
-					if (status.state !== "ready") throw new Error(status.message || "Connect a model before starting a task.");
+					if (status.state !== "ready") throw new Error(status.message || "Connect a model before starting a session.");
 					const owned = ownDrafts();
 					// No owned draft means there is nothing this tab may reuse; skip the full inventory read.
 					const sessions = owned.length
@@ -87,7 +87,7 @@ export function useFirstTask(client: Client) {
 					updateHomeDraft({ pending: request });
 				}
 				const sessionId = request.sessionId;
-				if (!sessionId) throw new Error("The task has no confirmed session yet. Retry the original request.");
+				if (!sessionId) throw new Error("The request has no confirmed session yet. Retry the original request.");
 				request = { ...request, phase: "submitting" };
 				updateHomeDraft({ pending: request });
 				await client.call(

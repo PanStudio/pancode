@@ -327,8 +327,8 @@ export function SessionOverview({
 			</Section>
 
 			{capabilities.data?.artifacts ? (
-				<Section id="pane-artifacts" title="Task files" icon="artifacts" open={() => onOpen("artifacts")}>
-					<p className="pane-empty">Browse files, outputs and task records.</p>
+				<Section id="pane-artifacts" title="Session files" icon="artifacts" open={() => onOpen("artifacts")}>
+					<p className="pane-empty">Browse files, outputs and session records.</p>
 				</Section>
 			) : null}
 			<Section
@@ -614,7 +614,7 @@ export function SessionOverview({
 										: branches.branchPoints === 0
 											? "One line of conversation."
 											: "Continuing on the current branch."}
-									{branches?.forkedFrom ? " Forked from an earlier task." : ""}
+									{branches?.forkedFrom ? " Forked from an earlier session." : ""}
 								</p>
 								{tip ? <p className="pane-card__facts pane-card__preview">Latest: {tip.label ?? tip.text}</p> : null}
 							</Section>

@@ -252,13 +252,13 @@ test("a window that only views the task offers no send, steer or shell line, and
 	for (const text of ["fix the build", "!ls"]) {
 		assert.deepEqual(submitIntent(draft({ text }), { ...viewing, shell: true }), {
 			kind: "blocked",
-			reason: "Firefox on laptop controls this task. Take control to send from this window.",
+			reason: "Firefox on laptop controls this session. Take control to send from this window.",
 		});
 	}
 	assert.equal(submitIntent(draft(), { ...viewing, turnRunning: true }).kind, "blocked");
 	assert.deepEqual(composerDelivery(viewing, DEFAULT_STEER_MODE, false, false), {
 		label: "Viewing",
-		detail: "Firefox on laptop controls this task.",
+		detail: "Firefox on laptop controls this session.",
 		tone: "warn",
 	});
 	assert.equal(submitIntent(draft(), situation()).kind, "prompt");

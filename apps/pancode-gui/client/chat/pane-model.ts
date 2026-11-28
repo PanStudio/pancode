@@ -18,7 +18,7 @@ export const PANE_VIEWS = [
 	{ id: "changes", label: "Changes", icon: "fileDiff" },
 	{ id: "branches", label: "Branches", icon: "branch" },
 	{ id: "agents", label: "Agents", icon: "fleet" },
-	{ id: "handoff", label: "Continue in a new task", icon: "branch" },
+	{ id: "handoff", label: "Continue in a new session", icon: "branch" },
 	{ id: "extensions", label: "Tools and add-ons", icon: "toolchain" },
 ] as const;
 
@@ -82,17 +82,17 @@ export const PANE_GROUPS: readonly { label: string; views: readonly PaneView[] }
 ];
 
 export const PANE_DESCRIPTIONS: Record<PaneView, string> = {
-	session: "Status, progress and the facts behind this task.",
+	session: "Status, progress and the facts behind this session.",
 	changes: "Edits and file paths reported by this conversation's tools.",
 	board: "Your checklist, PanCode's plan and recorded decisions.",
-	agents: "Worker activity and results linked to this task.",
-	artifacts: "Saved artifacts exposed by this task's connection.",
+	agents: "Worker activity and results linked to this session.",
+	artifacts: "Saved artifacts exposed by this session's connection.",
 	context: "Recorded window use, instructions and context management.",
-	usage: "This task's accounting and reported provider limits.",
-	timeline: "Every call, turn, tool and setting this task's journal recorded, newest first.",
+	usage: "This session's accounting and reported provider limits.",
+	timeline: "Every call, turn, tool and setting this session's journal recorded, newest first.",
 	branches: "Choose where the next request continues, or fork a conversation.",
 	handoff: "Review a handoff before starting a new conversation.",
-	extensions: "Tools and hooks loaded by this task's running session.",
+	extensions: "Tools and hooks loaded by this session.",
 };
 
 export function paneGate(

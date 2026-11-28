@@ -28,7 +28,7 @@ export function OpenWorkspaceDialog({
 	};
 	return (
 		<Dialog title="Open workspace" eyebrow="A folder on this machine" onClose={onClose} initialFocus={field}>
-			<p className="wb-open__intro">Choose a project folder. You can browse its work before starting a task.</p>
+			<p className="wb-open__intro">Choose a project folder. You can browse its work before starting a session.</p>
 			<form
 				className="wb-open"
 				onSubmit={(event) => {

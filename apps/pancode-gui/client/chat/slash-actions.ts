@@ -66,7 +66,7 @@ export const ACTIONS: readonly ActionSpec[] = [
 		action: "extensions",
 		name: "extensions",
 		title: "Extensions",
-		summary: "What this task loaded, and reload",
+		summary: "What this session loaded, and reload",
 		supported: (capabilities) => !!capabilities.extensions,
 	},
 	{

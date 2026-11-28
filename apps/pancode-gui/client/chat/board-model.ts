@@ -189,7 +189,7 @@ export function supersedeOutcome(
 /** The Decisions section's empty line: none recorded, or none still active while earlier ones remain. */
 export function decisionsEmptyLine(view: Pick<BoardView, "activeDecisions" | "earlierDecisions">): string | null {
 	if (view.activeDecisions.length > 0) return null;
-	if (view.earlierDecisions.length === 0) return "No decision has been recorded in this task.";
+	if (view.earlierDecisions.length === 0) return "No decision has been recorded in this session.";
 	return view.earlierDecisions.length === 1
 		? "No decision is active. The earlier one is below."
 		: `No decision is active. The ${view.earlierDecisions.length} earlier ones are below.`;

@@ -143,7 +143,7 @@ export const KEYBINDINGS = {
 		key: "u",
 		modifiers: ["alt"],
 		scope: "global",
-		action: "Show or hide the task overview",
+		action: "Show or hide the session overview",
 		where: "Conversation · no dialog open",
 	},
 	workers: {
@@ -200,7 +200,7 @@ export const KEYBINDINGS = {
 		modifiers: [],
 		scope: "list",
 		action: "Next list row",
-		where: "Sidebar task list · j also moves",
+		where: "Sidebar session list · j also moves",
 	},
 	listPrevious: {
 		id: "listPrevious",
@@ -208,7 +208,7 @@ export const KEYBINDINGS = {
 		modifiers: [],
 		scope: "list",
 		action: "Previous list row",
-		where: "Sidebar task list · k also moves",
+		where: "Sidebar session list · k also moves",
 	},
 	palette: {
 		id: "palette",
@@ -239,7 +239,7 @@ export const KEYBINDINGS = {
 		key: "o",
 		modifiers: ["primary", "shift"],
 		scope: "global",
-		action: "New task",
+		action: "New session",
 		where: "Current project · no dialog open",
 	},
 	newWindow: {
@@ -247,7 +247,7 @@ export const KEYBINDINGS = {
 		key: "n",
 		modifiers: ["primary", "shift"],
 		scope: "global",
-		action: "Open task in another window",
+		action: "Open session in another window",
 		where: "Installed app only · no dialog open; reserved by browser tabs",
 	},
 	openWorkspace: {
@@ -263,7 +263,7 @@ export const KEYBINDINGS = {
 		key: "|",
 		modifiers: ["primary", "shift"],
 		scope: "global",
-		action: "Toggle task sidebar",
+		action: "Toggle session sidebar",
 		where: "Conversation · no dialog open",
 	},
 	focusComposer: {

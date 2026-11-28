@@ -117,7 +117,7 @@ test("with only superseded decisions the board says none is active, not that non
 	const { decisionsEmptyLine } = await import("../client/chat/board-model.js");
 	assert.equal(
 		decisionsEmptyLine({ activeDecisions: [], earlierDecisions: [] }),
-		"No decision has been recorded in this task.",
+		"No decision has been recorded in this session.",
 	);
 	assert.equal(
 		decisionsEmptyLine({ activeDecisions: [], earlierDecisions: [{} as never] }),

@@ -281,7 +281,7 @@ export const WorkerGraph = memo(function WorkerGraph({
 				) : null}
 			</div>
 			{graph.nodes.length === 0 ? (
-				<p className="pane-empty agents-empty">No agents have been dispatched in this task.</p>
+				<p className="pane-empty agents-empty">No agents have been dispatched in this session.</p>
 			) : shown.length === 0 ? (
 				<p className="pane-empty agents-empty">Every dispatched agent has settled.</p>
 			) : null}

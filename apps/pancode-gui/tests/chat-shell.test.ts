@@ -405,15 +405,18 @@ test("the open task's commands are a This task group: one runs, one that needs a
 		fillTaskCommand: (name: string) => calls.push(`fill ${name}`),
 	};
 	const open = { sessionId: "s1", runningTurnId: null, sessionOpen: true, hasNotices: false, catalog };
-	const rows = appCommands(open, run).filter((row) => row.group === "This task");
+	const rows = appCommands(open, run).filter((row) => row.group === "This session");
 	assert.deepEqual(
 		rows.map((row) => row.title),
 		["Run doctor", "Run share…"],
 	);
 	for (const row of rows) row.run();
 	assert.deepEqual(calls, ["run doctor", "fill share"]);
-	assert.equal(appCommands({ ...open, sessionOpen: false }, run).filter((row) => row.group === "This task").length, 0);
-	assert.equal(appCommands(open, on).filter((row) => row.group === "This task").length, 0);
+	assert.equal(
+		appCommands({ ...open, sessionOpen: false }, run).filter((row) => row.group === "This session").length,
+		0,
+	);
+	assert.equal(appCommands(open, on).filter((row) => row.group === "This session").length, 0);
 });
 
 test("a stop names the turn running when it is pressed, and nothing once that turn settled", () => {
@@ -508,7 +511,7 @@ test("the palette's task commands leave out what Download transcript and Report 
 			} as never,
 		},
 		{ ...on, runTaskCommand: () => undefined, fillTaskCommand: () => undefined },
-	).filter((row) => row.group === "This task");
+	).filter((row) => row.group === "This session");
 	assert.deepEqual(
 		rows.map((row) => row.id),
 		["task-command.doctor", "task-command.archive"],

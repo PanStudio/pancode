@@ -59,7 +59,7 @@ export function routeFacts(
 		return {
 			tone,
 			text: "Model not reported",
-			title: `PanCode has not reported this task's model. ${healthText}`,
+			title: `PanCode has not reported this session's model. ${healthText}`,
 			spoken: `Model not reported. ${healthText}`,
 		};
 	}
