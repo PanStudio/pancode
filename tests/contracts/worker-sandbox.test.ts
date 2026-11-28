@@ -69,13 +69,13 @@ import {
 	configureWorkerProcessSandbox,
 	planSandboxedSpawn,
 } from "../../src/core/sandbox/worker-process.js";
+import { settingsChangeKind } from "../../src/core/settings-change-kind.js";
 import { formatControlValue, hasRedactedControlCredentials } from "../../src/core/settings-controls.js";
 import { layeredConfineList, readLayeredSettings } from "../../src/core/settings-layers.js";
 import type { TelemetryContext } from "../../src/core/telemetry/context.js";
 import { attachJournalRoute, telemetryContexts } from "../../src/core/telemetry/hub.js";
 import { type ToolName, ToolNames } from "../../src/core/tool-names.js";
 import { captureProjectSurface, recordProjectSurfaceTrust } from "../../src/core/workspace-trust.js";
-import { settingsChangeKind } from "../../src/domains/config/classify.js";
 import { resolveWorkerEnvelope } from "../../src/domains/dispatch/envelope.js";
 import { workerSandboxFor } from "../../src/domains/dispatch/worker-spec.js";
 import { createTaskWorktree } from "../../src/tools/task-worktree.js";

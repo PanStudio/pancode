@@ -1,8 +1,10 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
+
+import { settingsChangeKind } from "../core/settings-change-kind.js";
 import { readStrictLayeredSettings } from "../core/settings-layers.js";
 import type { TelemetryHub } from "../core/telemetry/hub.js";
-import { diffSettings, settingsChangeKind } from "../domains/config/classify.js";
+import { diffSettings } from "../domains/config/classify.js";
 import type { ConfigContract } from "../domains/config/contract.js";
 import type { InstalledExtension } from "../domains/extensions/types.js";
 import type { InstalledPlugin, PluginSnapshot } from "../domains/plugins/types.js";

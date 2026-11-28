@@ -25,12 +25,12 @@ import type { AdmissionHold, CallJournalOptions } from "../domains/telemetry/cal
 import type { TurnControlRecord, TurnOutcomeRecord } from "../lib/turn-control/index.js";
 import { reduceTurnOutcome } from "../lib/turn-control/index.js";
 import { resolveSessionTools } from "../tools/agent-tools.js";
-import type { ChatSubmitOptions, StepPipelineEnd } from "./chat-loop.js";
+import type { ChatSubmitOptions, CreateChatLoopDeps, StepPipelineEnd } from "./chat-loop.js";
 import { notConfiguredNotice } from "./chat-loop-messages.js";
 import type { ChatLoopScope } from "./chat-loop-scope.js";
 import { loopGuardContinuationDetail, TOOL_LOCK_RESET_DETAIL } from "./loop-guard-interrupt.js";
 import { type StepRun, stepTurnOutcome } from "./step-start.js";
-import { createTurnKeepalive } from "./turn-keepalive.js";
+import { createTurnKeepalive, type TurnKeepaliveDeps } from "./turn-keepalive.js";
 import { createTurnPrewarm, subscribePrewarmToCompaction } from "./turn-prewarm.js";
 import type { QueuedChatMessage } from "./turn-queues.js";
 import type { AgentRuntime, ChatLoopStateMachineState } from "./turn-state.js";
@@ -65,27 +65,118 @@ interface YoloContinuation {
 const countsAgainstCap = (stop: YoloContinuation): boolean =>
 	stop.step === true || continuationCountsAgainstCap(stop.cause);
 
-/** The chat loop's turn state machine: admission, settlement, side-call slots, prewarm and keepalive. */
-export function createChatLoopStateMachine(loop: ChatLoopScope, state: ChatLoopStateMachineState) {
-	const {
-		context,
-		currentToolInvokeOptions,
-		deps,
-		emitNotice,
-		outcomeCollector,
-		queues,
-		recovery,
-		stepPipeline,
-		turnRuntime,
-	} = loop;
-	// --- the state machine --------------------------------------------------
+/**
+ * Run one out-of-turn round while holding a slot on the endpoint it streams
+ * to, exactly as the turn and the pre-warm do. A `/btw` or `/handoff` round
+ * is a full request against the same inference scheduler, so endpoint
+ * capacity (#250) has to count it for as long as it is out, and the
+ * background-memory tier has to read that endpoint as busy (#229). The round
+ * may release the slot while it waits and take it back before it sends.
+ */
+async function withEndpointKeySlot<T>(
+	endpointKey: string | null,
+	round: (slot: EndpointSlot) => Promise<T>,
+): Promise<T> {
+	let held: (() => void) | null = null;
+	const slot: EndpointSlot = {
+		acquire: () => {
+			if (endpointKey !== null && held === null) held = registerForegroundStream(endpointKey);
+		},
+		release: () => {
+			held?.();
+			held = null;
+		},
+	};
+	slot.acquire();
+	try {
+		return await round(slot);
+	} finally {
+		slot.release();
+	}
+}
 
-	/**
-	 * What a settled turn stopped on, when nobody asked for it and yolo has continuations left (#445).
-	 * A guard interrupt (the hard tool-call ceiling or an identical-call loop stop) counts against the cap:
-	 * the turn did not converge after the soft budget asked it to re-plan.
-	 */
-	const yoloContinuationDue = (
+/**
+ * Budget admission for each attempt of a side round, a schema or auth retry included. It runs inside the attempt's
+ * call, so a hold at the ceiling reads as its admission stage with `waitedOn: "budget"` and journals the crossing
+ * and the wait for that call; a session that changed during the wait refuses the request (#424, #434). A held
+ * request gives its endpoint slot back for the hold, because a paused request must not hold capacity.
+ */
+function createSideCallAdmission(deps: CreateChatLoopDeps) {
+	return (
+		origin: ReturnType<SessionContract["current"]>,
+		slot: EndpointSlot,
+		signal?: AbortSignal,
+		// An automatic round (triage) is refused at the ceiling; only an operator's own request parks for a raise.
+		waitForRaise = deps.headless !== true,
+	) =>
+		async (hold: AdmissionHold): Promise<void> => {
+			// Checked whatever the route's pricing: an unpriced route projects nothing, but the session's settled
+			// spend may already be at the ceiling.
+			const telemetry = telemetryContext();
+			await deps.scheduling?.admitPaidRequest?.({
+				waitForRaise,
+				getCeilingUsd: () => deps.getSettings().safety.limits.sessionCostUsd,
+				onBlocked: () => {
+					hold.waitedOn = "budget";
+					slot.release();
+				},
+				...(telemetry ? { telemetry } : {}),
+				...(signal ? { signal } : {}),
+			});
+			if ((deps.session?.current()?.id ?? null) !== (origin?.id ?? null))
+				throw new Error("session changed before the request");
+			slot.acquire();
+		};
+}
+
+function createSideCallJournal(deps: CreateChatLoopDeps) {
+	return (
+		runtime:
+			| AgentRuntime
+			| {
+					targetId: string;
+					runtimeId: string;
+					pricedBy: AgentRuntime["runtimeResolution"]["pricedBy"];
+					freeRule?: AgentRuntime["runtimeResolution"]["freeRule"];
+					rates?: EffectivePricing["rates"];
+			  },
+		role: CallJournalOptions["role"],
+		origin: ReturnType<SessionContract["current"]>,
+	): { telemetry?: CallJournalOptions } => {
+		const acquire = deps.telemetry?.acquireTelemetrySession;
+		// The route's rates price a target-rates side call from its settled counts (#434).
+		const rates =
+			"runtimeResolution" in runtime
+				? resolveEffectivePricing(
+						runtime.runtimeResolution.target,
+						runtime.runtimeResolution.runtime,
+						runtime.runtimeResolution.wireModelId,
+					).rates
+				: runtime.rates;
+		return acquire
+			? {
+					telemetry: {
+						origin,
+						acquire,
+						role,
+						targetId: runtime.targetId,
+						runtimeId: runtime.runtimeId,
+						...pricingBasisFields("runtimeResolution" in runtime ? runtime.runtimeResolution : runtime),
+						...(rates !== undefined ? { rates } : {}),
+					},
+				}
+			: {};
+	};
+}
+
+/**
+ * What a settled turn stopped on, when nobody asked for it and yolo has continuations left (#445).
+ * A guard interrupt (the hard tool-call ceiling or an identical-call loop stop) counts against the cap:
+ * the turn did not converge after the soft budget asked it to re-plan.
+ */
+function createYoloContinuationDue(loop: ChatLoopScope, state: ChatLoopStateMachineState) {
+	const { deps } = loop;
+	return (
 		guardInterrupted = false,
 		guardFailure: { tool: string; failure: string } | null = null,
 		stepStop: { template?: string } | null = null,
@@ -149,6 +240,57 @@ export function createChatLoopStateMachine(loop: ChatLoopScope, state: ChatLoopS
 		];
 		return detail.length === 0 ? stop : { ...stop, detail: detail.join("\n") };
 	};
+}
+
+/** The keepalive's ledger entry: one display-less `prewarm` custom entry per refresh. */
+function createKeepaliveRecord(
+	deps: CreateChatLoopDeps,
+	state: ChatLoopStateMachineState,
+): TurnKeepaliveDeps["record"] {
+	return (runtime, refresh) => {
+		try {
+			deps.session?.appendEntry({
+				kind: "custom",
+				customType: "prewarm",
+				// A fact about the provider cache, never a model message or a transcript block.
+				display: false,
+				parentTurnId: state.lastTurnId,
+				data: {
+					trigger: "keepalive",
+					phase: refresh.phase,
+					target: runtime.targetId,
+					model: runtime.wireModelId,
+					promptTokens: refresh.promptTokens,
+					economics: refresh.economics,
+					promptCache: {
+						input: refresh.message?.usage.input ?? null,
+						cacheRead: refresh.message?.usage.cacheRead ?? null,
+						cacheWrite: refresh.message?.usage.cacheWrite ?? null,
+					},
+					...(refresh.error === null ? {} : { error: refresh.error }),
+				},
+			});
+		} catch {
+			// The ledger entry is diagnostics; the spend is already booked above.
+		}
+	};
+}
+
+/** The chat loop's turn state machine: admission, settlement, side-call slots, prewarm and keepalive. */
+export function createChatLoopStateMachine(loop: ChatLoopScope, state: ChatLoopStateMachineState) {
+	const {
+		context,
+		currentToolInvokeOptions,
+		deps,
+		emitNotice,
+		outcomeCollector,
+		queues,
+		recovery,
+		stepPipeline,
+		turnRuntime,
+	} = loop;
+	// --- the state machine --------------------------------------------------
+	const yoloContinuationDue = createYoloContinuationDue(loop, state);
 
 	/**
 	 * A step turn runs one pipeline step by contract, so the finish contract waits while a step continuation follows
@@ -365,109 +507,11 @@ export function createChatLoopStateMachine(loop: ChatLoopScope, state: ChatLoopS
 		}
 	};
 
-	/**
-	 * Budget admission for each attempt of a side round, a schema or auth retry included. It runs inside the attempt's
-	 * call, so a hold at the ceiling reads as its admission stage with `waitedOn: "budget"` and journals the crossing
-	 * and the wait for that call; a session that changed during the wait refuses the request (#424, #434). A held
-	 * request gives its endpoint slot back for the hold, because a paused request must not hold capacity.
-	 */
-	const sideCallAdmission =
-		(
-			origin: ReturnType<SessionContract["current"]>,
-			slot: EndpointSlot,
-			signal?: AbortSignal,
-			// An automatic round (triage) is refused at the ceiling; only an operator's own request parks for a raise.
-			waitForRaise = deps.headless !== true,
-		) =>
-		async (hold: AdmissionHold): Promise<void> => {
-			// Checked whatever the route's pricing: an unpriced route projects nothing, but the session's settled
-			// spend may already be at the ceiling.
-			const telemetry = telemetryContext();
-			await deps.scheduling?.admitPaidRequest?.({
-				waitForRaise,
-				getCeilingUsd: () => deps.getSettings().safety.limits.sessionCostUsd,
-				onBlocked: () => {
-					hold.waitedOn = "budget";
-					slot.release();
-				},
-				...(telemetry ? { telemetry } : {}),
-				...(signal ? { signal } : {}),
-			});
-			if ((deps.session?.current()?.id ?? null) !== (origin?.id ?? null))
-				throw new Error("session changed before the request");
-			slot.acquire();
-		};
-
-	/**
-	 * Run one out-of-turn round while holding a slot on the endpoint it streams
-	 * to, exactly as the turn and the pre-warm do. A `/btw` or `/handoff` round
-	 * is a full request against the same inference scheduler, so endpoint
-	 * capacity (#250) has to count it for as long as it is out, and the
-	 * background-memory tier has to read that endpoint as busy (#229). The round
-	 * may release the slot while it waits and take it back before it sends.
-	 */
-	const withEndpointKeySlot = async <T>(
-		endpointKey: string | null,
-		round: (slot: EndpointSlot) => Promise<T>,
-	): Promise<T> => {
-		let held: (() => void) | null = null;
-		const slot: EndpointSlot = {
-			acquire: () => {
-				if (endpointKey !== null && held === null) held = registerForegroundStream(endpointKey);
-			},
-			release: () => {
-				held?.();
-				held = null;
-			},
-		};
-		slot.acquire();
-		try {
-			return await round(slot);
-		} finally {
-			slot.release();
-		}
-	};
-
 	const withEndpointSlot = async <T>(runtime: AgentRuntime, round: (slot: EndpointSlot) => Promise<T>): Promise<T> =>
 		withEndpointKeySlot(modelEndpointKey(runtime.runtimeResolution.target, runtime.wireModelId), round);
 
-	const sideCallJournal = (
-		runtime:
-			| AgentRuntime
-			| {
-					targetId: string;
-					runtimeId: string;
-					pricedBy: AgentRuntime["runtimeResolution"]["pricedBy"];
-					freeRule?: AgentRuntime["runtimeResolution"]["freeRule"];
-					rates?: EffectivePricing["rates"];
-			  },
-		role: CallJournalOptions["role"],
-		origin: ReturnType<SessionContract["current"]>,
-	): { telemetry?: CallJournalOptions } => {
-		const acquire = deps.telemetry?.acquireTelemetrySession;
-		// The route's rates price a target-rates side call from its settled counts (#434).
-		const rates =
-			"runtimeResolution" in runtime
-				? resolveEffectivePricing(
-						runtime.runtimeResolution.target,
-						runtime.runtimeResolution.runtime,
-						runtime.runtimeResolution.wireModelId,
-					).rates
-				: runtime.rates;
-		return acquire
-			? {
-					telemetry: {
-						origin,
-						acquire,
-						role,
-						targetId: runtime.targetId,
-						runtimeId: runtime.runtimeId,
-						...pricingBasisFields("runtimeResolution" in runtime ? runtime.runtimeResolution : runtime),
-						...(rates !== undefined ? { rates } : {}),
-					},
-				}
-			: {};
-	};
+	const sideCallAdmission = createSideCallAdmission(deps);
+	const sideCallJournal = createSideCallJournal(deps);
 	// Install cancellation before publishing the preparation edge; listeners may cancel synchronously.
 	const prepareCompactionPaint = (): (() => Promise<void>) => {
 		const controller = new AbortController();
@@ -655,33 +699,7 @@ export function createChatLoopStateMachine(loop: ChatLoopScope, state: ChatLoopS
 		},
 		withEndpointSlot,
 		callJournal: (runtime) => sideCallJournal(runtime, "prewarm", deps.session?.current() ?? null).telemetry,
-		record: (runtime, refresh) => {
-			try {
-				deps.session?.appendEntry({
-					kind: "custom",
-					customType: "prewarm",
-					// A fact about the provider cache, never a model message or a transcript block.
-					display: false,
-					parentTurnId: state.lastTurnId,
-					data: {
-						trigger: "keepalive",
-						phase: refresh.phase,
-						target: runtime.targetId,
-						model: runtime.wireModelId,
-						promptTokens: refresh.promptTokens,
-						economics: refresh.economics,
-						promptCache: {
-							input: refresh.message?.usage.input ?? null,
-							cacheRead: refresh.message?.usage.cacheRead ?? null,
-							cacheWrite: refresh.message?.usage.cacheWrite ?? null,
-						},
-						...(refresh.error === null ? {} : { error: refresh.error }),
-					},
-				});
-			} catch {
-				// The ledger entry is diagnostics; the spend is already booked above.
-			}
-		},
+		record: createKeepaliveRecord(deps, state),
 	});
 	// The prompt this process will send is known now: the session prompt compiles
 	// against the configured target, and a boot-time resume rebuilds the message
