@@ -13,11 +13,11 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { processAlive } from "../core/process-identity.js";
+import type { RunToolBudgetEnvelope } from "../core/run-budget-envelope.js";
 import type { FactSum } from "../core/telemetry/fact.js";
 import { sumFactSums } from "../core/telemetry/pricing.js";
 import { renderCountSum, renderCountSumKnown, renderDurationSum, renderUsdSum } from "../core/telemetry/render.js";
 import { pancodeStateDir } from "../core/xdg.js";
-import type { RunToolBudgetEnvelope } from "../domains/dispatch/budget-envelope.js";
 import type { CapacityDrain } from "../domains/dispatch/capacity-lease.js";
 import type { RunEnvelope } from "../domains/dispatch/types.js";
 
@@ -305,7 +305,7 @@ async function writeStatusText(out: StatusWriter, snapshot: StatusSnapshot): Pro
 		out.write("running: none\n");
 	} else {
 		const budgets = snapshot.running.some((row) => row.budget !== null)
-			? await import("../domains/dispatch/budget-envelope.js")
+			? await import("../core/run-budget-envelope.js")
 			: null;
 		out.write("running:\n");
 		for (const row of snapshot.running) {

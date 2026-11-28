@@ -16,5 +16,4 @@ export {
 export type { CanonicalTrustStatus, TrustStatusAxis } from "./trust-status.js";
 export { composeTrustStatus, inspectRunTrustStatus, TRUST_STATUS_AXES } from "./trust-status.js";
 export type { EvidenceFinding, EvidenceTag, RunEvidence } from "./types.js";
-export { FAILURE_CAUSE_TAGS } from "./types.js";
 export { judgedPayloadKey } from "./verified-outcomes.js";

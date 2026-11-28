@@ -33,7 +33,7 @@ import {
 	telemetryCaptures,
 } from "../../core/telemetry/producer.js";
 import { pancodeStateDir } from "../../core/xdg.js";
-import { computeSettingsFingerprint } from "../dispatch/settings-fingerprint.js";
+import { computeSettingsFingerprint } from "../config/index.js";
 import type { CallJournal } from "./call-journal.js";
 import { openCallJournalHealth } from "./call-journal.js";
 import { createConsentView } from "./consent.js";

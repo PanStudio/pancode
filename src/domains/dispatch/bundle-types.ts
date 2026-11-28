@@ -2,6 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 
 import type { AcpDelegationRunHandle, AcpDelegationRunInput } from "../../acp/adapter.js";
+import type { RunToolBudgetEnvelope } from "../../core/run-budget-envelope.js";
 import type { SandboxAvailability } from "../../core/sandbox/types.js";
 import type { DispatchRunIdentity } from "../../core/telemetry/live-events.js";
 import type { AutonomyLevel } from "../../lib/autonomy/autonomy.js";
@@ -27,7 +28,6 @@ import type { WorkerPermit } from "../safety/worker-permit.js";
 import type { TelemetrySessionOrigin } from "../telemetry/session-journals.js";
 import type { DispatchAdmissionStage } from "./admission-scope.js";
 import type { WorktreeBootRecovery } from "./boot-recovery.js";
-import type { RunToolBudgetEnvelope } from "./budget-envelope.js";
 import type { CapabilityMismatch } from "./capability-match.js";
 import type { AbortReason, DispatchPreparationOptions, DispatchRequest } from "./contract.js";
 import type { WorkerEnvelope } from "./envelope.js";

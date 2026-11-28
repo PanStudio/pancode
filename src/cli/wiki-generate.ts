@@ -7,6 +7,7 @@ import { loadDomains } from "../core/domain-loader.js";
 import { formatElapsed } from "../core/format-time.js";
 import { sha256Hex } from "../core/hash.js";
 import { asDirectoryPathBoundary } from "../core/path-boundary.js";
+import { cloneRunToolBudgetEnvelope, formatEffectiveBudget } from "../core/run-budget-envelope.js";
 import { safeResourceWrite } from "../core/safe-resource-write.js";
 import type { Fact, FactSum } from "../core/telemetry/fact.js";
 import {
@@ -44,7 +45,6 @@ import {
 	observedWikiSources,
 	wikiSourcesMatch,
 } from "../domains/context/wiki/source-content.js";
-import { cloneRunToolBudgetEnvelope, formatEffectiveBudget } from "../domains/dispatch/budget-envelope.js";
 import type { DispatchContract } from "../domains/dispatch/contract.js";
 import { DISPATCH_INTENT_PATH_LIST_CAP } from "../domains/dispatch/index.js";
 import { declaredScopeIntent } from "../domains/dispatch/intent.js";

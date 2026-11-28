@@ -20,6 +20,7 @@ import { normalizeTokenUsage } from "../../core/token-split.js";
  */
 
 import { resolveDispatchFailureStatus } from "../../core/dispatch-outcome.js";
+import { cloneRunToolBudgetEnvelope, type RunToolBudgetEnvelope } from "../../core/run-budget-envelope.js";
 import type { TelemetryContext } from "../../core/telemetry/context.js";
 import type { EventPayload } from "../../core/telemetry/events.js";
 import type { TelemetryHub } from "../../core/telemetry/hub.js";
@@ -36,7 +37,6 @@ import {
 import { truncateToWidth } from "../../engine/tui-primitives.js";
 import { sanitizeCallTargetText } from "../../lib/call-target/call-target.js";
 import type { AgentAudience } from "../agents/spec.js";
-import { cloneRunToolBudgetEnvelope, type RunToolBudgetEnvelope } from "../dispatch/budget-envelope.js";
 import type { DispatchSnapshot } from "../dispatch/contract.js";
 import type { DispatchRequestOrigin, RunKind } from "../dispatch/types.js";
 import { summarizeTrustStatus } from "../evidence/trust-projection.js";

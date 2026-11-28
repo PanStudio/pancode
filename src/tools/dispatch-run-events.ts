@@ -2,8 +2,8 @@
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import type { TelemetryHub } from "../core/telemetry/hub.js";
 import { isRecord } from "../core/type-guards.js";
+import { durableAssistantTextFromEvent } from "../core/worker-output.js";
 import type { DispatchContract } from "../domains/dispatch/contract.js";
-import { durableAssistantTextFromEvent } from "../domains/dispatch/event-pump.js";
 import { defaultRunEventJournal, type RunEventJournalSink } from "../domains/dispatch/run-event-journal.js";
 import type { RunResult } from "../domains/dispatch/types.js";
 import { createRedactionTally, redactSecretsText } from "../lib/secrets/redact.js";

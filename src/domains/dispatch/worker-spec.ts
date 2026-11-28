@@ -12,6 +12,7 @@ import { GUARDRAIL_DEFAULTS } from "../../core/guardrails.js";
 import { canonicalizeExistingPath } from "../../core/path-canonical.js";
 import { relativePathEscapes } from "../../core/path-containment.js";
 import { protectedResidencyModels } from "../../core/residency-protection.js";
+import { type RunToolBudgetEnvelope, resolveToolBudgetEnvelope } from "../../core/run-budget-envelope.js";
 import { probedSandboxBackend } from "../../core/sandbox/availability.js";
 import { egressGrants } from "../../core/sandbox/egress/policy.js";
 import { sandboxEnvPolicy } from "../../core/sandbox/env-scrub.js";
@@ -51,6 +52,7 @@ import { INTERNAL_HELPER_RESULT_KINDS } from "../agents/result-contract.js";
 import { isHoareResultContract, type ResultContract } from "../agents/result-contract-types.js";
 import type { normalizeAgentSpec } from "../agents/spec.js";
 import type { ConfigContract } from "../config/contract.js";
+import { computeSettingsFingerprint } from "../config/index.js";
 import type { MiddlewareContract } from "../middleware/contract.js";
 import { type RuntimeDescriptor, runtimeTargetSnapshot } from "../providers/index.js";
 import {
@@ -65,7 +67,6 @@ import {
 import type { ProtectedArtifactState } from "../safety/protected-artifacts.js";
 import { mainGrantsUnavailable, type WorkerPermit, workerPermissionModeForPermit } from "../safety/worker-permit.js";
 import type { DispatchAdmissionStage } from "./admission-scope.js";
-import { type RunToolBudgetEnvelope, resolveToolBudgetEnvelope } from "./budget-envelope.js";
 import type { DispatchRequest } from "./contract.js";
 import type { WorkerEnvelope } from "./envelope.js";
 import type { EffectiveSettings } from "./envelope-stage.js";
@@ -79,7 +80,6 @@ import {
 	assertRuntimeCanHonorWorkerPermissionMode,
 	assertWriteRootsEnforceable,
 } from "./runtime-enforceability.js";
-import { computeSettingsFingerprint } from "./settings-fingerprint.js";
 import { type ResolvedTarget, targetToolCapability } from "./target-resolution.js";
 import { workerApprovalBackstopMs } from "./worker-approval-window.js";
 import type { WorkerSpec } from "./worker-spawn.js";

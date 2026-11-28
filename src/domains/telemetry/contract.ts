@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 
+import type { RunToolBudgetEnvelope } from "../../core/run-budget-envelope.js";
 import type { TelemetryCapture } from "../../core/telemetry/capture.js";
 import type { TelemetryAgent } from "../../core/telemetry/context.js";
 import type {
@@ -28,7 +29,6 @@ import type { PreimageData, PreimageEventName } from "../../core/telemetry/event
 import type { HostVerificationStatus } from "../../core/telemetry/run-vocabulary.js";
 import type { RunUsageFacts } from "../../core/telemetry/schemas.js";
 import type { AgentAudience } from "../agents/spec.js";
-import type { RunToolBudgetEnvelope } from "../dispatch/budget-envelope.js";
 import type { DispatchSnapshot } from "../dispatch/contract.js";
 import type { DispatchRequestOrigin, RunKind } from "../dispatch/types.js";
 import type { TrustSummaryProjection } from "../evidence/trust-projection.js";

@@ -16,6 +16,7 @@ import type { RunVerdict } from "./grading.js";
 
 import type { GatewayRoutingObservation } from "../../core/gateway-routing.js";
 import type { ResponseModelIdObservation } from "../../core/response-model-id.js";
+import type { RunToolBudgetEnvelope } from "../../core/run-budget-envelope.js";
 import type { WorkerSandboxReceipt } from "../../core/sandbox/worker-policy.js";
 import type { SkillActivation } from "../../core/skill-activation.js";
 import type { RunTerminalReason } from "../../core/telemetry/enums.js";
@@ -38,7 +39,6 @@ import type { ToolProfileName } from "../../tools/profiles.js";
 import type { DeclaredCheckReport } from "../../tools/verify/scripts.js";
 import type { AgentAudience } from "../agents/spec.js";
 import type { RuntimeEnforcement, RuntimeTargetSnapshot } from "../providers/index.js";
-import type { RunToolBudgetEnvelope } from "./budget-envelope.js";
 import type { ExecutionRole, GateTopologyRole } from "./execution-role.js";
 import type { DispatchIntent } from "./intent.js";
 import type { RouteDecisionV1 } from "./route-decision.js";

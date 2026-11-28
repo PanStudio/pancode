@@ -2,8 +2,8 @@
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 
 import { isRecord } from "../core/type-guards.js";
+import { durableAssistantTextFromEvent } from "../core/worker-output.js";
 import { pancodeStateDir } from "../core/xdg.js";
-import { durableAssistantTextFromEvent } from "../domains/dispatch/event-pump.js";
 import {
 	type AgentRoleFactsResolver,
 	agentRoleFactsResolver,
