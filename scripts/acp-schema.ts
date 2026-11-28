@@ -24,7 +24,7 @@ import { sha256Hex } from "../src/core/hash.js";
 
 const root = path.resolve(import.meta.dirname, "..");
 const pinPath = path.join(root, "scripts", "acp-schema.pin.json");
-const modulePath = path.join(root, "src", "engine", "acp", "upstream-schema.ts");
+const modulePath = path.join(root, "src", "acp", "upstream-schema.ts");
 const moduleRelative = "src/acp/upstream-schema.ts";
 
 /** The v1 definitions generated as exported schemas; everything they reference is generated alongside. */

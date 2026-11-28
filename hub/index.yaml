@@ -382,9 +382,9 @@ entries:
       - add an extension hook
       - create an extension workspace
       - debug extension reload
-    version: 0.1.9
+    version: 0.1.10
     sourceUrl: packs/skills/meta/extension-authoring
-    sha256: dd8f43e8eab979f723bcd8b4f23d611cf670a1a76186722534b17dcf0e4ca92c
+    sha256: cea3391c2b6e438b9dde66e272783513c208114df09abc7aad76700d8fb69d7d
     license: LicenseRef-PanCode-1.0
     tier: core
     provides:
@@ -637,9 +637,9 @@ entries:
       - change PanCode context or session lifecycle
       - edit PanCode skills tools or prompts
       - work a PanCode lane brief or spec
-    version: 0.7.4
+    version: 0.7.5
     sourceUrl: packs/skills/meta/pancode-dev
-    sha256: 283b5215edbfed37c9c5f40b9e62f7c335e77b0c4898e4986ac1e53b81fd55a9
+    sha256: 49f59dfc1db0fcf26617722b716ecb5be5eef7270f7b089fa0b518ffd0f8b35d
     license: LicenseRef-PanCode-1.0
     tier: core
     provides:

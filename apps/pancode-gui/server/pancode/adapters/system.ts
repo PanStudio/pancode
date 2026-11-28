@@ -3,6 +3,7 @@
 import { homedir } from "node:os";
 import { readLayeredSettings } from "../../../../../src/core/settings-layers.js";
 import { resolvePancodeDirs } from "../../../../../src/core/xdg.js";
+import { runDoctor } from "../../../../../src/domains/install/doctor.js";
 import {
 	acceptInteropAgents,
 	declineInteropAgents,
@@ -13,7 +14,6 @@ import {
 	interopProposals,
 	resolveOnPath,
 } from "../../../../../src/domains/interop/index.js";
-import { runDoctor } from "../../../../../src/domains/install/doctor.js";
 
 export function inspectSystem() {
 	return {

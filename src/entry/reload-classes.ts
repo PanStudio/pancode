@@ -217,7 +217,7 @@ export function createReloadClasses(deps: ReloadClassesDeps): ReloadClassesContr
 					const before = packages(deps.hub()?.packages ?? []);
 					try {
 						const snapshot = deps.reloadHub();
-						lines.push(...summary(`The hub (generation ${snapshot.generation})`, before, packages(snapshot.packages)));
+						lines.push(...summary(`Hub (generation ${snapshot.generation})`, before, packages(snapshot.packages)));
 						for (const entry of snapshot.packages)
 							for (const issue of entry.diagnostics) {
 								if (issue.type === "error") failed = true;

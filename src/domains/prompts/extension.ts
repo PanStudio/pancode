@@ -871,7 +871,7 @@ function selfDevelopmentSkillFragments(
 	const activation = isAutonomyLevel(autonomy);
 	const body = [
 		"# Self-development skills",
-		"For a task that changes PanCode's source, harness, prompts, or the hub packs, pancode-dev guides the editing step and pancode-test the validation step. Skip both for unrelated or self-contained questions.",
+		"For a task that changes PanCode's source, harness, prompts, or hub packs, pancode-dev guides the editing step and pancode-test the validation step. Skip both for unrelated or self-contained questions.",
 		`These two skills are discoverable from this checkout's hub/packs/skills/meta when no installed package owns their names. Check ${listCall} for current readiness; disabled, damaged, or hidden skills stay unavailable.`,
 		activation
 			? `Load each one when its step arrives, without waiting for a separate skill request, unless it is already loaded this session (by you, by the operator's /skill, or by the host): ${loadCall("pancode-dev")} once you have read the code and are about to make the first edit, ${loadCall("pancode-test")} once the change is made and you are choosing how to validate it. A loaded skill stays in context and is never loaded again. Never load both up front or for a step the task does not reach; a loaded skill is resent on every later request. Do not load every reference or the whole catalog.`

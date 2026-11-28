@@ -52,7 +52,7 @@ export const HARNESS_SLASH_COMMANDS: ReadonlyArray<BuiltinSlashCommand> = [
 		name: "reload",
 		rank: 3,
 		acp: { readOnlyRefuses: true },
-		description: "Reload settings, the hub packs, extension runtimes, prompts and MCP servers with one report",
+		description: "Reload settings, hub packs, extension runtimes, prompts and MCP servers with one report",
 		group: "PanCode",
 		kinds: ["reload"],
 		args: {

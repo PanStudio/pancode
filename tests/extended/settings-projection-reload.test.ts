@@ -28,7 +28,7 @@ test("saved next-turn settings reach the running guardrail consumer", async () =
 				`
 				import { telemetryHub } from ${JSON.stringify(source("core/telemetry/hub.ts"))};
 				import { resolveGuardrail } from ${JSON.stringify(source("core/guardrails.ts"))};
-				import { createStdioServerTransport } from ${JSON.stringify(source("engine/acp/transport.ts"))};
+				import { createStdioServerTransport } from ${JSON.stringify(source("acp/transport.ts"))};
 				import { bootOrchestrator } from ${JSON.stringify(source("entry/orchestrator.ts"))};
 				const transport = createStdioServerTransport();
 				telemetryHub().subscribe("config.next_turn_scheduled", () => {

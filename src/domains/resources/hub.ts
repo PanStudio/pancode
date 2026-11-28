@@ -748,7 +748,7 @@ export async function syncHub(direction: "sync" | "push", runner: HubCommandRunn
 	const settings = readSettings().integrations.hub;
 	if (!settings.sync)
 		throw new Error(
-			"hub_sync_disabled: The hub Git sync is off by default; turn it on with pancode config set integrations.hub.sync true, add a Git remote named hub beside the user index, and confirm it with pancode hub remote confirm <url>",
+			"hub_sync_disabled: Hub Git sync is off by default; turn it on with pancode config set integrations.hub.sync true, add a Git remote named hub beside the user index, and confirm it with pancode hub remote confirm <url>",
 		);
 	const remote = confirmedRemote();
 	const cwd = path.dirname(catalogPath());

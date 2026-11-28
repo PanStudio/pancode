@@ -7,7 +7,7 @@ triggers:
   - change PanCode context or session lifecycle
   - edit PanCode skills tools or prompts
   - work a PanCode lane brief or spec
-version: 0.7.4
+version: 0.7.5
 license: LicenseRef-PanCode-1.0
 pancode:
   registry-id: PanStudio/pancode
@@ -85,7 +85,7 @@ the repository handbook are enforced by `pnpm run lint`.
 - A new test file runs in no gate until `scripts/ci-tests.mjs` lists it.
 - Strict types: optional properties are spread in, never assigned
   `undefined`; relative imports end in `.js`; type imports use `import type`.
-- The hub edits: bump the version in `SKILL.md` and `plugin.json`, then
+- Hub edits: bump the version in `SKILL.md` and `plugin.json`, then
   `pnpm run skills:pin` and `pnpm run hub:pin`.
 
 ## Flywheel

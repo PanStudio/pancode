@@ -309,8 +309,8 @@ test("boundary checker rejects representative bypasses", () => {
 	])
 		assert.ok(violations(resolve(app, "server/http/escape.ts"), source).length > 0, source);
 	assert.ok(
-		violations(resolve(app, "server/pancode/wire-runtime.ts"), 'export * from "../../../../src/acp/types.js";')
-			.length > 0,
+		violations(resolve(app, "server/pancode/wire-runtime.ts"), 'export * from "../../../../src/acp/types.js";').length >
+			0,
 	);
 	const client = resolve(app, "client/chat/escape.ts");
 	assert.deepEqual(

@@ -76,7 +76,7 @@ function SkillRow({ skill }: { skill: Resource }) {
 
 /**
  * The skills PanCode can use in the current workspace, and nothing else. Installing packages, agents,
- * extensions and verifiers is Settings > Advanced > the hub, which this page links to.
+ * extensions and verifiers is Settings > Advanced > Hub, which this page links to.
  */
 export function SkillsPage({ client }: { client: Client }) {
 	useEffect(() => {

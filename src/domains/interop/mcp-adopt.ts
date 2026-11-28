@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 /**
  * Another agent's MCP server declaration mapped onto PanCode's strict `mcp.yaml`
- * (domains/gateway/mcp/config.ts). A server whose launch cannot be stated
+ * (domains/mcp/config.ts). A server whose launch cannot be stated
  * exactly in that schema (the 2024 HTTP+SSE transport, `${VAR}` expansion, a
  * shell string, an env pass-through list) is never guessed at: the plan skips
  * it and says why. A Streamable HTTP server's literal header values move into

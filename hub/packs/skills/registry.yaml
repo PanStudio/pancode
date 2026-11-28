@@ -69,16 +69,16 @@ skills:
     sha256: 7e9a01e6514405506884cd2fa191a4a7139c3124126da52ee8f53ff0929d2cd3
   - name: extension-authoring
     path: meta/extension-authoring
-    version: 0.1.9
-    sha256: 704874dc8be94fdbd6969dc1bf2caa47f748cd176589cf3541242b6274306e37
+    version: 0.1.10
+    sha256: b69c8b5797c13095ab5695e5231d38c549af455afe6cc20b6d5a23b322954c50
   - name: find-skills
     path: meta/find-skills
     version: 0.3.5
     sha256: 63ccbd912d652bdf9a787d1b3911abf1d3d2233f8e8f3db835c615b3a0906faa
   - name: pancode-dev
     path: meta/pancode-dev
-    version: 0.7.4
-    sha256: 2054f4a60ce6b4a08ac94aef4c916ef235cad4f156823465ed1ef2d807a5a197
+    version: 0.7.5
+    sha256: ed8291a5c2ec9d15ad0d7cde05a09562db3e34fdc486b2efe6a350fcd03838d4
   - name: pancode-test
     path: meta/pancode-test
     version: 0.5.3

@@ -237,7 +237,7 @@
 				"debug extension reload"
 			],
 			"sourceUrl": "https://github.com/PanStudio/pancode/tree/main/hub/packs/skills/meta/extension-authoring",
-			"version": "0.1.9",
+			"version": "0.1.10",
 			"audit": "pass",
 			"category": "meta"
 		},
@@ -267,7 +267,7 @@
 				"work a PanCode lane brief or spec"
 			],
 			"sourceUrl": "https://github.com/PanStudio/pancode/tree/main/hub/packs/skills/meta/pancode-dev",
-			"version": "0.7.4",
+			"version": "0.7.5",
 			"audit": "pass",
 			"category": "meta"
 		},

@@ -699,8 +699,8 @@ export function openHubOverlay(tui: TUI, deps: HubOverlayDeps): OverlayHandle {
 	// its existing toggle; wide layouts already draw detail beside the list.
 	handle.toggleDetail();
 
-	// The rows and the pane are bounded by the tier, so a tier change while the
-	// The hub is open rebuilds them in place, keeping the cursor and the filter.
+	// The rows and the pane are bounded by the tier, so a tier change while
+	// the hub is open rebuilds them in place, keeping the cursor and the filter.
 	const unsubscribeTier = onPresentationTierChange(() => {
 		if (!closed) handle.refreshTabs();
 	});

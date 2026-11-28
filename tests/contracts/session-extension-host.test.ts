@@ -424,7 +424,7 @@ test("an ACP serve loop that throws still disposes the extension host and the pr
 			"--input-type=module",
 			"--eval",
 			`
-			import { createStdioServerTransport } from ${JSON.stringify(source("engine/acp/transport.ts"))};
+			import { createStdioServerTransport } from ${JSON.stringify(source("acp/transport.ts"))};
 			import { bootOrchestrator } from ${JSON.stringify(source("entry/orchestrator.ts"))};
 			const transport = createStdioServerTransport();
 			try {

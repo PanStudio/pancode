@@ -36,7 +36,7 @@ PanCode extensions do not contribute skills.
 
 Installations, updates and active resource trees belong to the operator. Models
 may draft outside active roots and inspect or validate the result, but recognized
-model shell mutations of the hub packs are refused at every autonomy level.
+model shell mutations of hub packs are refused at every autonomy level.
 Interactive offers commit only after the bound operator answer. Skill tool
 restrictions last for the session until replaced or cleared with `/skill off`;
 worker activations remain scoped to their run. A skill can narrow tools but never
