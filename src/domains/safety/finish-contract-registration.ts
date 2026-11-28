@@ -43,6 +43,7 @@ import {
 } from "./finish-contract.js";
 import { DEFAULT_RECENT_ENTRY_LIMIT, recentEntries } from "./finish-entries.js";
 import { mutationPathsForTool } from "./finish-mutations.js";
+import { createRunGitHelpers } from "./observed-checks.js";
 import type { Rigor } from "./rigor.js";
 
 export const FINISH_CONTRACT_REGISTRATION_ID = "assessor.finish-contract";
@@ -88,6 +89,8 @@ export interface CreateFinishContractRegistrationOptions {
 	readActiveAcceptance?: (window: ReadonlyArray<unknown>) => UserTaskAcceptance | undefined;
 	/** Checks declared for this session only (`run --verify`), credited like the project's declared checks. */
 	readSessionVerifiers?: () => ReadonlyArray<SessionVerifier>;
+	/** The run's own git helper answer at `workspaceRoot` when its host already read it (a headless run); absent, read once per run. */
+	readRunGitHelpers?: (workspaceRoot: string) => boolean | undefined;
 	/**
 	 * Record the contract's decision to the audit ledger. Optional; when wired
 	 * (production passes the safety audit sink), every turn_end decision — each
@@ -164,6 +167,7 @@ export function createFinishContractRegistration(
 			else if (seen.abs !== abs) seen.ambiguous = true;
 		}
 	};
+	const runGitHelpers = createRunGitHelpers();
 	const unchangedPaths = (): Set<string> =>
 		new Set(
 			[...before.entries()]
@@ -227,6 +231,7 @@ export function createFinishContractRegistration(
 			const contractInput: FinishContractInput = {
 				sessionEntries: entries,
 				workspaceRoot: process.cwd(),
+				readGitHelpers: () => options.readRunGitHelpers?.(process.cwd()) ?? runGitHelpers(entries, process.cwd()),
 				sessionVerifiers: options.readSessionVerifiers?.() ?? [],
 				unchangedPaths: unchangedPaths(),
 				rigor,

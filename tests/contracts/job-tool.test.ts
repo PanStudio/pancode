@@ -6,6 +6,9 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
 import { Type } from "typebox";
 import type { JobCreateInput, JobOwner, JobRecord } from "../../src/core/job-types.js";
+import { notConfinedLabel } from "../../src/core/sandbox/host-launch.js";
+import { collectHostLaunches } from "../../src/core/sandbox/host-launch-record.js";
+import type { SandboxLaunchRecord } from "../../src/core/sandbox/launch-record.js";
 import { toolLimitConstraints } from "../../src/core/tool-limit-flags.js";
 import { type ToolName, ToolNames } from "../../src/core/tool-names.js";
 import type { ToolDecisionInput } from "../../src/domains/safety/decision-events.js";
@@ -536,7 +539,17 @@ describe("job ownership, scheduling and execution settlement", () => {
 	});
 	it("matches a multi-condition wait only when the host sees every condition hold (#450)", async () => {
 		const flag = join(scratch.dir, "cluster-done");
-		const host = make({ run: (context) => executeJobCommand(context) });
+		// Each command an occurrence polls settles one launch record under the occurrence's label (P8).
+		const launches: SandboxLaunchRecord[] = [];
+		const host = make({
+			run: async (context) => {
+				const ran = await collectHostLaunches(() =>
+					executeJobCommand(context, undefined, undefined, { label: notConfinedLabel("job", "jobs") }),
+				);
+				launches.push(...ran.launches);
+				return ran.value;
+			},
+		});
 		const created = await host.create(
 			{
 				intervalMs: 1000,
@@ -575,6 +588,16 @@ describe("job ownership, scheduling and execution settlement", () => {
 		const matched = present(host.get(id, owner));
 		strictEqual(matched.reason, "condition");
 		strictEqual(matched.starts, 2);
+		deepStrictEqual(
+			launches.map(({ launcher, integration, confinement, why, outcome }) => [
+				launcher,
+				integration,
+				confinement,
+				why,
+				outcome,
+			]),
+			Array.from({ length: 4 }, () => ["job", "jobs", "unconfined", "not-opted-in", "ran"]),
+		);
 	});
 	it("admits through the parent registry and refuses model-supplied authority", async () => {
 		const host = make();

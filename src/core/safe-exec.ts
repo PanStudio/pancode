@@ -11,7 +11,15 @@ import {
 } from "./git-commit-attribution.js";
 import { relativePathEscapes } from "./path-containment.js";
 import { bridgeEgress, type EgressReport, egressStdio } from "./sandbox/egress/bridge.js";
-import { type MainSandboxPolicy, planMainSandboxSpawn } from "./sandbox/main-session.js";
+import {
+	launchFacts,
+	type SandboxLaunchLabel,
+	type SandboxLaunchRecord,
+	type SandboxLaunchSettlement,
+	sandboxLaunch,
+	writeDeniedHint,
+} from "./sandbox/launch-record.js";
+import { type MainSandboxPolicy, planMainSandboxSpawn, sandboxWriteRefused } from "./sandbox/main-session.js";
 import {
 	forgetResourceScope,
 	invalidateResourceCapabilityCache,
@@ -108,6 +116,8 @@ export interface SafeCommandResult {
 	resourceNote?: string;
 	/** A proxied sandboxed command's network: the origins it tried and what its proxy answered. */
 	egress?: EgressReport;
+	/** What the sandbox policy decided for this launch and how it settled; absent when no policy applied. */
+	sandbox?: SandboxLaunchRecord;
 }
 
 /**
@@ -154,6 +164,8 @@ export interface RunCommandVectorOptions {
 	typedGitWritablePaths?: ReadonlyArray<string>;
 	/** Set for a contained main-session call (run_script, verify): it runs in the main-session sandbox with this policy. */
 	shellSandbox?: MainSandboxPolicy;
+	/** Names what launched the command in its sandbox record; absent, the record says `command`. */
+	launchLabel?: SandboxLaunchLabel;
 	/** The main session's `safety.resources.main` ceilings for an agent command; a worker's come from its spec. */
 	resourceLimits?: ResourceLimits;
 	output?: SafeCommandOutputSink;
@@ -602,9 +614,16 @@ export function runCommandVector(
 				: undefined;
 		const sandbox =
 			containedPlan ?? planSandboxedSpawn({ argv: [file, ...args] }, cwd, options.typedGitWritablePaths, { bridge: true });
+		const facts = sandbox.launch === undefined ? undefined : launchFacts(sandbox.launch, "command", options.launchLabel);
+		const launch = sandboxLaunch(facts);
+		// The record settles where the result is delivered, after a resource scope has said whether the launch happened.
+		const withRecord = (result: SafeCommandResult, settled: SandboxLaunchSettlement): SafeCommandResult => {
+			const record = launch.settle(settled);
+			return record === undefined ? result : { ...result, sandbox: record };
+		};
 		if (sandbox.kind === "refused") {
 			settled = true;
-			deliver(notLaunched(sandbox.message));
+			deliver(withRecord(notLaunched(sandbox.message), { outcome: "refused" }));
 			return;
 		}
 		// A limited command starts in its own systemd scope, which execs the planned launch in place.
@@ -616,7 +635,7 @@ export function runCommandVector(
 		if (resources.kind === "refused") {
 			settled = true;
 			if (sandbox.kind === "sandboxed") sandbox.afterExit();
-			deliver(notLaunched(resources.message));
+			deliver(withRecord(notLaunched(resources.message), { outcome: "refused" }));
 			return;
 		}
 		const scope = resources.kind === "scoped" ? resources.scope : null;
@@ -628,10 +647,10 @@ export function runCommandVector(
 			settling ??= settleResourceScope(scope);
 			return settling;
 		};
-		const resolve = (result: SafeCommandResult): void => {
+		const resolve = (result: SafeCommandResult, settled: SandboxLaunchSettlement): void => {
 			const pending = settleScope();
 			if (pending === null || scope === null) {
-				deliver(result);
+				deliver(withRecord(result, settled));
 				return;
 			}
 			void pending.then((settlement) => {
@@ -644,11 +663,16 @@ export function runCommandVector(
 					: null;
 				if (failure !== null) {
 					invalidateResourceCapabilityCache();
-					deliver({ ...notLaunched(scopeLaunchFailureMessage(scope, failure)), durationMs: result.durationMs });
+					deliver(
+						withRecord(
+							{ ...notLaunched(scopeLaunchFailureMessage(scope, failure)), durationMs: result.durationMs },
+							{ outcome: "launch-failed" },
+						),
+					);
 					return;
 				}
 				const note = resourceLimitNote(scope, settlement);
-				deliver(note === null ? result : { ...result, resourceNote: note });
+				deliver(withRecord(note === null ? result : { ...result, resourceNote: note }, settled));
 			});
 		};
 		const egressPlan = sandbox.kind === "sandboxed" ? sandbox.egress : undefined;
@@ -765,40 +789,59 @@ export function runCommandVector(
 				forgetResourceScope(scope);
 				invalidateResourceCapabilityCache();
 				if (sandbox.kind === "sandboxed") sandbox.afterExit();
-				deliver({
-					...notLaunched(scopeLaunchFailureMessage(scope, spawnError.message)),
-					durationMs: Math.round(performance.now() - startedAtClock),
-				});
+				deliver(
+					withRecord(
+						{
+							...notLaunched(scopeLaunchFailureMessage(scope, spawnError.message)),
+							durationMs: Math.round(performance.now() - startedAtClock),
+						},
+						{ outcome: "launch-failed" },
+					),
+				);
 				return;
 			}
 			const output = captured();
-			resolve({
-				file,
-				args: [...args],
-				cwd,
-				...output,
-				...(pipeDrainIncomplete ? { stdoutRetained: false, stderrRetained: false } : {}),
-				stderr: output.stderr.length === 0 && spawnError !== undefined ? spawnError.message : output.stderr,
-				exitCode: (cleanup.status?.incomplete === true || pipeDrainIncomplete) && exitCode === 0 ? 1 : exitCode,
-				leaderExit,
-				signal: signalName,
-				aborted,
-				timedOut,
-				outputCapped,
-				durationMs: Math.round(performance.now() - startedAtClock),
-				startedAt,
-				launched,
-				descendantsCleaned: cleanup.status?.descendantsCleaned ?? false,
-				cleanupIncomplete: cleanup.status?.incomplete ?? false,
-				pipeDrainIncomplete,
-				failure:
-					cleanup.status?.incomplete === true
-						? `process group cleanup incomplete: members were still present ${SAFE_EXEC_GROUP_TEARDOWN_BOUND_MS}ms after SIGKILL`
-						: pipeDrainIncomplete
-							? "output pipe draining incomplete after leader exit; logs may be incomplete and escaped processes are not contained"
-							: null,
-				...(egress === null ? {} : { egress: egress.report(exitCode) }),
-			});
+			const report = egress === null ? undefined : egress.report(exitCode);
+			const outcome = spawnError !== undefined || !launched ? "launch-failed" : "ran";
+			const settledLaunch: SandboxLaunchSettlement = {
+				outcome,
+				exitCode,
+				...(report !== undefined ? { egress: report } : {}),
+				hint:
+					outcome === "ran"
+						? writeDeniedHint(facts, exitCode, () => `${output.stderr}\n${output.stdout}`, sandboxWriteRefused)
+						: null,
+			};
+			resolve(
+				{
+					file,
+					args: [...args],
+					cwd,
+					...output,
+					...(pipeDrainIncomplete ? { stdoutRetained: false, stderrRetained: false } : {}),
+					stderr: output.stderr.length === 0 && spawnError !== undefined ? spawnError.message : output.stderr,
+					exitCode: (cleanup.status?.incomplete === true || pipeDrainIncomplete) && exitCode === 0 ? 1 : exitCode,
+					leaderExit,
+					signal: signalName,
+					aborted,
+					timedOut,
+					outputCapped,
+					durationMs: Math.round(performance.now() - startedAtClock),
+					startedAt,
+					launched,
+					descendantsCleaned: cleanup.status?.descendantsCleaned ?? false,
+					cleanupIncomplete: cleanup.status?.incomplete ?? false,
+					pipeDrainIncomplete,
+					failure:
+						cleanup.status?.incomplete === true
+							? `process group cleanup incomplete: members were still present ${SAFE_EXEC_GROUP_TEARDOWN_BOUND_MS}ms after SIGKILL`
+							: pipeDrainIncomplete
+								? "output pipe draining incomplete after leader exit; logs may be incomplete and escaped processes are not contained"
+								: null,
+					...(report !== undefined ? { egress: report } : {}),
+				},
+				settledLaunch,
+			);
 		};
 
 		const stopDraining = (): void => {
@@ -897,6 +940,8 @@ interface StagingCommandOptions {
 	env?: Record<string, string>;
 	timeoutMs: number;
 	maxOutputBytes?: number;
+	/** Names what launched the command in its sandbox record; absent, the record says `staging`. */
+	launchLabel?: SandboxLaunchLabel;
 }
 
 /**
@@ -917,7 +962,12 @@ export function runStagingCommandSync(
 ): string {
 	const cwd = resolveSafeCwd(options.cwd);
 	const sandbox = planSandboxedSpawn({ argv: [file, ...args] }, cwd);
-	if (sandbox.kind === "refused") throw new Error(sandbox.message);
+	const facts = sandbox.launch === undefined ? undefined : launchFacts(sandbox.launch, "staging", options.launchLabel);
+	const launch = sandboxLaunch(facts);
+	if (sandbox.kind === "refused") {
+		launch.settle({ outcome: "refused" });
+		throw new Error(sandbox.message);
+	}
 	// `detached` makes the child lead its own process group; Node honors it for spawnSync
 	// although its typings omit it, so the options travel as a variable.
 	const spawnOptions = {
@@ -936,6 +986,14 @@ export function runStagingCommandSync(
 		spawnOptions,
 	);
 	if (sandbox.kind === "sandboxed") sandbox.afterExit();
+	const spawnFailed = result.pid === undefined || result.pid === 0;
+	launch.settle({
+		outcome: spawnFailed ? "launch-failed" : "ran",
+		exitCode: result.status,
+		hint: spawnFailed
+			? null
+			: writeDeniedHint(facts, result.status, () => `${result.stderr ?? ""}\n${result.stdout ?? ""}`, sandboxWriteRefused),
+	});
 	// The leader is reaped, so what is left in its group is only what it started.
 	if (result.pid !== undefined && process.platform !== "win32") {
 		try {

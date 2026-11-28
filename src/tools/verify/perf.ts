@@ -93,7 +93,7 @@ export interface PerfBudgetReport {
 }
 
 /** The version this build writes. Version 1 files, which record no environment, still load. */
-export const PERF_BASELINE_VERSION = 2;
+const PERF_BASELINE_VERSION = 2;
 const SUPPORTED_BASELINE_VERSIONS: ReadonlyArray<number> = [1, PERF_BASELINE_VERSION];
 
 export function normalizePerfBudget(value: unknown): PerfBudgetSpec | Error {

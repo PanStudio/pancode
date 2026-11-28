@@ -39,7 +39,7 @@ import {
  * from its own files. A writer that appends to a sealed scope removes `bundle.json` first: a live scope has none.
  */
 
-export const SCOPE_BUNDLE_FORMAT = "pancode.telemetry.bundle";
+const SCOPE_BUNDLE_FORMAT = "pancode.telemetry.bundle";
 export type TelemetryScopeKind = Static<typeof ScopeKindSchema>;
 export const SEAL_EVENTS = {
 	session: "session.sealed",
@@ -51,7 +51,7 @@ export const SHARE_SEAL_EVENT = "share.sealed";
 
 const digestSchema = Type.String({ pattern: "^[0-9a-f]{64}$" });
 const closed = { additionalProperties: false };
-export const ScopeBundleManifestSchema = Type.Object(
+const ScopeBundleManifestSchema = Type.Object(
 	{
 		format: Type.Literal(SCOPE_BUNDLE_FORMAT),
 		version: Type.Literal(1),

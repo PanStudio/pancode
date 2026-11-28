@@ -40,7 +40,7 @@ import { terminalReportKind } from "./terminal-reports.js";
 import { GLYPH, pancodeTheme } from "./theme/index.js";
 import { createBootWelcome } from "./welcome-dashboard.js";
 
-export const INSTANT_SHELL_ENV = "PANCODE_INSTANT_SHELL";
+const INSTANT_SHELL_ENV = "PANCODE_INSTANT_SHELL";
 const DIAGNOSTIC_LIMIT_BYTES = 64 * 1024;
 
 export type TerminalLeaseState = "created" | "mounted" | "adopting" | "adopted" | "closing" | "closed";

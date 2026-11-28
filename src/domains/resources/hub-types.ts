@@ -23,7 +23,7 @@ export function isHubComponentKind(value: unknown): value is HubComponentKind {
 }
 
 /** A package's published audit verdict. */
-export const HUB_AUDIT_STATES = ["pass", "warn", "fail", "unknown"] as const;
+const HUB_AUDIT_STATES = ["pass", "warn", "fail", "unknown"] as const;
 export type HubAuditState = (typeof HUB_AUDIT_STATES)[number];
 
 export function isHubAuditState(value: unknown): value is HubAuditState {

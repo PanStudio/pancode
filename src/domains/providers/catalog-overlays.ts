@@ -13,7 +13,7 @@ import type { KnowledgeBaseEntry, KnowledgeBaseHit, KnowledgeBaseRoot } from "./
  * from the config dir, the project's `.pancode` dir and `PANCODE_MODEL_CATALOG_DIRS`, lowest
  * precedence first.
  */
-export const MODEL_CATALOG_OVERLAY_DIR = "model-catalog.d";
+const MODEL_CATALOG_OVERLAY_DIR = "model-catalog.d";
 export const MODEL_CATALOG_DIRS_ENV = "PANCODE_MODEL_CATALOG_DIRS";
 
 function isDirectory(path: string): boolean {

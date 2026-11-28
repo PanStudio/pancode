@@ -49,10 +49,10 @@ import type { ToolCallFacts } from "../../tools/agent-tools.js";
 import { deferAppend, deferredWritePending, dropDeferredWrite, flushDeferredWrite } from "./deferred-writes.js";
 import type { RunEventJournalBody } from "./run-event-journal.js";
 
-export const RUN_FEED_VERSION = 1;
-export const RUN_FEED_FILE = "feed.jsonl";
+const RUN_FEED_VERSION = 1;
+const RUN_FEED_FILE = "feed.jsonl";
 /** Per-run size cap; crossing it drops display rows behind one marker. */
-export const RUN_FEED_CAP_BYTES = 2 * 1024 * 1024;
+const RUN_FEED_CAP_BYTES = 2 * 1024 * 1024;
 /** Tail bytes a reader pulls, so following a capped feed stays cheap. */
 export const RUN_FEED_READ_TAIL_BYTES = 256 * 1024;
 /** Prose a text row may hold back while it waits for a word boundary. */

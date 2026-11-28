@@ -30,7 +30,7 @@ const ROLE_RANK: Readonly<Record<AttachRole, number>> = { observer: 0, approver:
 /** A client line larger than this is refused unread; a pair message's own bound is below it. */
 export const ATTACH_CLIENT_LINE_MAX_BYTES = 16_384;
 /** A pair message's size limit, the same one a peer prompt has. */
-export const ATTACH_SAY_MAX_BYTES = 8_192;
+const ATTACH_SAY_MAX_BYTES = 8_192;
 /** A transcript block's text as sent to a client; the host transcript keeps the whole of it. */
 const ATTACH_BLOCK_TEXT_MAX = 2_000;
 const REQUEST_ID = /^[A-Za-z0-9_.:-]{1,128}$/u;

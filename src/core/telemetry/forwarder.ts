@@ -21,6 +21,8 @@ const workerKinds = new Set([
 	"process.exited",
 	"tool.settled",
 	"tool.decided",
+	"sandbox.launched",
+	"sandbox.uncontained",
 	"middleware.fired",
 	"surface.settled",
 	"auth.refreshed",

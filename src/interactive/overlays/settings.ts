@@ -7,7 +7,8 @@ import { tierPolicy } from "../../core/presentation-tier.js";
 import { pancodeProjectRoot } from "../../core/project-root.js";
 import type { SettingsAreaId as SettingsSectionId } from "../../core/settings-areas.js";
 import { resolveSettingsArea, SETTINGS_AREAS as SETTINGS_SECTIONS } from "../../core/settings-areas.js";
-import { SETTINGS_LABELS_BY_ID, settingControl, settingsPathForRow } from "../../core/settings-controls.js";
+import { settingControl, settingsPathForRow } from "../../core/settings-controls.js";
+import { SETTINGS_LABELS_BY_ID } from "../../core/settings-copy.js";
 import type { SettingsShortcuts } from "../../core/settings-shortcuts.js";
 import { listSettingsShortcuts, rememberChangedSetting, setSettingPinned } from "../../core/settings-shortcuts.js";
 import type { NotificationLevel } from "../../core/views/notice-words.js";
@@ -28,7 +29,7 @@ import {
 	centeredWindow,
 	fitRows,
 	type HintEntry,
-	type RowBudgetedBody,
+	isRowBudgeted,
 	showPancodeOverlayFrame,
 } from "../overlay-frame.js";
 import { editSettingsFile } from "../settings-file-edit.js";
@@ -86,7 +87,7 @@ import {
 } from "./settings-sections.js";
 import { type ChoiceItem, ChoiceList, isSubmenuSurface, SubmenuWrapper } from "./settings-submenus.js";
 
-export { SETTINGS_LABELS_BY_ID } from "../../core/settings-controls.js";
+export { SETTINGS_LABELS_BY_ID } from "../../core/settings-copy.js";
 export { SubmenuWrapper } from "./settings-submenus.js";
 export { SETTINGS_SECTIONS, type SettingsSectionId };
 
@@ -121,10 +122,6 @@ const DETAIL_LANE_MAX_WIDTH = 72;
 const INSPECTOR_ROWS = 4;
 /** List rows the strip may never take from the lanes above it. */
 const MIN_LIST_ROWS = 6;
-
-function isRowBudgeted(child: Component): child is Component & RowBudgetedBody {
-	return typeof (child as Partial<RowBudgetedBody>).setBodyRows === "function";
-}
 
 /**
  * `9 settings`, or `3 connections` for the targets table, where the rows are not

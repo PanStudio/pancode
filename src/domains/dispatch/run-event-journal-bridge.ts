@@ -62,7 +62,7 @@ import { defaultRunEventJournal, type RunEventJournalEntry, type RunEventJournal
 import { parseToolCallFacts } from "./run-feed.js";
 
 /** Window one coalesced prose line covers. A viewer polls at the same cadence. */
-export const TEXT_COALESCE_MS = 250;
+const TEXT_COALESCE_MS = 250;
 /** A coalesced prose line is written early once it holds this much. */
 const TEXT_CHUNK_MAX_BYTES = 4096;
 /** Bytes kept of a reason or a call object; the viewer bounds its rows again. */

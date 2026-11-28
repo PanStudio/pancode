@@ -20,7 +20,7 @@ import type { MiddlewareEffect, MiddlewareHookInput } from "./types.js";
  * state that waits for the operator, not a stall).
  */
 
-export const TASK_NUDGE_REGISTRATION_ID = "nudge.open-tasks";
+const TASK_NUDGE_REGISTRATION_ID = "nudge.open-tasks";
 
 export interface CreateTaskNudgeRegistrationOptions {
 	/** Live board snapshot, or null when no board has been declared. */

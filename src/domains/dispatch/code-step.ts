@@ -59,16 +59,16 @@ export const CODE_STEP_CAPTURE_MAX_BYTES = 1_048_576;
  */
 export const CODE_STEP_EXCERPT_MAX_BYTES = 8_000;
 
-export const CODE_STEP_TIMEOUT_EXIT_CODE = 124;
-export const CODE_STEP_SPAWN_FAILURE_EXIT_CODE = 127;
+const CODE_STEP_TIMEOUT_EXIT_CODE = 124;
+const CODE_STEP_SPAWN_FAILURE_EXIT_CODE = 127;
 /** What the captured output ends with when the command's cleanup did not finish; its exit is then not the runner's last word. */
 export const CODE_STEP_CLEANUP_FAILURES = [
 	"command process group survived bounded cleanup",
 	"command output pipes did not drain before the cleanup deadline",
 ] as const;
 /** A commit step asked to record a tree with nothing in it. */
-export const CODE_STEP_EMPTY_DIFF_EXIT_CODE = 125;
-export const CODE_STEP_EMPTY_DIFF_MESSAGE = "nothing to commit: the workspace has no changes to record";
+const CODE_STEP_EMPTY_DIFF_EXIT_CODE = 125;
+const CODE_STEP_EMPTY_DIFF_MESSAGE = "nothing to commit: the workspace has no changes to record";
 
 /**
  * The registered commit command is a bare `git commit` and the workers who made the work never run git, so code stages
@@ -83,7 +83,7 @@ export interface CommitStage {
 	artifacts: ReadonlyArray<string>;
 }
 
-export const CODE_STEP_TRUNCATION_MARKER = "\n[... output truncated, see artifact ...]\n";
+const CODE_STEP_TRUNCATION_MARKER = "\n[... output truncated, see artifact ...]\n";
 
 export interface CodeStepRunInput {
 	/** A run id the caller announced before the command started; minted here when absent. */
@@ -170,6 +170,8 @@ export interface CodeStepRecord {
 	artifactPaths: ReadonlyArray<string>;
 	/** SHA-256 over the canonical report, the code step's stand-in for a receipt digest. */
 	reportDigest: string;
+	/** Where its commands ran (P8): the host verification sandbox, or the host on the operator's authority. */
+	confinement?: "sandboxed" | "host";
 }
 
 export interface CodeStepOutcome {
@@ -838,6 +840,7 @@ export async function runCodeStep(input: CodeStepRunInput): Promise<CodeStepOutc
 		cwd,
 		envNames: [...PLAYBOOK_COMMAND_BASE_ENV, ...command.env],
 		timeoutMs: command.timeoutMs,
+		confinement: input.shellSandbox !== undefined ? "sandboxed" : "host",
 		startedAt,
 		endedAt,
 		durationMs,

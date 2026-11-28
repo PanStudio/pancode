@@ -44,7 +44,7 @@ export function isPublicWebAddress(address: string): boolean {
 	return family === 6 && globalV6.check(address, "ipv6") && !blocked.check(address, "ipv6");
 }
 
-export class WebFetchNetworkError extends Error {
+class WebFetchNetworkError extends Error {
 	constructor(message: string) {
 		super(`WEB_FETCH_PRIVATE_NETWORK: ${message}`);
 		this.name = "WebFetchNetworkError";

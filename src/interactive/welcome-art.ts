@@ -52,7 +52,7 @@ const BAND_GAP = "   ";
 /** Cells of PAN on the one band, before the gap and CODE. */
 const BAND_PAN_WIDTH = [..."PAN"].map((letter) => LETTERS[letter]?.[0] ?? "").join(" ").length;
 /** The compact letters on one band, PAN then CODE, for panels too narrow to set the art beside the details. */
-export const WELCOME_WORDMARK_ROW: readonly string[] = Array.from({ length: 5 }, (_, row) =>
+const WELCOME_WORDMARK_ROW: readonly string[] = Array.from({ length: 5 }, (_, row) =>
 	["PAN", "CODE"].map((text) => [...text].map((letter) => LETTERS[letter]?.[row] ?? "").join(" ")).join(BAND_GAP),
 );
 

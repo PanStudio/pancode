@@ -55,7 +55,7 @@ interface JobsPayload {
 	running?: Array<{ Models?: unknown }>;
 }
 
-export function catalogModels(payload: CatalogPayload, cluster: string, framework: string): string[] {
+function catalogModels(payload: CatalogPayload, cluster: string, framework: string): string[] {
 	const models = payload.clusters?.[cluster]?.frameworks?.[framework]?.models;
 	if (!Array.isArray(models)) return [];
 	return models.map((model) => String(model).trim()).filter((model) => model.length > 0);

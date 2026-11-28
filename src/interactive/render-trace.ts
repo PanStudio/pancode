@@ -6,7 +6,7 @@ import { dirname, join } from "node:path";
 import type { TuiRenderObserver, TuiRenderPhase } from "../engine/tui.js";
 
 /** The trace format is append-only JSONL so partial sessions remain readable. */
-export const RENDER_TRACE_VERSION = 2;
+const RENDER_TRACE_VERSION = 2;
 
 export type RenderInputAction = "editor" | "overlay" | "scroll" | "submit" | "no-visual-change";
 export type VisibleEventKind = "text" | "thinking";
@@ -142,13 +142,13 @@ export type RenderTraceInputIngressRecord = Extract<RenderTraceRecord, { type: "
  * kill a wedged pane, and cost about 200 KB of process memory in the worst case
  * (a frame record carries its terminal-write commits).
  */
-export const INPUT_WEDGE_RING_CAPACITY = 256;
+const INPUT_WEDGE_RING_CAPACITY = 256;
 
 /** Subdirectory of the state directory that holds SIGTERM wedge dumps. */
-export const INPUT_WEDGE_DUMP_DIRNAME = "input-wedge";
+const INPUT_WEDGE_DUMP_DIRNAME = "input-wedge";
 
 /** Dumps kept in that directory; older ones are removed as new ones land. */
-export const INPUT_WEDGE_DUMP_RETAINED = 5;
+const INPUT_WEDGE_DUMP_RETAINED = 5;
 
 /**
  * Which half of the input pipeline was still moving when the dump was taken.

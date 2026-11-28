@@ -51,7 +51,7 @@ const tokenCoverage = {
 	apiCalls: Type.Optional(Type.Union([tokenFact, Type.Null()])),
 	tokenDisplay: Type.Optional(Type.Union([Type.String({ maxLength: 64 }), Type.Null()])),
 };
-export const FleetPayloads = {
+const FleetPayloads = {
 	"fleet.loopBlocked": Type.Object(
 		{
 			toolCallId: Type.Null(),
@@ -101,7 +101,7 @@ export const FleetPayloads = {
 		closed,
 	),
 };
-export const FleetFacts = {
+const FleetFacts = {
 	"fleet.loopBlocked": Type.Object(
 		{ type: Type.Literal("fleet.loopBlocked"), payload: FleetPayloads["fleet.loopBlocked"] },
 		closed,
@@ -153,7 +153,7 @@ export type FleetItem = Static<typeof FleetItem>;
  * `fleet` because they describe this conversation rather than a dispatched run,
  * and a board that mixed them would have to filter its own feed to draw either.
  */
-export const HealthPayloads = {
+const HealthPayloads = {
 	"health.compacted": Type.Object(
 		{
 			trigger: Type.String({ maxLength: 64 }),
@@ -198,7 +198,7 @@ export const HealthPayloads = {
 		closed,
 	),
 };
-export const HealthFacts = {
+const HealthFacts = {
 	"health.compacted": Type.Object(
 		{ type: Type.Literal("health.compacted"), payload: HealthPayloads["health.compacted"] },
 		closed,

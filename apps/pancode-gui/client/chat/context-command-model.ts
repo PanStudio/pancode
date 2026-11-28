@@ -18,7 +18,7 @@ export interface ContextOperationRef {
 	told: boolean;
 }
 
-export function operationRef(operation: ContextOperation | null | undefined): ContextOperationRef | null {
+function operationRef(operation: ContextOperation | null | undefined): ContextOperationRef | null {
 	if (!operation) return null;
 	return {
 		id: operation.id,

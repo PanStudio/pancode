@@ -13,6 +13,7 @@ import {
 	settingControl,
 	settingInactiveNote,
 } from "../../core/settings-controls.js";
+import { settingsRuntimeFacts } from "../../domains/providers/settings-facts.js";
 import type { Component } from "../../engine/tui.js";
 import { visibleWidth } from "../../engine/tui.js";
 import { GLYPH } from "../theme/index.js";
@@ -573,7 +574,7 @@ export function buildSettingItems(
 			return item;
 		}),
 	].map((item) => {
-		const note = settingInactiveNote(item.configPath, settings);
+		const note = settingInactiveNote(item.configPath, settings, settingsRuntimeFacts());
 		if (note) item.description += ` ${note}`;
 		if (item.configPath === "safety.autonomy") item.description += ` ${yoloAcceptanceNote(settings)}`;
 		return item;

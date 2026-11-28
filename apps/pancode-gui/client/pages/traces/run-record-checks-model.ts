@@ -47,7 +47,7 @@ const keyed = (items: Omit<CheckItem, "id">[]): CheckItem[] =>
 	items.map((item, index) => ({ ...item, id: `${index}:${item.name}` }));
 
 /** A validator digest is an exact identity, not prose; twelve characters tell two apart on screen. */
-export function shortDigest(value: unknown): string | null {
+function shortDigest(value: unknown): string | null {
 	const text = string(value);
 	return text ? `digest ${text.slice(0, 12)}` : null;
 }

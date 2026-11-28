@@ -6,10 +6,10 @@ import { motionEnabled } from "../../core/terminal-preferences.js";
 /** The chrome glyph table lives in core so the pane process shares it; the TUI keeps the spinner. */
 export { GLYPH };
 
-export const SPINNER_FRAMES = ["⣾", "⣽", "⣻", "⢿", "⡿", "⣟", "⣯", "⣷"] as const;
+const SPINNER_FRAMES = ["⣾", "⣽", "⣻", "⢿", "⡿", "⣟", "⣯", "⣷"] as const;
 
 /** Shared presentation snapshot cadence. Most progress marks remain static. */
-export const ANIMATION_STEP_MS = 120;
+const ANIMATION_STEP_MS = 120;
 /** How often the one live-activity spinner steps. */
 export const ACTIVITY_STEP_MS = 480;
 

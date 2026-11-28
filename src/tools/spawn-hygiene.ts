@@ -4,6 +4,11 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import { spawn } from "node:child_process";
 import { StringDecoder } from "node:string_decoder";
 import { buildSafeToolEnv } from "../core/safe-exec.js";
+import { uncontainedLabel } from "../core/sandbox/host-launch.js";
+import { settleHostLaunch } from "../core/sandbox/host-launch-record.js";
+import type { SandboxLaunchRecord } from "../core/sandbox/launch-record.js";
+import type { SandboxLaunchOutcome } from "../core/sandbox/types.js";
+import { planSandboxedSpawn } from "../core/sandbox/worker-process.js";
 import { truncateUtf8 } from "./truncate-utf8.js";
 
 /**
@@ -15,7 +20,7 @@ import { truncateUtf8 } from "./truncate-utf8.js";
  * the child to drain.
  */
 
-export const SEARCH_SPAWN_TIMEOUT_MS = 30_000;
+const SEARCH_SPAWN_TIMEOUT_MS = 30_000;
 const KILL_GRACE_MS = 3_000;
 export const SEARCH_STDERR_CAP_BYTES = 16 * 1024;
 /** Stdout lines longer than this are dropped unbuffered (e.g. rg --json over a minified bundle). */
@@ -86,7 +91,7 @@ export class BoundedDiagnosticDecoder {
  * of leaking the platform fault, and the pure-Node fallbacks never compile a
  * multi-hundred-KB regex either. 64 KiB is far past any real search pattern.
  */
-export const MAX_SEARCH_PATTERN_BYTES = 64 * 1024;
+const MAX_SEARCH_PATTERN_BYTES = 64 * 1024;
 
 /**
  * Validate a search pattern's byte size before it reaches spawn (or a fallback
@@ -242,7 +247,12 @@ export interface LineStreamResult {
 	stoppedEarly: boolean;
 	/** Spawn-level failure (binary missing, EACCES); null when the child ran. */
 	spawnError: string | null;
+	/** Where the search binary ran and how it settled (P8), the result's `details.sandbox`. */
+	launch: SandboxLaunchRecord;
 }
+
+/** A search with no sandbox policy runs on the host: admission judged every path it may read before it starts. */
+const HOST_SEARCH_LABEL = uncontainedLabel("search", "read-admitted");
 
 export function spawnLineStream(
 	file: string,
@@ -266,18 +276,32 @@ export function spawnLineStream(
 		// search tools validate pattern size up front, so this is a backstop. The
 		// IIFE keeps the child's narrowed stdio typing (non-null stdout) that an
 		// explicit ReturnType<typeof spawn> annotation would widen away.
+		// A worker's search binary runs under the worker's sandbox, like every other child the worker starts,
+		// with no network: its reads then stop at the sandbox's masks too, not only at the tool's path filter.
+		const cwd = options.cwd ?? process.cwd();
+		const plan = planSandboxedSpawn({ argv: [file, ...args] }, cwd, [], { network: false });
+		let released = false;
+		const releaseSandbox = (): void => {
+			if (released || plan.kind !== "sandboxed") return;
+			released = true;
+			plan.afterExit();
+		};
+		const settle = (outcome: SandboxLaunchOutcome, exitCode: number | null = null): SandboxLaunchRecord =>
+			settleHostLaunch(HOST_SEARCH_LABEL, { outcome, exitCode }, plan.launch);
 		const spawned = (() => {
+			if (plan.kind === "refused") return { ok: false as const, message: plan.message };
 			try {
 				return {
 					ok: true as const,
-					child: spawn(file, [...args], {
-						cwd: options.cwd ?? process.cwd(),
+					child: spawn(plan.kind === "sandboxed" ? plan.file : file, plan.kind === "sandboxed" ? plan.args : [...args], {
+						cwd,
 						env: buildSafeToolEnv(),
 						detached: process.platform !== "win32",
 						stdio: ["ignore", "pipe", "pipe"],
 					}),
 				};
 			} catch (error) {
+				releaseSandbox();
 				return { ok: false as const, message: error instanceof Error ? error.message : String(error) };
 			}
 		})();
@@ -291,9 +315,11 @@ export function spawnLineStream(
 				aborted: false,
 				stoppedEarly: false,
 				spawnError: spawned.message,
+				launch: settle(plan.kind === "refused" ? "refused" : "launch-failed"),
 			});
 			return;
 		}
+		spawned.child.once("exit", releaseSandbox);
 		const child = spawned.child;
 		const stdoutLines = new BoundedDiagnosticDecoder((line, truncated) => {
 			// Lines buffered before an early stop still flush; they no longer
@@ -346,6 +372,7 @@ export function spawnLineStream(
 		const finish = (spawnError: string | null): void => {
 			if (settled) return;
 			settled = true;
+			if (child.pid === undefined) releaseSandbox();
 			clearTimeout(timeoutTimer);
 			if (killGraceTimer) clearTimeout(killGraceTimer);
 			options.signal?.removeEventListener("abort", onAbort);
@@ -366,6 +393,7 @@ export function spawnLineStream(
 				aborted,
 				stoppedEarly,
 				spawnError,
+				launch: settle(child.pid === undefined ? "launch-failed" : "ran", child.exitCode),
 			});
 		};
 

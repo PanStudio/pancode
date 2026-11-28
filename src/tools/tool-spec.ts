@@ -229,6 +229,11 @@ export interface ToolSpec {
 	 */
 	outboundFiles?(args: Record<string, unknown>): ReadonlyArray<OutboundFile>;
 	/**
+	 * Where the host process this call runs on stands (P8): a line the approval card shows, such as an MCP server
+	 * that runs unconfined on the host. Null when the call starts no host-launched integration.
+	 */
+	hostLaunchNote?(): string | null;
+	/**
 	 * Where this call lands, read from prepared admission arguments, for the
 	 * awaited hook phase. Path-taking tools that resolve against the process
 	 * cwd need none: the registry resolves their `path` itself (`pathToolLanding`).

@@ -28,6 +28,7 @@ import { runCommandVector } from "../core/safe-exec.js";
 import { safeResourceWrite } from "../core/safe-resource-write.js";
 import {
 	type PancodeDirRole,
+	type PancodeDirs,
 	pancodeDirLayoutProblems,
 	removablePancodeRootProblem,
 	resetXdgCache,
@@ -110,6 +111,8 @@ interface ParsedUninstallArgs {
 }
 
 const UNINSTALL_PATH = ["uninstall"] as const;
+
+type GuiUninstall = Awaited<ReturnType<typeof prepareGuiUninstall>>;
 
 function parseUninstallArgs(argv: ReadonlyArray<string>): ParsedUninstallArgs {
 	const parsed: ParsedUninstallArgs = {
@@ -663,58 +666,12 @@ async function uninstallInactive(
 	return 0;
 }
 
-export async function runUninstallCommand(argv: ReadonlyArray<string>): Promise<number> {
-	let args: ParsedUninstallArgs;
-	try {
-		args = parseUninstallArgs(argv);
-	} catch (error) {
-		// One diagnostic and a pointer at the help (C3), never the help itself;
-		// under --json the failure document is the one thing on stdout (C6).
-		const usage = error instanceof CliUsageError ? error : new CliUsageError(UNINSTALL_PATH, "usage", String(error));
-		writeCliFailure({ path: UNINSTALL_PATH, slug: usage.slug, message: usage.message, json: argv.includes("--json") });
-		return 2;
-	}
-	if (args.help) {
-		process.stdout.write(HELP);
-		return 0;
-	}
-
-	// One sentence on stderr, and nothing on stdout but the --json failure
-	// document: a caller that piped this run is parsing stdout.
-	const isInteractive = Boolean(process.stdin.isTTY);
-	if (!args.dryRun && !args.yes && !isInteractive) {
-		writeCliFailure({
-			path: UNINSTALL_PATH,
-			slug: "confirmation_required",
-			message: "needs a terminal to confirm; pass --yes to skip the prompt",
-			json: args.json,
-		});
-		return 2;
-	}
-
-	const dirs = resolvePancodeDirs();
-	const layoutProblems = pancodeDirLayoutProblems(dirs);
-	if (layoutProblems.length > 0) {
-		writeCliFailure({
-			path: UNINSTALL_PATH,
-			slug: "not_configured",
-			message:
-				`refused an unsafe directory layout: ${layoutProblems.join("; ")}. ` +
-				"Run `pancode doctor` after setting four absolute, distinct, non-nesting roots.",
-			json: args.json,
-		});
-		return 2;
-	}
-	const installation = inspectInstallation();
+/**
+ * What a run would remove, keep and skip, measured and classified before anything is touched: the listing the dry
+ * run prints and the real run then works through.
+ */
+function planUninstall(args: ParsedUninstallArgs, dirs: PancodeDirs, installation: Installation, web: GuiUninstall) {
 	const method = installation.kind;
-	const presenter = createLifecyclePresenter({ json: args.json, dryRun: args.dryRun });
-	if (args.inactive) return uninstallInactive(installation, args, presenter);
-
-	presenter.header("Uninstall PanCode", "uninstall");
-	presenter.step(
-		`Installation method: ${method === "source" ? "source symlink" : method === "npm" ? "npm global" : method === "installer" ? "installer" : method}`,
-	);
-
 	const configSize = measurePath(dirs.config);
 	const dataSize = measurePath(dirs.data);
 	const stateSize = measurePath(dirs.state);
@@ -732,19 +689,6 @@ export async function runUninstallCommand(argv: ReadonlyArray<string>): Promise<
 	const paneHosts = process.platform === "win32" ? [] : privatePaneHosts(dirs.state);
 	const npmPrefix = method === "npm" && process.platform !== "win32" ? installation.prefix : null;
 	const removePackage = npmPrefix !== null && !args.keepBinary && !args.keepPackage;
-	let web: Awaited<ReturnType<typeof prepareGuiUninstall>>;
-	try {
-		const desktopPrefix =
-			process.env.XDG_DATA_HOME && isAbsolute(process.env.XDG_DATA_HOME)
-				? process.env.XDG_DATA_HOME
-				: join(homedir(), ".local/share");
-		web = await prepareGuiUninstall({ stateDir: dirs.state, desktopPrefix });
-	} catch (error) {
-		presenter.fail(error instanceof Error ? error.message : "Web installation ownership could not be checked.");
-		presenter.finish();
-		return 1;
-	}
-
 	// A root that is not provably PanCode's is never deleted recursively; it is kept and named.
 	const notPancode = (role: PancodeDirRole, exists: boolean): string | null => {
 		const problem = exists ? removablePancodeRootProblem(role, dirs[role]) : null;
@@ -879,6 +823,114 @@ export async function runUninstallCommand(argv: ReadonlyArray<string>): Promise<
 				detail: `mentions pancode on lines ${lines.join(", ")}; edit it by hand`,
 			});
 	}
+
+	return {
+		configSize,
+		dataSize,
+		stateSize,
+		cacheSize,
+		installerRecord,
+		linkPath,
+		inactiveInstall,
+		launcher,
+		launcherFiles,
+		runtimeSize,
+		shellEdits,
+		paneHosts,
+		npmPrefix,
+		removePackage,
+		refused,
+		items,
+		keepGuiState,
+		removePathBlocks,
+	};
+}
+
+export async function runUninstallCommand(argv: ReadonlyArray<string>): Promise<number> {
+	let args: ParsedUninstallArgs;
+	try {
+		args = parseUninstallArgs(argv);
+	} catch (error) {
+		// One diagnostic and a pointer at the help (C3), never the help itself;
+		// under --json the failure document is the one thing on stdout (C6).
+		const usage = error instanceof CliUsageError ? error : new CliUsageError(UNINSTALL_PATH, "usage", String(error));
+		writeCliFailure({ path: UNINSTALL_PATH, slug: usage.slug, message: usage.message, json: argv.includes("--json") });
+		return 2;
+	}
+	if (args.help) {
+		process.stdout.write(HELP);
+		return 0;
+	}
+
+	// One sentence on stderr, and nothing on stdout but the --json failure
+	// document: a caller that piped this run is parsing stdout.
+	const isInteractive = Boolean(process.stdin.isTTY);
+	if (!args.dryRun && !args.yes && !isInteractive) {
+		writeCliFailure({
+			path: UNINSTALL_PATH,
+			slug: "confirmation_required",
+			message: "needs a terminal to confirm; pass --yes to skip the prompt",
+			json: args.json,
+		});
+		return 2;
+	}
+
+	const dirs = resolvePancodeDirs();
+	const layoutProblems = pancodeDirLayoutProblems(dirs);
+	if (layoutProblems.length > 0) {
+		writeCliFailure({
+			path: UNINSTALL_PATH,
+			slug: "not_configured",
+			message:
+				`refused an unsafe directory layout: ${layoutProblems.join("; ")}. ` +
+				"Run `pancode doctor` after setting four absolute, distinct, non-nesting roots.",
+			json: args.json,
+		});
+		return 2;
+	}
+	const installation = inspectInstallation();
+	const method = installation.kind;
+	const presenter = createLifecyclePresenter({ json: args.json, dryRun: args.dryRun });
+	if (args.inactive) return uninstallInactive(installation, args, presenter);
+
+	presenter.header("Uninstall PanCode", "uninstall");
+	presenter.step(
+		`Installation method: ${method === "source" ? "source symlink" : method === "npm" ? "npm global" : method === "installer" ? "installer" : method}`,
+	);
+
+	let web: GuiUninstall;
+	try {
+		const desktopPrefix =
+			process.env.XDG_DATA_HOME && isAbsolute(process.env.XDG_DATA_HOME)
+				? process.env.XDG_DATA_HOME
+				: join(homedir(), ".local/share");
+		web = await prepareGuiUninstall({ stateDir: dirs.state, desktopPrefix });
+	} catch (error) {
+		presenter.fail(error instanceof Error ? error.message : "Web installation ownership could not be checked.");
+		presenter.finish();
+		return 1;
+	}
+
+	const {
+		configSize,
+		dataSize,
+		stateSize,
+		cacheSize,
+		installerRecord,
+		linkPath,
+		inactiveInstall,
+		launcher,
+		launcherFiles,
+		runtimeSize,
+		shellEdits,
+		paneHosts,
+		npmPrefix,
+		removePackage,
+		refused,
+		items,
+		keepGuiState,
+		removePathBlocks,
+	} = planUninstall(args, dirs, installation, web);
 
 	presenter.listItems("The following will be removed", items);
 	if (web.unmanaged.length > 0) {

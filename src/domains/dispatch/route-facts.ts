@@ -73,7 +73,7 @@ export type RouteFactVerdict =
 	| { ok: false; reason: string; unknowns: ReadonlyArray<string> };
 
 /** Facts older than this are stale evidence and satisfy no hard requirement. */
-export const ROUTE_FACT_FRESHNESS_MS = 15 * 60 * 1000;
+const ROUTE_FACT_FRESHNESS_MS = 15 * 60 * 1000;
 
 function isFresh(probedAt: string, now: number, freshnessMs: number): boolean {
 	const at = Date.parse(probedAt);

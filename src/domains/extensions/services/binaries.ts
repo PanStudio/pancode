@@ -40,7 +40,7 @@ export const BINARY_RUN_LIMITS = Object.freeze({
 });
 
 /** Where an extension's vendored binaries live: `<data>/tools/ext/<id>/`. */
-function packBinaryRoot(extensionId: string, root: string = toolchainRoot()): string {
+export function packBinaryRoot(extensionId: string, root: string = toolchainRoot()): string {
 	return path.join(root, "ext", extensionId);
 }
 

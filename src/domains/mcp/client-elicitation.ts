@@ -27,7 +27,7 @@ import {
 } from "./tool-results.js";
 
 /** Retries of one request that the server keeps answering with input_required (basic/patterns/mrtr). */
-export const MCP_INPUT_REQUIRED_ROUNDS = 8;
+const MCP_INPUT_REQUIRED_ROUNDS = 8;
 
 export interface McpElicitation {
 	answerInputRequired(

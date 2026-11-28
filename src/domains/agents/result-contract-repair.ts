@@ -16,7 +16,7 @@ import type { ResultContract } from "./result-contract-types.js";
 export const RESULT_CONTRACT_REPAIR_LIMIT = 2;
 
 /** Live-read anchors quoted back to the model in a repair round. */
-export const RESULT_CONTRACT_ANCHOR_LIMIT = 12;
+const RESULT_CONTRACT_ANCHOR_LIMIT = 12;
 
 /**
  * The exact terminal shape each contract accepts, quoted to the model verbatim.

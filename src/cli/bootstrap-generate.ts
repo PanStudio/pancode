@@ -41,7 +41,7 @@ import { TelemetryDomainModule } from "../domains/telemetry/module.js";
 import { armInternalDispatchDeadline } from "./internal-dispatch.js";
 import { createCliWorkerHooks } from "./worker-extension-hooks.js";
 
-export const BOOTSTRAP_MAX_OUTPUT_BYTES = 256 * 1024;
+const BOOTSTRAP_MAX_OUTPUT_BYTES = 256 * 1024;
 
 /**
  * The internal agent that reads a repository and returns the handbook payload.

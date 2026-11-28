@@ -229,7 +229,7 @@ import {
 import { workerFlowPolicyInput } from "../domains/safety/information-flow.js";
 import { createInternalGitPolicy } from "../domains/safety/internal-git-policy.js";
 import { SafetyDomainModule } from "../domains/safety/module.js";
-import { createStandingChecks } from "../domains/safety/observed-checks.js";
+import { createRunGitHelpersRelay, createStandingChecks } from "../domains/safety/observed-checks.js";
 import type { ProtectedArtifactState } from "../domains/safety/protected-artifacts.js";
 import { createProtectedArtifactsRegistration } from "../domains/safety/protected-artifacts-registration.js";
 import { SAFETY_JUDGE_CONSECUTIVE_BLOCKS, type SafetyJudgeSeat } from "../domains/safety/safety-judge.js";
@@ -535,7 +535,11 @@ function readFlowSessionEntries(sessionId: string): ReadonlyArray<unknown> {
  */
 const FINISH_CONTRACT_TAIL_ENTRIES = DEFAULT_RECENT_ENTRY_LIMIT * 2;
 
-function readRecentSessionEntriesForContract(sessionId: string): SessionEntry[] {
+/** No session reads as none, which disables the finish contract's assessment for the turn. */
+function readRecentSessionEntriesForContract(sessionId: string): SessionEntry[];
+function readRecentSessionEntriesForContract(sessionId: string | undefined): SessionEntry[] | null;
+function readRecentSessionEntriesForContract(sessionId: string | undefined): SessionEntry[] | null {
+	if (sessionId === undefined) return null;
 	return collectSessionEntries(
 		readSessionTailTurns(sessionId, FINISH_CONTRACT_TAIL_ENTRIES).entries,
 		sessionCurrentPath(sessionId),
@@ -2223,13 +2227,13 @@ export async function bootOrchestrator(options: BootOptions = {}): Promise<BootR
 		autonomy: resolveEffectiveAutonomy,
 		admissionAutonomy: resolveAdmissionAutonomy,
 		sandboxEnv: () => mainSandboxEnvPolicy(getCurrentSettings()),
+		confine: () => getCurrentSettings().safety.confine,
 		sessionCodeConsentPending: () => sessionCodeConsent.pending(),
 		untilStoppedDefault: () => getCurrentSettings().chat.loopsUntilStopped,
 		createSession: createRoutedSession,
 		mcpEvents: () => toolBootstrap.mcpCapabilities ?? null,
 		notice: (text) => {
-			if (deferredWatchdogNoticeSink) deferredWatchdogNoticeSink(text);
-			else bootStderr(`${text}\n`);
+			(deferredWatchdogNoticeSink ?? ((msg: string) => bootStderr(`${msg}\n`)))(text);
 		},
 	});
 	const toolBootstrap = registerAllTools(toolRegistry, {
@@ -2607,18 +2611,17 @@ export async function bootOrchestrator(options: BootOptions = {}): Promise<BootR
 	const runVerifyChecks = options.headless?.verify?.checks ?? [];
 	let creditedRunChecks: ReadonlySet<string> = new Set();
 	let declaredCompletionFacts: ReadonlyArray<CompletionFact> = [];
+	const headlessGitHelpers = createRunGitHelpersRelay();
 	if (session) {
 		middlewareRegistrar.registerHook(
 			createFinishContractRegistration({
 				getTurnConstraints: () => chat.currentTurnConstraints?.(),
 				...(runVerifyChecks.length > 0 ? { readSessionVerifiers: () => runVerifyChecks } : {}),
+				readRunGitHelpers: headlessGitHelpers.read,
 				// Tail-scoped: the contract only needs the last-user-message window, so
 				// it parses a bounded ledger tail per turn_end rather than the whole
 				// file (which grows unbounded with session length).
-				readSessionEntries: () => {
-					const meta = session.current();
-					return meta ? readRecentSessionEntriesForContract(meta.id) : null;
-				},
+				readSessionEntries: () => readRecentSessionEntriesForContract(session.current()?.id),
 				resolveRigor: () =>
 					resolveRigor({
 						cwd: process.cwd(),
@@ -3967,6 +3970,7 @@ export async function bootOrchestrator(options: BootOptions = {}): Promise<BootR
 				autonomyHalt: () => lastAutonomyHalt,
 				readEntries: activePathEntries,
 				scratchRoots: getCurrentSettings().safety.scratchRoots,
+				onRunGitHelpers: headlessGitHelpers.note,
 				autonomy: () => autonomyWindow.report(true),
 				scopeNotices: (listener) => bus.subscribe("run.scope_notice_raised", listener),
 				sessionCostCeilingUsd: () => getCurrentSettings().safety.limits.sessionCostUsd,

@@ -37,7 +37,7 @@ it("operator bootstrap report: internal schema retries keep scope provenance wit
 		const request = {
 			agentId: "context-bootstrap",
 			executionRole: "explorer" as const,
-			task: "Inspect PANCODE.md CLAUDE.md src/engine/types.ts and tests/contracts/bootstrap-route.test.ts.",
+			task: "Inspect PANCODE.md CLAUDE.md src/engine/types.ts and tests/extended/bootstrap-route.test.ts.",
 			cwd: env.dir,
 			intent: scope.intent,
 			responseSchema: { type: "object" },

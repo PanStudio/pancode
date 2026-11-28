@@ -38,6 +38,11 @@ export interface ExtensionPaneOwner {
 	declaration: Pick<ExtensionRuntimeDeclarationV2, "binaries">;
 	/** Absolute store directory: the pane's working directory and the root its tap file resolves under. */
 	storeDir: string;
+	/**
+	 * Wraps the program's argv for the sandbox when `safety.confine` names the extension (P8); `release` runs once
+	 * the pane is gone. Absent, the program runs on the host as before.
+	 */
+	confine?: (argv: ReadonlyArray<string>, cwd: string) => { argv: string[]; release: () => void } | { refused: string };
 }
 
 export interface ExtensionPaneOpen {
@@ -166,6 +171,8 @@ interface Held {
 	taps: TapFileWatcher | null;
 	/** Set while the host closes the pane, so the departure is reported with its cause. */
 	closing: ExtensionPaneChangeReason | null;
+	/** A confined program's sandbox cleanup, run once its pane is gone. */
+	release: (() => void) | null;
 }
 
 export function createExtensionPaneHost(deps: ExtensionPaneHostDeps): ExtensionPaneHost {
@@ -202,9 +209,10 @@ export function createExtensionPaneHost(deps: ExtensionPaneHostDeps): ExtensionP
 	};
 	const drop = (reason: ExtensionPaneChangeReason): void => {
 		if (!held) return;
-		const { extensionId, taps } = held;
+		const { extensionId, taps, release } = held;
 		taps?.stop();
 		held = null;
+		release?.();
 		notify(extensionId, "closed", reason);
 	};
 	function gone(entry: MuxPaneRecord): void {
@@ -245,6 +253,8 @@ export function createExtensionPaneHost(deps: ExtensionPaneHostDeps): ExtensionP
 		const resolved = packBinaryPath(owner.extensionId, binary);
 		if ("reason" in resolved) throw new Error(resolved.reason);
 		const label = `ext:${owner.extensionId}`;
+		const confined = owner.confine?.([resolved.path, ...request.args], owner.storeDir);
+		if (confined !== undefined && "refused" in confined) throw new Error(`pane: ${confined.refused}`);
 		let taps: TapFileWatcher | null = null;
 		if (request.tap) {
 			const action = request.tap.action;
@@ -252,10 +262,10 @@ export function createExtensionPaneHost(deps: ExtensionPaneHostDeps): ExtensionP
 				if (!disposed) press(owner.extensionId, action, "dock");
 			});
 		}
-		held = { extensionId: owner.extensionId, label, taps, closing: null };
+		held = { extensionId: owner.extensionId, label, taps, closing: null, release: confined?.release ?? null };
 		let refusal: string | null = null;
 		const ref = await mux.openUtilityPane({
-			argv: [resolved.path, ...request.args],
+			argv: confined?.argv ?? [resolved.path, ...request.args],
 			cwd: owner.storeDir,
 			label,
 			title: request.title,
@@ -274,6 +284,7 @@ export function createExtensionPaneHost(deps: ExtensionPaneHostDeps): ExtensionP
 		if (ref === null) {
 			taps?.stop();
 			held = null;
+			confined?.release();
 			throw new Error(`pane: the pane did not open: ${refusal ?? "the pane host refused"}`);
 		}
 		const state = request.hidden ? "hidden" : "visible";

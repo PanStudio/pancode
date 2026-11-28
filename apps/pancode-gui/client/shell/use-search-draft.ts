@@ -27,7 +27,12 @@ export function useSearchDraft(urlValue: string, write: (value: string) => void)
 
 /** The next search params built from the live location, not the render-time copy a transition may hold back. */
 export function liveSearchWith(key: string, value: string): URLSearchParams {
-	const next = new URLSearchParams(window.location.search);
+	return searchWith(window.location.search, key, value);
+}
+
+/** `current` with `key` set to `value`, or without `key` when `value` is empty. */
+export function searchWith(current: URLSearchParams | string, key: string, value: string | null): URLSearchParams {
+	const next = new URLSearchParams(current);
 	if (value) next.set(key, value);
 	else next.delete(key);
 	return next;

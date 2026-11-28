@@ -7,7 +7,7 @@ import { SessionState } from "./sessions.js";
 
 const closed = { additionalProperties: false };
 const nullableText = Type.Union([Type.String({ maxLength: 512 }), Type.Null()]);
-export const SessionActivity = Type.Union([
+const SessionActivity = Type.Union([
 	Type.Literal("approval"),
 	Type.Literal("question"),
 	Type.Literal("working"),

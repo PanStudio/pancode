@@ -15,6 +15,7 @@ import { normalizePerfBudget, normalizePerfTolerance, type PerfBudgetSpec } from
 import { parseDeclaredProof } from "./proof.js";
 import {
 	type DeclaredReproduce,
+	hasControlCharacter,
 	normalizeRepeat,
 	normalizeReproduce,
 	normalizeSeed,
@@ -188,14 +189,6 @@ function utf8Bytes(value: string): number {
 	return Buffer.byteLength(value, "utf8");
 }
 
-function hasControlCharacter(value: string): boolean {
-	for (let index = 0; index < value.length; index += 1) {
-		const code = value.charCodeAt(index);
-		if (code <= 31 || code === 127) return true;
-	}
-	return false;
-}
-
 function catalogDiagnostic(message: string): ProjectCatalogLoadResult {
 	return { ok: false, reason: `${PROJECT_VERIFIER_CATALOG_RELATIVE_PATH}: ${message}` };
 }
@@ -206,7 +199,8 @@ function unknownFields(record: Record<string, unknown>, allowed: ReadonlySet<str
 		.sort(compareCodepoints);
 }
 
-function relativeCwd(workspaceRoot: string, resolved: string): string {
+/** `resolved` relative to the workspace root with `/` separators; the root itself is `.`. */
+export function workspaceRelative(workspaceRoot: string, resolved: string): string {
 	const relative = path.relative(workspaceRoot, resolved);
 	return relative.length === 0 ? "." : relative.split(path.sep).join("/");
 }
@@ -244,7 +238,7 @@ function safelyResolveCatalogCwd(
 		}
 		return new Error(`${location} cannot be resolved as a repository directory: '${rawCwd}' (${message})`);
 	}
-	return { declared: relativeCwd(workspaceRoot, resolved), execution: realCwd };
+	return { declared: workspaceRelative(workspaceRoot, resolved), execution: realCwd };
 }
 
 /**

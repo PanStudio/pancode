@@ -51,7 +51,7 @@ export interface ToolRemoveOptions {
  * number meaningless. Age is the one signal that means the same thing
  * everywhere.
  */
-export const STALE_STAGING_MS = 3_600_000;
+const STALE_STAGING_MS = 3_600_000;
 
 /** What one sweep of a tool's directory deleted, and what it could not. */
 export interface ToolRemoveResult {

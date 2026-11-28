@@ -30,6 +30,7 @@
 import { realpathSync } from "node:fs";
 import path from "node:path";
 import { safeResourceWrite } from "../../core/safe-resource-write.js";
+import { parseEgressAllowEntry } from "../../core/sandbox/egress/policy.js";
 import { withStateFileLockSync } from "../../core/state-file-lock.js";
 import { isRecord } from "../../core/type-guards.js";
 import { pancodeConfigDir } from "../../core/xdg.js";
@@ -46,7 +47,7 @@ import {
 import type { McpSurface } from "./surface.js";
 
 export const MCP_TRUST_FILENAME = "mcp-trust.json";
-export const MCP_TRUST_VERSION = 1;
+const MCP_TRUST_VERSION = 1;
 
 /**
  * Bounds on the trust file, read on every resolve; a file past either is unusable until repaired. The record
@@ -70,6 +71,8 @@ export interface McpTrustRecord {
 	trustedAt: string;
 	/** Absent unless granted, so version 1 files written before the grant read unchanged. */
 	network?: true;
+	/** Egress origins a confined server reaches through PanCode's proxy in the main session (P8); absent when none. */
+	allow?: string[];
 	/** Each bound project entry file's hash at trust time, by path, so a stale reason can name the script. */
 	entryScriptHashes?: Record<string, string>;
 	/** The tool surface the operator approved; absent until approved, so earlier files read unchanged. */
@@ -128,6 +131,8 @@ export type McpTrustStatus =
 			actionClass: McpTrustActionClass;
 			/** The operator granted this server's sandboxed process network in fleet workers. */
 			network?: true;
+			/** `host:port` origins the server reaches through PanCode's proxy when the operator confines it. */
+			allow?: string[];
 			/**
 			 * The approved tool surface; absent when none is recorded. Launch trust
 			 * stands either way, and only judgeMcpSurface decides whether calls run.
@@ -231,6 +236,13 @@ function parseTrustState(text: string): McpTrustState | Error {
 		if (raw.network !== undefined && typeof raw.network !== "boolean") {
 			return new Error(`records[${index}].network must be true or false`);
 		}
+		if (
+			raw.allow !== undefined &&
+			(!Array.isArray(raw.allow) ||
+				raw.allow.some((entry) => typeof entry !== "string" || typeof parseEgressAllowEntry(entry) === "string"))
+		) {
+			return new Error(`records[${index}].allow must list exact host:port origins`);
+		}
 		const hashes = raw.entryScriptHashes;
 		if (
 			hashes !== undefined &&
@@ -248,6 +260,7 @@ function parseTrustState(text: string): McpTrustState | Error {
 			actionClass: raw.actionClass,
 			trustedAt: raw.trustedAt as string,
 			...(raw.network === true ? { network: true as const } : {}),
+			...(Array.isArray(raw.allow) && raw.allow.length > 0 ? { allow: [...(raw.allow as string[])] } : {}),
 			...(isRecord(hashes) ? { entryScriptHashes: { ...(hashes as Record<string, string>) } } : {}),
 			...(surface !== undefined ? { surface } : {}),
 		});
@@ -377,6 +390,7 @@ function trustStatusFor(server: McpServerDeclaration, projectRoot: string, state
 			status: "trusted",
 			actionClass: server.actionClass,
 			...(server.network === true ? { network: true } : {}),
+			...(server.allow !== undefined ? { allow: server.allow } : {}),
 			...(recorded !== undefined ? { surface: recorded } : {}),
 		};
 	}
@@ -432,6 +446,7 @@ function trustStatusFor(server: McpServerDeclaration, projectRoot: string, state
 		status: "trusted",
 		actionClass: record.actionClass,
 		...(record.network === true ? { network: true } : {}),
+		...(record.allow !== undefined ? { allow: record.allow } : {}),
 		...(record.surface !== undefined ? { surface: record.surface } : {}),
 	};
 }
@@ -475,6 +490,8 @@ export interface TrustMcpServerOptions extends McpTrustOptions {
 	actionClass?: McpTrustActionClass;
 	/** Grant the server's sandboxed process network in fleet workers; omitting it records no grant. */
 	network?: boolean;
+	/** `host:port` origins the server reaches through PanCode's proxy when the operator confines it; empty records none. */
+	allow?: ReadonlyArray<string>;
 	now?: () => Date;
 }
 
@@ -549,6 +566,7 @@ function trustMcpServerLocked(options: TrustMcpServerOptions): TrustMcpServerRes
 		actionClass,
 		trustedAt: (options.now?.() ?? new Date()).toISOString(),
 		...(options.network === true ? { network: true as const } : {}),
+		...(options.allow !== undefined && options.allow.length > 0 ? { allow: [...new Set(options.allow)] } : {}),
 		...(Object.keys(hashes).length > 0 ? { entryScriptHashes: hashes } : {}),
 		...(carriedSurface !== undefined ? { surface: carriedSurface } : {}),
 	};

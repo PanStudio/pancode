@@ -13,6 +13,7 @@
  *     swap for a later phase.
  */
 
+import { asRecord } from "../../../core/type-guards.js";
 import type { AgentMessage, Usage } from "../../../engine/types.js";
 import { ceilChars, estimateAgentMessageTokens } from "../context-accounting.js";
 import type {
@@ -47,12 +48,6 @@ function estimateMessage(entry: MessageEntry): number {
 	return estimateAgentMessageTokens({ ...entry, payload: promptPayload });
 }
 
-function record(value: unknown): Record<string, unknown> | null {
-	return value !== null && typeof value === "object" && !Array.isArray(value)
-		? (value as Record<string, unknown>)
-		: null;
-}
-
 /** Provider deltas price only a single isolated result; ambiguous batches stay estimated (#422). */
 export function createTokenEstimator(
 	entries: ReadonlyArray<SessionEntry>,
@@ -75,8 +70,8 @@ export function createTokenEstimator(
 		if (entry.kind === "message" && entry.role === "assistant") {
 			const usage = extractUsage(entry.payload);
 			const prior = previous && extractUsage(previous.payload);
-			const before = previous && record(previous.payload);
-			const after = record(entry.payload);
+			const before = previous && asRecord(previous.payload);
+			const after = asRecord(entry.payload);
 			if (
 				isolated &&
 				result &&

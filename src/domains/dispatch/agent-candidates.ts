@@ -26,7 +26,7 @@ export type { AgentAutomationAuthority };
 export { AGENT_AUTOMATION_AUTHORITIES };
 
 /** Keeps decision evidence and the agent axis finite even when every recipe is hard-rejected. */
-export const AGENT_CANDIDATE_LIMIT = 64;
+const AGENT_CANDIDATE_LIMIT = 64;
 
 export type AgentTaskType =
 	| "code_write"

@@ -53,8 +53,8 @@ export type FieldProjection =
 	| AnonKind
 	| { readonly [field: string]: FieldProjection };
 
-export const WITHHELD = "[withheld]";
-export const ANONYMOUS_ID = /^anon_[0-9a-f]{16}$/u;
+const WITHHELD = "[withheld]";
+const ANONYMOUS_ID = /^anon_[0-9a-f]{16}$/u;
 
 type AllKeys<T> = T extends unknown ? keyof T : never;
 type PayloadProjection<T> = { readonly [K in AllKeys<T>]-?: FieldProjection };
@@ -343,6 +343,7 @@ export const SHARE_EVENT_PROJECTIONS: { readonly [N in ShareableEventName]: Payl
 			"outputTruncated",
 			"outputDigest",
 			"reportDigest",
+			"confinement",
 		),
 		runId: "id",
 		stepId: "token",
@@ -614,6 +615,7 @@ export const SHARE_EVENT_PROJECTIONS: { readonly [N in ShareableEventName]: Payl
 			"runs",
 			"maxDurationMs",
 			"timeoutMs",
+			"confinement",
 			"exitCode",
 			"outputChars",
 		),
@@ -623,8 +625,30 @@ export const SHARE_EVENT_PROJECTIONS: { readonly [N in ShareableEventName]: Payl
 		tool: "tool",
 		extension: { id: "name", version: "token", scope: "token", contentDigest: "id", generation: "keep" },
 	},
+	"sandbox.launched": {
+		...keep(
+			"caller",
+			"launcher",
+			"confinement",
+			"why",
+			"backend",
+			"outcome",
+			"exitCode",
+			"network",
+			"dropped",
+			"shed",
+			"listeningPorts",
+			"hint",
+		),
+		integration: "name",
+		destinations: {
+			...keep("port", "decision", "reason", "source", "viaUpstream", "count", "hostClipped"),
+			host: "host",
+		},
+	},
+	"sandbox.uncontained": keep("caller", "why", "mode", "backend"),
 	"extension.binary_ran": {
-		...keep("sha256", "via", "parent", "outcome", "reasonCode", "exitCode", "argCount", "durationMs"),
+		...keep("sha256", "via", "parent", "outcome", "reasonCode", "confinement", "exitCode", "argCount", "durationMs"),
 		extension: { id: "name", version: "token", scope: "token", contentDigest: "id" },
 		binary: "name",
 		version: "token",
@@ -769,7 +793,7 @@ export const SHARE_EVENT_PROJECTIONS: { readonly [N in ShareableEventName]: Payl
  * them becomes an anonymous id, and so does every dictionary key they hold, such as a model id under
  * `targets[].lmstudio.models`; only their fixed field names, switches and numbers stay readable.
  */
-export const SHARE_OBJECT_PROJECTIONS: Readonly<Record<string, FieldProjection>> = {
+const SHARE_OBJECT_PROJECTIONS: Readonly<Record<string, FieldProjection>> = {
 	"prompt-structure": {
 		sections: { ...keep("tokenEstimate", "contentHash"), id: "token" },
 		fragments: { ...keep("contentHash", "dynamic"), id: "token", relPath: "path" },

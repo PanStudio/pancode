@@ -31,7 +31,7 @@ export interface RunProvenanceView {
 type ProvenanceReceipt = Pick<RunResult, "pipeline" | "personaOverride" | "safety">;
 
 /** Number of leading hash characters shown as a persona-override prompt-hash prefix. */
-export const PERSONA_HASH_PREFIX_CHARS = 12;
+const PERSONA_HASH_PREFIX_CHARS = 12;
 
 /**
  * Read provenance from a sealed receipt shape. This reads optional fields

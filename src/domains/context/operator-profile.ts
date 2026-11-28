@@ -30,7 +30,7 @@ type ValidationPreference = (typeof VALIDATION_PREFERENCES)[number];
 type CommitMessageStyle = (typeof COMMIT_MESSAGE_STYLES)[number];
 
 /** Cap on rendered profile section, in characters. Keeps it a small section. */
-export const OPERATOR_PROFILE_MAX_CHARS = 700;
+const OPERATOR_PROFILE_MAX_CHARS = 700;
 /** Cap on local-only path entries surfaced in the prompt. */
 const OPERATOR_PROFILE_MAX_LOCAL_PATHS = 8;
 

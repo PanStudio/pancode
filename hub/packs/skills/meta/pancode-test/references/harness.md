@@ -31,10 +31,10 @@ in teardown.
 
 ## Driving the built CLI
 
-Built-process tests under `tests/smoke/` and `tests/extended-smoke/` spawn `dist/cli/index.js` through a local
+Built-process tests under `tests/smoke/` spawn `dist/cli/index.js` through a local
 process driver suited to that boundary:
 
-- `tests/extended-smoke/cli-core.test.ts` captures stdout and stderr with a bounded timeout.
+- `cli-core.test.ts` captures stdout and stderr with a bounded timeout.
 - `acp-boundary.test.ts` keeps stdin open and frames ACP v1 JSON-RPC messages.
 - `installed-package.test.ts` packs, installs, and launches the installed
   artifact.

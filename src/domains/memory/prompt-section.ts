@@ -19,7 +19,7 @@ import type {
 } from "./types.js";
 
 export const MEMORY_PROMPT_DEFAULT_TOKEN_BUDGET = 400;
-export const MEMORY_PROMPT_DEFAULT_MAX_ITEMS = 5;
+const MEMORY_PROMPT_DEFAULT_MAX_ITEMS = 5;
 
 /**
  * Default scopes considered for chat-loop memory injection. We deliberately
@@ -29,7 +29,7 @@ export const MEMORY_PROMPT_DEFAULT_MAX_ITEMS = 5;
  * need richer context that the chat-loop does not have at submit-time. Future
  * slices can broaden this list per call site.
  */
-export const MEMORY_PROMPT_DEFAULT_SCOPES: ReadonlyArray<MemoryScope> = ["global", "repo"];
+const MEMORY_PROMPT_DEFAULT_SCOPES: ReadonlyArray<MemoryScope> = ["global", "repo"];
 
 export interface MemoryPromptOptions {
 	/** Explicit experiment only; omitted options keep the default priority. */

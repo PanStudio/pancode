@@ -3,7 +3,7 @@
 import type { AgentCapabilities } from "../../contracts/capabilities.js";
 import type { Attachment } from "./attachments-model.js";
 
-export const ATTACHMENT_PREVIEW_CHARACTERS = 12000;
+const ATTACHMENT_PREVIEW_CHARACTERS = 12000;
 
 /** Review uses a bounded projection. The original attachment is always the send/download body. */
 export function attachmentReview(item: Attachment) {

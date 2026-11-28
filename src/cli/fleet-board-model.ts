@@ -684,7 +684,7 @@ export function createBoardSource(stateDir: string = pancodeStateDir()): BoardSo
 }
 
 /** The ledger rows, re-read only when `runs.json` changed. A torn or failed read keeps the last good copy. */
-export function ledgerRuns(source: BoardSource): ReadonlyArray<RunEnvelope> {
+function ledgerRuns(source: BoardSource): ReadonlyArray<RunEnvelope> {
 	source.ledger = readLedgerSnapshot(source.ledger, source.stateDir);
 	return source.ledger.runs;
 }

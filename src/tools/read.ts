@@ -50,7 +50,7 @@ import { truncateUtf8 } from "./truncate-utf8.js";
 // took ~9 sequential 16KB reads before). The per-turn observation budget
 // (src/tools/observation.ts) still bounds the aggregate. The configurable
 // value lives at safety.limits.readBytesPerCall.
-export const DEFAULT_READ_MAX_BYTES = GUARDRAIL_DEFAULTS.readMaxBytes;
+const DEFAULT_READ_MAX_BYTES = GUARDRAIL_DEFAULTS.readMaxBytes;
 const MIN_READ_CAP_BYTES = 1024;
 export const DEFAULT_DOCS_HEAD_LINES = 80;
 
@@ -830,6 +830,7 @@ async function readDocument(
 		details: {
 			file,
 			document: kind,
+			...("launch" in rendered && rendered.launch !== undefined ? { sandbox: rendered.launch } : {}),
 			readRange: {
 				startLine:
 					view.shownCount > 0

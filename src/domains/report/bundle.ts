@@ -33,18 +33,18 @@ import { type LocalIdentity, scrubText } from "./scrub.js";
 import { reportBundlePath, reportBundlesDirectory } from "./store.js";
 import { REPORT_AUTONOMY, REPORT_INSTALL_KINDS, REPORT_KINDS, REPORT_SURFACES, REPORT_TRIGGERS } from "./vocabulary.js";
 
-export const REPORT_BUNDLE_FORMAT = "pancode.report.bundle";
-export const REPORT_TRANSCRIPT_FORMAT = "pancode.report.transcript";
-export const CONSENT_SCOPES = ["debug", "dataset"] as const;
+const REPORT_BUNDLE_FORMAT = "pancode.report.bundle";
+const REPORT_TRANSCRIPT_FORMAT = "pancode.report.transcript";
+const CONSENT_SCOPES = ["debug", "dataset"] as const;
 export type ConsentScope = (typeof CONSENT_SCOPES)[number];
 /** At least one scope: a bundle is never built without the reporter's restated consent. */
 export type ConsentScopes = readonly [ConsentScope, ...ConsentScope[]];
 export type BundleContent = "none" | "transcript";
-export const CONSENT_TEXT_VERSION = 1;
+const CONSENT_TEXT_VERSION = 1;
 export const TRANSCRIPT_TURNS_DEFAULT = 3;
 export const TRANSCRIPT_TURNS_MAX = 10;
 /** A bundle stays in the reports directory this long after it was sent (D-REPORT 5.8). */
-export const BUNDLE_RETENTION_DAYS = 30;
+const BUNDLE_RETENTION_DAYS = 30;
 
 const MEMBER_ENVELOPE = "report.json";
 const MEMBER_TELEMETRY = "telemetry.tar.gz";
@@ -52,7 +52,7 @@ const MEMBER_TRANSCRIPT = "transcript.jsonl";
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 /** What a bundle keeps, shown before the reporter agrees (D-REPORT 5.2). Fixed text: it does not depend on the bundle. */
-export const BUNDLE_KEPT: ReadonlyArray<string> = [
+const BUNDLE_KEPT: ReadonlyArray<string> = [
 	"Call mechanics: disposition, stop reason, failure cause, stages and timings, transport, usage, cache verdict, retries.",
 	"Turn and run settlement: stop reason, terminal cause and stage, outcome and exit codes, tool counts by built-in tool name.",
 	"Routing: mode, posture, verdict, rejection reasons, built-in runtime ids.",
@@ -62,7 +62,7 @@ export const BUNDLE_KEPT: ReadonlyArray<string> = [
 	"Versions and the environment block.",
 ];
 
-export const BUNDLE_NEVER_KEPT: ReadonlyArray<string> = [
+const BUNDLE_NEVER_KEPT: ReadonlyArray<string> = [
 	"Prompts, model text, thinking, tool arguments and output, unless the transcript is ticked.",
 	"File contents, diffs, commit messages.",
 	"Absolute or relative paths, repository names and remotes, branch names.",

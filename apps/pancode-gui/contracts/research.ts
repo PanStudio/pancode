@@ -8,14 +8,14 @@ const Nullable = <T extends Parameters<typeof Type.Union>[0][number]>(schema: T)
 
 /** `r<yyyymmdd>-<hhmmss>-<hex4>`, the id `pancode research start` gives a campaign. */
 export const ResearchCampaignId = Type.String({ pattern: "^r[0-9]{8}-[0-9]{6}-[0-9a-f]{4}$" });
-export const ResearchDirection = Type.Union([Type.Literal("min"), Type.Literal("max")]);
+const ResearchDirection = Type.Union([Type.Literal("min"), Type.Literal("max")]);
 /** A key of the JSON payload the objective check prints, such as `wall_ms`. */
-export const ResearchMetric = Type.String({ pattern: "^[A-Za-z_][A-Za-z0-9_.-]{0,127}$" });
+const ResearchMetric = Type.String({ pattern: "^[A-Za-z_][A-Za-z0-9_.-]{0,127}$" });
 /** A repository-relative glob; never a leading dash, so it cannot read as an option. */
-export const ResearchScope = Type.String({ minLength: 1, maxLength: 256, pattern: "^[^\\-\\r\\n][^\\r\\n]*$" });
+const ResearchScope = Type.String({ minLength: 1, maxLength: 256, pattern: "^[^\\-\\r\\n][^\\r\\n]*$" });
 /** One line of guidance for the agent; never a leading dash, so `--goal` always takes it as its value. */
-export const ResearchGoal = Type.String({ minLength: 1, maxLength: 2000, pattern: "^[^\\-\\s][^\\r\\n]*$" });
-export const ResearchModel = Type.String({ pattern: "^[A-Za-z0-9][A-Za-z0-9._:/@+-]{0,255}$" });
+const ResearchGoal = Type.String({ minLength: 1, maxLength: 2000, pattern: "^[^\\-\\s][^\\r\\n]*$" });
+const ResearchModel = Type.String({ pattern: "^[A-Za-z0-9][A-Za-z0-9._:/@+-]{0,255}$" });
 
 export const ResearchStartRequest = Type.Object(
 	{
@@ -64,7 +64,7 @@ export const ResearchGrade = Type.Object(
 );
 export type ResearchGrade = Static<typeof ResearchGrade>;
 
-export const ResearchArchiveReason = Type.Union([
+const ResearchArchiveReason = Type.Union([
 	Type.Literal("agent-failed"),
 	Type.Literal("no-op"),
 	Type.Literal("duplicate"),
@@ -77,7 +77,7 @@ export const ResearchArchiveReason = Type.Union([
 	Type.Literal("deadline"),
 	Type.Literal("interrupted"),
 ]);
-export const ResearchStopReason = Type.Union([
+const ResearchStopReason = Type.Union([
 	Type.Literal("max-iterations"),
 	Type.Literal("max-wall-minutes"),
 	Type.Literal("max-cost-usd"),
@@ -165,7 +165,7 @@ const FrozenCheck = Type.Object(
 	closed,
 );
 
-export const ResearchCampaignRecord = Type.Object(
+const ResearchCampaignRecord = Type.Object(
 	{
 		version: Type.Literal(1),
 		id: ResearchCampaignId,

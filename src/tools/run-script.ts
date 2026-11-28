@@ -101,7 +101,7 @@ export const RUN_SCRIPT_CAPS = Object.freeze({
  * Python's streams unbuffered so the live tail and the logs reflect progress
  * as it happens rather than at exit.
  */
-export const RUN_SCRIPT_DEFAULT_INTERPRETER_ARGS: Readonly<Record<RunScriptInterpreter, ReadonlyArray<string>>> = {
+const RUN_SCRIPT_DEFAULT_INTERPRETER_ARGS: Readonly<Record<RunScriptInterpreter, ReadonlyArray<string>>> = {
 	python3: ["-u"],
 	python: ["-u"],
 	node: [],
@@ -1234,7 +1234,7 @@ export function createRunScriptTool(deps: RunScriptToolDeps = {}): ToolSpec {
 				sweep,
 				...(failure === null ? {} : { failure }),
 				...(manifestError === null ? {} : { manifestError }),
-				...(result.egress === undefined ? {} : { egress: result.egress.receipts }),
+				...(result.sandbox === undefined ? {} : { sandbox: result.sandbox }),
 			};
 			if (outcome === "succeeded" && manifestError === null) return { kind: "ok", output: text, details };
 			return { kind: "error", message: text, details };

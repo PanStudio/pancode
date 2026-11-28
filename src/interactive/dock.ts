@@ -143,7 +143,7 @@ export function dockBodyRows(tui: object): number {
 }
 
 /** Rows an adaptive surface keeps when its content is small, so one or two options never leave a tall empty dock. */
-export const DOCK_COMPACT_ROWS = 6;
+const DOCK_COMPACT_ROWS = 6;
 
 /**
  * Body rows a docked decision (an approval) may spend: every row the two rails, the footer and a sliver of transcript

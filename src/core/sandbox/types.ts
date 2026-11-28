@@ -11,7 +11,8 @@ import type { EgressBridgeSetup } from "./egress/setup.js";
 export const SANDBOX_MODES = ["auto", "required", "off"] as const;
 export type SandboxMode = (typeof SANDBOX_MODES)[number];
 
-export type SandboxBackend = "bwrap" | "seatbelt";
+export const SANDBOX_BACKENDS = ["bwrap", "seatbelt"] as const;
+export type SandboxBackend = (typeof SANDBOX_BACKENDS)[number];
 
 /**
  * `safety.sandboxUnixSockets` values. `block` refuses new Unix-domain sockets
@@ -63,9 +64,112 @@ export interface HomeReadList {
 export const EGRESS_MODES = ["off", "proxied", "open"] as const;
 export type EgressMode = (typeof EGRESS_MODES)[number];
 
+/** `safety.confine` integration classes that take no name; `mcp:` and `extension:` entries name one. */
+export const CONFINE_CLASSES = ["hooks", "git", "jobs"] as const;
+export type ConfineClass = (typeof CONFINE_CLASSES)[number];
+
 /** Named exact host/port bundles (`safety.egress.<caller>.presets`); egress/policy.ts lists their origins. */
 export const EGRESS_PRESET_NAMES = ["npm", "pypi", "github", "crates", "go"] as const;
 export type EgressPresetName = (typeof EGRESS_PRESET_NAMES)[number];
+
+/** Whose process launched: the main session, a read-only main run, or a dispatched worker. */
+export const SANDBOX_CALLERS = ["main", "main-read-only", "worker"] as const;
+export type SandboxCaller = (typeof SANDBOX_CALLERS)[number];
+
+/**
+ * What started the process: the shell and command-vector exec seams, the synchronous staging command, and the
+ * integration launchers that pick their own policy (an MCP stdio server, a pack's binary or pane, a YAML hook, typed
+ * git, grep and find, the sqlite and PDF readers, a job, a code step).
+ */
+export const SANDBOX_LAUNCHERS = [
+	"shell",
+	"command",
+	"staging",
+	"mcp-stdio",
+	"extension-binary",
+	"extension-pane",
+	"yaml-hook",
+	"typed-git",
+	"search",
+	"sqlite",
+	"pdf",
+	"job",
+	"code-step",
+] as const;
+export type SandboxLauncher = (typeof SANDBOX_LAUNCHERS)[number];
+
+/**
+ * How one launch was confined. `sandboxed` runs under the OS backend; `unconfined` would be sandboxed but runs on
+ * the host for the reason `why` gives; `host` runs on the host under the operator's own authority.
+ */
+export const SANDBOX_CONFINEMENTS = ["sandboxed", "unconfined", "host"] as const;
+export type SandboxConfinement = (typeof SANDBOX_CONFINEMENTS)[number];
+
+/**
+ * Why a launch has its confinement. Sandboxed: the main session's policy, the worker's spec, an operator's opt-in to
+ * confine the integration (`safety.confine`), or a launcher confined by default. Unconfined: the operator let this
+ * caller run without a backend, the integration is not opted in to confinement, `safety.sandbox` is off, or no
+ * backend answered. Host: the operator's own authority. `read-admitted`: a main-session read tool (grep, find) runs
+ * on the host, and read admission checks every path it reads.
+ */
+export const SANDBOX_LAUNCH_WHYS = [
+	"main-policy",
+	"worker-policy",
+	"confine-opt-in",
+	"confined-by-default",
+	"unconfined-opt-in",
+	"not-opted-in",
+	"sandbox-off",
+	"no-backend",
+	"operator-authority",
+	"read-admitted",
+] as const;
+export type SandboxLaunchWhy = (typeof SANDBOX_LAUNCH_WHYS)[number];
+
+/**
+ * How a launch ended as the sandbox saw it. `refused`: the planner, or a resource ceiling the host cannot enforce,
+ * refused it and nothing ran. `launch-failed`: the spawn, its resource scope or the sandbox's own network setup failed
+ * before the command ran. `ran`: the command started; its exit code says how it went.
+ */
+export const SANDBOX_LAUNCH_OUTCOMES = ["ran", "refused", "launch-failed"] as const;
+export type SandboxLaunchOutcome = (typeof SANDBOX_LAUNCH_OUTCOMES)[number];
+
+/**
+ * What PanCode's egress proxy did with one origin. `allowed`: the upstream connect completed. `denied`: policy
+ * refused it before any dial. `failed`: admitted, but the name did not resolve or the dial did not complete.
+ */
+export const EGRESS_DECISIONS = ["allowed", "denied", "failed"] as const;
+export type EgressDecision = (typeof EGRESS_DECISIONS)[number];
+
+/** Why the proxy denied or failed an origin; an allowed origin carries none. */
+export const EGRESS_REASONS = [
+	"ungranted",
+	"operator-denied",
+	"private-literal",
+	"private-answer",
+	"unresolved",
+	"dial-error",
+	"dial-timeout",
+	"upstream-refused",
+	"proxy-closed",
+] as const;
+export type EgressReason = (typeof EGRESS_REASONS)[number];
+
+/**
+ * What admitted an origin: the configured grants and presets, an origin the operator approved earlier this session,
+ * or the operator's answer while this launch waited.
+ */
+export const EGRESS_SOURCES = ["grant", "session", "operator"] as const;
+export type EgressSource = (typeof EGRESS_SOURCES)[number];
+
+/** At most this many destinations in one launch record; the rest count as `dropped`. */
+export const SANDBOX_RECORD_MAX_DESTINATIONS = 32;
+/** At most this many listening ports in one launch record. */
+export const SANDBOX_RECORD_MAX_LISTENING_PORTS = 16;
+
+/** The heuristic hints a launch's output can raise. `write-denied`: the output reads like a refused write; no kernel event says so. */
+export const SANDBOX_LAUNCH_HINTS = ["write-denied"] as const;
+export type SandboxLaunchHint = (typeof SANDBOX_LAUNCH_HINTS)[number];
 
 /** A worker's proxied shell egress, present only when its network goes through PanCode's proxy. */
 export interface WorkerEgressSpec {
@@ -124,6 +228,12 @@ export interface WorkerSandboxSpec {
 	 * worker whose own probe then fails refuses the command instead of running it direct.
 	 */
 	backendExpected?: true;
+	/**
+	 * A local worker only, with `backendExpected`: the full backend this host's own probes found working, so the
+	 * worker takes it instead of probing again. It names only a working backend, so it can add confinement and never
+	 * remove any: a launch that then fails fails its command. A degraded or missing backend is never carried.
+	 */
+	probedBackend?: ProbedSandboxBackend;
 	/**
 	 * Admission found no backend where the worker runs and the operator allowed
 	 * it to run unconfined: `safety.sandboxUnconfinedLocalWorkers` for a local
@@ -228,6 +338,13 @@ export interface SandboxReadRestriction {
 export interface SandboxInvocation {
 	file: string;
 	args: string[];
+}
+
+/** A full sandbox backend a host probe found working; `networkIsolation` when bubblewrap also isolated the network. */
+export interface ProbedSandboxBackend {
+	backend: SandboxBackend;
+	executable: string;
+	networkIsolation?: true;
 }
 
 export interface SandboxAvailability {

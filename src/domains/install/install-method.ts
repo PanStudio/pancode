@@ -71,7 +71,7 @@ export interface InstallerRecord {
 	pathEntry?: string;
 }
 
-export const INSTALLER_MANIFEST_KIND = "pancode-installer";
+const INSTALLER_MANIFEST_KIND = "pancode-installer";
 /** First line after the shebang of every launcher scripts/install.sh writes. */
 export const INSTALLER_LAUNCHER_MARK = "# pancode-installer launcher";
 

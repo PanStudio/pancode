@@ -221,6 +221,7 @@ export async function runHeadlessVerifyChecks(
 				durationMs: Math.round(performance.now() - started),
 				timedOut: run.timedOut,
 				ranAfterLastEdit: credited.has(check.id),
+				confinement: "host",
 			});
 		}
 		// A shutdown stopped the checks; what finished seals as it ran, without a base replay. A shutdown during the

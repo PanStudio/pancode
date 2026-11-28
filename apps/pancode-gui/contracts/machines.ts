@@ -28,7 +28,7 @@ export const MachineMutation = Type.Union([
 	Type.Object({ action: Type.Literal("check"), id: MachineId, confirmed: Type.Literal(true) }, closed),
 ]);
 export type MachineMutation = Static<typeof MachineMutation>;
-export const MachineChecks = Type.Object(
+const MachineChecks = Type.Object(
 	{
 		reachable: Type.Boolean(),
 		pancodePresent: Type.Boolean(),

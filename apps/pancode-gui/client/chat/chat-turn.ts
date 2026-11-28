@@ -16,8 +16,8 @@ import type { TurnActivity } from "./composer-model.js";
 import type { HealthRow } from "./health.js";
 import type { ChatTurn } from "./turns.js";
 
-export const AGENT_NAME = "Panos";
-export const REASONING_PREVIEW_MAX = 140;
+const AGENT_NAME = "Panos";
+const REASONING_PREVIEW_MAX = 140;
 export const REASONING_LABEL = "Reasoning";
 export const REASONING_SOURCE = "reported by PanCode";
 export const REPLAY_CHIP = "earlier record";
