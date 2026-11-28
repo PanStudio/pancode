@@ -206,7 +206,17 @@ describe("harness extension executable capabilities", () => {
 		if (verdict.result.kind === "error") ok(verdict.result.message.includes("unsandboxed: true"), verdict.result.message);
 		equal(existsSync(target), false);
 		deepStrictEqual(asked, []);
-		await registry.invoke({ tool: testName, args: { text: "x", unsandboxed: true } });
+		// An escape states its reason for the operator's card, or is refused before it asks.
+		const unstated = await registry.invoke({ tool: testName, args: { text: "x", unsandboxed: true } });
+		equal(
+			unstated.kind === "blocked" ? unstated.decision.policy?.reasonCode : unstated.kind,
+			"sandbox-escape-reason-required",
+		);
+		deepStrictEqual(asked, []);
+		await registry.invoke({
+			tool: testName,
+			args: { text: "x", unsandboxed: true, unsandboxed_reason: "it writes state" },
+		});
 		deepStrictEqual(asked, ["sandbox-escape"]);
 		equal(existsSync(target), false);
 	});

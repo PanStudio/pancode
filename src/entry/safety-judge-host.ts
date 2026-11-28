@@ -173,8 +173,7 @@ function chosenOptionText(
  * picked (`auto`) are no operator's word, as the registry's own reading holds.
  * The question, the chosen labels and what those options say are the agent's
  * text, so the judge reads them but only what the operator typed counts as their
- * words; the escape backstop reads the question and labels as an approval only
- * through `askApprovesSandboxEscape`.
+ * words. No answered round approves a sandbox escape: only the approval card does.
  */
 function operatorAnswersOfToolResult(payload: unknown, asked: AskedQuestions): SafetyJudgeOperatorMessage[] {
 	if (!isRecord(payload) || typeof payload.toolName !== "string" || payload.isError === true) return [];

@@ -783,7 +783,7 @@ const FUNCTION_LINE_EXEMPTIONS: ReadonlyMap<string, number> = new Map([
 	["src/cli/modes/print.ts#runHeadlessMainAgent", 856],
 	["src/cli/uninstall.ts#runUninstallCommand", 543],
 	["src/cli/upgrade.ts#runUpgradeCommand", 568],
-	["src/core/settings-validate.ts#validateSettings", 1297],
+	["src/core/settings-validate.ts#validateSettings", 1295],
 	["src/domains/dispatch/admission.ts#createCapacityAdmissionController", 547],
 	["src/domains/dispatch/execution-scheduler.ts#executePlan", 662],
 	["src/domains/dispatch/fleet-run.ts#runFleetHoldingWorkspace", 1043],
@@ -794,7 +794,7 @@ const FUNCTION_LINE_EXEMPTIONS: ReadonlyMap<string, number> = new Map([
 	["src/domains/mux/socket-client.ts#createMuxClient", 553],
 	["src/domains/providers/extension.ts#createProvidersBundle", 625],
 	["src/domains/resources/hub-validation.ts#validateHubPackage", 567],
-	["src/domains/safety/policy-engine.ts#createSafetyPolicyEngine", 1713],
+	["src/domains/safety/policy-engine.ts#createSafetyPolicyEngine", 1709],
 	["src/domains/scheduling/job-controller.ts#createJobController", 979],
 	["src/domains/session/compaction/compact.ts#compactWithCalls", 738],
 	["src/domains/session/extension.ts#createSessionBundle", 505],
@@ -811,7 +811,7 @@ const FUNCTION_LINE_EXEMPTIONS: ReadonlyMap<string, number> = new Map([
 	["src/interactive/chat-panel.ts#createChatPanel.applyEvent", 534],
 	["src/interactive/editor-submit.ts#createEditorSubmitController", 668],
 	["src/interactive/interactive-application.ts#createInteractiveApplication", 2195],
-	["src/interactive/interactive-presentation.ts#createInteractivePresentation", 1077],
+	["src/interactive/interactive-presentation.ts#createInteractivePresentation", 1072],
 	["src/interactive/interactive-slash-runtime.ts#createInteractiveSlashRuntime", 794],
 	["src/interactive/overlay-general-openers.ts#createOverlayGeneralOpeners", 741],
 	["src/interactive/overlay-lifecycle.ts#createOverlayLifecycle", 607],
@@ -838,7 +838,7 @@ const FUNCTION_LINE_EXEMPTIONS: ReadonlyMap<string, number> = new Map([
 	["src/tools/dispatch-runner.ts#runDispatchTool", 550],
 	["src/tools/gateway/index.ts#createGatewayTool", 875],
 	["src/tools/gateway/mcp-capabilities.ts#createMcpCapabilitySource", 1680],
-	["src/tools/registry.ts#createRegistry", 2346],
+	["src/tools/registry.ts#createRegistry", 2342],
 ]);
 
 function memberNameText(name: ts.PropertyName | ts.BindingName, tree: ts.SourceFile): string {

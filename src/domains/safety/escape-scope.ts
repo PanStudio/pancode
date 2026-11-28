@@ -65,9 +65,6 @@ export interface EscapeScopeGrant {
 	readonly at: string;
 }
 
-/** What admission does with an escape a granted scope covers. */
-export type ScopedEscapeRoute = "run" | "judge";
-
 function digest(value: string | Buffer): string {
 	return `sha256:${sha256Hex(value)}`;
 }
@@ -193,15 +190,6 @@ function escapeScopeCovers(
 	return names.every((name) => scope.env[name] === reach.env[name]);
 }
 
-/**
- * Whether a covered escape runs at admission or still goes to the safety judge with the grant as its
- * approval. Maintainer ruling on M-7 Q3: it runs, without the judge; admission consults a grant only when
- * leaving the sandbox is the call's sole ask reason (`onlyAsksToLeaveSandbox`), so any other ask still asks.
- */
-export function scopedEscapeRoute(): ScopedEscapeRoute {
-	return "run";
-}
-
 /** True when an ask's only reason is leaving the sandbox, so a scope grant answers all of it. */
 function onlyAsksToLeaveSandbox(decision: SafetyDecision): boolean {
 	const policy = decision.policy;
@@ -211,7 +199,7 @@ function onlyAsksToLeaveSandbox(decision: SafetyDecision): boolean {
 }
 
 /** The scope as one line: the script files with their short hashes, the cwd and the env assignments it covers. */
-export function describeEscapeScope(scope: EscapeScope): string {
+function describeEscapeScope(scope: EscapeScope): string {
 	const names = Object.keys(scope.env);
 	const env =
 		names.length === 0

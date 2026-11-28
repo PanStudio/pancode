@@ -12,6 +12,7 @@ import {
 	buildWelcomeDashboardLines,
 	createBootWelcome,
 	createWelcomeDashboard,
+	type WelcomeShellSandbox,
 } from "../../src/interactive/welcome-dashboard.js";
 
 const originalEnv = { ...process.env };
@@ -501,6 +502,7 @@ test("welcome renders orientation guidance without configuration inventory or du
 		projectContext: "none" as const,
 		submitKeyLabel: "Enter",
 		autonomy: "yolo",
+		shellSandbox: { outcome: "available" as const, main: "contained" as const, yolo: "contained-sandbox" as const },
 		targets: "9 configured",
 		fleet: "28 recipes",
 		quota: null,
@@ -522,7 +524,7 @@ test("welcome renders orientation guidance without configuration inventory or du
 	}
 });
 
-test("the detailed banner claims only automatic edits on a host whose shell runs without an OS sandbox (bt-11 #6)", () => {
+test("the detailed banner claims only automatic edits on a host whose shell runs without an OS sandbox (bt-11 #6, G16)", () => {
 	process.env.TERM = "xterm-256color";
 	delete process.env.PANCODE_SCREEN_READER;
 	const settings = structuredClone(DEFAULT_SETTINGS);
@@ -530,27 +532,44 @@ test("the detailed banner claims only automatic edits on a host whose shell runs
 	settings.chat.model = "test-model";
 	settings.interface.demo = true;
 	settings.interface.outputDetail = "detailed";
-	let contained: boolean | null = false;
+	let state: WelcomeShellSandbox | null = { outcome: "missing", main: "rails", yolo: "contained-rails" };
 	const live = createWelcomeDashboard({
 		providers: { list: () => [] },
 		getSettings: () => settings,
 		getTerminalRows: () => 40,
-		getShellContained: () => contained,
+		getShellSandbox: () => state,
 	});
+	const render = (): string => live.render(120).map(stripTerminalSequences).join("\n");
 	try {
 		for (const width of [80, 120, 200]) {
 			const lines = live.render(width);
 			ok(lines.every((line) => visibleWidth(line) <= width));
 			const text = lines.map(stripTerminalSequences).join("\n");
-			match(text, /auto edits · no OS sandbox/u);
+			match(text, /auto edits · not sandboxed \(no OS sandbox\)/u);
 			ok(!text.includes("auto in workspace"), text);
 		}
-		contained = null;
-		const unchecked = live.render(120).map(stripTerminalSequences).join("\n");
+		state = null;
+		const unchecked = render();
 		match(unchecked, /sandbox {4}auto edits$/mu);
-		ok(!unchecked.includes("auto in workspace") && !unchecked.includes("no OS sandbox"), unchecked);
-		contained = true;
-		match(live.render(120).map(stripTerminalSequences).join("\n"), /auto in workspace · OS sandbox active/u);
+		ok(!unchecked.includes("auto in workspace") && !unchecked.includes("sandboxed"), unchecked);
+		state = { outcome: "available", main: "contained", yolo: "contained-sandbox" };
+		match(render(), /auto in workspace · OS sandbox active/u);
+		// Each backend outcome reads differently: partial, lost and off are not "no OS sandbox".
+		state = { outcome: "partial", main: "contained", yolo: "contained-sandbox" };
+		match(render(), /auto in workspace · OS sandbox partial \(no seccomp baseline\)/u);
+		state = { outcome: "lost", main: "rails", yolo: "contained-rails" };
+		match(render(), /auto edits · not sandboxed \(OS sandbox lost\)/u);
+		state = { outcome: "off", main: "off", yolo: "contained-rails" };
+		match(render(), /auto edits · not sandboxed \(safety\.sandbox off\)/u);
+		// Yolo reads the host, not its confinement setting alone.
+		settings.safety.autonomy = "yolo";
+		state = { outcome: "missing", main: "rails", yolo: "contained-rails" };
+		match(render(), /contained · not sandboxed \(no OS sandbox\), asks refused/u);
+		settings.safety.yoloConfinement = "unconfined";
+		state = { outcome: "available", main: "contained", yolo: "sandboxed" };
+		match(render(), /unconfined · OS sandbox active \(safety\.sandbox required\)/u);
+		state = { outcome: "missing", main: "rails", yolo: "refused" };
+		match(render(), /unconfined · commands refused \(required, no OS sandbox\)/u);
 	} finally {
 		live.dispose();
 	}
@@ -604,7 +623,8 @@ test("startup and live tier changes share one bounded welcome policy", () => {
 		settings.safety.autonomy = "yolo";
 		const after = live.render(120);
 		ok(after !== before, "autonomy invalidates the welcome cache");
-		match(after.map(stripTerminalSequences).join("\n"), /contained · OS sandbox active/u);
+		// No probe answer reached this banner, so it names the confinement and claims no sandbox.
+		match(after.map(stripTerminalSequences).join("\n"), /sandbox {4}contained$/mu);
 	} finally {
 		live.dispose();
 	}

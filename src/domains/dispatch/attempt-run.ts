@@ -362,9 +362,8 @@ export async function openAttemptRun(rt: DispatchRuntime, attempt: FoldingAttemp
 		...(hostRun === undefined ? {} : { hostRun }),
 		heartbeatAt,
 		heartbeatStatus: "alive",
-		// `required` refuses a command it cannot sandbox, and so does a worker whose backend this host saw work.
-		...(attempt.spec.sandbox !== undefined &&
-		(attempt.spec.sandbox.mode === "required" || attempt.spec.sandbox.backendExpected === true)
+		// A worker refuses a command it cannot sandbox unless admission allowed it to run unconfined.
+		...(attempt.spec.sandbox !== undefined && attempt.spec.sandbox.unconfined !== true
 			? { shellConfined: true as const }
 			: {}),
 		meter: tokenMeter,

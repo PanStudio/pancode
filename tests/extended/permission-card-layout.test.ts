@@ -15,6 +15,7 @@ import {
 	classifyDecisionPresentation,
 	decisionFactsForPermission,
 } from "../../src/domains/safety/decision-presentation.js";
+import { SANDBOX_ESCAPE_REASON, SANDBOX_ESCAPE_RULE_ID } from "../../src/domains/safety/sandbox-escape.js";
 import { UNATTENDED_ALLOWED_BY } from "../../src/domains/safety/unattended.js";
 import { getKeybindings, setKeybindings, stripTerminalSequences, visibleWidth } from "../../src/engine/tui.js";
 import { createWorkerSafety } from "../../src/engine/worker-tools.js";
@@ -46,6 +47,7 @@ import {
 } from "../../src/interactive/theme/primitives.js";
 import type { UnattendedTimers } from "../../src/interactive/unattended-countdown.js";
 import { CALL_TARGET_MAX_CHARS, describeCallTarget } from "../../src/lib/call-target/call-target.js";
+import { mainApprovalRequestView } from "../../src/session-control/approval-request-facts.js";
 import { createRegistry } from "../../src/tools/registry.js";
 import { writeTool } from "../../src/tools/write.js";
 
@@ -71,6 +73,33 @@ test("a worker bash target keeps command boundaries without terminal controls", 
 	const bounded = describeCallTarget("bash", { command: `${command}\n`.repeat(30) });
 	ok(bounded.length <= CALL_TARGET_MAX_CHARS);
 	ok(/ … \+\d+ more characters$/u.test(bounded));
+});
+
+test("an escape card shows the agent's stated reason as its words, sanitized, and no other card does", () => {
+	const escapeAsk = {
+		kind: "ask",
+		classification: { actionClass: "execute", reasons: [SANDBOX_ESCAPE_REASON] },
+		rejection: { short: "bash asks: sandbox escape", detail: SANDBOX_ESCAPE_REASON, hints: [] },
+		policy: { ruleId: SANDBOX_ESCAPE_RULE_ID, reasonCode: SANDBOX_ESCAPE_RULE_ID, reasons: [SANDBOX_ESCAPE_REASON] },
+	} as unknown as SafetyDecision;
+	const args = {
+		command: "npm publish",
+		unsandboxed: true,
+		unsandboxed_reason: "the sandbox hides\u001b[2J ~/.npmrc,\n which the publish needs",
+	};
+	const view = mainApprovalRequestView({ tool: ToolNames.Bash, args }, escapeAsk, undefined, "default", undefined);
+	strictEqual(view.escapeReason, "the sandbox hides ~/.npmrc, which the publish needs");
+	const rows = plain(createPermissionOverlayBody(view).render(contentWidth(120))).join("\n");
+	match(rows, /agent says\s+the sandbox hides/u);
+	const contained = {
+		...escapeAsk,
+		classification: { actionClass: "execute", reasons: [] },
+		policy: { ruleId: "default-execute", reasonCode: "default-execute", reasons: [] },
+	} as unknown as SafetyDecision;
+	strictEqual(
+		mainApprovalRequestView({ tool: ToolNames.Bash, args }, contained, undefined, "default", undefined).escapeReason,
+		undefined,
+	);
 });
 
 const WRITE_VIEW: ApprovalRequestView = {

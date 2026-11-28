@@ -34,6 +34,7 @@ import { mainSandboxWriteHint } from "../core/sandbox/main-session.js";
 import { storeReadRoots, validateBlobName, validateTagName } from "../core/store-paths.js";
 import type { DynamicToolName } from "../core/tool-names.js";
 import { CommandOutputMask, maskCommandOutput } from "../domains/evidence/output-mask.js";
+import { UNSANDBOXED_REASON_DESCRIPTION } from "../domains/safety/unsandboxed-reason.js";
 import type { StoreBackend } from "../domains/store/backend.js";
 import { findExecutableOnPath } from "../domains/toolchain/resolve.js";
 import { StringEnum } from "../engine/ai.js";
@@ -835,9 +836,10 @@ export const runScriptToolSurface: ToolSurface = {
 		unsandboxed: Type.Optional(
 			Type.Boolean({
 				description:
-					"Run outside the OS sandbox. Request it only after this script failed because of the sandbox, for example it needed credentials or a path outside the writable roots; the call is then reviewed against the operator's request.",
+					"Run outside the OS sandbox. Request it only after this script failed because of the sandbox, for example it needed credentials or a path outside the writable roots; the operator decides.",
 			}),
 		),
+		unsandboxed_reason: Type.Optional(Type.String({ description: UNSANDBOXED_REASON_DESCRIPTION })),
 	}),
 	baseActionClass: "execute",
 	executionMode: "sequential",
@@ -851,7 +853,7 @@ export const runScriptToolSurface: ToolSurface = {
 				command: projection.command,
 				...(projection.cwd === undefined ? {} : { cwd: projection.cwd }),
 				// The projected command leaves the sandbox exactly when the script asked to.
-				...(args.unsandboxed === true ? { unsandboxed: true } : {}),
+				...(args.unsandboxed === true ? { unsandboxed: true, unsandboxed_reason: args.unsandboxed_reason } : {}),
 			},
 		};
 	},

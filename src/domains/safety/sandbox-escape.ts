@@ -15,7 +15,7 @@ import type { SafetyDecision } from "./contract.js";
 export const SANDBOX_ESCAPE_RULE_ID = "sandbox-escape";
 
 export const SANDBOX_ESCAPE_REASON =
-	"unsandboxed: true leaves the main-session sandbox, so the command runs as the operator with the operator's credentials and files; it runs only when the operator's request names this escape or the operator approves it";
+	"unsandboxed: true leaves the main-session sandbox, so the command runs as the operator with the operator's credentials and files; it runs only when the operator approves it on this card or chose a session option that covers it";
 
 /**
  * True when the ask would run a command outside the main-session sandbox,
@@ -25,15 +25,6 @@ export function asksToLeaveSandbox(decision: SafetyDecision): boolean {
 	const policy = decision.policy;
 	if (policy === undefined) return false;
 	return policy.ruleId === SANDBOX_ESCAPE_RULE_ID || policy.reasons.includes(SANDBOX_ESCAPE_REASON);
-}
-
-/**
- * True when an operator message mentions the sandbox. The judge's `operator-named`
- * citation is the model's word; an escape it allows also needs the operator's own
- * text to speak of the sandbox, so a judge that misreads a request cannot grant one.
- */
-export function operatorMentionsSandbox(messages: ReadonlyArray<string>): boolean {
-	return messages.some((text) => /sandbox|unconfined/i.test(text));
 }
 
 /** An answered ask_user question and the option labels the operator chose on it, as ask_user recorded them. */
@@ -79,22 +70,10 @@ export function askApproves(asked: AskedApproval): boolean {
 }
 
 /**
- * True when an answered ask_user round approves leaving the sandbox: the question itself names
- * leaving it and every option the operator chose is affirmative. The question and the labels are the
- * agent's text, so neither counts as the operator's words for any guard; together with the operator's
- * choice they are the approval the escape backstop accepts beside the operator's own typed words.
- */
-export function askApprovesSandboxEscape(asked: AskedApproval): boolean {
-	return askApproves(asked) && LEAVES_SANDBOX.test(asked.question);
-}
-
-/**
  * The outside-workspace paths a shell call writes or deletes, or a write or
  * edit call changes, when the operator's own text names every one of them;
  * otherwise empty. A call whose targets cannot be read, or that touches nothing
- * outside the workspace, names nothing. Naming a path is not consent to leave
- * the sandbox, so for an escape the judge uses this only to hand the call to the
- * operator instead of a block; for any call it tells the judge the path is the operator's.
+ * outside the workspace, names nothing. It tells the judge the path is the operator's.
  */
 export function operatorNamedOutsideTargets(
 	call: { tool: string; args: Readonly<Record<string, unknown>> | undefined },

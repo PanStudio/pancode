@@ -3,6 +3,7 @@
 import { Type } from "typebox";
 import { ToolNames } from "../../core/tool-names.js";
 import { VERIFICATION_SCRIPT_FAMILY_HINT } from "../../core/verification-scripts.js";
+import { UNSANDBOXED_REASON_DESCRIPTION } from "../../domains/safety/unsandboxed-reason.js";
 import { StringEnum } from "../../engine/ai.js";
 import type { ToolSurface } from "../lazy-tool.js";
 
@@ -53,9 +54,11 @@ export const verifyToolSurface: ToolSurface = {
 		cwd: Type.Optional(Type.String({ description: "Package script cwd." })),
 		unsandboxed: Type.Optional(
 			Type.Boolean({
-				description: "Leave the sandbox only after it failed a check (credentials, unwritable paths); reviewed.",
+				description:
+					"Leave the sandbox only after it failed a check (credentials, unwritable paths); the operator decides.",
 			}),
 		),
+		unsandboxed_reason: Type.Optional(Type.String({ description: UNSANDBOXED_REASON_DESCRIPTION })),
 		timeout_ms: Type.Optional(Type.Number({ description: "Timeout ms (not declared checks)." })),
 		max_output_bytes: Type.Optional(
 			Type.Number({

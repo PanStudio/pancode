@@ -9,14 +9,14 @@ export const DEFAULT_BWRAP_PATH = "/usr/bin/bwrap";
 const SANDBOX_TMP = "/tmp";
 
 /**
- * The descriptor the unix-socket filter travels on. It sits above stdio and
+ * The descriptor the seccomp program travels on. It sits above stdio and
  * the Node IPC channel an extension runtime child holds on descriptor 3, and
  * stays a single digit because a POSIX shell redirects only 0 through 9.
  */
-export const UNIX_SOCKET_FILTER_FD = 9;
+export const SECCOMP_FILTER_FD = 9;
 
-/** A `unixSocketFilter` that reads the program from the launch's stdin, so probing support writes no file. */
-export const UNIX_SOCKET_FILTER_STDIN = "-";
+/** A `seccompFilter` that reads the program from the launch's stdin, so probing support writes no file. */
+export const SECCOMP_FILTER_STDIN = "-";
 
 /** The descriptor bwrap writes its JSON status records on under the retrying launcher. */
 const STATUS_FD = 8;
@@ -85,29 +85,30 @@ export function buildBwrapInvocation(
 			args.push("--tmpfs", bindPath(mask.path));
 			for (const entry of mask.reveal ?? [])
 				args.push(entry.writable ? "--bind-try" : "--ro-bind-try", entry.source, bindPath(entry.target));
+			if (mask.readOnly === true) args.push("--remount-ro", bindPath(mask.path));
 		} else args.push("--ro-bind-try", "/dev/null", bindPath(mask.path));
 	}
 	for (const [key, value] of Object.entries(spec.setEnv ?? {})) args.push("--setenv", key, value);
 	for (const key of spec.unsetEnv ?? []) args.push("--unsetenv", key);
-	if (spec.unixSocketFilter !== undefined) args.push("--seccomp", String(UNIX_SOCKET_FILTER_FD));
+	if (spec.seccompFilter !== undefined) args.push("--seccomp", String(SECCOMP_FILTER_FD));
 	// Masks are mounts onto a host path, and a host program that renames a new file over that path while bwrap sets
 	// up (Copilot CLI and Claude Code rewrite their configs so) makes bwrap abort the launch. A stdin filter is read
 	// once, so that launch, used only to probe, keeps the single attempt.
-	const retry = spec.maskedPaths.length > 0 && spec.unixSocketFilter !== UNIX_SOCKET_FILTER_STDIN;
+	const retry = spec.maskedPaths.length > 0 && spec.seccompFilter !== SECCOMP_FILTER_STDIN;
 	if (retry) args.push("--json-status-fd", String(STATUS_FD));
 	args.push("--chdir", spec.cwd, "--");
 	if (retry) args.push("/bin/sh", "-c", STDERR_HANDOFF, "pancode-sandbox");
 	args.push(...sandboxCommandArgv(spec.command));
-	if (spec.unixSocketFilter === undefined && !retry) return { file: bwrapPath, args };
+	if (spec.seccompFilter === undefined && !retry) return { file: bwrapPath, args };
 	// bwrap takes a seccomp program only as an open descriptor. A shell opens
 	// the program file on it and execs bwrap in its own place, so every caller
 	// keeps spawning one self-contained argv with its own stdio; bwrap reads
 	// and closes the descriptor before the command starts.
-	const fd = UNIX_SOCKET_FILTER_FD;
+	const fd = SECCOMP_FILTER_FD;
 	const source =
-		spec.unixSocketFilter === undefined
+		spec.seccompFilter === undefined
 			? ""
-			: spec.unixSocketFilter === UNIX_SOCKET_FILTER_STDIN
+			: spec.seccompFilter === SECCOMP_FILTER_STDIN
 				? ` ${fd}<&0 0</dev/null`
 				: ` ${fd}<"$filter"`;
 	return {
@@ -116,7 +117,7 @@ export function buildBwrapInvocation(
 			"-c",
 			retry ? retryingLaunch(source) : `filter=$1; shift; exec "$@"${source}`,
 			"pancode-sandbox",
-			spec.unixSocketFilter ?? "",
+			spec.seccompFilter ?? "",
 			bwrapPath,
 			...args,
 		],

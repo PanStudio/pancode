@@ -25,6 +25,7 @@ import { runDeadlineAt } from "../core/termination-phase.js";
 import { ToolNames } from "../core/tool-names.js";
 import { CumulativeOutputMask } from "../domains/evidence/output-mask.js";
 import { echoedCheckStatus } from "../domains/safety/check-command-shape.js";
+import { UNSANDBOXED_REASON_DESCRIPTION } from "../domains/safety/unsandboxed-reason.js";
 import { bashObservedLines } from "./bash-observed-lines.js";
 import { expandPath } from "./path-utils.js";
 import { toolPresentationPolicy } from "./presentation.js";
@@ -438,9 +439,10 @@ export const bashTool: ToolSpec = {
 		unsandboxed: Type.Optional(
 			Type.Boolean({
 				description:
-					"Leave the sandbox, only after a command failed because of it (credentials, a path outside the writable roots); the call is reviewed.",
+					"Leave the sandbox, only after a command failed because of it (credentials, a path outside the writable roots, startup files like .vscode); the operator decides.",
 			}),
 		),
+		unsandboxed_reason: Type.Optional(Type.String({ description: UNSANDBOXED_REASON_DESCRIPTION })),
 		timeout_ms: Type.Optional(Type.Number({ description: "Timeout in milliseconds." })),
 		output_policy: Type.Optional(
 			Type.Union([Type.Literal("full"), Type.Literal("bounded"), Type.Literal("summary"), Type.Literal("metadata-only")], {

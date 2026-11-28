@@ -17,8 +17,8 @@ run anywhere but secret paths.
 Pushes, publishes, code-host and cloud commands and network writes leave the
 sandbox on their own once PanCode's safety judge allows them; never add
 `unsandboxed: true` to them. Rerun a command the sandbox broke once with
-`unsandboxed: true`; that escape runs only when the operator's request names
-it or the operator approves it.
+`unsandboxed: true` and `unsandboxed_reason`; only the operator's card approves
+it. Startup files such as .vscode, .husky and .gitmodules need that escape.
 Destructive workspace operations (git reset --hard, checkout or restore of the
 tree, git clean without -x, git stash drop, deletes) run after PanCode snapshots
 the workspace. {attended} The operator can undo them with /rewind. Without a

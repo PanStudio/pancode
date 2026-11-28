@@ -920,12 +920,19 @@ describe("dispatch admission boundary", () => {
 		const previewWith = async (
 			mutate: (settings: typeof DEFAULT_SETTINGS) => void,
 			req: Parameters<NonNullable<ReturnType<typeof makeDispatchBundle>["contract"]["preview"]>>[0],
+			sandbox: {
+				available: boolean;
+				backend: "bwrap";
+				reason: null;
+				network: string | null;
+				degraded?: string;
+			} = netBrokenSandbox,
 		) => {
 			const settings = structuredClone(DEFAULT_SETTINGS);
 			settings.fleet.nodes = [{ id: "netbox", host: "netbox.invalid", maxWorkers: 1 }];
 			mutate(settings);
 			const bundle = makeDispatchBundle(dispatchStubContext({ settings }), {
-				previewNode: () => ({ node, sandbox: netBrokenSandbox }),
+				previewNode: () => ({ node, sandbox }),
 			});
 			await bundle.extension.start();
 			try {
@@ -1001,6 +1008,22 @@ describe("dispatch admission boundary", () => {
 			{ agentId: "coder", executionRole: "builder", task: "Inspect files.", cwd: tmpdir() },
 		);
 		strictEqual(coderWithWeb.node.id, "netbox");
+		// A node whose bwrap runs without its seccomp baseline is partial: auto admits it, required refuses it.
+		const partial = { ...netBrokenSandbox, network: null, degraded: "bubblewrap did not load the seccomp filter" };
+		const checker = { agentId: "verifier", executionRole: "checker" as const, task: "Verify tests pass.", cwd: tmpdir() };
+		strictEqual((await previewWith(() => {}, checker, partial)).node.id, "netbox");
+		await rejects(
+			() =>
+				previewWith(
+					(s) => {
+						s.safety.sandbox = "required";
+						if (s.fleet.nodes[0]) s.fleet.nodes[0].allowUnsandboxed = true;
+					},
+					checker,
+					partial,
+				),
+			/node 'netbox'.*its OS sandbox is partial: bubblewrap did not load the seccomp filter\) and safety\.sandbox is required/u,
+		);
 	});
 
 	it("refuses an architect whose write_roots exclude its plan's contract path before any worker runs", () => {
