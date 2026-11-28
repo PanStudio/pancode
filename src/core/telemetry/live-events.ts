@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
+
 import type { Static } from "typebox";
 import type { AgentAudience } from "../../domains/agents/spec.js";
 import type { ConfigDiff } from "../../domains/config/classify.js";
@@ -12,7 +13,6 @@ import type {
 	RunOutcomeCode,
 	ToolActivitySummary,
 } from "../../domains/dispatch/types.js";
-import type { MiddlewareHook } from "../../domains/middleware/types.js";
 import type { TargetStatus } from "../../domains/providers/contract.js";
 import type { PancodeSettings } from "../config.js";
 import type { ContextOperation } from "../context-operation.js";
@@ -21,7 +21,14 @@ import type { SkillActivation } from "../skill-activation.js";
 import type { ContextFoldSchema, ContextPrunedSchema, ContextRecalledSchema } from "./context-schemas.js";
 import type { EvidenceAssessed } from "./evidence-schemas.js";
 import type { PluginReloadedSchema } from "./host-schemas.js";
+import type { HostVerificationStatus } from "./run-vocabulary.js";
 import type { RunUsageFacts } from "./schemas.js";
+import type {
+	ContextActivityStatus,
+	GrantExecution,
+	MemoryGuardianState,
+	MiddlewareHook,
+} from "./session-vocabulary.js";
 
 /**
  * Payload contracts for the live events declared in EVENTS (src/core/telemetry/events.ts). They describe what
@@ -105,7 +112,7 @@ export interface MemoryStepCompletedPayload {
  */
 export interface MemoryGuardianChangedPayload {
 	sessionId: string | null;
-	state: "off" | "idle" | "reviewing" | "waiting-capacity" | "unavailable";
+	state: MemoryGuardianState;
 }
 
 /** A successful model load or eviction on one residency-managed endpoint. */
@@ -209,7 +216,6 @@ export type ContextActivityPhase =
 	| "compact"
 	| "summarize"
 	| "done";
-export type ContextActivityStatus = "started" | "running" | "completed" | "failed";
 
 /** Structured progress for context operations, rendered above the composer. */
 export interface ContextActivityPayload {
@@ -589,7 +595,7 @@ export interface PermissionGrantFacts {
 	attempt: number;
 	authority: "main" | "operator";
 	issuer?: "main" | "operator" | undefined;
-	execution: "not_executed" | "executing" | "executed" | "unknown";
+	execution: GrantExecution;
 	state: string;
 }
 
@@ -741,7 +747,7 @@ export interface DispatchTerminalStats {
 	/** Honest activity record aggregated from the run's tool telemetry; null when the receipt carries none. */
 	toolActivity: ToolActivitySummary | null;
 	/** Host-run declared verification status when the request included checks; `not_implicated` is a batch member the failure was charged away from. */
-	hostVerification?: "verified" | "rejected" | "skipped" | "not_implicated";
+	hostVerification?: HostVerificationStatus;
 }
 
 /** Published on `run.completed` when a run finalizes as succeeded. */

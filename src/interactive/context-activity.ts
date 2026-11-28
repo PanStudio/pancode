@@ -8,8 +8,8 @@ import type {
 	ContextActivityKind,
 	ContextActivityPayload,
 	ContextActivityPhase,
-	ContextActivityStatus,
 } from "../core/telemetry/live-events.js";
+import { CONTEXT_ACTIVITY_STATUSES, type ContextActivityStatus } from "../core/telemetry/session-vocabulary.js";
 import type { Component } from "../engine/tui.js";
 import { truncateToWidth, visibleWidth, wrapTextWithAnsi } from "../engine/tui.js";
 import {
@@ -310,7 +310,7 @@ export function createContextActivityStore(
 			!raw ||
 			!Object.hasOwn(CONTEXT_KIND_TITLES, raw.kind) ||
 			!Object.hasOwn(PHASE_LABELS, raw.phase) ||
-			!["started", "running", "completed", "failed"].includes(raw.status) ||
+			!(CONTEXT_ACTIVITY_STATUSES as ReadonlyArray<string>).includes(raw.status) ||
 			typeof raw.message !== "string" ||
 			!Number.isFinite(raw.at)
 		)

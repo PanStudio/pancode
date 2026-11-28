@@ -14,6 +14,7 @@ import { ToolNames } from "../../core/tool-names.js";
 import { displayImageMimeType, toolResultImages, toolResultShotPaths } from "../../core/tool-result-images.js";
 import type { TurnConstraints } from "../../core/turn-constraints.js";
 import { isRecord } from "../../core/type-guards.js";
+import type { ThinkingLevel } from "../../core/views/thinking-levels.js";
 import { TOOL_TITLE_MAX_BYTES } from "../../core/views/tool-words.js";
 import type { AutonomyLevel } from "../../lib/autonomy/autonomy.js";
 import {
@@ -54,7 +55,6 @@ import type { AcpJsonRpcPeerTransport } from "./transport.js";
 import type {
 	AcpRequestPermissionResponse,
 	AcpSessionUpdateParams,
-	AcpThinkingLevel,
 	AcpToolCallLocation,
 	AcpToolCallStatus,
 	AcpToolKind,
@@ -79,7 +79,7 @@ export interface AcpServerSession {
 	autonomySource: "settings" | "session";
 	target: string | null;
 	model: string | null;
-	thinkingLevel: AcpThinkingLevel;
+	thinkingLevel: ThinkingLevel;
 	createdAt: string;
 	activePrompt: ActivePrompt | null;
 	/** The client's own session ceiling from `session/new`; the operator's limits sit under it. */

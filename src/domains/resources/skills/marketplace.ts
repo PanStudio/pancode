@@ -23,7 +23,7 @@ import { loadSkills, type Skill } from "./loader.js";
 export type MarketplaceSkillOrigin = "catalog" | "index";
 
 import { relativePathEscapes } from "../../../core/path-containment.js";
-import type { HubRequirementRef } from "../hub-types.js";
+import type { HubAuditState, HubRequirementRef } from "../hub-types.js";
 
 export type { HubEntryKind, HubRequirementRef } from "../hub-types.js";
 
@@ -41,7 +41,7 @@ export interface MarketplaceSkill {
 	/** Local path or URL accepted by `pancode hub install`. */
 	sourceUrl: string;
 	version?: string;
-	audit?: "pass" | "warn" | "fail" | "unknown";
+	audit?: HubAuditState;
 	/** Catalog grouping ("git", "research", ...); absent in a flat catalog. */
 	category?: string;
 	/** Trigger phrases from the skill's frontmatter, for local promotion matching. */

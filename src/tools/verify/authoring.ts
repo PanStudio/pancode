@@ -1,10 +1,12 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
+
 import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { isMap, isSeq, parseDocument, stringify, type YAMLMap } from "yaml";
 import { resolveSafeCwd, SAFE_EXEC_DEFAULT_TIMEOUT_MS } from "../../core/safe-exec.js";
+import type { DeclaredCheckKind } from "../../core/telemetry/session-vocabulary.js";
 import { parseTomlDocument, tomlTableAt } from "../../core/toml.js";
 import { compareCodepoints } from "../../domains/evidence/ordering.js";
 import { loadValidationContract, VALIDATION_CONTRACT_MARKDOWN_PATH } from "../../domains/safety/validation-contract.js";
@@ -13,7 +15,6 @@ import {
 	BROWSER_CATALOG_FIELDS,
 	type DeclaredBrowserCheck,
 	type DeclaredCheck,
-	type DeclaredCheckKind,
 	type DeclaredNumericCompare,
 	type DeclaredPerfBudget,
 	PROJECT_VERIFIER_CATALOG_CAPS,

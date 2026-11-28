@@ -16,7 +16,7 @@
  * tracker and calling `record` with fixed elapsed values.
  */
 
-import { MIDDLEWARE_HOOKS, type MiddlewareHook } from "./types.js";
+import { MIDDLEWARE_HOOKS, type MiddlewareHook } from "../../core/telemetry/session-vocabulary.js";
 
 /**
  * Forgiving, phase-aware defaults (ms). Tuned against the measured cost of the

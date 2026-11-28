@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
+
 import { randomBytes } from "node:crypto";
+import type { GrantExecution } from "../../core/telemetry/session-vocabulary.js";
 import type { ApprovalAuthority } from "../safety/admission.js";
 import { type GrantEffectDescriptor, grantEffectDigest } from "../safety/grant-effect.js";
 
@@ -21,7 +23,6 @@ import { type GrantEffectDescriptor, grantEffectDigest } from "../safety/grant-e
  */
 
 export type GrantState = "pending" | "authorized" | "executing" | "completed" | "denied" | "expired" | "canceled";
-type GrantExecution = "not_executed" | "executing" | "executed" | "unknown";
 type GrantIssuer = "main" | "operator";
 export type GrantDecision = "approve" | "deny";
 

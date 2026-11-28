@@ -6,6 +6,7 @@ import {
 	type ActiveRoutingRole,
 	THINKING_LEVELS,
 } from "../../core/defaults.js";
+import type { RoutingPosture } from "../../core/telemetry/run-vocabulary.js";
 import type { AgentCapabilityClass } from "../agents/spec.js";
 import {
 	type AssignmentAttemptStartEvent,
@@ -15,7 +16,6 @@ import {
 import type { DispatchRequest } from "./contract.js";
 import { withAttemptRole } from "./execution-role.js";
 import { type RouteDecisionV1, routeCandidateKey } from "./route-decision.js";
-import type { RoutingPosture } from "./route-policy.js";
 import type { RunNodeIdentity, RunOutcome, RunResult } from "./types.js";
 import type { DispatchFailoverCandidate, DispatchFailoverMode } from "./validation.js";
 

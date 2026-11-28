@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
+
 import { statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
@@ -8,6 +9,7 @@ import { sha256Hex } from "../../core/hash.js";
 import { neutralizeFraming } from "../../core/reminder-framing.js";
 import type { TelemetryContext } from "../../core/telemetry/context.js";
 import type { Fact } from "../../core/telemetry/fact.js";
+import { MIDDLEWARE_HOOKS } from "../../core/telemetry/session-vocabulary.js";
 import { ToolNames } from "../../core/tool-names.js";
 import { isRecord } from "../../core/type-guards.js";
 import { headForRedaction } from "../../lib/secrets/redact.js";
@@ -500,7 +502,7 @@ export function createMemoryInterventionRegistration(deps: MemoryInterventionDep
 		},
 		id: MEMORY_INTERVENTION_REGISTRATION_ID,
 		description: "maintain bounded task execution memory and selectively remind after repeated failures or compaction",
-		hooks: ["before_tool", "after_tool", "turn_start", "turn_end", "on_compaction"],
+		hooks: MIDDLEWARE_HOOKS,
 		evidence: "count:failure-recurrence@task-memory",
 		evaluate(input, context): ReadonlyArray<MiddlewareEffect> {
 			observeSession(input);

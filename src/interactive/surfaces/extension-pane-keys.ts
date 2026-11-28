@@ -7,6 +7,7 @@
  * as the pane's taps, so a double press means the same thing from either.
  */
 import type { ExtensionUiAction } from "@pancode/sdk/extension";
+import type { NotificationLevel } from "../../core/views/notice-words.js";
 import { PANCODE_APP_KEYBINDINGS, PANCODE_KEYBINDINGS } from "../../domains/config/keybindings.js";
 import type { OperatorExtensions } from "../../domains/extensions/operator-extensions.js";
 import { extensionOwnerLabel } from "../../domains/extensions/owner-label.js";
@@ -19,7 +20,6 @@ import { createExtensionPaneHost, type ExtensionPaneHost } from "../../domains/e
 import type { MuxContract } from "../../domains/mux/contract.js";
 import { createDockKeyGate } from "../../domains/mux/dock-keys.js";
 import { type Keybinding, type KeyId, matchesKey } from "../../engine/tui.js";
-import type { InteractiveNoticeLevel } from "../interactive-subscriptions.js";
 import type { PancodeKeybindingManager } from "../keybinding-manager.js";
 import { createExtensionDockHost, type ExtensionDockHost } from "./extension-dock.js";
 import { WORKSPACE_FOCUS_KEY, WORKSPACE_LEAVE_KEY } from "./registry.js";
@@ -32,7 +32,7 @@ export interface ExtensionPaneKeysDeps {
 	/** Read late: the operator and the key manager are built after this. */
 	operator: () => OperatorExtensions | undefined;
 	keybindings: () => PancodeKeybindingManager;
-	notify: (level: InteractiveNoticeLevel, text: string, key?: string) => void;
+	notify: (level: NotificationLevel, text: string, key?: string) => void;
 }
 
 export interface ExtensionPaneKeys {

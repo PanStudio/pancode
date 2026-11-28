@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 
+import { ROUTING_POSTURES, type RoutingPosture } from "../../core/telemetry/run-vocabulary.js";
 import { isRecord } from "../../core/type-guards.js";
 import type { RouteCandidate, RouteDecisionV1 } from "./route-decision.js";
-import type { RoutingPosture } from "./route-policy.js";
 
 export type RoutingLocality = "local-only" | "prefer-local" | "any";
 export type RoutingFailover = "none" | "approved";
@@ -36,7 +36,7 @@ const KEYS = new Set([
 	"locality",
 	"failover",
 ]);
-const POSTURES = new Set<RoutingPosture>(["manual", "quality", "balanced", "latency", "economy"]);
+const POSTURES = new Set<RoutingPosture>(ROUTING_POSTURES);
 const LOCALITIES = new Set<RoutingLocality>(["local-only", "prefer-local", "any"]);
 const FAILOVERS = new Set<RoutingFailover>(["none", "approved"]);
 

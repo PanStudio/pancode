@@ -7,6 +7,7 @@ import { Type } from "typebox";
 import { vocabulary } from "./enums.js";
 import { CallIdSchema, ExistingId } from "./id-schemas.js";
 import { closed, count, duration } from "./schemas.js";
+import { DECLARED_CHECK_KINDS, GRANT_EXECUTIONS } from "./session-vocabulary.js";
 
 /**
  * The file kinds a write or edit records by extension. Anything else is `other`, so the vocabulary stays closed and
@@ -73,7 +74,7 @@ export const ToolSettledSchema = Type.Object(
 		 */
 		fileExt: Type.Optional(vocabulary(TOOL_FILE_KINDS)),
 		/** The declared kind of the check a verify call ran (`src/tools/verify/catalog.ts`). */
-		checkKind: Type.Optional(vocabulary(["command", "numeric-compare", "perf-budget", "reproduce", "browser"])),
+		checkKind: Type.Optional(vocabulary(DECLARED_CHECK_KINDS)),
 		/** The skill a context call loaded; an operator-chosen name, so a share anonymizes it like a rule id. */
 		skill: Type.Optional(ExistingId),
 		/** The capabilities a gateway call or chain invoked, so the tool mix sees `data` or `web_fetch` behind it. */
@@ -155,7 +156,7 @@ export const ApprovalResolvedSchema = Type.Object(
 					attempt: count,
 					authority: vocabulary(["main", "operator"]),
 					issuer: Type.Optional(vocabulary(["main", "operator"])),
-					execution: vocabulary(["not_executed", "executing", "executed", "unknown"]),
+					execution: vocabulary(GRANT_EXECUTIONS),
 					state: ExistingId,
 				},
 				closed,

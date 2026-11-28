@@ -16,6 +16,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { safeResourceWrite } from "../../core/safe-resource-write.js";
 import { tryWithStateFileLockSync } from "../../core/state-file-lock.js";
+import { QUOTA_STATUSES } from "../../core/telemetry/session-vocabulary.js";
 import { isRecord } from "../../core/type-guards.js";
 import { pancodeStatePath, stateRootRemoved } from "../../core/xdg.js";
 import { redactSecretString } from "../../lib/secrets/redaction.js";
@@ -48,7 +49,7 @@ export interface SharedQuotaState {
 }
 
 const VERSION = 2;
-const STATUSES: ReadonlySet<string> = new Set(["ok", "no_credentials", "expired", "error", "loading"]);
+const STATUSES: ReadonlySet<string> = new Set(QUOTA_STATUSES);
 
 /** The shared file of this PanCode home; resolving it creates nothing. */
 export function quotaSharedStatePath(): string {

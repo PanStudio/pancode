@@ -34,6 +34,7 @@ import {
 } from "../domains/resources/hub.js";
 import {
 	applyHubLifecycle,
+	HUB_OPERATIONS,
 	type HubApplyResult,
 	type HubLifecyclePlan,
 	type HubOperation,
@@ -213,10 +214,9 @@ function parse(args: ReadonlyArray<string>): Parsed {
 	}
 	return out;
 }
-const LIFECYCLE: ReadonlyArray<HubOperation> = ["install", "update", "enable", "disable", "remove"];
 /** Every `pancode hub` subcommand; `inventory` and `import` are routed before parsing. */
 const HUB_COMMANDS: ReadonlyArray<string> = [
-	...LIFECYCLE,
+	...HUB_OPERATIONS,
 	"components",
 	"drift",
 	"import",
@@ -662,7 +662,7 @@ async function executeHubCommand(
 		process.stdout.write(`${JSON.stringify(value, null, 2)}\n`);
 	};
 	try {
-		if (parsed.dryRun && parsed.command !== "package" && !LIFECYCLE.includes(parsed.command as HubOperation))
+		if (parsed.dryRun && parsed.command !== "package" && !HUB_OPERATIONS.includes(parsed.command as HubOperation))
 			throw new Error("--dry-run is supported only for hub install, update, enable, disable, remove and package");
 		if (parsed.command === "skills") {
 			if (parsed.positional.length) throw new Error("hub skills takes no arguments");
@@ -1036,7 +1036,7 @@ async function executeHubCommand(
 				releaseHubPlan(plan);
 			}
 		}
-		if (LIFECYCLE.includes(parsed.command as HubOperation)) {
+		if (HUB_OPERATIONS.includes(parsed.command as HubOperation)) {
 			const operation = parsed.command as HubOperation;
 			const { plan, apply, ok } = runLifecycleStep(operation, ref, parsed.scope, parsed, options);
 			const binaries = apply.dryRun

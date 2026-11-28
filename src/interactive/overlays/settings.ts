@@ -10,6 +10,7 @@ import { resolveSettingsArea, SETTINGS_AREAS as SETTINGS_SECTIONS } from "../../
 import { SETTINGS_LABELS_BY_ID, settingControl, settingsPathForRow } from "../../core/settings-controls.js";
 import type { SettingsShortcuts } from "../../core/settings-shortcuts.js";
 import { listSettingsShortcuts, rememberChangedSetting, setSettingPinned } from "../../core/settings-shortcuts.js";
+import type { NotificationLevel } from "../../core/views/notice-words.js";
 import {
 	applyTargetCredentialPlan,
 	getRuntimeRegistry,
@@ -1388,8 +1389,6 @@ export class SettingsCenter implements Component {
 	}
 }
 
-export type SettingsNoticeLevel = "info" | "success" | "warning" | "error";
-
 export interface OpenSettingsOverlayDeps {
 	getSettings: () => Readonly<PancodeSettings>;
 	providers?: ProvidersContract;
@@ -1401,7 +1400,7 @@ export interface OpenSettingsOverlayDeps {
 	 * gate held the change instead of applying it (the yolo acceptance card).
 	 */
 	commitSetting?: (id: string, next: PancodeSettings, scope: "session" | "project" | "global") => unknown;
-	notice?: (level: SettingsNoticeLevel, text: string, key?: string) => void;
+	notice?: (level: NotificationLevel, text: string, key?: string) => void;
 	onClose: () => void;
 	/** Open focused on this section (deep link from `/settings <section>`). */
 	section?: SettingsSectionId;

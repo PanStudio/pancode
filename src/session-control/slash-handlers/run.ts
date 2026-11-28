@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 // Split from slash-commands.ts, which adapts pi-coding-agent's BUILTIN_SLASH_COMMANDS registry.
 import { existsSync } from "node:fs";
-import { THINKING_LEVELS } from "../../core/defaults.js";
+import { THINKING_LEVELS, type ThinkingLevel } from "../../core/defaults.js";
 import type { TurnConstraints } from "../../core/turn-constraints.js";
 import { parseCouncilReport, parseOracleResult } from "../../domains/agents/index.js";
 import { AdmissionCanceledError } from "../../domains/dispatch/admission-error.js";
@@ -14,7 +14,6 @@ import {
 	workerFailureHeadline,
 } from "../../domains/dispatch/failure-headline.js";
 import type { RunResult } from "../../domains/dispatch/types.js";
-import type { JobThinkingLevel } from "../../domains/dispatch/validation.js";
 import { classifyVerifiability, verifiabilityRoute } from "../../domains/evidence/verifiability.js";
 import { forcedAcpAgentId, isInteropHeadlessRuntime } from "../../domains/interop/peer-modes.js";
 import type { ProvidersContract } from "../../domains/providers/index.js";
@@ -674,8 +673,8 @@ export function shareWorkerRun(runId: string | undefined, ctx: SlashCommandConte
 	ctx.submitOperatorNote(note);
 }
 
-export const RUN_THINKING_LEVELS: ReadonlyArray<JobThinkingLevel> = THINKING_LEVELS;
+export const RUN_THINKING_LEVELS: ReadonlyArray<ThinkingLevel> = THINKING_LEVELS;
 
-export function isRunThinkingLevel(value: string): value is JobThinkingLevel {
+export function isRunThinkingLevel(value: string): value is ThinkingLevel {
 	return RUN_THINKING_LEVELS.some((level) => level === value);
 }

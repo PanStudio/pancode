@@ -16,6 +16,10 @@ import type { UnitTotal, UnitTotalRefusal } from "../telemetry/economy.js";
 import type { Fact, FactSum } from "../telemetry/fact.js";
 import { countNoun } from "./count-words.js";
 
+/** How warm a backend call found its prompt cache. */
+export const CACHE_VERDICTS = ["hot", "partial", "cold", "small", "unknown"] as const;
+export type BackendCacheVerdict = (typeof CACHE_VERDICTS)[number];
+
 export const USAGE_NOT_MEASURED = "not measured";
 
 /** The read-model quantity shape: a fact or a sum of facts, and its canonical display. */

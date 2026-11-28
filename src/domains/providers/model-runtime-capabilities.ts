@@ -15,8 +15,8 @@ import {
 import {
 	availableThinkingLevels,
 	type CapabilityFlags,
+	THINKING_LEVELS,
 	type ThinkingLevel,
-	VALID_THINKING_LEVELS,
 } from "./types/capability-flags.js";
 import type { KnowledgeBase, KnowledgeBaseHit } from "./types/knowledge-base.js";
 import {
@@ -484,7 +484,7 @@ function listedEffortLevel(
 	if (listed.includes(requested)) return requested;
 	if (requested === "off" && preset !== undefined && preset !== "off" && listed.includes(preset)) return preset;
 	const candidates: ThinkingLevel[] = listed.filter((level) => level !== "off");
-	const rank = (level: ThinkingLevel) => VALID_THINKING_LEVELS.indexOf(level);
+	const rank = (level: ThinkingLevel) => THINKING_LEVELS.indexOf(level);
 	let best = candidates[0] ?? listed[0] ?? "off";
 	for (const level of candidates) {
 		if (Math.abs(rank(level) - rank(requested)) < Math.abs(rank(best) - rank(requested))) best = level;

@@ -235,10 +235,6 @@ export const ACP_TELEMETRY_METHODS = {
 /** A coalesced `telemetry_update` notice, at most 10 Hz and never per token; a client re-reads the topics it shows. */
 export const ACP_TELEMETRY_UPDATE_NOTIFICATION = "_pancode/telemetry/update";
 
-/** Every thinking level a safe-settings patch or the `thinkingLevel` config option may name, weakest first. */
-export const ACP_THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
-export type AcpThinkingLevel = (typeof ACP_THINKING_LEVELS)[number];
-
 /** Wire bounds on `_pancode/targets/list`: targets per response and model ids per target. */
 export const ACP_MAX_TARGETS = 64;
 export const ACP_TARGET_MODEL_LIMIT = 64;

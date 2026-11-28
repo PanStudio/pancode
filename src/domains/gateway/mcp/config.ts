@@ -37,6 +37,7 @@ import { bundledPluginCatalog, listInstalledPlugins, pluginDataDir } from "../..
 import { isLoopbackHost } from "./files.js";
 import { parsePassedVariables } from "./passed-environment.js";
 import { mcpCredentialKeyRefusal, mcpDeclaredHeaderRefusal, mcpRemoteEndpoint } from "./remote.js";
+import type { McpTrustActionClass } from "./trust.js";
 
 export const MCP_CONFIG_VERSION = 1;
 export const MCP_USER_CONFIG_FILENAME = "mcp.yaml";
@@ -183,8 +184,8 @@ interface McpServerDeclarationBase {
 	cwdRoot: string;
 	timeoutMs: number | null;
 	/** Operator-declared effect class; project servers use the separate trust record. */
-	actionClass: "read" | "execute" | "destructive" | "unknown";
-	toolActionClasses: Record<string, "read" | "execute" | "destructive" | "unknown">;
+	actionClass: McpTrustActionClass;
+	toolActionClasses: Record<string, McpTrustActionClass>;
 	/** Declared path arguments per tool; absent when none are declared. */
 	toolPathArguments?: McpToolPathArguments;
 	/** Whether the user explicitly supplied a server-wide class, including unknown. */
@@ -286,8 +287,8 @@ type DeclaredServerFields = (
 ) & {
 	id: string;
 	timeoutMs: number | null;
-	actionClass: "read" | "execute" | "destructive" | "unknown";
-	toolActionClasses: Record<string, "read" | "execute" | "destructive" | "unknown">;
+	actionClass: McpTrustActionClass;
+	toolActionClasses: Record<string, McpTrustActionClass>;
 	toolPathArguments: McpToolPathArguments;
 };
 
@@ -356,7 +357,7 @@ export function mcpServerDigest(
 	) & {
 		id: string;
 		timeoutMs: number | null;
-		toolActionClasses?: Readonly<Record<string, "read" | "execute" | "destructive" | "unknown">>;
+		toolActionClasses?: Readonly<Record<string, McpTrustActionClass>>;
 		toolPathArguments?: Readonly<McpToolPathArguments>;
 		/** A plugin server's plugin tree digest, so any change to the plugin needs a new trust decision. */
 		pluginContentDigest?: string;
@@ -930,8 +931,8 @@ function validateServer(
 	) {
 		return new Error(`${location}.actionClass must be read, execute, destructive, or unknown`);
 	}
-	const actionClass = (value.actionClass ?? "unknown") as "read" | "execute" | "destructive" | "unknown";
-	const toolActionClasses = Object.create(null) as Record<string, "read" | "execute" | "destructive" | "unknown">;
+	const actionClass = (value.actionClass ?? "unknown") as McpTrustActionClass;
+	const toolActionClasses = Object.create(null) as Record<string, McpTrustActionClass>;
 	if (value.toolActionClasses !== undefined) {
 		if (!isRecord(value.toolActionClasses)) return new Error(`${location}.toolActionClasses must be a mapping`);
 		const entries = Object.entries(value.toolActionClasses);

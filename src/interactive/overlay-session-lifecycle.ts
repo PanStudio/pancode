@@ -2,6 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import { hostname } from "node:os";
 import { editTextExternally, resolveExternalEditor } from "../core/external-editor.js";
+import type { NotificationLevel } from "../core/views/notice-words.js";
 import { pancodeStateDir } from "../core/xdg.js";
 import { resolveSessionCwd } from "../domains/session/cwd-fallback.js";
 import type { DecisionLedgerEntry } from "../domains/session/entries.js";
@@ -28,7 +29,6 @@ import type { SlashCommandContext } from "../session-control/slash-command-types
 import type { ChatPanel } from "./chat-panel.js";
 import { rehydrateChatPanelFromTurns } from "./chat-renderer.js";
 import { emitCommandNotice } from "./command-fallbacks.js";
-import type { InteractiveNoticeLevel } from "./interactive-subscriptions.js";
 import type { OverlayTransitions } from "./overlay-transitions.js";
 import { openCwdFallbackOverlay } from "./overlays/cwd-fallback.js";
 import { openHandoffReviewOverlay } from "./overlays/handoff-review.js";
@@ -81,7 +81,7 @@ export interface OverlaySessionLifecycleDeps {
 	/** Live terminal width, so the handoff review box tracks the window. */
 	terminal?: { columns: number };
 	stderr(text: string): void;
-	notify(level: InteractiveNoticeLevel, text: string, key?: string): void;
+	notify(level: NotificationLevel, text: string, key?: string): void;
 	openSessionOverlay?: typeof openSessionOverlay;
 	openTreeOverlay?: typeof openTreeOverlay;
 	openMessagePickerOverlay?: typeof openMessagePickerOverlay;

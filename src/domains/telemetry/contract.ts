@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
+
 import type { TelemetryCapture } from "../../core/telemetry/capture.js";
 import type { TelemetryAgent } from "../../core/telemetry/context.js";
 import type {
@@ -24,6 +25,7 @@ import type {
 import type { EconomyProjection } from "../../core/telemetry/economy.js";
 import type { TelemetryRecord } from "../../core/telemetry/envelope.js";
 import type { PreimageData, PreimageEventName } from "../../core/telemetry/events.js";
+import type { HostVerificationStatus } from "../../core/telemetry/run-vocabulary.js";
 import type { RunUsageFacts } from "../../core/telemetry/schemas.js";
 import type { AgentAudience } from "../agents/spec.js";
 import type { RunToolBudgetEnvelope } from "../dispatch/budget-envelope.js";
@@ -74,7 +76,7 @@ export interface TelemetryRunSummary {
 	foreign?: true;
 	gate?: { role: string; cycle: number };
 	council?: { group: string; label: string; color?: string; round: number };
-	hostVerification?: "verified" | "rejected" | "skipped" | "not_implicated";
+	hostVerification?: HostVerificationStatus;
 	trust?: TrustSummaryProjection;
 	/** Which validator failed and on what evidence, when the trust status says validation failed. */
 	validationFailure?: string;

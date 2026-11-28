@@ -69,6 +69,7 @@ import {
 	toolSurfaceSources,
 } from "../core/turn-constraints.js";
 import type { TurnOrigin, TurnToolCall } from "../core/turn-origin.js";
+import type { NotificationLevel } from "../core/views/notice-words.js";
 import type { BudgetInspection } from "../domains/context/budget/inspection.js";
 import type { DispatchContract } from "../domains/dispatch/index.js";
 import type { PinnedContextBlock } from "../domains/extensions/pinned-context.js";
@@ -192,7 +193,7 @@ interface QueuedUserTurnEvent {
  */
 export interface ChatNoticeEvent {
 	type: "notice";
-	level: "info" | "success" | "warning" | "error";
+	level: NotificationLevel;
 	surface: "footer" | "transcript";
 	text: string;
 	key?: string;

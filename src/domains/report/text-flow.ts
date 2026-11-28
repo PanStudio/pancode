@@ -6,6 +6,7 @@
  */
 
 import { sha256Hex } from "../../core/hash.js";
+import type { NoticeLevel } from "../../core/views/notice-words.js";
 import { rememberIdentity } from "./body.js";
 import { type BuiltBundle, buildBundle, type ConsentScopes, consentText, saveBuiltBundle } from "./bundle.js";
 import type { ReportCommandRunner } from "./command.js";
@@ -30,7 +31,7 @@ import { detectTransport, type ReportTransport, routeFor } from "./transport.js"
 import type { ReportKind } from "./vocabulary.js";
 
 export interface ReportTextReply {
-	level: "info" | "success" | "warn" | "error";
+	level: NoticeLevel;
 	text: string;
 	/** The draft the reply is about and its outbox state, for a client that builds its own dialog. */
 	report?: { draftId: string; state: string };

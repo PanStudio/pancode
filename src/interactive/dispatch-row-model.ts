@@ -2,7 +2,9 @@
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 
 /** The dispatch board's row model and the shared presentation of one run: status, origin, usage, evidence, and card key-value lines. */
+
 import type { Quantity, RunTelemetryV1 } from "../core/telemetry/dto.js";
+import type { HostVerificationStatus } from "../core/telemetry/run-vocabulary.js";
 import type { AgentAudience } from "../domains/agents/spec.js";
 import type { RunToolBudgetEnvelope } from "../domains/dispatch/budget-envelope.js";
 import type { CompletedRunCaveat } from "../domains/dispatch/failure-headline.js";
@@ -82,7 +84,7 @@ export interface DispatchBoardRow {
 	gate?: { role: string; cycle: number };
 	council?: { group: string; label: string; color?: string; round: number };
 	/** Orchestrator-executed declared verification status. */
-	hostVerification?: "verified" | "rejected" | "skipped" | "not_implicated";
+	hostVerification?: HostVerificationStatus;
 	/**
 	 * The canonical trust projection of the sealed receipt, read back from
 	 * disk and authenticated against the ledger row. Absent while the run is

@@ -8,13 +8,14 @@
 
 import type { UnitTotal, UnitTotalRefusal } from "../../core/telemetry/economy.js";
 import { renderCredit } from "../../core/telemetry/render.js";
+import type { RoutingPosture } from "../../core/telemetry/run-vocabulary.js";
 import type { AgentLatencyClass } from "../agents/spec.js";
 import type { RouteQualityLabel } from "./route-quality.js";
 
 export const ROUTE_POLICY_VERSION = "route-policy/4";
 export const MINIMUM_QUALITY_LABELED_OUTCOMES = 6;
 
-export type RoutingPosture = "manual" | "quality" | "balanced" | "latency" | "economy";
+export type { RoutingPosture };
 
 export interface RouteEstimate {
 	/** Quality denominators contain pass/fail labels only; unmeasured work is excluded. */

@@ -19,6 +19,7 @@ import type { BackendCompletionTimings } from "../core/cache-telemetry.js";
 import { streamSimple } from "./ai.js";
 import { estimateInputTokensFromContext } from "./apis/output-budget.js";
 import type { AgentMessage, AgentTool, EngineModel, Usage } from "./types.js";
+import { LLM_MESSAGE_ROLES } from "./types.js";
 
 /**
  * The one user message appended so the chat template renders the prefix up to
@@ -39,14 +40,6 @@ export interface PrewarmContext {
 	messages: ReadonlyArray<AgentMessage>;
 	tools: ReadonlyArray<AgentTool>;
 }
-
-/**
- * The roles pi-agent-core's default `convertToLlm` keeps when it turns the
- * agent's message list into provider messages. The pre-warm applies the same
- * filter so its message array is the one a turn would send, not the agent's
- * internal list.
- */
-const LLM_MESSAGE_ROLES: ReadonlySet<string> = new Set(["system", "user", "assistant", "toolResult"]);
 
 export interface PrewarmRoundInput {
 	telemetry?: CallJournalOptions;

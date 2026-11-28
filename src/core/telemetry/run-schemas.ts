@@ -9,14 +9,22 @@ import { RunBoundKind, RunOutcome, RunOutcomeCode, RunTerminalReason, vocabulary
 import { FactSumSchema, factSchema } from "./fact.js";
 import { CallIdSchema, ExistingId } from "./id-schemas.js";
 import {
+	DISPATCH_REQUEST_ORIGINS,
 	EXECUTION_ROLE_VOCABULARY,
 	GRADE_LAYERS,
 	GRADE_RULE_IDS,
 	GRADE_RULE_STATUSES,
+	HOST_CHECK_NOT_RUN_REASONS,
+	HOST_VERIFICATION_STATUSES,
+	RECEIPT_VERIFICATION_BASES,
+	RECEIPT_VERIFICATION_STATES,
+	ROUTING_POSTURES,
 	RUN_ASSURANCES,
 	RUN_HASH_CANONICALIZATIONS,
 	RUN_HASH_SUBJECTS,
 	RUN_OBLIGATIONS,
+	VALIDATION_GROUNDING_BASES,
+	WORKER_CHANNEL_FAILURES,
 } from "./run-vocabulary.js";
 import {
 	closed,
@@ -171,7 +179,7 @@ function runSettledSchema<const R extends readonly string[]>(roles: R) {
 			version: Type.Literal(1),
 			agentId: ExistingId,
 			executionRole: vocabulary(roles),
-			requestOrigin: nullable(vocabulary(["user", "agent", "internal", "harness"])),
+			requestOrigin: nullable(vocabulary(DISPATCH_REQUEST_ORIGINS)),
 			identity: nullable(
 				Type.Object({ host: Type.String({ maxLength: 256 }), user: Type.String({ maxLength: 256 }) }, closed),
 			),
@@ -225,7 +233,7 @@ function runSettledSchema<const R extends readonly string[]>(roles: R) {
 			/** The routing request the run was admitted under, which a continuation it seeds inherits. */
 			routingIntent: Type.Object(
 				{
-					posture: vocabulary(["manual", "quality", "balanced", "latency", "economy"]),
+					posture: vocabulary(ROUTING_POSTURES),
 					maxCostUsd: nullable(Type.Number({ minimum: 0 })),
 					deadlineMs: nullable(duration),
 					minimumQuality: nullable(Type.Number()),
@@ -371,18 +379,8 @@ function runSettledSchema<const R extends readonly string[]>(roles: R) {
 			toolGovernance: nullable(vocabulary(["pancode-policy", "agent-managed", "deny-all"])),
 			verification: Type.Object(
 				{
-					state: vocabulary(["verified", "unverified", "not_applicable", "unknown"]),
-					basis: vocabulary([
-						"validation-tool",
-						"host-observed-command",
-						"read-only-agent",
-						"no-validation-tool",
-						"retired-by-change",
-						"dispatch-run-record",
-						"acp-external-unobserved",
-						"host-verification",
-						"result-unavailable",
-					]),
+					state: vocabulary(RECEIPT_VERIFICATION_STATES),
+					basis: vocabulary(RECEIPT_VERIFICATION_BASES),
 					detail: Type.Optional(text),
 				},
 				closed,
@@ -425,13 +423,7 @@ function runSettledSchema<const R extends readonly string[]>(roles: R) {
 						claimed: count,
 						grounded: count,
 						ungrounded: Type.Array(text, { maxItems: 64 }),
-						basis: vocabulary([
-							"grounded",
-							"no-command-executed",
-							"unmatched-command",
-							"unattributable-status",
-							"unobserved-lane",
-						]),
+						basis: vocabulary(VALIDATION_GROUNDING_BASES),
 					},
 					closed,
 				),
@@ -538,7 +530,7 @@ function runSettledSchema<const R extends readonly string[]>(roles: R) {
 			hostVerification: nullable(
 				Type.Object(
 					{
-						status: vocabulary(["verified", "rejected", "skipped", "not_implicated"]),
+						status: vocabulary(HOST_VERIFICATION_STATUSES),
 						strategy: vocabulary(["single", "batch-settled"]),
 						checks: count,
 						failed: count,
@@ -722,9 +714,7 @@ export const RunResultObjectSchema = Type.Object(
 								outputTail: Type.String(),
 								evidenceRunId: nullable(Type.String()),
 								/** Why the check ran nothing (refused, unconfigured, or its executable never started); absent when it ran. */
-								notRun: Type.Optional(
-									vocabulary(["refused", "unconfigured", "spawn-failed", "nothing-changed", "shutdown", "no-tests"]),
-								),
+								notRun: Type.Optional(vocabulary(HOST_CHECK_NOT_RUN_REASONS)),
 								/** The same check replayed on the task base; null when it was not compared. */
 								baseComparison: nullable(
 									Type.Object(
@@ -792,14 +782,7 @@ export const WorkerChannelFailedSchema = Type.Object(
 		errno: Type.Union([Type.String({ pattern: "^E[A-Z0-9]{1,31}$" }), Type.Null()]),
 		/** The worker process had already exited when the failure happened. */
 		afterExit: Type.Boolean(),
-		failure: vocabulary([
-			"write-failed",
-			"oversize-frame",
-			"unserializable-frame",
-			"backlog-full",
-			"undrained",
-			"invalid-frame",
-		]),
+		failure: vocabulary(WORKER_CHANNEL_FAILURES),
 	},
 	closed,
 );
@@ -868,7 +851,7 @@ function routeDecidedSchema<const R extends readonly string[]>(roles: R) {
 		{
 			policyVersion: ExistingId,
 			mode: vocabulary(["fixed", "shadow", "active"]),
-			posture: vocabulary(["manual", "quality", "balanced", "latency", "economy"]),
+			posture: vocabulary(ROUTING_POSTURES),
 			decisionHash: ExistingId,
 			decisionDurationMs: duration,
 			confidence: finiteOrNull,
@@ -957,7 +940,7 @@ export const RunEnqueuedSchema = Type.Object(
 	{
 		runId: ExistingId,
 		agentId: ExistingId,
-		requestOrigin: Type.Union([vocabulary(["user", "agent", "internal", "harness"]), Type.Null()]),
+		requestOrigin: Type.Union([vocabulary(DISPATCH_REQUEST_ORIGINS), Type.Null()]),
 		targetId: ExistingId,
 		wireModelId: ExistingId,
 		runtimeId: ExistingId,

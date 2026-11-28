@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
+
 import type { EffectiveMemoryRoute } from "../../core/session-routing.js";
+import type { MemoryGuardianState } from "../../core/telemetry/session-vocabulary.js";
 import type { BackgroundSkipReason } from "./background-budget.js";
 import { BACKGROUND_SKIP_REASONS } from "./background-budget.js";
 import type { RetentionStatus } from "./completion-retention.js";
@@ -43,9 +45,6 @@ export interface TaskMemoryBudgetSkip {
 	resumeAt?: string;
 }
 
-/** What the always-on memory guardian is doing; one value every operator surface projects. `off` covers a disabled or rules-only tier. */
-export type TaskMemoryGuardianState = "off" | "idle" | "reviewing" | "waiting-capacity" | "unavailable";
-
 /** Read-only projection shared by operator surfaces. */
 export interface TaskMemoryOperatorStatus {
 	promptSelection?: MemoryPromptSelection | null;
@@ -62,7 +61,7 @@ export interface TaskMemoryOperatorStatus {
 	/** True while a detached background memory step is still running. */
 	stepInFlight: boolean;
 	/** Guardian state; absent on a surface that does not run the guardian. */
-	guardian?: TaskMemoryGuardianState;
+	guardian?: MemoryGuardianState;
 	/** Newest budget skip among the recent steps, or null when none of them was skipped. */
 	lastSkip?: TaskMemoryBudgetSkip | null;
 	/**

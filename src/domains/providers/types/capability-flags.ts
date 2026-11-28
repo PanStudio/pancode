@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { THINKING_LEVELS, type ThinkingLevel } from "../../../core/views/thinking-levels.js";
 import { catalogThinkingLevelsForRuntime } from "../catalog.js";
 import { isHarmonyModelId } from "../model-family.js";
 
@@ -70,9 +71,7 @@ export const EMPTY_CAPABILITIES: CapabilityFlags = {
 	maxTokens: 0,
 };
 
-export const VALID_THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
-
-export type ThinkingLevel = (typeof VALID_THINKING_LEVELS)[number];
+export { THINKING_LEVELS, type ThinkingLevel };
 
 const THINKING_LEVELS_WITHOUT_XHIGH: ReadonlyArray<ThinkingLevel> = ["off", "minimal", "low", "medium", "high"];
 const THINKING_LEVELS_OPENAI_5_1_MINI: ReadonlyArray<ThinkingLevel> = ["off", "minimal", "low", "medium", "high"];
@@ -96,7 +95,7 @@ function normalizeModelId(modelId: string | undefined): string | undefined {
 
 function availableOpenAICodexThinkingLevels(modelId: string | undefined): ReadonlyArray<ThinkingLevel> {
 	const normalized = normalizeModelId(modelId);
-	if (!normalized) return VALID_THINKING_LEVELS;
+	if (!normalized) return THINKING_LEVELS;
 	if (normalized === "gpt-5.1-codex-mini") return THINKING_LEVELS_OPENAI_5_1_MINI;
 	if (
 		normalized.startsWith("gpt-5.2") ||

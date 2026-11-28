@@ -2,6 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import { ToolNames } from "../../core/tool-names.js";
 import type { SemanticFilters, SemanticSearchResult, SemanticSourceKind } from "../../domains/semantic/index.js";
+import { SEMANTIC_SOURCE_KINDS } from "../../domains/semantic/types.js";
 import type { ObservationReservation } from "../observation.js";
 import {
 	commitObservationReservation,
@@ -31,7 +32,6 @@ export interface ContextSemanticDeps {
 
 const SEMANTIC_TOOL_MAX_QUERY_CHARS = 2000;
 const SEMANTIC_TOOL_TIMEOUT_MS = 6000;
-const KINDS: readonly SemanticSourceKind[] = ["code", "wiki", "memory", "evidence", "inbox", "recording"];
 const ARGUMENTS = new Set(["scope", "query", "limit", "kinds", "run_id", "media_type", "after", "before"]);
 const UNAVAILABLE =
 	"context: semantic search is disabled or unavailable in this run. Use code_nav, grep, or evidence to locate original sources.";
@@ -52,10 +52,12 @@ function parseRequest(args: Record<string, unknown>): ContextSemanticRequest | s
 		args.kinds !== undefined &&
 		(!Array.isArray(args.kinds) ||
 			args.kinds.length < 1 ||
-			args.kinds.length > KINDS.length ||
-			args.kinds.some((kind: unknown) => typeof kind !== "string" || !KINDS.includes(kind as SemanticSourceKind)))
+			args.kinds.length > SEMANTIC_SOURCE_KINDS.length ||
+			args.kinds.some(
+				(kind: unknown) => typeof kind !== "string" || !(SEMANTIC_SOURCE_KINDS as readonly string[]).includes(kind),
+			))
 	)
-		return `Semantic kinds must contain 1-${KINDS.length} supported source kinds.`;
+		return `Semantic kinds must contain 1-${SEMANTIC_SOURCE_KINDS.length} supported source kinds.`;
 	for (const name of ["run_id", "media_type"] as const)
 		if (args[name] !== undefined && (typeof args[name] !== "string" || !args[name].trim() || args[name].length > 256))
 			return `Semantic ${name} must contain 1-256 characters.`;

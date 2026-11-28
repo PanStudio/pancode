@@ -1,10 +1,13 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
+
 import type { TSchema } from "typebox";
 import { Type } from "typebox";
 import { Value } from "typebox/value";
 import type { FleetSettings } from "../core/defaults.js";
+import { ROUTING_POSTURES } from "../core/telemetry/run-vocabulary.js";
 import { isRecord } from "../core/type-guards.js";
+import { THINKING_LEVELS } from "../core/views/thinking-levels.js";
 import { RESULT_SUMMARY_MAX_BYTES_CEILING } from "../domains/agents/result-contract-allowance.js";
 import { WORKER_CONTEXT_SPLICE_TOKENS } from "../domains/context/worker/contract.js";
 import { DISPATCH_BRIEFING_MAX_BYTES } from "../domains/dispatch/validation.js";
@@ -49,8 +52,6 @@ export function dispatchSchemaCompositionFor(fleet: FleetShape): DispatchSchemaC
 		adaptiveRouting: routing.roles.length > 0 || routing.postures.length > 0 || routing.agentRoles.length > 0,
 	};
 }
-
-const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
 
 /** The compact schema's required `task` stands for nothing on a list or batch call, or when a model leaves it out. */
 export const COORDINATOR_DISPATCH_ARGUMENTS = {
@@ -534,9 +535,7 @@ export function buildDispatchParameters(composition: DispatchSchemaComposition =
 		routing: Type.Optional(
 			Type.Object(
 				{
-					...(composition.adaptiveRouting
-						? { posture: Type.Optional(StringEnum(["manual", "quality", "balanced", "latency", "economy"] as const)) }
-						: {}),
+					...(composition.adaptiveRouting ? { posture: Type.Optional(StringEnum(ROUTING_POSTURES)) } : {}),
 					maxCostUsd: Type.Optional(Type.Number({ exclusiveMinimum: 0 })),
 					deadlineMs: Type.Optional(Type.Integer({ exclusiveMinimum: 0 })),
 					...(composition.adaptiveRouting ? { minimumQuality: Type.Optional(Type.Number({ minimum: 0, maximum: 1 })) } : {}),

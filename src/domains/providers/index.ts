@@ -24,7 +24,7 @@ export {
 	warmableBackend,
 } from "./cache-deployment.js";
 export { AGENT_ROLE_TOOLS_REQUIRED_REASON, mergeCapabilities, supportsAgentRoleTools } from "./capabilities.js";
-export type { ProvidersContract, TargetHealth, TargetStatus } from "./contract.js";
+export type { ProvidersContract, TargetHealth, TargetHealthStatus, TargetStatus } from "./contract.js";
 export { credentialsPresent } from "./credentials.js";
 export { isOrchestratorEligibleRuntime, isTargetEligibleRuntime } from "./eligibility.js";
 export {
@@ -188,7 +188,7 @@ export type {
 export {
 	availableThinkingLevels,
 	EMPTY_CAPABILITIES,
-	VALID_THINKING_LEVELS,
+	THINKING_LEVELS,
 } from "./types/capability-flags.js";
 export { type ContextWindowSlots, formatContextWindowSlots } from "./types/context-window-slots.js";
 export type { KnowledgeBase, KnowledgeBaseEntry, KnowledgeBaseHit } from "./types/knowledge-base.js";

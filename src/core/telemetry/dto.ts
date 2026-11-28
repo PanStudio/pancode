@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
+
 import type { Static, TSchema } from "typebox";
 import { Type } from "typebox";
 import {
@@ -27,6 +28,15 @@ import { FactSumSchema, factSchema } from "./fact.js";
 import { AttemptIdSchema, CallIdSchema, ExistingId, TelemetryAgentSchema } from "./id-schemas.js";
 import { RunFeedBodySchema, RunResultObjectSchema, RunSettledSchema } from "./run-schemas.js";
 import {
+	HOST_CHECK_NOT_RUN_REASONS,
+	HOST_VERIFICATION_STATUSES,
+	RECEIPT_VERIFICATION_BASES,
+	RECEIPT_VERIFICATION_STATES,
+	ROUTING_POSTURES,
+	VALIDATION_GROUNDING_BASES,
+	WORKER_CHANNEL_FAILURES,
+} from "./run-vocabulary.js";
+import {
 	CallSettledSchema,
 	ObjectRefSchema,
 	PricingSchema,
@@ -49,6 +59,14 @@ import {
 	SessionCloseReason,
 	StepPipelineSettledSchema,
 } from "./session-schemas.js";
+import {
+	AUTH_REFRESH_OUTCOMES,
+	CACHE_RECOVERY_OUTCOMES,
+	CONTEXT_TOTAL_SOURCES,
+	MIDDLEWARE_HOOKS,
+	MIDDLEWARE_REMINDER_SEVERITIES,
+	QUOTA_STATUSES,
+} from "./session-vocabulary.js";
 import { MIDDLEWARE_EFFECTS, SYSTEM_ONE_OUTCOME } from "./surface-schemas.js";
 
 /**
@@ -99,7 +117,7 @@ const transportFacts = {
 	recovery: Type.Object(
 		{
 			action: vocabulary(["cooldown_reset", "auth_reset"]),
-			outcome: vocabulary(["eligible", "recovered", "failed", "unknown"]),
+			outcome: vocabulary(CACHE_RECOVERY_OUTCOMES),
 		},
 		closed,
 	),
@@ -914,11 +932,11 @@ const TimelineEntrySchema = Type.Union([
 		{
 			kind: Type.Literal("middleware"),
 			...at,
-			hook: vocabulary(["before_tool", "after_tool", "turn_start", "turn_end", "on_compaction"]),
+			hook: vocabulary(MIDDLEWARE_HOOKS),
 			phase: vocabulary(["sync", "async", "awaited"]),
 			ruleId: ExistingId,
 			effects: Type.Array(MIDDLEWARE_EFFECTS),
-			severity: Type.Union([vocabulary(["info", "advisory", "warn", "hard-block"]), Type.Null()]),
+			severity: Type.Union([vocabulary(MIDDLEWARE_REMINDER_SEVERITIES), Type.Null()]),
 			evidence: Type.Union([text, Type.Null()]),
 			tool: Type.Union([ExistingId, Type.Null()]),
 			turnId: Type.Union([ExistingId, Type.Null()]),
@@ -933,7 +951,7 @@ const TimelineEntrySchema = Type.Union([
 			provider: ExistingId,
 			trigger: vocabulary(["expiry", "rejected"]),
 			attempted: Type.Boolean(),
-			outcome: vocabulary(["refreshed", "adopted", "failed", "cancelled"]),
+			outcome: vocabulary(AUTH_REFRESH_OUTCOMES),
 			/** True when this session's process wrote the credential now in use; false when another process did. */
 			wroteCredential: Type.Boolean(),
 			duration: shown,
@@ -962,7 +980,7 @@ const TimelineEntrySchema = Type.Union([
 			kind: Type.Literal("context"),
 			...at,
 			snapshotId: ExistingId,
-			source: vocabulary(["estimated", "exact", "reconciled", "streaming"]),
+			source: vocabulary(CONTEXT_TOTAL_SOURCES),
 			window: Type.Object(
 				{
 					desired: count,
@@ -1020,14 +1038,7 @@ const TimelineEntrySchema = Type.Union([
 			frameType: Type.Union([text, Type.Null()]),
 			errno: Type.Union([text, Type.Null()]),
 			afterExit: Type.Boolean(),
-			failure: vocabulary([
-				"write-failed",
-				"oversize-frame",
-				"unserializable-frame",
-				"backlog-full",
-				"undrained",
-				"invalid-frame",
-			]),
+			failure: vocabulary(WORKER_CHANNEL_FAILURES),
 		},
 		closed,
 	),
@@ -1061,7 +1072,7 @@ const RunTimelineEntrySchema = Type.Union([
 			kind: Type.Literal("route"),
 			...at,
 			mode: vocabulary(["fixed", "shadow", "active"]),
-			posture: vocabulary(["manual", "quality", "balanced", "latency", "economy"]),
+			posture: vocabulary(ROUTING_POSTURES),
 			decisionHash: ExistingId,
 			executed: Type.Object(
 				{ agentId: ExistingId, targetId: ExistingId, modelId: ExistingId, runtimeId: ExistingId, nodeId: ExistingId },
@@ -1174,18 +1185,8 @@ const RunEvidenceSchema = Type.Object(
 					verification: nullable(
 						Type.Object(
 							{
-								state: vocabulary(["verified", "unverified", "not_applicable", "unknown"]),
-								basis: vocabulary([
-									"validation-tool",
-									"host-observed-command",
-									"read-only-agent",
-									"no-validation-tool",
-									"retired-by-change",
-									"dispatch-run-record",
-									"acp-external-unobserved",
-									"host-verification",
-									"result-unavailable",
-								]),
+								state: vocabulary(RECEIPT_VERIFICATION_STATES),
+								basis: vocabulary(RECEIPT_VERIFICATION_BASES),
 								detail: Type.Optional(text),
 							},
 							closed,
@@ -1198,7 +1199,7 @@ const RunEvidenceSchema = Type.Object(
 					hostVerification: nullable(
 						Type.Object(
 							{
-								status: vocabulary(["verified", "rejected", "skipped", "not_implicated"]),
+								status: vocabulary(HOST_VERIFICATION_STATUSES),
 								reason: nullable(text),
 								strategy: vocabulary(["single", "batch-settled"]),
 								checks: Type.Array(
@@ -1207,9 +1208,7 @@ const RunEvidenceSchema = Type.Object(
 											check: text,
 											exitCode: Type.Integer(),
 											/** Set when the check never started, so `exitCode` reports no run; absent when it started. */
-											notRun: Type.Optional(
-												vocabulary(["refused", "unconfigured", "spawn-failed", "nothing-changed", "shutdown", "no-tests"]),
-											),
+											notRun: Type.Optional(vocabulary(HOST_CHECK_NOT_RUN_REASONS)),
 											durationMs: nonNegative,
 											memo: Type.Boolean(),
 											outputTail: Type.String({ maxLength: 16_384 }),
@@ -1254,13 +1253,7 @@ const RunEvidenceSchema = Type.Object(
 								claimed: count,
 								grounded: count,
 								ungrounded: Type.Array(text),
-								basis: vocabulary([
-									"grounded",
-									"no-command-executed",
-									"unmatched-command",
-									"unattributable-status",
-									"unobserved-lane",
-								]),
+								basis: vocabulary(VALIDATION_GROUNDING_BASES),
 							},
 							closed,
 						),
@@ -1467,7 +1460,7 @@ const QuotaStateSchema = Type.Object(
 					provider: ExistingId,
 					credentials: Type.Array(ExistingId),
 					displayName: text,
-					status: vocabulary(["ok", "no_credentials", "expired", "error", "loading"]),
+					status: vocabulary(QUOTA_STATUSES),
 					plan: Type.Union([text, Type.Null()]),
 					credits: Type.Union([
 						Type.Object(

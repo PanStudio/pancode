@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { CACHE_VERDICTS } from "../../../../src/core/views/usage-words.js";
 import type { UsageReport } from "../../contracts/reports.js";
 import { countText, quantityText } from "../telemetry/quantity-model.js";
 import { cacheReportsOf } from "./usage-model.js";
@@ -16,9 +17,7 @@ export function usageCacheEvidence(report: UsageReport) {
 			uncached: quantityText(cache.uncachedPrefill),
 			reprocessed: quantityText(cache.rePrefilled),
 			breaks: countText(cache.breaks.length),
-			verdicts: (["hot", "partial", "cold", "small", "unknown"] as const)
-				.map((verdict) => `${verdict}: ${countText(cache.verdicts[verdict])}`)
-				.join(" · "),
+			verdicts: CACHE_VERDICTS.map((verdict) => `${verdict}: ${countText(cache.verdicts[verdict])}`).join(" · "),
 		})),
 	};
 }

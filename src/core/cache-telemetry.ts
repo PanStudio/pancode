@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
-import { cacheBreakLoss } from "./telemetry/cache-break.js";
 
-/** Cache classification for one backend completion call. */
-export type BackendCacheVerdict = "hot" | "partial" | "cold" | "small" | "unknown";
+import { cacheBreakLoss } from "./telemetry/cache-break.js";
+import type { BackendCacheVerdict } from "./views/usage-words.js";
+
+export type { BackendCacheVerdict };
 
 /** Backend timing source that directly reports local prefill work. */
 export type BackendTimingsSource = "llamacpp-timings" | "lmstudio-timings";

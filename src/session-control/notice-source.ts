@@ -6,6 +6,9 @@
  * event (a bounded one-line state change) and keeps its gutter row. The choice
  * is made by the emitting source and never by terminal width.
  */
+
+import type { NoticeLevel } from "../core/views/notice-words.js";
+
 export const NOTICE_SOURCES = [
 	"tip",
 	"reminder",
@@ -25,5 +28,4 @@ export function isNoticeSource(value: unknown): value is NoticeSource {
 	return typeof value === "string" && (NOTICE_SOURCES as readonly string[]).includes(value);
 }
 
-/** Severity of a transcript notice, shared by every surface that reports one. */
-export type NoticeLevel = "info" | "success" | "warn" | "error";
+export type { NoticeLevel };

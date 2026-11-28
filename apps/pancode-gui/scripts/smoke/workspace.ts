@@ -441,7 +441,7 @@ export async function workspaceSteps(run: SmokeRun) {
 		await check("hub-agent-details");
 		if (width === 1600 || width === 390)
 			await page.screenshot({ path: join(output, `hub-agents-${width}.png`), fullPage: true });
-		for (const collection of ["Agents", "Prompts", "Playbooks", "Extensions", "Servers", "Verifiers"]) {
+		for (const collection of ["Agents", "Prompts", "Playbooks", "Extensions", "Verifiers"]) {
 			await page
 				.locator("main")
 				.getByRole("tab", { name: new RegExp(`^${collection} · [1-9]`) })

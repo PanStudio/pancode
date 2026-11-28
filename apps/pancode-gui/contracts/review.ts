@@ -1,18 +1,15 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
-import { type Static, Type } from "typebox";
+import { type Static, type TLiteral, Type } from "typebox";
+import { PROJECT_TRUST_SURFACES } from "../../../src/core/views/trust-words.js";
 
 const closed = { additionalProperties: false };
 
+type LiteralTuple<T extends readonly string[]> = { -readonly [K in keyof T]: TLiteral<T[K]> };
 /** The project surfaces `pancode config trust` reviews and approves. */
-export const TrustSurface = Type.Union([
-	Type.Literal("safety"),
-	Type.Literal("hooks"),
-	Type.Literal("settings"),
-	Type.Literal("extensions"),
-	Type.Literal("plugins"),
-	Type.Literal("handbook"),
-]);
+export const TrustSurface = Type.Union(
+	PROJECT_TRUST_SURFACES.map((surface) => Type.Literal(surface)) as LiteralTuple<typeof PROJECT_TRUST_SURFACES>,
+);
 export type TrustSurface = Static<typeof TrustSurface>;
 export const Sha256 = Type.String({ pattern: "^[0-9a-f]{64}$" });
 /** As the memory store mints and validates them; never starts with a dash and holds no whitespace. */

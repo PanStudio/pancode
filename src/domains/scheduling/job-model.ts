@@ -3,6 +3,7 @@
 import { realpathSync } from "node:fs";
 import { isAbsolute } from "node:path";
 import { sha256Hex } from "../../core/hash.js";
+import { JOB_PREDICATE_OPS } from "../../core/job-types.js";
 import { snapshotTurnConstraints } from "../../core/turn-constraints.js";
 import { isRecord } from "../../core/type-guards.js";
 import type {
@@ -58,8 +59,7 @@ function validateJobPredicate(predicate: JobPredicate): JobPredicate {
 		text(key, 128, "predicate path segment");
 		if (["__proto__", "prototype", "constructor"].includes(key)) throw new Error("job: unsafe predicate path");
 	}
-	if (!["eq", "ne", "lt", "lte", "gt", "gte", "exists"].includes(predicate.op))
-		throw new Error("job: invalid predicate operator");
+	if (!JOB_PREDICATE_OPS.includes(predicate.op)) throw new Error("job: invalid predicate operator");
 	const value = predicate.value;
 	if (predicate.op === "exists") {
 		if (value !== undefined) throw new Error("job: exists takes no value");

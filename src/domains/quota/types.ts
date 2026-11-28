@@ -13,11 +13,9 @@
 import { sha256Hex } from "../../core/hash.js";
 import type { EconomyUnit } from "../../core/telemetry/economy.js";
 import type { QuotaAccess, QuotaOverage, QuotaQualification } from "../../core/telemetry/schemas.js";
+import type { QuotaStatus } from "../../core/telemetry/session-vocabulary.js";
 
-export type { QuotaAccess, QuotaOverage, QuotaQualification };
-
-/** Outcome of one usage read, including the reasons a read produced no data. */
-export type QuotaStatus = "ok" | "no_credentials" | "expired" | "error" | "loading";
+export type { QuotaAccess, QuotaOverage, QuotaQualification, QuotaStatus };
 
 /** One rate-limit window reported by a provider. */
 export interface UsageWindow {

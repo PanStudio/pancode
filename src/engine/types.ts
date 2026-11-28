@@ -17,6 +17,7 @@ export type {
 } from "@earendil-works/pi-agent-core";
 
 import type { AgentState as PiAgentState } from "@earendil-works/pi-agent-core";
+import type { CacheRecoveryOutcome } from "../core/telemetry/session-vocabulary.js";
 
 /**
  * Writable view onto the engine AgentState. The public typings mark
@@ -175,6 +176,9 @@ export interface CodexTransportObservation {
 	recovery?: {
 		action: "cooldown_reset" | "auth_reset";
 		countersBeforeReset: CodexTransportCounters;
-		outcome: "eligible" | "recovered" | "failed" | "unknown";
+		outcome: CacheRecoveryOutcome;
 	};
 }
+
+/** The Pi message roles a provider request carries; the agent keeps other roles in its own list. */
+export const LLM_MESSAGE_ROLES: ReadonlySet<string> = new Set(["system", "user", "assistant", "toolResult"]);

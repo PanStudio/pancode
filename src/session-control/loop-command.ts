@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
-import type { JobPredicate, JobRecord } from "../core/job-types.js";
+import type { JobControlAction, JobPredicate, JobRecord } from "../core/job-types.js";
 import { jobPollFailure } from "../core/job-types.js";
 import { plainOutcomeLabel } from "../domains/dispatch/failure-headline.js";
 import { jobExecutionTimeoutMs, jobIsComplete } from "../domains/scheduling/job-model.js";
@@ -54,19 +54,16 @@ type LoopCreateArgs = {
 	until_stopped?: boolean;
 };
 
-/** Job-tool control actions; `cancel` is what `stop <id> --now` sends and is never typed. */
-const LOOP_CONTROL_ACTIONS = ["pause", "resume", "stop", "cancel"] as const;
-/** Control words a typed `/loop` line accepts. */
+/** Control words a typed `/loop` line accepts; `cancel` is what `stop <id> --now` sends and is never typed. */
 const LOOP_CONTROL_VERBS: ReadonlyArray<string> = ["pause", "resume", "stop"];
 /** First words that read or control existing jobs and never create one. */
 export const LOOP_OBSERVE_VERBS: ReadonlyArray<string> = ["status", ...LOOP_CONTROL_VERBS];
-type LoopControlAction = (typeof LOOP_CONTROL_ACTIONS)[number];
 
 export type LoopCommand =
 	| { kind: "create"; args: LoopCreateArgs }
 	| { kind: "list" }
 	| { kind: "status"; id: string | undefined }
-	| { kind: "control"; action: LoopControlAction; id: string | undefined };
+	| { kind: "control"; action: JobControlAction; id: string | undefined };
 
 type LoopParseResult = { ok: true; command: LoopCommand } | { ok: false; reason: string };
 
@@ -374,7 +371,7 @@ export function parseLoopArgv(argv: ReadonlyArray<string>): LoopParseResult {
 		if (now) tokens = [verb, ...tokens.slice(1).filter((token) => token !== "--now")];
 		if (now && tokens.length === 1) return { ok: true, command: { kind: "control", action: "cancel", id: undefined } };
 		const parsed = parseId(verb, tokens);
-		const action: LoopControlAction = now ? "cancel" : (verb as LoopControlAction);
+		const action: JobControlAction = now ? "cancel" : (verb as JobControlAction);
 		return "error" in parsed ? fail(parsed.error) : { ok: true, command: { kind: "control", action, id: parsed.id } };
 	}
 	return parseCreate(tokens);
@@ -675,7 +672,7 @@ function jobFromResult(result: ToolResult): JobRecord | null {
 	return isJobRecord(job) ? job : null;
 }
 
-function controlVerbText(action: LoopControlAction, job: JobRecord): string {
+function controlVerbText(action: JobControlAction, job: JobRecord): string {
 	if (action === "pause") return `loop ${loopLabel(job)} paused`;
 	if (action === "resume") return `loop ${loopLabel(job)} resumed`;
 	if (jobIsComplete(job)) return `loop ${loopLabel(job)} ${action === "stop" ? "stopped" : "cancelled"}`;

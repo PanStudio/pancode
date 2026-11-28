@@ -12,11 +12,10 @@
  */
 
 import { samplerTemperature } from "../core/sampler-support.js";
+import { DRAFT_LABELS, type DraftLabel } from "../core/views/draft-words.js";
 import { stripDeadToolCallMarkup } from "../engine/loop-guard.js";
 
-/** Candidate names, in the order the rounds were started. */
-export const DRAFT_LABELS = ["A", "B", "C", "D"] as const;
-export type DraftLabel = (typeof DRAFT_LABELS)[number];
+export { DRAFT_LABELS, type DraftLabel };
 export const DRAFT_MIN = 2;
 export const DRAFT_MAX = 4;
 export const DRAFT_DEFAULT = 3;
