@@ -28,8 +28,12 @@ steps:
   - kind: loop
     id: review
     maxAttempts: 2
-    dependencies: [suite]
-    check: {kind: agent, agent: verifier, scope: readonly}
+    dependencies: [commit-plan, suite]
+    check:
+      kind: agent
+      agent: reviewer
+      scope: readonly
+      instructions: "Grade the tree against the plan artifact the plan step committed (.pancode/artifacts/PLAN.md, named in the commit-plan report attached on the first check)."
     repair: {kind: agent, agent: coder, scope: workspace}
   - kind: code
     id: commit-code
@@ -66,7 +70,7 @@ Verify. Two different questions get asked, in order, and neither can answer the
 other's. The suite asks whether it runs: code executes the repository's
 registered `test` command and hands you its verbatim output if it is red. The
 reviewer asks whether this is what was asked for: an independent read-only
-verifier grades the tree against the plan. A revision that lands after the last
+reviewer grades the tree against the plan. A revision that lands after the last
 green suite invalidates that green, and the suite is re-run before anything is
 committed.
 
