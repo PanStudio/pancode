@@ -7,8 +7,8 @@
  * PanCode publishes one npm package, `@panstudio/pancode`. This proves its tarball (`npm pack`) is all an npm
  * user needs: every `bin` and `exports` target is in the tarball, it installs alone into an empty prefix with an
  * empty npm cache of its own and no `@pancode/*` package beside it, and from inside that prefix `pancode --version`
- * and `pancode store --help` run and every `sdk/<subpath>` export imports. The release check follows: the installed
- * `pancode --version` names the packed version (`scripts/release/installed-commands.mjs`). Then the installed CLI
+ * and `pancode store --help` run and every `sdk/<subpath>` export imports; `pancode --version` must name the packed
+ * version. Then the installed CLI
  * scaffolds an extension outside the prefix and `pancode extensions test` runs its tests against
  * `pancode/sdk/testing`; when this checkout has TypeScript, the scaffold also type-checks against the installed
  * declarations. Third-party runtime dependencies come from the configured registry or mirror.
@@ -23,16 +23,15 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 import { gunzipSync } from "node:zlib";
-import { checkInstalledCommands, PACKAGE_NAME } from "./release/installed-commands.mjs";
 
 const shell = process.platform === "win32";
 const root = fileURLToPath(new URL("..", import.meta.url));
 
-/** The commands the package installs. */
-export const COMMANDS = ["pancode"];
+/** The name PanCode is published under on npm. */
+const PACKAGE_NAME = "@panstudio/pancode";
 
 /** The regular files in a gzipped tarball, as a map of path to contents. Reads ustar and pax headers. */
-export function readTarball(bytes) {
+function readTarball(bytes) {
 	const tar = gunzipSync(bytes);
 	const files = new Map();
 	let longName;
@@ -62,7 +61,7 @@ function exportTargets(value) {
 }
 
 /** Problems with the packed root package: its name, its commands, and the files its bin and exports name. */
-export function tarballProblems(files) {
+function tarballProblems(files) {
 	const raw = files.get("package/package.json");
 	if (raw === undefined) return ["the tarball has no package/package.json"];
 	const text = raw.toString("utf8");
@@ -75,7 +74,7 @@ export function tarballProblems(files) {
 		for (const name of Object.keys(manifest[field] ?? {}))
 			if (name.startsWith("@pancode/")) problems.push(`package.json ${field} names ${name}, which is never published`);
 	const bin = manifest.bin ?? {};
-	for (const command of COMMANDS) if (!bin[command]) problems.push(`package.json bin has no ${command}`);
+	if (!bin.pancode) problems.push("package.json bin has no pancode");
 	for (const target of [...exportTargets(manifest.exports), ...Object.values(bin)]) {
 		const inside = `package/${target.replace(/^\.\//u, "")}`;
 		if (!files.has(inside)) problems.push(`${target} is named by exports or bin but missing from the tarball`);
@@ -139,11 +138,12 @@ export async function checkPackedInstall({ tarball, prefix }) {
 			XDG_CACHE_HOME: join(home, "xdg-cache"),
 		};
 		const bin = (command) => join(prefix, "node_modules", ".bin", shell ? `${command}.cmd` : command);
-		const lines = [`pancode --version: ${run(bin("pancode"), ["--version"], { cwd: prefix, env }).split("\n")[0]}`];
+		const reported = run(bin("pancode"), ["--version"], { cwd: prefix, env }).split("\n")[0];
+		if (!reported.includes(manifest.version))
+			throw new Error(`pancode --version printed ${reported}; expected ${manifest.version}`);
+		const lines = [`pancode --version: ${reported}`];
 		run(bin("pancode"), ["store", "--help"], { cwd: prefix, env });
 		lines.push("pancode store --help ok");
-		const installed = checkInstalledCommands({ prefix, env, version: manifest.version });
-		lines.push(`installed pancode --version: ${installed.pancodeVersion} in ${installed.ms} ms`);
 		const specifiers = Object.keys(manifest.exports ?? {})
 			.filter((key) => key.startsWith("./sdk/"))
 			.map((key) => `${manifest.name}/${key.slice(2)}`);
@@ -160,7 +160,7 @@ export async function checkPackedInstall({ tarball, prefix }) {
 		} else lines.push("scaffolded extension not type-checked: no TypeScript in this checkout");
 		run(bin("pancode"), ["extensions", "test", extension], { cwd: authoring, env });
 		lines.push("scaffolded extension tests pass against pancode/sdk/testing");
-		return { lines, installed };
+		return { lines };
 	} finally {
 		rmSync(cache, { recursive: true, force: true });
 		rmSync(home, { recursive: true, force: true });

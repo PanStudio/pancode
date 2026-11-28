@@ -108,7 +108,6 @@ Release (see [release/README.md](release/README.md)):
 - `release/smoke.mjs`: `pnpm run release:smoke`.
 - `release/publish.mjs`: the `publish` job's step: npm, the GitHub release, `main`, then the website and the channel files.
 - `release/tested-run.mjs`: the `tested run` and `publish` jobs' check: finds the green push run of the commit being released and checks its `release` artifact against `SHA256SUMS` and the commit.
-- `release/installed-commands.mjs`: checks of the installed `pancode` command.
 - `release-version-policy.mjs` (+ `.d.mts`): which package versions and changelog headings a checkout or release accepts.
 - `check-release.mjs`: audits the built `dist/` and the packed tarball's contents.
 - `release-manifest.json`: runtime files the installed package must contain.

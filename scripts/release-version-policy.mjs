@@ -65,20 +65,3 @@ export function readmeInstallVersion({ version, changelog }) {
 
 /** Published channel versions; checkout -dev versions never enter npm. */
 export const RC_VERSION = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)-rc\.(0|[1-9]\d*)$/;
-
-export function publishTagErrors({ version, tag }) {
-	if (typeof version !== "string") return ["package.json has no version"];
-	if (DEV_VERSION.test(version))
-		return [`package.json version ${version} is a development version and is never published, under any dist-tag`];
-	const required = RC_VERSION.test(version)
-		? "beta"
-		: /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.test(version)
-			? "latest"
-			: null;
-	if (required === null) return [`Unsupported published version ${version}; use a stable or -rc.N version`];
-	// npm's default publish tag is latest, including when the env variable is absent.
-	if ((tag || "latest") === required) return [];
-	return [
-		`package.json version ${version} must publish with 'npm publish --tag ${required}' (npm_config_tag is ${tag || "unset"})`,
-	];
-}
