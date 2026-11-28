@@ -18,11 +18,9 @@ import type { AcpHandoffControl } from "../acp/server-options.js";
 import { createStdioServerTransport } from "../acp/transport.js";
 import { modelBootstrapGenerate, resolveBootstrapRoute } from "../cli/bootstrap-generate.js";
 import { writeHeadlessNoticesToStderr } from "../cli/headless-notices.js";
-import { segmentUsageFromView } from "../cli/modes/json-stream.js";
-import { runHeadlessMainAgent } from "../cli/modes/print.js";
 import type { RunJsonMainSessionFrame } from "../cli/modes/run-json-schema.js";
 import { RUN_JSON_SCHEMA_VERSION } from "../cli/modes/run-json-schema.js";
-import { noteMainRunV2, startRunOutput, writeLocalAnswer, writeRunDiagnostic } from "../cli/run-failure.js";
+import { noteMainRunV2, writeRunDiagnostic } from "../cli/run-failure.js";
 import { setToolEnvAutonomy, startLoginEnvCapture } from "../core/bash-exec.js";
 import { formatBootTrace } from "../core/boot-trace.js";
 import { readPancodeVersionLabel } from "../core/build-info.js";
@@ -36,9 +34,8 @@ import { writeDiagnostic } from "../core/diagnostics.js";
 import { type LoadResult, loadDomains } from "../core/domain-loader.js";
 import { setAutonomousCommitProcess, setCommitDecisionRefsProvider } from "../core/git-commit-attribution.js";
 import { configureGuardrails, guardrailValuesFromSettings } from "../core/guardrails.js";
-import { HEADLESS_PERMISSION_DENIED_REASON } from "../core/headless-permission.js";
 import { installInternalGitPolicy } from "../core/internal-git.js";
-import { flushPackageActivities, recordPackageActivity } from "../core/package-activity.js";
+import { flushPackageActivities } from "../core/package-activity.js";
 import { readPancodeVersion } from "../core/package-root.js";
 import type { CatalogRanker } from "../core/precomputed-rank.js";
 import { ensureProjectIgnore } from "../core/project-root.js";
@@ -64,7 +61,7 @@ import { getTerminationCoordinator, resolveShutdownHookBudgetMs } from "../core/
 import { yieldToEventLoop } from "../core/timers.js";
 import { ToolNames } from "../core/tool-names.js";
 import { surfaceSpecPlacement } from "../core/tool-surface.js";
-import { narrowTurnConstraints, templateTurnConstraints, turnAllowsTool } from "../core/turn-constraints.js";
+import { turnAllowsTool } from "../core/turn-constraints.js";
 import { captureProjectSurface, projectSurfaceTrustNotice } from "../core/workspace-trust.js";
 import { pancodeDataDir, pancodeStateDir } from "../core/xdg.js";
 import { autonomyCeilingRefusal, launchAutonomyRefusal, yoloRootRefusal } from "../core/yolo-host.js";
@@ -90,15 +87,10 @@ import {
 	executeFleetRun,
 	fleetAdmissionRefusal,
 	fleetRouteResolver,
-	runUsageFromCallRecords,
 } from "../domains/dispatch/index.js";
 import { createDispatchDomainModule } from "../domains/dispatch/module.js";
 import { configureRunEventJournal } from "../domains/dispatch/run-event-journal.js";
-import {
-	createExtensionRuntimeHookBridge,
-	installedExtensionClaims,
-	isLoadableExtension,
-} from "../domains/extensions/index.js";
+import { createExtensionRuntimeHookBridge, isLoadableExtension } from "../domains/extensions/index.js";
 import { ExtensionsDomainModule } from "../domains/extensions/module.js";
 import {
 	describeUpgradeNotice,
@@ -185,7 +177,7 @@ import {
 } from "../domains/providers/one-shot.js";
 import { resolveModelReference } from "../domains/providers/resolver.js";
 import { LOCAL_API_KEY_FALLBACK, resolveSideCallAuth } from "../domains/providers/side-call-auth.js";
-import { resolveTarget, unpricedRunRoutes } from "../domains/providers/unpriced-routes.js";
+import { resolveTarget } from "../domains/providers/unpriced-routes.js";
 import { createVisionSidecar } from "../domains/providers/vision-sidecar.js";
 import { anthropicQuotaNotice, onAnthropicQuotaChange, watchCopilotStreamQuota } from "../domains/quota/index.js";
 import { lazyReportTextHost, reportWiring } from "../domains/report/wiring.js";
@@ -196,12 +188,7 @@ import {
 	suggestableSkills,
 } from "../domains/resources/index.js";
 import { createResourcesDomainModule } from "../domains/resources/module.js";
-import {
-	expandSubmitReferences,
-	expandSubmitText,
-	mcpPromptSlashRows,
-	submitDisplay,
-} from "../domains/resources/submit-expansion.js";
+import { expandSubmitText, mcpPromptSlashRows } from "../domains/resources/submit-expansion.js";
 import { createCitationGroundingRegistration } from "../domains/safety/citation-grounding.js";
 import { createFinishContractRegistration } from "../domains/safety/finish-contract-registration.js";
 import { DEFAULT_RECENT_ENTRY_LIMIT } from "../domains/safety/finish-entries.js";
@@ -226,7 +213,6 @@ import { createProtectedArtifactsRegistration } from "../domains/safety/protecte
 import { SAFETY_JUDGE_CONSECUTIVE_BLOCKS, type SafetyJudgeSeat } from "../domains/safety/safety-judge.js";
 import { createSessionCodeConsent } from "../domains/safety/session-code-consent.js";
 import { unattendedWindowMs } from "../domains/safety/unattended.js";
-import { createRunCostCap, runCostCeilingUsd } from "../domains/scheduling/budget.js";
 import { createSchedulingDomainModule } from "../domains/scheduling/module.js";
 import type { CompactInput, CompactResult } from "../domains/session/compaction/compact.js";
 import {
@@ -242,7 +228,7 @@ import type { SessionContract, SessionMeta } from "../domains/session/contract.j
 import { activeDecisionRefs, createDecisionBoardStore } from "../domains/session/decision-board.js";
 import type { CompactionTrigger, SessionEntry } from "../domains/session/entries.js";
 import { commitHandoff, type HandoffServiceDeps, prepareHandoff } from "../domains/session/handoff-service.js";
-import { runHeadlessCompaction, SessionLiveError } from "../domains/session/index.js";
+import { SessionLiveError } from "../domains/session/index.js";
 import { SessionDomainModule } from "../domains/session/module.js";
 import { reconcilePendingProtectedArtifacts } from "../domains/session/protected-artifact-journal.js";
 import {
@@ -263,7 +249,6 @@ import { probeWorkspaceAsync } from "../domains/session/workspace/index.js";
 import { archiveCommandHost, shareArchiver } from "../domains/share/index.js";
 import type { SystemOneInstance } from "../domains/system-one/index.js";
 import { createSystemOne, parseRouteList } from "../domains/system-one/index.js";
-import { READ_MODEL_FOLD } from "../domains/telemetry/index.js";
 import { createTelemetryDomain } from "../domains/telemetry/module.js";
 import type { UserTaskAcceptance } from "../domains/user-tasks/acceptance.js";
 import { activeUserTaskAcceptance } from "../domains/user-tasks/active-acceptance.js";
@@ -373,6 +358,7 @@ import { createFileMutationObserver, createSkillActivationObserver } from "../to
 import { createRegistry } from "../tools/registry.js";
 import { acpHostReadOnlySource } from "../tools/registry-verdicts.js";
 import { startToolOffloadSweep } from "../tools/result-shaping.js";
+import { runHeadlessSurface } from "./boot/headless-surface.js";
 import { runInteractiveSurface } from "./boot/interactive-surface.js";
 import type { BootSurfaceCells, BootSurfaceInput, BootSurfaceSeams } from "./boot/surface.js";
 
@@ -3060,6 +3046,12 @@ export async function bootOrchestrator(options: BootOptions = {}): Promise<BootR
 		set askUserHandler(value) {
 			askUserHandler = value;
 		},
+		get creditedRunChecks() {
+			return creditedRunChecks;
+		},
+		get lastAutonomyHalt() {
+			return lastAutonomyHalt;
+		},
 		get reportReviewOpener() {
 			return reportReviewOpener;
 		},
@@ -3074,12 +3066,15 @@ export async function bootOrchestrator(options: BootOptions = {}): Promise<BootR
 		},
 	};
 	const surface: BootSurfaceInput = {
+		activePathEntries,
 		agents,
 		applySettingsBlob,
 		autonomyWindow,
 		beforeShellEntryRecorded,
+		bumpSessionState,
 		bus,
 		chat,
+		chatIdle,
 		clampAtScope,
 		commitExtensionHooks,
 		commitSetting,
@@ -3094,6 +3089,7 @@ export async function bootOrchestrator(options: BootOptions = {}): Promise<BootR
 		getCurrentSettings,
 		getTaskMemorySeedOffer,
 		guardianState,
+		headlessGitHelpers,
 		historyReviews,
 		hookDrift,
 		initialNotices,
@@ -3105,6 +3101,7 @@ export async function bootOrchestrator(options: BootOptions = {}): Promise<BootR
 		mux,
 		options,
 		panes,
+		printJsonSessionHeader,
 		providers,
 		readCurrentSessionEntries,
 		recordBoot,
@@ -3119,9 +3116,12 @@ export async function bootOrchestrator(options: BootOptions = {}): Promise<BootR
 		selectAtScope,
 		session,
 		settingOrigin,
+		startSessionExtensionHost,
+		startupOverrides,
 		systemOne,
 		systemOneControl,
 		taskBoard,
+		taskMemoryBank,
 		taskMemoryTier,
 		telemetry,
 		telemetryRunReaders,
@@ -3136,7 +3136,11 @@ export async function bootOrchestrator(options: BootOptions = {}): Promise<BootR
 		cells,
 	};
 	const seams: BootSurfaceSeams = {
+		answerExtensionLine,
 		loadInteractiveIndex: () => import("../interactive/index.js"),
+		parseSlashCommand,
+		resolvePermission,
+		subscribeLoopGuardStop,
 	};
 
 	if (options.acp) {
@@ -3833,289 +3837,7 @@ export async function bootOrchestrator(options: BootOptions = {}): Promise<BootR
 		}
 	}
 
-	if (options.headless) {
-		recordBoot();
-		if (options.headless.compact) return runHeadlessCompaction(chat, options.headless.compact, { termination, timer });
-		dispatch?.primeRouteQuota?.();
-		// Operatorless: there is no TUI subscriber to turn a loop-guard interrupt
-		// into a run stop, so a degenerate local model would spin until an
-		// external timeout (each call blocked, the agent loop never aborted). Wire
-		// the shared interrupt->stop subscriber so the run ends with the same
-		// durable closing turn the interactive surface produces.
-		const unsubscribeLoopGuardStop = subscribeLoopGuardStop(bus, chat);
-		const headlessPermissionReason = HEADLESS_PERMISSION_DENIED_REASON;
-		const headlessExtensions = createSessionExtensionHosting({
-			start: () => startSessionExtensionHost("headless", options.headless?.answers?.interview),
-			commit: commitExtensionHooks,
-			idle: chatIdle,
-			bus,
-			report: (line) => process.stderr.write(`pancode: ${line}\n`),
-		});
-		// `--max-cost-usd` bounds what this run adds, so a continued session's
-		// earlier spend does not count against it. It becomes the session
-		// ceiling every paid request already passes: the main agent's, each
-		// compaction's and each dispatch's admission. A lower configured
-		// ceiling still holds. The start is read the way admission reads spend, so the cap counts only this run (#434).
-		const runCostCap =
-			options.headless.maxCostUsd === undefined
-				? null
-				: createRunCostCap((await telemetry?.settledSessionSpend())?.usd ?? 0, options.headless.maxCostUsd);
-		if (runCostCap !== null) {
-			startupOverrides.set(
-				"safety.limits.sessionCostUsd",
-				runCostCeilingUsd({
-					spentUsd: runCostCap.startUsd,
-					runMaxUsd: runCostCap.maxUsd,
-					configuredUsd: getCurrentSettings().safety.limits.sessionCostUsd,
-				}),
-			);
-			bumpSessionState();
-			result.getContract("scheduling")?.setRunCostCap?.(runCostCap);
-		}
-		const unpricedRoutes = runCostCap === null ? [] : unpricedRunRoutes(getCurrentSettings(), providers);
-		if (unpricedRoutes.length > 0) {
-			process.stderr.write(
-				`pancode run: --max-cost-usd does not bound unpriced routes: ${unpricedRoutes.join(", ")}; declare targets[].pricing to bound them\n`,
-			);
-		}
-		const unsubscribeHeadlessPermission = toolRegistry.onPermissionRequired((call, decision, meta) => {
-			void resolvePermission(
-				{ bus, registry: toolRegistry },
-				{
-					action: "stop",
-					payload: {
-						status: "denied",
-						requestId: meta.requestId,
-						origin: "main",
-						decidedBy: "policy:no-operator",
-						tool: call.tool,
-						actionClass: decision.classification.actionClass,
-						reason: headlessPermissionReason,
-						requestedBy: "headless",
-					},
-				},
-			);
-		});
-		try {
-			// WTF-P F04: `/ext:<id>:<cmd>` and a `replaces: prompt` takeover run in the
-			// extension runtime with no model turn, as they do in the terminal.
-			const typed = parseSlashCommand(options.headless.prompt);
-			if (typed.kind === "unknown-command" && installedExtensionClaims(typed.token, process.cwd())) {
-				const headlessExtensionHost = await headlessExtensions.ensure();
-				await headlessExtensionHost?.ready.catch(() => undefined);
-				const answer = await answerExtensionLine(
-					options.headless.prompt,
-					typed.token,
-					headlessExtensionHost?.operator,
-					resources?.prompts(process.cwd()).items ?? [],
-				);
-				if (answer !== null) {
-					if (answer.ok) writeLocalAnswer(answer.text, (options.headless.mode ?? "text") !== "text");
-					else writeRunDiagnostic(`pancode: ${answer.message}\n`);
-					await termination.shutdown(answer.ok ? 0 : 1);
-					return { exitCode: answer.ok ? 0 : 1, bootTimeMs: timer.snapshot().totalMs };
-				}
-			}
-			const parsedSkillRequest = resources?.parsePendingSkillRequests(options.headless.prompt, process.cwd()) ?? {
-				text: options.headless.prompt,
-				pendingSkillRequests: [],
-			};
-			const promptExpansion = resources?.expandPromptTemplate(parsedSkillRequest.text, process.cwd());
-			if (promptExpansion?.expanded && promptExpansion.template.sourceInfo.owner)
-				recordPackageActivity({
-					type: "pancode_plugin_resource_use",
-					kind: "prompt",
-					owner: promptExpansion.template.sourceInfo.owner,
-					outcome: "expanded",
-					details: { name: promptExpansion.template.name },
-				});
-			// A prompt named as `/name` is a request for that template. When the
-			// template refuses, the run says why and stops; sending the literal
-			// `/name` on to the model spends a turn answering a command it cannot
-			// run, and the operator never sees the refusal.
-			if (promptExpansion?.expanded === false && promptExpansion.refusal) {
-				writeRunDiagnostic(`pancode: ${promptExpansion.refusal.message}\n`);
-				await termination.shutdown(1);
-				return { exitCode: 1, bootTimeMs: timer.snapshot().totalMs };
-			}
-			// A display-only template that reached boot (the CLI preflight answers
-			// most of them earlier) is printed for the operator and the run ends;
-			// its body was never model text.
-			if (promptExpansion?.expanded === false && promptExpansion.display) {
-				writeLocalAnswer(promptExpansion.display.text, (options.headless.mode ?? "text") !== "text");
-				await termination.shutdown(0);
-				return { exitCode: 0, bootTimeMs: timer.snapshot().totalMs };
-			}
-			// Started only for a run that reaches the model, so the early exits
-			// above spawn no runtime. Only a --answers file answers here; without
-			// one a tool's interview is cancelled with reason headless.
-			// The first turn's turn_start reaches a runtime only once the startup
-			// generation has committed. A run whose startup failed goes on without runtimes.
-			await (await headlessExtensions.ensure())?.ready.catch(() => undefined);
-			// SIGINT while an `@path` in the prompt is read ends the run before any
-			// request; aborting kills poppler, a detached child that would outlive it (#438).
-			const attachmentRead = new AbortController();
-			const stopAttachmentRead = bus.subscribe("shutdown.requested", () => attachmentRead.abort());
-			// An MCP prompt's text is the server's: it is sent as the prompt gave it, never read for `@path`.
-			const mcpPrompt =
-				promptExpansion?.expanded || !mcpSubmit
-					? null
-					: await mcpSubmit.expandPrompt(parsedSkillRequest.text, attachmentRead.signal);
-			if (mcpPrompt?.ok === false) {
-				stopAttachmentRead();
-				writeRunDiagnostic(`pancode: ${mcpPrompt.error}\n`);
-				await termination.shutdown(1);
-				return { exitCode: 1, bootTimeMs: timer.snapshot().totalMs };
-			}
-			const fileExpansion = await (mcpPrompt?.ok
-				? Promise.resolve({
-						text: mcpPrompt.text,
-						images: mcpPrompt.images,
-						diagnostics: [],
-						referencedPaths: [],
-						notes: [mcpPrompt.note],
-					})
-				: expandSubmitReferences(
-						promptExpansion?.expanded ? promptExpansion.text : parsedSkillRequest.text,
-						process.cwd(),
-						{ signal: attachmentRead.signal, ...(mcpSubmit ? { mcp: mcpSubmit } : {}) },
-					)
-			)
-				.catch((err: unknown) => {
-					if (!attachmentRead.signal.aborted) throw err;
-					return null;
-				})
-				.finally(stopAttachmentRead);
-			if (fileExpansion === null || attachmentRead.signal.aborted) {
-				writeRunDiagnostic("pancode run: interrupted while reading file attachments; nothing was sent\n");
-				await termination.shutdown(130);
-				return { exitCode: 130, bootTimeMs: timer.snapshot().totalMs };
-			}
-			// A template's tool scope and budget narrow the run's --allow-tools, --delegate-tools and limits, never widen.
-			const template = promptExpansion?.expanded ? promptExpansion.template : undefined;
-			const constraints = narrowTurnConstraints(
-				options.headless.constraints,
-				template ? templateTurnConstraints(template) : undefined,
-			);
-			// A headless template and its flags bind once for the whole run (#423).
-			chat.setToolCeiling?.([constraints]);
-			const images = [...(options.headless.images ?? []), ...fileExpansion.images];
-			const workingContextPaths = [...(options.headless.workingContextPaths ?? []), ...fileExpansion.referencedPaths];
-			// prompt_submit hooks judge the line the operator typed, as in the TUI and ACP.
-			const display = submitDisplay({
-				typed: options.headless.prompt,
-				parsedText: parsedSkillRequest.text,
-				...(promptExpansion?.expanded
-					? { template: { name: promptExpansion.template.name, text: promptExpansion.text } }
-					: {}),
-				referencedPaths: fileExpansion.referencedPaths,
-				diagnostics: fileExpansion.diagnostics,
-				cwd: process.cwd(),
-				mcpNotes: fileExpansion.notes,
-			});
-			startRunOutput();
-			// R-11: a main turn that ended on PanCode's own fault earns one stderr line after the run.
-			let internalFault = false;
-			const unsubscribeInternalFault = bus.subscribe("turn.settled", (payload, context) => {
-				if (context?.agent.role === "main" && payload.terminal.cause === "internal") internalFault = true;
-			});
-			const code = await runHeadlessMainAgent(chat, {
-				prompt: fileExpansion.text,
-				...(display ? { display } : {}),
-				...(constraints ? { constraints } : {}),
-				...(images.length > 0 ? { images } : {}),
-				...(workingContextPaths.length > 0 ? { workingContextPaths } : {}),
-				...(options.headless.sampling ? { sampling: options.headless.sampling } : {}),
-				...(parsedSkillRequest.pendingSkillRequests.length > 0
-					? { pendingSkillRequests: parsedSkillRequest.pendingSkillRequests }
-					: {}),
-				mode: options.headless.mode ?? "text",
-				...(options.headless.routeNotice ? { routeNotice: options.headless.routeNotice } : {}),
-				...(options.headless.steerChannel
-					? {
-							steerChannel: options.headless.steerChannel,
-							reload: (target: ReloadTarget) => reloadClasses.run(target, () => headlessExtensions.reloadStep()),
-						}
-					: {}),
-				...(options.headless.failOnNoop === true ? { failOnNoop: true } : {}),
-				...(options.headless.failOnVerify === true ? { failOnVerify: true } : {}),
-				...(options.headless.outputSchema !== undefined ? { outputSchema: options.headless.outputSchema } : {}),
-				unpricedRoutes: (reach) => unpricedRunRoutes(getCurrentSettings(), providers, reach),
-				...(options.headless.onPermission === "fail" ? { onPermission: "fail" as const } : {}),
-				...(options.headless.deadline !== undefined ? { deadline: options.headless.deadline } : {}),
-				...(options.headless.answers !== undefined ? { answers: options.headless.answers } : {}),
-				...(options.headless.verify !== undefined
-					? { verify: { ...options.headless.verify, credited: () => creditedRunChecks } }
-					: {}),
-				...(dispatch ? { dispatch } : {}),
-				autonomyHalt: () => lastAutonomyHalt,
-				readEntries: activePathEntries,
-				scratchRoots: getCurrentSettings().safety.scratchRoots,
-				onRunGitHelpers: headlessGitHelpers.note,
-				autonomy: () => autonomyWindow.report(true),
-				scopeNotices: (listener) => bus.subscribe("run.scope_notice_raised", listener),
-				sessionCostCeilingUsd: () => getCurrentSettings().safety.limits.sessionCostUsd,
-				...(telemetry
-					? {
-							runUsage: async (from: string, roles = ["main", "compaction"]) => {
-								// Every queued settlement is written and the live fold seeded before the calls are read (#434).
-								await telemetry.settledSessionSpend();
-								const view = telemetry.read?.live();
-								// The run's own turn calls and the compactions it ran, folded as the read model folds them.
-								return view ? runUsageFromCallRecords(view.callRecords({ roles, from }), READ_MODEL_FOLD) : null;
-							},
-							// The same calls, folded by the economy projection; a run carries no period fees (S11).
-							runEconomy: async (from: string, roles) => {
-								await telemetry.settledSessionSpend();
-								return telemetry.read?.live()?.economy(roles ? { roles, from } : { from }) ?? null;
-							},
-							segmentUsage: async (messages) => {
-								// The segment's calls are journaled and the live fold seeded before they are read (#434).
-								await telemetry.settledSessionSpend();
-								const view = telemetry.read?.live();
-								return view ? segmentUsageFromView(view, messages) : null;
-							},
-						}
-					: {}),
-				...(runCostCap !== null ? { costCap: { maxUsd: runCostCap.maxUsd, unpricedRoutes } } : {}),
-				getSessionHeader: () => printJsonSessionHeader(session?.current() ?? null, getCurrentSettings().chat),
-			});
-			unsubscribeInternalFault();
-			if (internalFault) {
-				try {
-					const { HEADLESS_OFFER_LINE, takeHeadlessOffer } = await import("../domains/report/index.js");
-					const offered = takeHeadlessOffer({
-						stateDir: pancodeStateDir(),
-						sessionId: session?.current()?.id ?? null,
-						offers: getCurrentSettings().report?.offers ?? "ask",
-						mode: options.headless.mode ?? "text",
-						env: process.env,
-						now: new Date(),
-					});
-					if (offered) process.stderr.write(`${HEADLESS_OFFER_LINE}\n`);
-				} catch {
-					// The offer line is a courtesy; a ledger that cannot be read or written leaves the run's exit as it was.
-				}
-			}
-			if (code === 0) {
-				const deadline = options.headless.deadline;
-				await memoryOwner.retainTask(
-					"headless",
-					deadline?.expired() ? 0 : Math.min(5000, deadline?.remainingMs?.() ?? 5000),
-				);
-				const meta = session?.current();
-				if (meta) saveTaskBankSnapshot(pancodeStateDir(), meta.id, taskMemoryBank.snapshot());
-			}
-			await termination.shutdown(code);
-			return { exitCode: code, bootTimeMs: timer.snapshot().totalMs };
-		} finally {
-			unsubscribeHeadlessPermission();
-			unsubscribeLoopGuardStop();
-			// A run that throws skips the termination drain; the host's runtime
-			// children would otherwise keep the process alive. Disposal is idempotent.
-			await headlessExtensions.dispose();
-		}
-	}
+	if (options.headless) return runHeadlessSurface(surface, seams, options.headless);
 	return runInteractiveSurface(surface, seams);
 }
 

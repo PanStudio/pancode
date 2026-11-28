@@ -1,7 +1,11 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
+
+import type { RunJsonMainSessionFrame } from "../../cli/modes/run-json-schema.js";
+import type { PancodeSettings } from "../../core/config.js";
 import type { DomainContractMap } from "../../core/domain-contracts.js";
 import type { LoadResult } from "../../core/domain-loader.js";
+import type { SessionOverrides } from "../../core/session-routing.js";
 import type { StartupTimer } from "../../core/startup-timer.js";
 import type { TelemetryHub } from "../../core/telemetry/hub.js";
 import type { getTerminationCoordinator } from "../../core/termination.js";
@@ -17,6 +21,7 @@ import type { InteropContract } from "../../domains/interop/contract.js";
 import type { GuardianStatePublisher } from "../../domains/memory/guardian-state.js";
 import type { MemoryRuntime } from "../../domains/memory/index.js";
 import type { MemoryInterventionRegistration } from "../../domains/memory/intervention-types.js";
+import type { TaskMemoryBank } from "../../domains/memory/task-bank.js";
 import type { TaskMemoryHandoffSeedOutcome } from "../../domains/memory/task-memory-handoff.js";
 import type { HistoryReviewActivity } from "../../domains/memory/task-memory-status.js";
 import type { MuxContract } from "../../domains/mux/contract.js";
@@ -25,9 +30,9 @@ import type { PluginSnapshot } from "../../domains/plugins/types.js";
 import type { ProvidersContract } from "../../domains/providers/index.js";
 import type { ResourcesContract } from "../../domains/resources/contract.js";
 import type { McpSubmitReader } from "../../domains/resources/submit-expansion.js";
-import type { AutonomyWindow } from "../../domains/safety/autonomy-window.js";
+import type { AutonomyHalt, AutonomyWindow } from "../../domains/safety/autonomy-window.js";
 import type { GitHookDriftGuard } from "../../domains/safety/hook-drift.js";
-import type { SessionContract } from "../../domains/session/contract.js";
+import type { SessionContract, SessionMeta } from "../../domains/session/contract.js";
 import type { DecisionBoardStore } from "../../domains/session/decision-board.js";
 import type { SessionEntry } from "../../domains/session/entries.js";
 import type { TaskBoardStore } from "../../domains/session/task-board.js";
@@ -37,8 +42,11 @@ import type { UserTasksStore } from "../../domains/user-tasks/store.js";
 import type * as InteractiveIndexModule from "../../interactive/index.js";
 import type { BootInteractivity } from "../../interactive/terminal-lease.js";
 import type { ChatLoop } from "../../session-control/chat-loop.js";
+import type { answerExtensionLine, resolvePermission } from "../../session-control/index.js";
+import type { subscribeLoopGuardStop } from "../../session-control/loop-guard-interrupt.js";
 import type { ReloadClassesController } from "../../session-control/reload-report.js";
 import type { RunIo } from "../../session-control/slash-command-types.js";
+import type { parseSlashCommand } from "../../session-control/slash-commands.js";
 import type { AskUserHandler } from "../../tools/ask-user.js";
 import type { ToolBootstrapHandle } from "../../tools/bootstrap.js";
 import type { DispatchBackgroundRegistry } from "../../tools/dispatch-background.js";
@@ -58,6 +66,8 @@ type SessionSettingsView = ReturnType<typeof createSessionSettingsView>;
  */
 export interface BootSurfaceCells {
 	askUserHandler: AskUserHandler | null;
+	readonly creditedRunChecks: ReadonlySet<string>;
+	readonly lastAutonomyHalt: AutonomyHalt | null;
 	reportReviewOpener: ((draftId: string) => void) | null;
 	readonly resumedSessionAtBoot: boolean;
 	readonly yoloHeldAtBoot: boolean;
@@ -65,12 +75,15 @@ export interface BootSurfaceCells {
 
 /** What the surface tails (src/entry/boot/*-surface.ts) read from the wired session. */
 export interface BootSurfaceInput {
+	activePathEntries: () => readonly SessionEntry[];
 	agents: AgentsContract | undefined;
 	applySettingsBlob: SessionSettingsView["applySettingsBlob"];
 	autonomyWindow: AutonomyWindow;
 	beforeShellEntryRecorded: () => void;
+	bumpSessionState: SessionSettingsView["bump"];
 	bus: TelemetryHub;
 	chat: ChatLoop;
+	chatIdle: () => boolean;
 	clampAtScope: SessionSettingsView["clampAtScope"];
 	commitExtensionHooks: () => ExtensionReloadOutcome;
 	commitSetting: SessionSettingsView["commitSetting"];
@@ -85,6 +98,10 @@ export interface BootSurfaceInput {
 	getCurrentSettings: SessionSettingsView["getCurrentSettings"];
 	getTaskMemorySeedOffer: () => { source: string; count: number } | null;
 	guardianState: GuardianStatePublisher;
+	headlessGitHelpers: {
+		note(workspaceRoot: string, gitHelpers: boolean): void;
+		read(workspaceRoot: string): boolean | undefined;
+	};
 	historyReviews: HistoryReviewActivity;
 	hookDrift: GitHookDriftGuard;
 	initialNotices: string[];
@@ -96,6 +113,7 @@ export interface BootSurfaceInput {
 	mux: MuxContract | undefined;
 	options: BootOptions;
 	panes: PanesOperations | null;
+	printJsonSessionHeader: (meta: SessionMeta | null, active: PancodeSettings["chat"]) => RunJsonMainSessionFrame | null;
 	providers: ProvidersContract;
 	readCurrentSessionEntries: () => ReadonlyArray<SessionEntry>;
 	recordBoot: (interactivity?: BootInteractivity) => void;
@@ -124,9 +142,15 @@ export interface BootSurfaceInput {
 	selectAtScope: SessionSettingsView["selectAtScope"];
 	session: SessionContract | undefined;
 	settingOrigin: SessionSettingsView["settingOrigin"];
+	startSessionExtensionHost: (
+		mode: "headless" | "acp",
+		ask?: AskUserHandler,
+	) => Promise<import("../extension-host.js").ExtensionHost | null>;
+	startupOverrides: SessionOverrides;
 	systemOne: SystemOne;
 	systemOneControl: ReturnType<typeof createSystemOneControl>;
 	taskBoard: TaskBoardStore;
+	taskMemoryBank: TaskMemoryBank;
 	taskMemoryTier: () => "llm" | "rules";
 	telemetry: TelemetryContract;
 	telemetryRunReaders: TelemetryRunReaderBinder | undefined;
@@ -146,5 +170,9 @@ export interface BootSurfaceInput {
  * STAGE0_SEAMS), so it hands them to the surfaces; each `load*` is that module's `import()`, still run on its own path.
  */
 export interface BootSurfaceSeams {
+	answerExtensionLine: typeof answerExtensionLine;
 	loadInteractiveIndex: () => Promise<typeof InteractiveIndexModule>;
+	parseSlashCommand: typeof parseSlashCommand;
+	resolvePermission: typeof resolvePermission;
+	subscribeLoopGuardStop: typeof subscribeLoopGuardStop;
 }
