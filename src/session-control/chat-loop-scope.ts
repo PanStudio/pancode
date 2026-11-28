@@ -88,9 +88,14 @@ export interface ChatLoopScope {
 	stepPolicyStop: { template?: string } | null;
 	lastStepPipeline: StepPipelineEnd | null;
 	stepTurnScope: { evidence: SubmitEvidence; continuation: boolean } | null;
+	activeSubmit: Promise<void>;
 	priorSubmit: Promise<void>;
 	sessionResetSettlement: Promise<void>;
 	machinePreparation: { token: object; runtime: AgentRuntime | null } | null;
+	machineTurnRunning: object | null;
+	pendingMachineCancellation: object | null;
+	machineHostDisposed: boolean;
+	nextRequestPrepared: Promise<void>;
 	nextRequestNavigation: number;
 	turnActive: boolean;
 	pendingPreTurnRead: AbortController | null;

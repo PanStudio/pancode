@@ -1320,7 +1320,7 @@ export function createChatLoop(deps: CreateChatLoopDeps): ChatLoop {
 		const yolo = (deps.getAutonomy?.() ?? deps.getSettings().safety.autonomy) === "yolo";
 		options.turnBudgetContinues = budgetCrossingContinues({
 			yolo,
-			machineTurn: machineTurnRunning !== null,
+			machineTurn: loop.machineTurnRunning !== null,
 			failure: state.continuation.stop,
 			locked: state.synthesisToolLock,
 			continuations: state.continuation.yoloContinuations,
@@ -1413,9 +1413,18 @@ export function createChatLoop(deps: CreateChatLoopDeps): ChatLoop {
 		lastStepPipeline: null,
 		/** The running submit's runtime, where its own messages start, and whether it is a yolo continuation. */
 		stepTurnScope: null,
+		// Settlement tracking for whenSettled(): every submit still going, coerced
+		// to never reject so shutdown ordering cannot throw. `priorSubmit` is what
+		// `activeSubmit` held before the latest submit joined it, which is the run an
+		// interrupt has to wait out.
+		activeSubmit: Promise.resolve(),
 		priorSubmit: Promise.resolve(),
 		sessionResetSettlement: Promise.resolve(),
 		machinePreparation: null,
+		machineTurnRunning: null,
+		pendingMachineCancellation: null,
+		machineHostDisposed: false,
+		nextRequestPrepared: Promise.resolve(),
 		nextRequestNavigation: 0,
 		// A submit owns the turn state machine from the moment it starts running,
 		// which is well before `state.streaming` flips: the probe, auto-compaction,
@@ -1567,19 +1576,9 @@ export function createChatLoop(deps: CreateChatLoopDeps): ChatLoop {
 
 	// --- the state machine --------------------------------------------------
 
-	// Settlement tracking for whenSettled(): every submit still going, coerced
-	// to never reject so shutdown ordering cannot throw. `priorSubmit` is what
-	// `activeSubmit` held before the latest submit joined it, which is the run an
-	// interrupt has to wait out.
-	let activeSubmit: Promise<void> = Promise.resolve();
 	let machineTurnOwner: object | null = null;
-	let machineTurnRunning: object | null = null;
-	let pendingMachineCancellation: object | null = null;
 	let machineProjectionBinding: { host: MachineTurnProjectionHost } | null = null;
 	let machineProjectionRequired = false;
-	let machineHostDisposed = false;
-
-	let nextRequestPrepared: Promise<void> = Promise.resolve();
 	const {
 		continueStoppedTurn,
 		interruptRefusalReason,
@@ -1660,9 +1659,9 @@ export function createChatLoop(deps: CreateChatLoopDeps): ChatLoop {
 			}
 			// A stop now supersedes one still waiting for the tool boundary.
 			loop.boundaryStop = null;
-			const machineCancellation = pendingMachineCancellation;
-			pendingMachineCancellation = null;
-			const preserveQueue = machineCancellation !== null && machineCancellation === machineTurnRunning;
+			const machineCancellation = loop.pendingMachineCancellation;
+			loop.pendingMachineCancellation = null;
+			const preserveQueue = machineCancellation !== null && machineCancellation === loop.machineTurnRunning;
 			// An operator who already stopped this turn keeps it stopped: a guard
 			// stop racing in after the Esc must not read as the guard's, or yolo
 			// would continue the turn (R2-safety-secrets-20).
@@ -1911,9 +1910,9 @@ export function createChatLoop(deps: CreateChatLoopDeps): ChatLoop {
 		liveBudget: () => context.liveBudget(),
 		inspectLiveBudget: () => context.inspectLiveBudget(),
 		refreshLiveBudget: () => context.refreshLiveBudget(),
-		whenSettled: () => activeSubmit,
+		whenSettled: () => loop.activeSubmit,
 		whenPrewarmSettled: () => prewarm.settled(),
-		nextRequestReady: () => nextRequestPrepared,
+		nextRequestReady: () => loop.nextRequestPrepared,
 		onSessionReset(handler): () => void {
 			sessionResetListeners.add(handler);
 			return () => {
@@ -1927,7 +1926,7 @@ export function createChatLoop(deps: CreateChatLoopDeps): ChatLoop {
 			// An interview another session or branch closed never answers this one's continuations (C-25).
 			loop.promptInterview = undefined;
 			turnRuntime.cancelRunWatchdog();
-			loop.sessionResetSettlement = activeSubmit;
+			loop.sessionResetSettlement = loop.activeSubmit;
 			state.streaming = false;
 			loop.pendingPreTurnRead?.abort();
 			context.cancelCompaction();
@@ -1977,7 +1976,7 @@ export function createChatLoop(deps: CreateChatLoopDeps): ChatLoop {
 			// an advisory; arriving here at all is the navigation that does.
 			context.resetForSession(leafTurnId);
 			loop.nextRequestNavigation += 1;
-			nextRequestPrepared =
+			loop.nextRequestPrepared =
 				replayMessages && replayMessages.length > 0 ? prepareNextRequest(loop.nextRequestNavigation) : Promise.resolve();
 			// The resumed ledger renders before the first new turn (issue #189),
 			// and the window it renders against should be the probed one rather
@@ -1999,7 +1998,7 @@ export function createChatLoop(deps: CreateChatLoopDeps): ChatLoop {
 			steerInterrupter.dispose();
 			loop.submitOwner?.abort();
 			loop.pendingPreTurnRead?.abort();
-			machineHostDisposed = true;
+			loop.machineHostDisposed = true;
 			sessionResetListeners.clear();
 			unsubscribeEggSession?.();
 			eggs.reset();
@@ -2332,7 +2331,7 @@ export function createChatLoop(deps: CreateChatLoopDeps): ChatLoop {
 
 	const submitInner = api.submit.bind(api);
 	const submitTracked: ChatLoop["submit"] = (text, options) => {
-		loop.priorSubmit = activeSubmit;
+		loop.priorSubmit = loop.activeSubmit;
 		const preparationToken = options?.machineTurn?.preparationToken;
 		loop.machinePreparation = preparationToken === undefined ? null : { token: preparationToken, runtime: null };
 		// The flag brackets the whole submit, including the early returns an
@@ -2347,7 +2346,7 @@ export function createChatLoop(deps: CreateChatLoopDeps): ChatLoop {
 		// A steer during a run is a submit that returns at once. Replacing the record with it forgot the
 		// live run, so an interrupt's wait for the cancel to settle returned early and shutdown could stop the writer
 		// under a persisting turn. The record covers every submit still going.
-		activeSubmit = Promise.all([loop.priorSubmit, run.catch(() => {})]).then(() => {});
+		loop.activeSubmit = Promise.all([loop.priorSubmit, run.catch(() => {})]).then(() => {});
 		return run;
 	};
 
@@ -2435,7 +2434,7 @@ export function createChatLoop(deps: CreateChatLoopDeps): ChatLoop {
 		};
 	};
 	api.machineTurnAvailable = () =>
-		!machineHostDisposed &&
+		!loop.machineHostDisposed &&
 		(!machineProjectionRequired || machineProjectionBinding !== null) &&
 		machineTurnOwner === null &&
 		!state.streaming &&
@@ -2456,7 +2455,7 @@ export function createChatLoop(deps: CreateChatLoopDeps): ChatLoop {
 		if (!api.machineTurnAvailable?.())
 			return refused("The main conversation is busy; delivery remains with its job controller.");
 		const current = (): boolean =>
-			!machineHostDisposed &&
+			!loop.machineHostDisposed &&
 			!request.signal.aborted &&
 			request.sessionId === api.getSessionId() &&
 			request.isAdmissionCurrent();
@@ -2485,13 +2484,13 @@ export function createChatLoop(deps: CreateChatLoopDeps): ChatLoop {
 				return;
 			}
 			if (
-				machineTurnRunning === token &&
+				loop.machineTurnRunning === token &&
 				ownedUserTurnId !== null &&
 				state.activeUserTurnId === ownedUserTurnId &&
 				state.runtime === ownedRuntime &&
 				request.sessionId === api.getSessionId()
 			) {
-				pendingMachineCancellation = token;
+				loop.pendingMachineCancellation = token;
 				// The controller's abort reason says what ended it; a timed-out occurrence is not a cancelled one (#445).
 				const cause = request.signal.reason;
 				const ended = cause instanceof Error ? cause.message : String(cause);
@@ -2502,7 +2501,7 @@ export function createChatLoop(deps: CreateChatLoopDeps): ChatLoop {
 						...(cause instanceof JobClockExpired ? { source: "job_clock" as const } : {}),
 					});
 				} finally {
-					pendingMachineCancellation = null;
+					loop.pendingMachineCancellation = null;
 				}
 			}
 		};
@@ -2537,12 +2536,12 @@ export function createChatLoop(deps: CreateChatLoopDeps): ChatLoop {
 					onStarting: request.onStarting,
 					onSettled: (result) => {
 						settled = result;
-						if (machineTurnRunning === token) machineTurnRunning = null;
+						if (loop.machineTurnRunning === token) loop.machineTurnRunning = null;
 					},
 				},
 				onAdmitted: () => {
 					if (loop.machinePreparation?.token === token) loop.machinePreparation = null;
-					machineTurnRunning = token;
+					loop.machineTurnRunning = token;
 					autonomousCommits.release ??= enterAutonomousCommitScope();
 					ownedUserTurnId = state.activeUserTurnId;
 					ownedRuntime = state.runtime;
@@ -2573,7 +2572,7 @@ export function createChatLoop(deps: CreateChatLoopDeps): ChatLoop {
 		} finally {
 			request.signal.removeEventListener("abort", cancel);
 			autonomousCommits.release?.();
-			if (machineTurnRunning === token) machineTurnRunning = null;
+			if (loop.machineTurnRunning === token) loop.machineTurnRunning = null;
 			try {
 				projectionLease?.release();
 			} catch (error) {
@@ -2584,7 +2583,7 @@ export function createChatLoop(deps: CreateChatLoopDeps): ChatLoop {
 			}
 			if (machineTurnOwner === token) machineTurnOwner = null;
 			// Successor prompts have their own lifetime and must never extend this occurrence (#411).
-			if (settled !== null && !machineHostDisposed)
+			if (settled !== null && !loop.machineHostDisposed)
 				void queues
 					.resubmitStranded()
 					.then(async (submitted) => {
