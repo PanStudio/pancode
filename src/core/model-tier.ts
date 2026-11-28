@@ -18,7 +18,7 @@ export function isModelTier(value: unknown): value is ModelTier {
 }
 
 /** What is known about a model before anyone has asked how capable it is. */
-export interface ModelTierFacts {
+interface ModelTierFacts {
 	/** The wire model id, which often carries a parameter count (`qwen3-8b`, `llama-3.1-70b`). */
 	modelId: string;
 	/** The effective context window in tokens; zero when unknown. */

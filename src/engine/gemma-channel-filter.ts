@@ -41,7 +41,7 @@ export interface GemmaChannelSegment {
 	content: string;
 }
 
-export interface GemmaChannelFilter {
+interface GemmaChannelFilter {
 	push(chunk: string): GemmaChannelSegment[];
 	flush(): GemmaChannelSegment[];
 }

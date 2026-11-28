@@ -13,7 +13,7 @@ import { join } from "node:path";
 import { resolvePancodeDirs } from "./xdg.js";
 
 /** Its value is the injected directory, which tells PanCode's injection from an operator NODE_COMPILE_CACHE. */
-export const INJECTED_COMPILE_CACHE_ENV = "PANCODE_INJECTED_COMPILE_CACHE";
+const INJECTED_COMPILE_CACHE_ENV = "PANCODE_INJECTED_COMPILE_CACHE";
 
 let settled: string | null | undefined;
 

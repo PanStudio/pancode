@@ -202,7 +202,7 @@ export function usageKnownAmount(quantity: { fact: Fact<number> | FactSum } | nu
 }
 
 /** A session's token quantities by field, as the read model folds its own calls. */
-export interface SessionTokenQuantities {
+interface SessionTokenQuantities {
 	input: UsageQuantity | null | undefined;
 	output: UsageQuantity | null | undefined;
 	cacheRead: UsageQuantity | null | undefined;

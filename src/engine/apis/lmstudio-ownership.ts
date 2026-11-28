@@ -28,7 +28,7 @@ import { withStateFileLock } from "../../core/state-file-lock.js";
 import { pancodeStatePath } from "../../core/xdg.js";
 import { atomicWrite } from "../session.js";
 
-export interface PancodeLoadRecord {
+interface PancodeLoadRecord {
 	instanceId: string;
 	modelKey: string;
 	loadedAt: string;

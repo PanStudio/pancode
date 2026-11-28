@@ -51,8 +51,6 @@ import type { RegistryDeps, ToolRegistry } from "../tools/registry-contract.js";
 import { runtimeAttachesGateway } from "../tools/surface.js";
 import { type AgentLedgerPort, toolSignatureOf } from "../worker/protocol.js";
 
-export { WORKER_RUNTIME_MEDIATES_PANCODE_DISPATCH } from "./worker-runtime-capabilities.js";
-
 /** Host-owned terminal protocol, never an additional workspace capability. */
 export const INTERNAL_HELPER_RESULT_TOOL = "pancode_submit_result";
 
@@ -62,7 +60,7 @@ export const INTERNAL_HELPER_RESULT_TOOL = "pancode_submit_result";
  * workers do not share counts. The detector matches the orchestrator's
  * behaviour and forwards structural tool decisions to the run journal (#434).
  */
-export interface WorkerSafetyOptions {
+interface WorkerSafetyOptions {
 	cwd?: string;
 	/** Exact artifact required by the admitted architect contract; never a general write grant. */
 	requiredArtifactPath?: string;
@@ -270,7 +268,7 @@ export function createWorkerToolRegistry(
  * mediates nested PanCode dispatch. A constant, not a lookup: there is nothing to
  * vary by runtime, and a parameter would imply otherwise.
  */
-export interface AttestedToolIdentityInput {
+interface AttestedToolIdentityInput {
 	allowedTools: ReadonlyArray<ToolName>;
 	helperResult?: true;
 	/** False when the resolved runtime mediates no tool calls at all. */

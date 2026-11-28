@@ -21,7 +21,7 @@ const MAX_CALLS = 1000;
 const DEFAULT_CALLS = 200;
 const GROUP_BY: ReadonlySet<CostReportV1["groupBy"]> = new Set(["role", "model", "turn"]);
 
-export interface AcpTelemetryRequestDeps {
+interface AcpTelemetryRequestDeps {
 	model: TelemetryReadModel;
 	/** Refresh provider readings through the quota domain before reading their telemetry DTO (#434). */
 	refreshQuota?: () => Promise<void>;

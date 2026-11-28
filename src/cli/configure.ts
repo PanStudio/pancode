@@ -13,6 +13,7 @@ import {
 } from "../domains/providers/index.js";
 import { closestRuntimeId, getRuntimeRegistry } from "../domains/providers/registry.js";
 import type { RuntimeDescriptor } from "../domains/providers/types/runtime-descriptor.js";
+import { printError, printNote } from "./argv.js";
 import { ask } from "./ask.js";
 import { HELP, type ParsedArgs, parseSetupArgs } from "./configure-args.js";
 import { editSettings } from "./configure-editor.js";
@@ -32,7 +33,6 @@ import {
 } from "./configure-target-setup.js";
 import { createLifecyclePresenter, type LifecyclePresenter, shortenPath } from "./lifecycle-presenter.js";
 import { canSelect, promptSelect } from "./select.js";
-import { printError, printNote } from "./shared.js";
 import { terminalColumns, wrapPlain } from "./text-layout.js";
 
 /** Auth labels for credentials PanCode holds itself; any other label names the tool a runtime logs in through. */

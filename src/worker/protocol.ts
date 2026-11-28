@@ -175,7 +175,7 @@ export interface WorkerResourceFacts {
 
 /** Bound on how much attested resource detail one announce may carry. */
 export const WORKER_RESOURCE_LABEL_MAX = 32;
-export const WORKER_RESIDENT_MODEL_MAX = 64;
+const WORKER_RESIDENT_MODEL_MAX = 64;
 
 /**
  * Route and node identity attested by the process that will execute the run.
@@ -593,8 +593,8 @@ export interface WorkerModelLoad {
 }
 
 /** Bounds on one model load report. */
-export const WORKER_MODEL_LOAD_ID_MAX_CHARS = 256;
-export const WORKER_MODEL_LOAD_ALIAS_MAX = 8;
+const WORKER_MODEL_LOAD_ID_MAX_CHARS = 256;
+const WORKER_MODEL_LOAD_ALIAS_MAX = 8;
 
 /**
  * One worker ask routed to the main agent (Phase D). It rides the control
@@ -735,7 +735,7 @@ export function toolSignatureOf(names: ReadonlyArray<string>): string {
 	return sha256Hex(JSON.stringify([...names].sort()));
 }
 
-export type FrameParseResult<T> = { ok: true; value: T } | { ok: false; reason: string };
+type FrameParseResult<T> = { ok: true; value: T } | { ok: false; reason: string };
 
 /**
  * Reject an oversized line before it reaches JSON.parse. Byte length, not code

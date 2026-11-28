@@ -42,7 +42,6 @@ import {
 	ACP_TOOL_PROGRESS_META_KEY,
 	ACP_TOOLS_META_KEY,
 	ACP_TRUST_META_KEY,
-	ACP_USAGE_META_KEY,
 	ACP_WORKER_PERMISSIONS_META_KEY,
 	ACP_WORKSPACE_META_KEY,
 	closed,
@@ -245,7 +244,7 @@ export const AcpWorkerPermissionsCapability = Type.Object(
 	},
 	closed,
 );
-export type AcpWorkerPermissionsCapability = Static<typeof AcpWorkerPermissionsCapability>;
+type AcpWorkerPermissionsCapability = Static<typeof AcpWorkerPermissionsCapability>;
 
 /** `_meta["pancode/budget"]` beside `_meta["pancode/notice"]` on the chunk that reports a ceiling stop. */
 export interface AcpBudgetBlock {
@@ -275,7 +274,7 @@ export interface AcpBudgetCapability {
 }
 
 /** The trust report's capability entry. `surfaces` are `ProjectTrustSurface` names. */
-export interface AcpTrustCapability {
+interface AcpTrustCapability {
 	version: 1;
 	meta: typeof ACP_TRUST_META_KEY;
 	surfaces: ReadonlyArray<string>;
@@ -301,7 +300,7 @@ export interface AcpCeiling {
  * one with `ceiling_unsupported`. Enforcement covers tool calls, the dispatches
  * they start, and slash commands, which run only as reads or bounded turns.
  */
-export interface AcpCeilingCapability {
+interface AcpCeilingCapability {
 	version: 1;
 	meta: typeof ACP_CEILING_META_KEY;
 	fields: ReadonlyArray<(typeof ACP_CEILING_FIELDS)[number]>;
@@ -312,7 +311,7 @@ export interface AcpCeilingCapability {
  * `satisfies` this, so an extension it announces under a key or in a shape this
  * interface does not name fails the build instead of reaching a client.
  */
-export interface AcpAgentCapabilitiesMeta {
+interface AcpAgentCapabilitiesMeta {
 	[ACP_SESSION_META_KEY]: { close: boolean; label: boolean };
 	[ACP_SETTINGS_META_KEY]: AcpSettingsCapability;
 	[ACP_TARGETS_META_KEY]: AcpTargetsCapability;
@@ -344,46 +343,6 @@ export interface AcpAgentCapabilitiesMeta {
 	[ACP_SHELL_META_KEY]?: AcpShellCapability;
 	[ACP_QUEUE_META_KEY]?: AcpWire<AcpQueueCapability>;
 	[ACP_READOUTS_META_KEY]: AcpReadoutsCapability;
-}
-
-/** What a client announces under `clientCapabilities._meta` to opt in to the attended extensions. */
-export interface AcpClientCapabilitiesMeta {
-	[ACP_EVENTS_META_KEY]?: { version: 1; kinds: ReadonlyArray<string> };
-	[ACP_TOOL_PROGRESS_META_KEY]?: { version: 1 };
-	[ACP_QUEUE_META_KEY]?: { version: 1 };
-	[ACP_INTERVIEWS_META_KEY]?: {
-		version: 1;
-		request: typeof ACP_INTERVIEW_REQUEST_METHOD;
-		cancel?: typeof ACP_INTERVIEW_CANCEL_METHOD;
-		/**
-		 * How long an interview round waits for the client, 1 to
-		 * {@link ACP_MAX_NEGOTIATED_TIMEOUT_MS}. Overrides the configured default,
-		 * never an explicit `pancode acp --permission-timeout`. Any other value
-		 * refuses the whole opt-in.
-		 */
-		timeoutMs?: number;
-	};
-	/**
-	 * A person at the client answers MCP servers' elicitations: forms and
-	 * links, over `_pancode/elicitation/request`. Without it no MCP server is
-	 * told PanCode can ask anyone. `timeoutMs` is bounded and pinned like the
-	 * interview one.
-	 */
-	[ACP_ELICITATION_META_KEY]?: {
-		version: 1;
-		request: typeof ACP_ELICITATION_REQUEST_METHOD;
-		cancel?: typeof ACP_ELICITATION_CANCEL_METHOD;
-		timeoutMs?: number;
-	};
-	[ACP_WORKER_PERMISSIONS_META_KEY]?: {
-		version: 1;
-		withdraw: typeof ACP_PERMISSION_WITHDRAW_METHOD;
-		/** The `session/request_permission` window, bounded and pinned like the interview one. */
-		timeoutMs?: number;
-	};
-	[ACP_READOUTS_META_KEY]?: { version: 1 };
-	/** The full read-model usage, each quantity with its fact and ref, in place of the compact displays. */
-	[ACP_USAGE_META_KEY]?: { version: 1 };
 }
 
 /** Preserve the announcement's inferred shape while checking every extension against its wire contract. */

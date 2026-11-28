@@ -15,7 +15,7 @@ import { resolvePancodeDirs } from "./xdg.js";
  * keys do not apply; they are kept apart because a permission error announced
  * as invalid YAML sends the operator after the wrong problem.
  */
-export type SettingsIssueKind = "unreadable" | "syntax" | "schema";
+type SettingsIssueKind = "unreadable" | "syntax" | "schema";
 
 export interface SettingsIssue {
 	/** Dotted key path, e.g. `chat.target` or `targets[2].runtime`. */

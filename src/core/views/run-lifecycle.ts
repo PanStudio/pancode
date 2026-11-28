@@ -13,9 +13,9 @@
  */
 
 export type RunLifecycleKind = "enqueued" | "started" | "progressed" | "aborted" | "ended" | "settled";
-export type RunLifecyclePhase = "queued" | "running" | "cancelling" | "ended" | "settled";
+type RunLifecyclePhase = "queued" | "running" | "cancelling" | "ended" | "settled";
 /** How a surface draws the run. A stop is not a failure: a canceled run reads `stopped`. */
-export type RunLifecycleView = "queued" | "running" | "cancelling" | "done" | "failed" | "stopped";
+type RunLifecycleView = "queued" | "running" | "cancelling" | "done" | "failed" | "stopped";
 
 export interface RunLifecycleEvent {
 	readonly kind: RunLifecycleKind;

@@ -26,7 +26,6 @@ export {
 	type McpEventStream,
 	type McpEventStreamHandlers,
 	type McpEventStreamOptions,
-	type McpHttpServerSpec,
 	type McpProgressUpdate,
 	type McpProtocolClientOptions,
 	type McpRequestOptions,
@@ -38,9 +37,7 @@ export {
 	type McpToolCallResult,
 	type McpToolDescriptor,
 	type McpToolListing,
-	type McpTransport,
 	type McpTransportEvents,
-	mcpRequiredCapabilities,
 	renderMcpContent,
 	resourceLinkLine,
 } from "./client.js";

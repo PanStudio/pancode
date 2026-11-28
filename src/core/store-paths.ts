@@ -56,10 +56,7 @@ export {
 	encodeTagSegment,
 	isRecordsTag,
 	recordsTag,
-	STORE_BLOB_MAX_BYTES,
 	STORE_DEFAULT_ROOT_NAME,
-	STORE_RECORDS_SUFFIX,
-	STORE_TAG_MAX_BYTES,
 	validateBlobName,
 	validateTagName,
 } from "@pancode/store/paths";
@@ -98,8 +95,8 @@ export function storeReplacedBlob(
  * in task worktrees key the same store as the session that dispatched them.
  * `storeMainCheckout` is the package's, so the store CLI keys the same way.
  * The same `.git` then `commondir` walk exists in `taskWorktreeOrigin`
- * (`src/core/task-worktree-claim.ts`) and `linkedWorktreeMainRoot`
- * (`src/domains/memory/operations.ts`); each also checks an ownership claim or
+ * (`src/core/task-worktree-claim.ts`) and `checkoutLink`
+ * (`src/core/project-root.ts`); each also checks an ownership claim or
  * back link this lookup does not need, so they are not merged here.
  */
 export function storeProjectRoot(cwd: string): string {

@@ -82,7 +82,7 @@ import {
 	type WorkerHookEvaluator,
 } from "./extension-runtime-hooks.js";
 
-export interface ExtensionReloadHookSummary {
+interface ExtensionReloadHookSummary {
 	/** Registrations published for the owner in this generation. */
 	registered: number;
 	dropped: number;
@@ -254,7 +254,7 @@ export function extensionHookReceiptSink(sessionId: () => string | undefined): H
 }
 
 /** Cap on issue lines carried in one outcome so an operator surface stays bounded. */
-export const EXTENSION_RELOAD_REPORT_LINE_CAP = 40;
+const EXTENSION_RELOAD_REPORT_LINE_CAP = 40;
 
 function failure(message: string): ExtensionSnapshotDiagnostics {
 	return {

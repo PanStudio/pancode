@@ -53,6 +53,7 @@ import {
 	validateEgress,
 	validateExternalAgent,
 	validateFleetNode,
+	validateHomeReads,
 	validateKeybindings,
 	validateModels,
 	validatePrompts,
@@ -87,7 +88,12 @@ const TOP_LEVEL_KEYS = [
 ] as const;
 
 function readSandboxOptions(issues: Issues, safety: Record<string, unknown>, settings: PancodeSettings): void {
+	if ("sandbox" in safety) {
+		const parsed = expectEnum(issues, "safety.sandbox", safety.sandbox, SANDBOX_MODES);
+		if (parsed !== undefined) settings.safety.sandbox = parsed;
+	}
 	if ("egress" in safety) validateEgress(issues, safety.egress, settings);
+	if ("homeReads" in safety) validateHomeReads(issues, safety.homeReads, settings);
 	if ("sandboxUnconfinedLocalWorkers" in safety) {
 		const parsed = expectBoolean(issues, "safety.sandboxUnconfinedLocalWorkers", safety.sandboxUnconfinedLocalWorkers);
 		if (parsed !== undefined) settings.safety.sandboxUnconfinedLocalWorkers = parsed;
@@ -968,6 +974,7 @@ export function validateSettings(raw: unknown): SettingsValidationResult {
 				"sandboxUnconfinedLocalWorkers",
 				"sandboxCacheMaxGiB",
 				"confine",
+				"homeReads",
 				"snapshots",
 				"validationWrappers",
 				"unattendedAfterSeconds",
@@ -979,10 +986,6 @@ export function validateSettings(raw: unknown): SettingsValidationResult {
 			if ("autonomy" in safety) {
 				const parsed = expectEnum(issues, "safety.autonomy", safety.autonomy, AUTONOMY_LEVELS);
 				if (parsed !== undefined) settings.safety.autonomy = parsed;
-			}
-			if ("sandbox" in safety) {
-				const parsed = expectEnum(issues, "safety.sandbox", safety.sandbox, SANDBOX_MODES);
-				if (parsed !== undefined) settings.safety.sandbox = parsed;
 			}
 			readSandboxOptions(issues, safety, settings);
 			if ("snapshots" in safety) {

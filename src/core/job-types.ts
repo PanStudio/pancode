@@ -11,7 +11,7 @@ export interface JobOwner {
 	readonly generation: string;
 }
 export const JOB_PREDICATE_OPS = ["eq", "ne", "lt", "lte", "gt", "gte", "exists"] as const;
-export type JobPredicateOp = (typeof JOB_PREDICATE_OPS)[number];
+type JobPredicateOp = (typeof JOB_PREDICATE_OPS)[number];
 export interface JobPredicate {
 	readonly path: readonly string[];
 	readonly op: JobPredicateOp;
@@ -42,7 +42,7 @@ export type JobRunner =
 			readonly event: string;
 			readonly arguments: Readonly<Record<string, unknown>>;
 	  };
-export type JobMatchAction = { readonly kind: "notice" } | { readonly kind: "main_turn"; readonly prompt: string };
+type JobMatchAction = { readonly kind: "notice" } | { readonly kind: "main_turn"; readonly prompt: string };
 export interface JobCreateInput {
 	readonly intervalMs: number;
 	readonly runner: JobRunner;
@@ -108,7 +108,7 @@ export function turnContinuationDelayMs(attempt: number, retryAfterMs?: number):
 	// A stated wait is never cut short, or the continuation would go back to the provider before the time it named.
 	return Math.max(TURN_CONTINUATION_FAILURE_DELAYS_MS[index] ?? 0, retryAfterMs ?? 0);
 }
-export type JobEndReason = "count" | "condition" | "stopped" | "canceled" | "deadline" | "failure";
+type JobEndReason = "count" | "condition" | "stopped" | "canceled" | "deadline" | "failure";
 export const JOB_OUTCOMES = ["succeeded", "failed", "noop", "canceled", "timed_out", "interrupted"] as const;
 export const JOB_DELIVERY_STATES = ["pending", "running", "delivered", "dropped", "failed"] as const;
 export interface JobEvidence {
@@ -123,7 +123,7 @@ export interface JobEvidence {
 	truncated: boolean;
 	errorClass: "infrastructure" | "permission" | "execution" | null;
 }
-export interface JobOccurrence {
+interface JobOccurrence {
 	id: string;
 	scheduledAt: number;
 	startedAt: number | null;
@@ -131,7 +131,7 @@ export interface JobOccurrence {
 	state: "pending" | "running" | "terminal";
 	evidence: JobEvidence | null;
 }
-export interface JobDelivery {
+interface JobDelivery {
 	id: string;
 	occurrenceId: string;
 	kind: "notice" | "main_turn";

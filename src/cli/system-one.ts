@@ -3,7 +3,7 @@
 import type { PancodeSettings } from "../core/config.js";
 import { readLayeredSettings, settingsSourceFor } from "../core/settings-layers.js";
 import type { OneShotPort } from "../domains/providers/one-shot.js";
-import { printError } from "./shared.js";
+import { printError } from "./argv.js";
 
 export const SYSTEM_ONE_HELP = `pancode systemone status
 pancode systemone use <route>[,<route>...] [--scope user|project]

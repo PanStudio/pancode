@@ -98,11 +98,6 @@ function pricedCostOf(settled: SettledRunRecord["settled"]): Fact<number> {
 	return usd.kind === "measured" || usd.kind === "estimated" ? usd : { kind: "unknown", reason: "not-observed" };
 }
 
-/** The history entry a settled run contributes; null for a run settled under no route decision. */
-export function routeHistoryEntry(record: SettledRunRecord): RouteHistoryEntry | null {
-	return routeEntryOf(settledRunFacts(record));
-}
-
 function settledRunFacts(record: SettledRunRecord): SettledRunFacts {
 	return {
 		runId: record.row.runId,

@@ -43,10 +43,6 @@ const HKDF_INFO = "pancode share v1";
 /** PKCS#8 DER prefix of an X25519 private key; the raw 32 bytes follow it. */
 const X25519_PKCS8_PREFIX = Buffer.from("302e020100300506032b656e04220420", "hex");
 
-export function newShareId(): string {
-	return `shr_${randomBytes(8).toString("hex")}`;
-}
-
 export interface SharePlaintext {
 	format: typeof SHARE_PLAIN_FORMAT;
 	v: 1;

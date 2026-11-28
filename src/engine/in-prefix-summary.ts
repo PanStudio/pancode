@@ -52,7 +52,7 @@ export interface MainRequestRecord {
 	cachedTokens: number | null;
 }
 
-export type InPrefixRefusal =
+type InPrefixRefusal =
 	| "unsupported-api"
 	| "no-request"
 	| "prompt-unknown"
@@ -63,7 +63,7 @@ export type InPrefixRefusal =
 	| "pending-tools"
 	| "prefix-moved";
 
-export interface InPrefixSummary {
+interface InPrefixSummary {
 	/** The route the request goes to; a compaction resolved to any other model cannot use it. */
 	model: { id: string; provider: string };
 	/** Base-input-equivalent tokens this request costs before output, with `tail` as the appended message. */
@@ -100,7 +100,7 @@ function hostedPricing(model: Model<Api>): PrefixPricing {
 }
 
 /** What the caller knows about the route beyond the model row. */
-export interface InPrefixRoute {
+interface InPrefixRoute {
 	/**
 	 * The route's billing resolved free: a local-native runtime, or a target declaring `pricing: free` or zero rates.
 	 * An unpriced gateway is not free; its pricing is unknown.

@@ -12,7 +12,7 @@ import {
 	releaseHubImport,
 	renderHubImportPlan,
 } from "../domains/interop/index.js";
-import { printError } from "./shared.js";
+import { printError } from "./argv.js";
 
 const HELP = `pancode hub import <path|github-tree-url> [--user|--project] [--format claude|codex] [--dry-run] [--json] [--yes]
 

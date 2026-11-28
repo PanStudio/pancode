@@ -37,13 +37,13 @@ import {
 import type { AgentRuntime } from "./turn-state.js";
 
 /** Longest a keepalive follows one request while the turn awaits an attached dispatch. */
-export const KEEPALIVE_FLEET_HORIZON_MS = 2 * 60 * 60_000;
+const KEEPALIVE_FLEET_HORIZON_MS = 2 * 60 * 60_000;
 /** Longest a keepalive follows one request while the turn awaits any other tool. */
-export const KEEPALIVE_TOOL_HORIZON_MS = 60 * 60_000;
+const KEEPALIVE_TOOL_HORIZON_MS = 60 * 60_000;
 
-export type KeepalivePhase = "fleet" | "tools";
+type KeepalivePhase = "fleet" | "tools";
 
-export type KeepaliveStopReason =
+type KeepaliveStopReason =
 	| "disabled"
 	| "turn-settled"
 	| "runtime-changed"
@@ -91,7 +91,7 @@ export interface TurnKeepaliveDeps {
 	};
 }
 
-export interface TurnKeepalive {
+interface TurnKeepalive {
 	/** Follow the turn's newest request; any earlier one is no longer the prefix the turn extends. */
 	noteRequest(
 		runtime: AgentRuntime,

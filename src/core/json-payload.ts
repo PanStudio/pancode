@@ -81,7 +81,7 @@ function matchingBrace(text: string, start: number): number {
 	return -1;
 }
 
-export type JsonObjectPayload =
+type JsonObjectPayload =
 	| { ok: true; value: Record<string, unknown> }
 	| { ok: false; reason: "not-json" | "not-object" };
 

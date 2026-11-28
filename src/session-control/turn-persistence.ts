@@ -13,6 +13,7 @@ import { messageUsageForAccounting } from "../core/message-accounting.js";
 import type { PackageIdentity } from "../core/package-identity.js";
 import type { FactSum } from "../core/telemetry/fact.js";
 import { sumFactSums, sumFacts } from "../core/telemetry/pricing.js";
+import { asRecord } from "../core/type-guards.js";
 import type { MiddlewareToolChoiceControl } from "../domains/middleware/index.js";
 import { noteAnthropicStreamQuota, noteCodexStreamQuota } from "../domains/quota/index.js";
 import { endpointDigest } from "../domains/session/context-accounting.js";
@@ -42,7 +43,6 @@ import {
 	hasPersistableAssistantContent,
 	isEmptyAbortedAssistantMessage,
 	isLengthStopAssistantMessage,
-	recordValue,
 	sumRunUsage,
 	terminalFailureFromAssistantMessage,
 	toolResultSummary,
@@ -53,7 +53,7 @@ import type { QueuedMessageKind } from "./turn-queues.js";
 import type { RetryStatusPayload } from "./turn-recovery.js";
 import type { AgentRuntime, ChatLoopTarget, TurnPersistenceState } from "./turn-state.js";
 
-export interface TurnPersistenceDeps {
+interface TurnPersistenceDeps {
 	/** Runs before any turn is written, so a ledger fact can precede the text it describes. */
 	beforeTurnRecorded?: (session: SessionContract) => void;
 	getToolOwner?: (name: string) => PackageIdentity | undefined;
@@ -270,7 +270,7 @@ export function createTurnPersistence(deps: TurnPersistenceDeps): TurnPersistenc
 			payload.stopReason = message.stopReason;
 		}
 		if (isLengthStopAssistantMessage(message) && state.runtime) {
-			const contextExhaustion = recordValue(payload.contextExhaustion);
+			const contextExhaustion = asRecord(payload.contextExhaustion);
 			const contextWindow = state.runtime.runtimeResolution.capabilityDecisions.contextWindow;
 			if (contextExhaustion && contextWindow > 0) contextExhaustion.contextWindow = contextWindow;
 		}

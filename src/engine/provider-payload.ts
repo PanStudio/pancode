@@ -21,7 +21,7 @@ import { safeResourceWrite } from "../core/safe-resource-write.js";
 import { isRecord } from "../core/type-guards.js";
 import { pancodeStatePath } from "../core/xdg.js";
 import { resolvedRequestContext } from "./context.js";
-import type { EngineModel, ToolRoundRecord } from "./types.js";
+import { type EngineModel, type ToolRoundRecord, zeroUsage } from "./types.js";
 
 type Choice<T extends { toolChoice?: unknown }> = NonNullable<T["toolChoice"]>;
 /**
@@ -641,12 +641,7 @@ export function streamToolRound(
 				usage: {
 					// This synthetic fault has no metered provider usage (#423).
 					callInvoked: false,
-					input: 0,
-					output: 0,
-					cacheRead: 0,
-					cacheWrite: 0,
-					totalTokens: 0,
-					cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+					...zeroUsage(),
 				},
 				stopReason: "error" as const,
 				errorMessage: error instanceof Error ? error.message : String(error),

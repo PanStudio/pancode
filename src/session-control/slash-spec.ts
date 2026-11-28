@@ -106,7 +106,7 @@ export function usageLine(entry: { name: string; args?: CommandArgsSpec }, subco
 	return `\nusage: ${prefix}${argsStr ? ` ${argsStr}` : ""}\n`;
 }
 
-export function parseArgs(spec: CommandArgsSpec, argsLine: string): ParsedArgs {
+function parseArgs(spec: CommandArgsSpec, argsLine: string): ParsedArgs {
 	const flags = new Map<string, string | true>();
 	const flagValues = new Map<string, string[]>();
 	const positionals: string[] = [];
@@ -341,7 +341,7 @@ export interface ArgCompletion {
 	required: boolean;
 }
 
-export interface ArgCompletionResult {
+interface ArgCompletionResult {
 	completions: ArgCompletion[];
 	/** Half-open replacement range in argumentText. Quotes are outside the range. */
 	tokenStart: number;

@@ -85,7 +85,7 @@ export interface LoadResult<M = DomainContractMap> {
 	stop(signal?: AbortSignal): Promise<void>;
 }
 
-export interface LoadDomainsOptions {
+interface LoadDomainsOptions {
 	diagnostic?: (text: string) => void;
 	/**
 	 * Awaited before each domain is created. Interactive boot turns the event

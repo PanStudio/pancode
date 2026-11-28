@@ -13,14 +13,12 @@ export {
 	renderUsdLimit,
 	renderUsdSpend,
 } from "../../../../src/core/telemetry/render.js";
-export { pancodeConfigDir, pancodeDataDir, pancodeStateDir, resolvePancodeDirs } from "../../../../src/core/xdg.js";
+export { resolvePancodeDirs } from "../../../../src/core/xdg.js";
 export { readInstallerRecord } from "../../../../src/domains/lifecycle/install-method.js";
 export { getVersionInfo } from "../../../../src/domains/lifecycle/version.js";
 export { ESCAPE_SCOPE_OPTION_PREFIX } from "../../../../src/domains/safety/escape-scope.js";
 export {
-	AcpProcessError,
 	AcpProtocolError,
-	AcpRequestError,
 	AcpTimeoutError,
 } from "../../../../src/engine/acp/errors.js";
 export type { AcpJsonRpcTransport } from "../../../../src/engine/acp/transport.js";

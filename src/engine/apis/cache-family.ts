@@ -11,7 +11,7 @@ import type { PinnedPromptPrefix } from "./anthropic-system-split.js";
 import { declareRuntimeNoticeProducer } from "./residency.js";
 
 /** The stable head of one worker request: what its provider can serve from a prefix cache. */
-export interface CacheFamilyInput {
+interface CacheFamilyInput {
 	api: string;
 	provider: string;
 	modelId: string;
@@ -81,7 +81,7 @@ const CONVERSATION = "pancodeConversation";
  * Where main sessions claim their cache lanes across processes: the dispatch admission store registers itself at
  * boot (M-11), so two processes on one install never put two live conversations on one routing id.
  */
-export interface MainCacheLaneStore {
+interface MainCacheLaneStore {
 	claim(key: string, conversation: string): number;
 	/** Release this process's lane of one conversation, or all of them when none is named. */
 	release(conversation: string | undefined): void;

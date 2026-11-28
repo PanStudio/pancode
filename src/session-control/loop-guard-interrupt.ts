@@ -19,7 +19,7 @@ import type { LoopBlockedPayload, ToolBudgetExceededPayload } from "../core/tele
 import type { ChatCancelOptions } from "./chat-loop.js";
 
 /** Minimal chat surface the loop-guard stop needs: only the cancel entry point. */
-export interface LoopGuardStoppableChat {
+interface LoopGuardStoppableChat {
 	cancel(options?: ChatCancelOptions): void;
 }
 

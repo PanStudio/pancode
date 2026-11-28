@@ -40,7 +40,7 @@ import { filterEntriesToActivePath } from "../domains/session/tree/active-path.j
 
 export const FLOW_RESTRICTION_ENTRY_TYPE = "pancode_flow_restriction";
 
-export interface FlowLedger {
+interface FlowLedger {
 	/** The union carried by the current session, or null when nothing restricted has entered it. */
 	current(): FlowRestrictionSet | null;
 	/**
@@ -278,7 +278,7 @@ export function createFlowLedger(deps: {
 	};
 }
 
-export interface HandoffSeedFlowDeps {
+interface HandoffSeedFlowDeps {
 	ledger: Pick<FlowLedger, "absorb" | "refusal" | "restrictionsOf">;
 	/** A session to hold the labels. A pending label would land on whichever session opens next, seeded or not. */
 	ensureSession: () => void;

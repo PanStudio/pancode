@@ -9,7 +9,7 @@
 const SDK_BODY_CHARS = 4000;
 const SDK_MARKER = /\.\.\. \[truncated (\d+) chars\]/u;
 /** Bounds both the capture read and the restored diagnostic kept in the ledger. */
-export const MAX_RESTORED_ERROR_BODY_CHARS = 65_536;
+const MAX_RESTORED_ERROR_BODY_CHARS = 65_536;
 const MAX_CAPTURE_BYTES = 4 * 1024 * 1024;
 
 /** Read a clone so the SDK still owns the original body. Never throws. */

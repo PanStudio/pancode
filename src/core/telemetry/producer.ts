@@ -50,7 +50,7 @@ export interface TelemetrySink {
  * Reopens a session writer its idle close shut, for a session-scoped record whose context names that session. It
  * never chooses an owner: a record whose context names no session has none to reopen (#434).
  */
-export type TelemetryReopener = (record: PendingTelemetry) => boolean;
+type TelemetryReopener = (record: PendingTelemetry) => boolean;
 
 const sinks = new Map<string, TelemetrySink>();
 /** Owns records whose context names neither a session nor a run; the writer stamps its own context on them (#434). */
@@ -302,7 +302,7 @@ type StageFacts = {
 };
 type Settlement = Omit<CallSettled, keyof CallStarted | "stages">;
 /** A provider HTTP response as the engine seam saw it. Headers never reach the journal except through an allowlist. */
-export interface ObservedResponse {
+interface ObservedResponse {
 	status: number;
 	headers: Readonly<Record<string, string>>;
 }

@@ -32,9 +32,9 @@ import {
 	toolStatus,
 	toolStatuses,
 } from "../domains/toolchain/index.js";
+import { formatColumns, printError, printOk } from "./argv.js";
 import { writeCliFailure } from "./kit/json-out.js";
 import type { ErrorSlug } from "./kit/slugs.js";
-import { formatColumns, printError, printOk } from "./shared.js";
 
 const HELP = `pancode tools <command>
 

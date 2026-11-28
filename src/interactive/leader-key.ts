@@ -24,7 +24,7 @@ export interface LeaderKeyRouteResult {
 	consumed: boolean;
 }
 
-export function routeLeaderKey(data: string, state: LeaderKeyState, deps: LeaderKeyRouteDeps): LeaderKeyRouteResult {
+function routeLeaderKey(data: string, state: LeaderKeyState, deps: LeaderKeyRouteDeps): LeaderKeyRouteResult {
 	if (isKeyRelease(data)) return { state, consumed: state.status === "pending" };
 	if (matchesKey(data, "ctrl+c")) return { state: IDLE_LEADER_STATE, consumed: state.status === "pending" };
 	if (state.status === "idle") {

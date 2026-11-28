@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import { scanTelemetrySegment } from "../../../core/telemetry/segment.js";
 import { ALL_TOOL_NAMES } from "../../../core/tool-names.js";
-import { carriesPath, unpackTelemetryArchive, verifyShareArchive } from "../../telemetry/index.js";
+import { carriesPath, verifyShareArchive } from "../../telemetry/index.js";
 import { reportOs } from "../vocabulary.js";
 
 /**
@@ -91,20 +91,4 @@ export function telemetryShareDigest(
 			}
 	}
 	return digest;
-}
-
-/** Digest a report bundle: its envelope names the platform and install kind, its telemetry member is a share archive. */
-export function reportBundleDigest(bundle: Buffer): ShareDigest {
-	const entries = unpackTelemetryArchive(bundle);
-	const envelope = entries.find((entry) => entry.path === "report.json");
-	const telemetry = entries.find((entry) => entry.path === "telemetry.tar.gz");
-	if (envelope === undefined || telemetry === undefined) throw new Error("not a report bundle");
-	const environment = field(JSON.parse(envelope.bytes.toString("utf8")), "environment");
-	const platform = field(environment, "platform");
-	const install = field(environment, "install");
-	return telemetryShareDigest(telemetry.bytes, {
-		platform: typeof platform === "string" ? (platform.split("-")[0] ?? "") : "",
-		install: typeof install === "string" ? install : "unknown",
-		profile: "report",
-	});
 }

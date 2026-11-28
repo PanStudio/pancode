@@ -141,7 +141,7 @@ function atOrAbove(path: string, target: string): boolean {
 }
 
 /** The file whose presence marks a custom data or cache root as PanCode's own. */
-export const PANCODE_ROOT_MARKER = ".pancode-root";
+const PANCODE_ROOT_MARKER = ".pancode-root";
 
 const ROLE_OWNERSHIP_FILE: Record<PancodeDirRole, string> = {
 	config: "settings.yaml",

@@ -49,8 +49,8 @@ import { canonicalProjectRoot } from "../domains/gateway/mcp/trust.js";
 import type { McpCapabilitySource } from "../tools/gateway/mcp-capability-types.js";
 import { isMcpPromptCommandName } from "../tools/gateway/mcp-resources.js";
 import type { RegistryVerdict } from "../tools/registry-contract.js";
+import { printError } from "./argv.js";
 import { mcpEditOutput, mcpLoginOutput, mcpLogoutOutput } from "./mcp-credentials.js";
-import { printError } from "./shared.js";
 
 const HELP = `pancode mcp <command>
 

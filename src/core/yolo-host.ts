@@ -67,7 +67,7 @@ function runsInContainer(facts: YoloHostFacts): boolean {
 }
 
 /** What the operator reads when yolo is refused. */
-export const YOLO_ROOT_REFUSAL =
+const YOLO_ROOT_REFUSAL =
 	"yolo is refused: PanCode runs as root outside a container, where an unattended command can damage the whole host. Run as a regular user, run inside a container, or set PANCODE_SANDBOXED=1 to attest that this process is already sandboxed.";
 
 /** The refusal, or null when yolo may run here. */

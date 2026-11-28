@@ -2,8 +2,8 @@
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import { isPackageIdentity } from "./package-identity.js";
 
-export type SkillActivationTrigger = "slash-command" | "tool";
-export type PendingSkillRequestSource = "slash-command" | "selector" | "marketplace" | "recipe";
+type SkillActivationTrigger = "slash-command" | "tool";
+type PendingSkillRequestSource = "slash-command" | "selector" | "marketplace" | "recipe";
 
 /**
  * The one reply shape every surface teaches for skill suggestions: the
@@ -370,7 +370,7 @@ export interface SkillActivation {
 	runId?: string;
 }
 
-export interface SkillActivationSource {
+interface SkillActivationSource {
 	owner?: import("./package-identity.js").PackageIdentity;
 	name: string;
 	filePath: string;

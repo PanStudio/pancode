@@ -18,10 +18,10 @@ export const RESPONSE_SCHEMA_MAX_SERIALIZED_BYTES = 64 * 1024;
  * runtime added; {@link responseSchemaDialectFor} is where the out-of-turn
  * seam did exactly that (issue #223).
  */
-export const RESPONSE_SCHEMA_RUNTIME_ID = "llamacpp";
+const RESPONSE_SCHEMA_RUNTIME_ID = "llamacpp";
 
 /** The runtime that takes the standard OpenAI `json_schema` response format. */
-export const OPENAI_SCHEMA_RUNTIME_ID = "lmstudio";
+const OPENAI_SCHEMA_RUNTIME_ID = "lmstudio";
 
 /**
  * The LiteLLM gateway, which takes the same standard `json_schema` format.
@@ -43,7 +43,7 @@ export const OPENAI_SCHEMA_RUNTIME_ID = "lmstudio";
  * warning names is real, and the only thing that makes this entry safe is that
  * somebody measured it.
  */
-export const GATEWAY_SCHEMA_RUNTIME_ID = "litellm";
+const GATEWAY_SCHEMA_RUNTIME_ID = "litellm";
 
 /**
  * How a runtime spells a JSON-schema response constraint on the wire.

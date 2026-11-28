@@ -13,11 +13,13 @@ import { relativePathEscapes } from "../../core/path-containment.js";
 import { runCommandVector } from "../../core/safe-exec.js";
 import { sandboxAvailability } from "../../core/sandbox/availability.js";
 import { sandboxEnvPolicy } from "../../core/sandbox/env-scrub.js";
+import { homeReadList } from "../../core/sandbox/home-read-roots.js";
+import { planHomeReads } from "../../core/sandbox/home-reads.js";
 import { buildSandboxInvocation } from "../../core/sandbox/invocation.js";
 import { type MainSandboxPolicy, mainSandboxPolicy, mainShellContained } from "../../core/sandbox/main-session.js";
 import { withMountAliases } from "../../core/sandbox/mount-aliases.js";
 import { discoverSecretMasks } from "../../core/sandbox/secret-files.js";
-import type { SandboxMode } from "../../core/sandbox/types.js";
+import type { HomeReadList, SandboxMode } from "../../core/sandbox/types.js";
 import { sandboxLaunchFilters } from "../../core/sandbox/unix-sockets.js";
 import { physicalSandboxPath, settingsFileMasks, workerSandboxMasks } from "../../core/sandbox/worker-process.js";
 import { pancodeStateDir } from "../../core/xdg.js";
@@ -90,6 +92,8 @@ export async function compareHostVerificationBase(input: {
 	slot?: VerificationSlotEvents;
 	/** Stops the base replay: a check not yet replayed stays not_compared, and the one in flight is killed. */
 	signal?: AbortSignal;
+	/** The host checks' `listed` home reads, which the base replay keeps. */
+	homeReads?: HomeReadList;
 }): Promise<void> {
 	const failures = input.verification?.checks.filter((check) => check.exitCode !== 0) ?? [];
 	if (failures.length === 0) return;
@@ -215,13 +219,24 @@ export async function compareHostVerificationBase(input: {
 				...baseMasks,
 				...secretMasks,
 			]);
-			const masks = withMountAliases([...baseMasks, ...secretMasks, ...sockets.masks], undefined, [
+			const shownRoots = [
 				physicalSandboxPath(worktree.path),
 				physicalSandboxPath(worktree.root),
 				...links.map((link) => physicalSandboxPath(dirname(link.target))),
-			]);
+			];
+			const masks = withMountAliases([...baseMasks, ...secretMasks, ...sockets.masks], undefined, shownRoots);
 			// A sandbox that cannot see the mount aliases would leave secrets readable.
 			if (masks instanceof Error) return { exitCode: null, incomplete: true, lines: [] };
+			const homeReads =
+				input.homeReads === undefined
+					? undefined
+					: planHomeReads({
+							list: input.homeReads,
+							backend,
+							admitted: [...new Set(shownRoots)],
+							cwd: physicalSandboxPath(worktree.path),
+						});
+			if (homeReads instanceof Error) return { exitCode: null, incomplete: true, lines: [] };
 			const invocation = buildSandboxInvocation(
 				{
 					command: {
@@ -246,8 +261,9 @@ export async function compareHostVerificationBase(input: {
 					cwd: worktree.path,
 					writableRoots: [],
 					network: false,
-					maskedPaths: masks,
+					maskedPaths: [...masks, ...(homeReads?.masks ?? [])],
 					...sockets.fields,
+					...(homeReads !== undefined ? { readRestriction: homeReads.restriction } : {}),
 				},
 				backend,
 				executable,
@@ -410,13 +426,18 @@ export function hostVerificationSandbox(
 	if (mode === "off" || (mode === "auto" && !mainShellContained(mode, availability))) return undefined;
 	const root = typeof workspace === "string" ? workspace : workspace.path;
 	const source = typeof workspace === "string" || workspace.root === workspace.path ? undefined : workspace.root;
+	const homeReads = settings !== undefined ? homeReadList(settings.safety.homeReads, "main") : undefined;
 	return mainSandboxPolicy({
 		workspace: root,
 		scratchRoots: effectiveScratchRoots(settings?.safety.scratchRoots ?? [], root),
 		...(source !== undefined ? { sourceCheckout: source } : {}),
 		...(settings !== undefined
-			? { env: sandboxEnvPolicy(settings), unixSockets: settings.safety.sandboxUnixSockets }
+			? {
+					env: sandboxEnvPolicy(settings),
+					unixSockets: settings.safety.sandboxUnixSockets,
+				}
 			: {}),
+		...(homeReads !== undefined ? { homeReads } : {}),
 	});
 }
 

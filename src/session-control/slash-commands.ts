@@ -150,7 +150,7 @@ function formatPanesStatus(status: PanesStatus): ReadonlyArray<string> {
 	return lines;
 }
 
-export const PANES_SLASH_COMMANDS: ReadonlyArray<BuiltinSlashCommand> = [
+const PANES_SLASH_COMMANDS: ReadonlyArray<BuiltinSlashCommand> = [
 	{
 		name: "attach",
 		rank: 3,

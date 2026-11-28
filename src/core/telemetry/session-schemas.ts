@@ -180,7 +180,7 @@ export const AutonomyEndedSchema = Type.Object(
 	},
 	closed,
 );
-export const StatusPhase = vocabulary([
+const StatusPhase = vocabulary([
 	"idle",
 	"preparing",
 	"waiting_model",

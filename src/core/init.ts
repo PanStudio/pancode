@@ -22,7 +22,7 @@ import {
 	resolvePancodeDirs,
 } from "./xdg.js";
 
-export interface InitReport {
+interface InitReport {
 	configDir: string;
 	dataDir: string;
 	stateDir: string;

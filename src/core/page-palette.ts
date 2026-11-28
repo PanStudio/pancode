@@ -19,7 +19,7 @@ const PAGE_INKS = {
 } as const satisfies Record<string, PaletteColor>;
 
 type PageSurface = keyof typeof PAGE_SURFACES;
-export type PageColor = PageSurface | keyof typeof PAGE_INKS;
+type PageColor = PageSurface | keyof typeof PAGE_INKS;
 
 function isPageSurface(color: PageColor): color is PageSurface {
 	return Object.hasOwn(PAGE_SURFACES, color);

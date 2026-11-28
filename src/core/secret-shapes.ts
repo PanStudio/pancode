@@ -67,7 +67,7 @@ export const AUTHORIZATION_SHAPE: CredentialShape = {
 };
 
 /** Shapes that are a credential by their value alone, wherever they sit. */
-export const CREDENTIAL_VALUE_SHAPES: ReadonlyArray<CredentialShape> = [
+const CREDENTIAL_VALUE_SHAPES: ReadonlyArray<CredentialShape> = [
 	{ kind: "aws-access-key", re: /\b(?:AKIA|ASIA)[0-9A-Z]{16}\b/g },
 	GITHUB_TOKEN_SHAPE,
 	GITLAB_TOKEN_SHAPE,

@@ -23,7 +23,7 @@ export const COPY_JOIN_MARK = `${MARK_PREFIX}s${MARK_END}`;
 /** A word broken across rows (a long URL): joins the row before it with no space. */
 export const COPY_TIGHT_MARK = `${MARK_PREFIX}w${MARK_END}`;
 
-export type CopyMarkKind = "row" | "join" | "tight";
+type CopyMarkKind = "row" | "join" | "tight";
 
 const KIND_CODE: Readonly<Record<CopyMarkKind, string>> = { row: "r", join: "s", tight: "w" };
 
@@ -35,7 +35,7 @@ export function copyMark(kind: CopyMarkKind, cells = 0): string {
 	return `${MARK_PREFIX}${KIND_CODE[kind]}${cells > 0 ? cells : ""}${MARK_END}`;
 }
 
-export interface CopyMark {
+interface CopyMark {
 	kind: CopyMarkKind;
 	/** Decoration columns that follow the mark. */
 	cells: number;

@@ -94,7 +94,7 @@ export const SETTINGS_AREA_GROUPS: Readonly<Record<SettingsAreaId, readonly stri
 	],
 };
 
-export interface SettingsPlacement {
+interface SettingsPlacement {
 	area: SettingsAreaId;
 	group: string;
 }
@@ -277,6 +277,7 @@ export function settingsPlacementForRow(id: string, path: string): SettingsPlace
 	if (under(path, "fleet.permissions")) return place("safety", "Worker approvals");
 	if (under(path, "safety.review") || path === "safety.validationWrappers") return place("safety", "Review");
 	if (under(path, "safety.judge")) return place("safety", "Safety judge");
+	if (under(path, "safety.homeReads")) return place("safety", "Sandbox");
 	if (under(path, "safety.egress")) return place("safety", "Sandbox");
 	if (under(path, "systemOne") || under(path, "chat.steering")) return place("advanced", "Experimental");
 	if (under(path, "telemetry")) return place("advanced", "Telemetry");

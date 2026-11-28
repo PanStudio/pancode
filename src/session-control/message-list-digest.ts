@@ -14,7 +14,7 @@ export interface MessageListDigests {
 	digest(count?: number): string;
 }
 
-export interface MessageListFold {
+interface MessageListFold {
 	/** Fold `messages` into the running state and return a snapshot of it. */
 	observe(messages: ReadonlyArray<AgentMessage>): MessageListDigests;
 }

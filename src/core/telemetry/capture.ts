@@ -4,8 +4,8 @@ import type { SegmentHeader } from "./envelope.js";
 import type { JournalEventName } from "./events.js";
 import { journalDefinition } from "./events.js";
 
-export type TelemetryMode = SegmentHeader["mode"];
-export type CaptureFlags = SegmentHeader["capture"];
+type TelemetryMode = SegmentHeader["mode"];
+type CaptureFlags = SegmentHeader["capture"];
 export type CaptureFlag = keyof CaptureFlags;
 
 /** The `telemetry` settings block. Research flags are requests; `effectiveTelemetryCapture` decides (#434). */

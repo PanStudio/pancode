@@ -61,7 +61,7 @@ export interface AcpHandoffDraft {
 	sourceIdentity: string;
 	document: string;
 }
-export interface AcpHandoffRefusal {
+interface AcpHandoffRefusal {
 	ok: false;
 	level: "warn" | "error";
 	code: string;
