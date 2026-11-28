@@ -13,12 +13,15 @@ import { afterEach, describe, it } from "node:test";
 import { pathToFileURL } from "node:url";
 import type { PancodeSettings } from "../../src/core/config.js";
 import { claimsProjectRoot, readClaims } from "../../src/domains/claims/index.js";
+import { extensionInvocation } from "../../src/domains/extensions/operator-commands.js";
+import { OperatorExtensions } from "../../src/domains/extensions/operator-extensions.js";
 import { createExtensionClaimsService } from "../../src/domains/extensions/services/claims.js";
 import {
 	createExtensionCheckReceipts,
 	createExtensionVerifyService,
 } from "../../src/domains/extensions/services/verify.js";
 import { createExtensionWorktreeService } from "../../src/domains/extensions/services/worktrees.js";
+import { installExtension } from "../../src/domains/extensions/state.js";
 import { isolatePancodeEnv } from "../harness/scratch-env.js";
 
 interface Campaign {
@@ -415,5 +418,28 @@ describe("research pack campaign", () => {
 		);
 		release();
 		strictEqual((await running).reason, "max-iterations");
+	});
+});
+
+describe("research pack panel", () => {
+	it("opens from /research alone and refreshes the campaign it shows, through the host's declared state", async (t) => {
+		const env = await isolatePancodeEnv("pancode-research-pack-home-");
+		t.after(() => env.restore());
+		const repo = scoreRepo();
+		const { campaign } = await setup(repo, [], 1);
+		const packDir = join(process.cwd(), "hub", "packs", "extensions", "research");
+		ok(installExtension(packDir, { cwd: repo, scope: "user" }).extension?.loadable);
+		const host = new OperatorExtensions({
+			context: () => ({ workspace: repo, sessionId: "s1", mode: "interactive" }),
+			isIdle: () => true,
+			onlyId: "research",
+		});
+		t.after(() => host.dispose());
+		strictEqual((await host.reload("startup")).status, "committed");
+		const list = await host.invoke(extensionInvocation("research", "research"), "");
+		strictEqual(list.panel?.meta, "1 campaign(s)", list.text);
+		await host.action("research", { id: "open", key: campaign.id, source: "panel" });
+		const refreshed = await host.action("research", { id: "refresh", source: "panel" });
+		strictEqual(refreshed.panel?.title, `Research · ${campaign.id}`, refreshed.text);
 	});
 });

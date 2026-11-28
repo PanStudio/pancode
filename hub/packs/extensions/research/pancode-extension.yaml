@@ -17,7 +17,7 @@ runtime:
       command: research
       summary: Hill-climb a check's metric with agent runs inside a budget.
   ui: [panel]
-  state: { project: true }
+  state: { project: true, session: true }
   services:
     runs: { maxTimeoutSeconds: 86400, maxConcurrent: 1, autonomy: [default, yolo] }
     worktrees: true
