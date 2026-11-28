@@ -64,4 +64,4 @@ export {
 } from "./share.js";
 export { packTelemetryArchive, type ShareArchiveEntry, unpackTelemetryArchive } from "./share-archive.js";
 export { carriesPath, isBuiltinRuntimeId, RUNTIME_VOCABULARY } from "./share-projection.js";
-export { emptyUsageDiagnostics, explainRepoRef, isRepoRef, usageWindow } from "./usage-window.js";
+export { emptyUsageDiagnostics, explainRepoRef, isRepoRef, usageReportWindow, usageWindow } from "./usage-window.js";

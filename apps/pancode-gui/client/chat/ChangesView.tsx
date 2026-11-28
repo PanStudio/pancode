@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import { useMemo, useState } from "react";
 import { Icon } from "../design/icons.js";
-import { extensionBadge, type FileChange, summarizeChanges, touchedFiles } from "./changes-model.js";
+import { changeLine, extensionBadge, type FileChange, summarizeChanges, touchedFiles } from "./changes-model.js";
 import { DiffView } from "./Diff.js";
 import type { PaneSession } from "./pane-model.js";
 
@@ -57,20 +57,21 @@ export function ChangesView({ session, workspaceRoot }: { session: PaneSession; 
 			</div>
 		);
 	const allOpen = changes.files.every((file) => opened.has(file.path));
+	const changed = changeLine(changes);
 	return (
 		<div className="changes">
 			{changes.files.length > 0 ? (
 				<div className="changes__head">
 					<p>
-						{changes.applied > 0 ? (
+						{changed.applied !== null ? (
 							<>
-								{changes.applied} {changes.applied === 1 ? "file" : "files"} changed{" "}
+								{changed.applied}{" "}
 								<span className="diffstat">
 									<span className="diffstat__add">+{changes.adds}</span> <span className="diffstat__del">−{changes.dels}</span>
 								</span>
 							</>
 						) : null}
-						{changes.pending > 0 ? `${changes.applied > 0 ? " · " : ""}${changes.pending} waiting for approval` : null}
+						{changed.pending}
 					</p>
 					<button
 						type="button"

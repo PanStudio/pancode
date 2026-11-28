@@ -28,18 +28,26 @@ const {
 import { type HighlightToken, highlightCode } from "./highlight.js";
 import { type JsonContainer, parseJsonContainer } from "./json-tree-model.js";
 import {
+	CODE_VISIBLE_LINES,
 	codeLanguage,
+	codeLineCount,
 	type DiffLineKind,
+	decodeEntities,
+	diffGutterWidth,
 	diffLines,
 	type FootnoteRefToken,
 	type FootnoteToken,
+	footnoteId,
 	HIGHLIGHT_MAX_CHARS,
+	hasLongLine,
+	headingTag,
 	IncrementalMarkdown,
 	lexMarkdown,
 	type MarkdownToken,
 	type MathToken,
 	mermaidSourceProblem,
 	numericColumns,
+	offersJsonTree,
 	pathReference,
 	safeHref,
 	tableText,
@@ -59,53 +67,12 @@ export function JsonTreeView({ value, fallback }: { value: JsonContainer; fallba
 	);
 }
 
-/** Long JSON offers the tree; a short object reads fine as text. */
-export function offersJsonTree(lineCount: number, chars: number): boolean {
-	return lineCount > CODE_VISIBLE_LINES || chars > 2_000;
-}
-
 function MathTokenContent({ token }: { token: MathToken }) {
 	return (
 		<React.Suspense fallback={token.raw}>
 			<MathContent token={token} />
 		</React.Suspense>
 	);
-}
-
-const ENTITY_PATTERN =
-	/&(#x[0-9a-f]+|#[0-9]+|amp|lt|gt|quot|apos|nbsp|copy|reg|hellip|mdash|ndash|rarr|larr|times);/giu;
-const NAMED_ENTITIES: Readonly<Record<string, string>> = {
-	amp: "&",
-	lt: "<",
-	gt: ">",
-	quot: '"',
-	apos: "'",
-	nbsp: " ",
-	copy: "©",
-	reg: "®",
-	hellip: "…",
-	mdash: "—",
-	ndash: "–",
-	rarr: "→",
-	larr: "←",
-	times: "×",
-};
-
-/** Markdown entity references survive lexing verbatim; React must show the character. */
-export function decodeEntities(text: string): string {
-	if (!text.includes("&")) return text;
-	return text.replace(ENTITY_PATTERN, (match, entity: string) => {
-		const lower = entity.toLowerCase();
-		if (lower.startsWith("#x")) {
-			const code = Number.parseInt(lower.slice(2), 16);
-			return Number.isFinite(code) && code > 0 && code <= 0x10ffff ? String.fromCodePoint(code) : match;
-		}
-		if (lower.startsWith("#")) {
-			const code = Number.parseInt(lower.slice(1), 10);
-			return Number.isFinite(code) && code > 0 && code <= 0x10ffff ? String.fromCodePoint(code) : match;
-		}
-		return NAMED_ENTITIES[lower] ?? match;
-	});
 }
 
 /** Raster images only: an SVG can carry script, and the app draws nothing it would have to sanitize. */
@@ -199,7 +166,8 @@ function ActionLabel({ full, short }: { full: string; short: string | undefined 
 	);
 }
 
-export function CopyButton({ text, label = "Copy", short }: { text: string; label?: string; short?: string }) {
+/** Copies `text` to the clipboard; the state shows the outcome for a moment, then returns to idle. */
+export function useCopy(text: string): readonly ["idle" | "copied" | "failed", () => void] {
 	const [state, setState] = useState<"idle" | "copied" | "failed">("idle");
 	const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
 	useEffect(
@@ -220,11 +188,16 @@ export function CopyButton({ text, label = "Copy", short }: { text: string; labe
 		if (timer.current !== null) clearTimeout(timer.current);
 		timer.current = setTimeout(() => setState("idle"), 1_600);
 	}
+	return [state, () => void copy()];
+}
+
+export function CopyButton({ text, label = "Copy", short }: { text: string; label?: string; short?: string }) {
+	const [state, copy] = useCopy(text);
 	return (
 		<button
 			type="button"
 			className={`code-block__copy is-${state}`}
-			onClick={() => void copy()}
+			onClick={copy}
 			aria-label={state === "copied" ? "Copied to the clipboard" : state === "failed" ? "Copy failed" : label}
 		>
 			{state === "copied" ? "Copied" : state === "failed" ? "Copy failed" : <ActionLabel full={label} short={short} />}
@@ -262,11 +235,7 @@ const DIFF_LINE_LABEL: Readonly<Partial<Record<DiffLineKind, string>>> = { add: 
  */
 function DiffLines({ code }: { code: string }) {
 	const lines = useMemo(() => diffLines(code), [code]);
-	const width = useMemo(() => {
-		let widest = 0;
-		for (const line of lines) widest = Math.max(widest, line.old ?? 0, line.new ?? 0);
-		return widest === 0 ? 0 : String(widest).length;
-	}, [lines]);
+	const width = useMemo(() => diffGutterWidth(lines), [lines]);
 	const text = useMemo(() => code.split("\n"), [code]);
 	const number = (value: number | null) => (value === null ? "".padStart(width) : String(value).padStart(width));
 	return (
@@ -288,25 +257,6 @@ function DiffLines({ code }: { code: string }) {
 			})}
 		</>
 	);
-}
-
-/**
- * Lines a code block shows before it scrolls, from the `pre`'s 520px cap at 12px/1.7 mono. A block
- * that fits says nothing about its length; a longer one names it, because its end is out of sight.
- */
-const CODE_VISIBLE_LINES = 24;
-/** A line past this many characters runs off a reading column, so the block offers to wrap. */
-const CODE_WRAP_OFFER_CHARS = 88;
-
-function hasLongLine(code: string): boolean {
-	let start = 0;
-	while (start <= code.length) {
-		const end = code.indexOf("\n", start);
-		if ((end < 0 ? code.length : end) - start > CODE_WRAP_OFFER_CHARS) return true;
-		if (end < 0) return false;
-		start = end + 1;
-	}
-	return false;
 }
 
 interface CodeBlockProps {
@@ -338,7 +288,7 @@ export const CodeBlock = memo(function CodeBlock({ code, info, settled }: CodeBl
 		};
 	}, [wantsHighlight, code, grammar]);
 	const tokens = highlight?.code === code && highlight.grammar === grammar ? highlight.tokens : null;
-	const lineCount = code.length === 0 ? 0 : code.split("\n").length;
+	const lineCount = codeLineCount(code);
 	const [wrap, setWrap] = useState(false);
 	// Offered once the block has settled, so the control does not appear and vanish while it streams.
 	const wrappable = useMemo(() => settled && hasLongLine(code), [settled, code]);
@@ -438,10 +388,6 @@ interface MermaidBlockProps {
 const StreamingContext = createContext(false);
 /** Footnote anchors are scoped to one message, so two answers that both say `[^1]` do not share an id. */
 const FootnoteScope = createContext("md");
-
-function footnoteId(scope: string, label: string): string {
-	return `${scope}-fn-${label.replace(/[^\w-]/gu, "_")}`;
-}
 
 /** Moves to a note without touching the URL, which the app's router owns. */
 function jumpTo(id: string) {
@@ -612,11 +558,6 @@ export const MermaidBlock = memo(function MermaidBlock({ source, settled }: Merm
 		</figure>
 	);
 });
-
-function headingTag(depth: number): "h2" | "h3" | "h4" | "h5" | "h6" {
-	const level = Math.min(6, Math.max(2, depth + 1));
-	return `h${level}` as "h2" | "h3" | "h4" | "h5" | "h6";
-}
 
 function Inline({ tokens }: { tokens: readonly MarkdownToken[] }) {
 	return (

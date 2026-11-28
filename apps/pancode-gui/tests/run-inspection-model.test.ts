@@ -2,7 +2,8 @@
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { evidenceDestination, listDestination, matchesText } from "../client/pages/run-inspection-model.js";
+import { matchesText } from "../client/design/text-match.js";
+import { evidenceDestination, listDestination } from "../client/pages/run-inspection-model.js";
 import { callPosition, runModelSpend, runTotals, stageBars } from "../client/pages/traces/trace-model.js";
 import type { TraceRun } from "../contracts/traces.js";
 import type { RunTimelineEntry } from "../contracts/wire.js";

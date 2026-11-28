@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import { existsSync, realpathSync } from "node:fs";
-import { dirname, relative, resolve, sep } from "node:path";
+import { dirname, relative, resolve } from "node:path";
 import { threadId } from "node:worker_threads";
+import { relativePathEscapes } from "../../../../../src/core/path-containment.js";
 import {
 	describeResolution,
 	findPinnedTool,
@@ -47,8 +48,7 @@ function containedTool(id: string) {
 		while (!existsSync(parent)) parent = dirname(parent);
 		return resolve(realpathSync(parent), relative(parent, path));
 	};
-	const difference = relative(canonical(root), canonical(resolve(root, id)));
-	if (difference === ".." || difference.startsWith(`..${sep}`) || difference.startsWith(sep))
+	if (relativePathEscapes(relative(canonical(root), canonical(resolve(root, id)))))
 		throw new AppProblem("validation", "Tool directory escapes the toolchain root.");
 }
 export function toolchainAdapter(options: { pins?: readonly PinnedTool[]; fetcher?: ToolFetcher } = {}) {

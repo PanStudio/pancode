@@ -4,17 +4,14 @@
 // left rail's, shared by the shell (which lays out the column) and the pages that fill it.
 
 import { useSyncExternalStore } from "react";
+import { readPref, writePref } from "../interaction/prefs.js";
 
 const ASIDE_KEY = "pancode-gui-aside";
 const listeners = new Set<() => void>();
 
 function read(): boolean {
-	try {
-		return localStorage.getItem(ASIDE_KEY) === "expanded";
-	} catch {
-		// Keep the conversation clear when no browser preference can be read.
-		return false;
-	}
+	// Keep the conversation clear when no browser preference can be read.
+	return readPref(ASIDE_KEY) === "expanded";
 }
 
 let expanded = read();
@@ -22,11 +19,7 @@ let expanded = read();
 export function setAsideExpanded(next: boolean): void {
 	if (next === expanded) return;
 	expanded = next;
-	try {
-		localStorage.setItem(ASIDE_KEY, next ? "expanded" : "collapsed");
-	} catch {
-		// The choice holds for this tab.
-	}
+	writePref(ASIDE_KEY, next ? "expanded" : "collapsed");
 	for (const listener of listeners) listener();
 }
 

@@ -6,13 +6,15 @@
 // without a browser.
 
 import type { Static } from "typebox";
-import type { HubAgents, HubComponent } from "../../contracts/hub.js";
+import type { HubAgents, HubComponent, HubExtensions, HubVerifiers } from "../../contracts/hub.js";
 import { finite } from "../api/narrow.js";
 import { humanizeKey } from "../design/facts-model.js";
 import { inspectionTabIndex } from "../design/run-inspection-model.js";
 
 export type Agent = Static<typeof HubAgents>["agents"][number];
 export type Resource = Static<typeof HubComponent>;
+type Extension = Static<typeof HubExtensions>["extensions"][number];
+type Check = Static<typeof HubVerifiers>["checks"][number];
 
 export interface CardFact {
 	label: string;
@@ -155,6 +157,101 @@ export function collectionTabLabel(
 	if (!read.read) return name;
 	if (read.count !== undefined) return `${name} · ${read.count}`;
 	return `${name} · ${read.failed ? "Unavailable" : "…"}`;
+}
+
+export const HUB_COLLECTIONS = [
+	"Catalog",
+	"Agents",
+	"Skills",
+	"Prompts",
+	"Playbooks",
+	"Extensions",
+	"Verifiers",
+] as const;
+export type HubCollection = (typeof HUB_COLLECTIONS)[number];
+export type HubEntry = {
+	id: string;
+	name: string;
+	description: string;
+	state: string;
+	detail: unknown;
+	agent?: Agent;
+	skill?: Resource;
+};
+export type HubEntries = Record<Exclude<HubCollection, "Catalog">, HubEntry[]>;
+
+/** The read each collection's rows come from. Skills, prompts, playbooks and the catalog share the inventory. */
+export type HubSource = "inventory" | "agents" | "extensions" | "verifiers";
+export const hubSource = (name: HubCollection): HubSource =>
+	name === "Agents" ? "agents" : name === "Extensions" ? "extensions" : name === "Verifiers" ? "verifiers" : "inventory";
+
+/** Verifiers are one project's checks, so they are read only with a workspace; the rest once the scope is resolved. */
+export const hubCollectionRead = (name: HubCollection, workspace: boolean, resolved: boolean): boolean =>
+	name === "Verifiers" ? workspace : resolved;
+
+/** Every collection's rows, from whichever reads have answered; an unanswered read gives no rows. */
+export function hubEntries(read: {
+	resources?: readonly Resource[] | undefined;
+	agents?: readonly Agent[] | undefined;
+	extensions?: readonly Extension[] | undefined;
+	checks?: readonly Check[] | undefined;
+}): HubEntries {
+	const resourceEntries = (kind: "skill" | "prompt" | "playbook"): HubEntry[] =>
+		(read.resources ?? [])
+			.filter((row) => row.kind === kind)
+			.map((row) => ({
+				id: row.key,
+				name: row.name,
+				description: row.description,
+				state: `${row.availability} · ${row.source.class}`,
+				detail: row,
+				...(kind === "skill" ? { skill: row } : {}),
+			}));
+	return {
+		Agents: (read.agents ?? []).map((row) => ({
+			id: row.id,
+			name: row.name,
+			description: row.description,
+			state: `${row.category} · ${row.source}`,
+			detail: row,
+			agent: row,
+		})),
+		Skills: resourceEntries("skill"),
+		Prompts: resourceEntries("prompt"),
+		Playbooks: resourceEntries("playbook"),
+		Extensions: (read.extensions ?? []).map((row) => ({
+			id: `${row.id}:${row.scope}`,
+			name: row.name,
+			description: row.description,
+			state: extensionState(row),
+			detail: row,
+		})),
+		Verifiers: (read.checks ?? []).map((row) => ({
+			id: row.id,
+			name: row.id,
+			description: row.description,
+			state: `${row.origin} · ${row.runner}`,
+			detail: row,
+		})),
+	};
+}
+
+/** The active collection's rows the filter keeps. Free text runs across every string field a row carries, not only its name. */
+export const hubVisible = (active: HubCollection, entries: HubEntries, filter: string): HubEntry[] =>
+	(active === "Catalog" ? [] : entries[active]).filter((row) => matchesQuery(row.detail, filter));
+
+/** A collection tab's label from its read: the catalog counts packages, every other tab its rows. */
+export function hubTabLabel(
+	name: HubCollection,
+	read: { loaded: boolean; failed: boolean; packages: number | undefined; entries: HubEntries },
+	scope: { workspace: boolean; resolved: boolean },
+): string {
+	const count = !read.loaded ? undefined : name === "Catalog" ? read.packages : read.entries[name].length;
+	return collectionTabLabel(name, {
+		read: hubCollectionRead(name, scope.workspace, scope.resolved),
+		count,
+		failed: read.failed,
+	});
 }
 
 /** With no workspace open the hub reads installation-wide: built-in and user layers, no project. */

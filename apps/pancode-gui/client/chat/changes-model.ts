@@ -144,6 +144,17 @@ export function changeCounts(summary: Pick<ChangeSummary, "adds" | "dels">): str
 	return summary.adds === 0 && summary.dels === 0 ? "" : `+${summary.adds} −${summary.dels}`;
 }
 
+/** "2 files changed" and "1 waiting for approval"; the second leads with a dot when both show. */
+export function changeLine(summary: Pick<ChangeSummary, "applied" | "pending">): {
+	readonly applied: string | null;
+	readonly pending: string | null;
+} {
+	return {
+		applied: summary.applied > 0 ? `${summary.applied} ${summary.applied === 1 ? "file" : "files"} changed` : null,
+		pending: summary.pending > 0 ? `${summary.applied > 0 ? " · " : ""}${summary.pending} waiting for approval` : null,
+	};
+}
+
 /** Up to four letters of the extension, for the tile beside a file's name. */
 export function extensionBadge(name: string): string {
 	const extension = /\.([A-Za-z0-9]{1,4})$/u.exec(name)?.[1];
