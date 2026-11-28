@@ -28,6 +28,7 @@ import {
 	steerOutcome,
 } from "./fleet-facts.js";
 import "./approval.css";
+import { sessionCapabilitiesQuery } from "../api/queries.js";
 
 export interface RunSteering {
 	readonly client: Client;
@@ -212,9 +213,7 @@ export const LiveWorkers = memo(function LiveWorkers({
 }) {
 	// The composer's key, so this is the same single request per session.
 	const capabilities = useQuery({
-		queryKey: ["session-capabilities", sessionId],
-		queryFn: () => client.call(routes.sessionCapabilities, { params: { id: sessionId }, query: {}, body: {} }),
-		staleTime: Number.POSITIVE_INFINITY,
+		...sessionCapabilitiesQuery(client, sessionId),
 		retry: false,
 		enabled: sessionOpen,
 	});

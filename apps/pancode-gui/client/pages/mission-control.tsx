@@ -4,10 +4,8 @@ import { useQuery } from "@tanstack/react-query";
 import { memo, useDeferredValue, useEffect, useMemo, useRef } from "react";
 import { Link, useOutletContext, useSearchParams } from "react-router";
 import type { UsagePerformance } from "../../contracts/reports.js";
-import { routes } from "../../contracts/runtime-routes.js";
 import type { SessionOverviewItem } from "../../contracts/session-overview.js";
 import type { Client } from "../api/client.js";
-import { emptyInput } from "../api/client.js";
 import { formatTime } from "../api/clock.js";
 import type { ConnectionState } from "../api/events.js";
 import { Icon } from "../design/icons.js";
@@ -27,6 +25,7 @@ import { ACTIVITY, activityLabel, SESSION_FILTERS, sessionInventory } from "./mi
 import { OperatorMetrics, SessionMetricFigures, useOperatorMetrics } from "./operator-metrics.js";
 import type { SessionControls } from "./session-control-actions.js";
 import "./mission-control.css";
+import { workspacesQuery } from "../api/queries.js";
 
 const FILTER_NAMES: Readonly<Record<SessionFilter, string>> = {
 	all: "All sessions",
@@ -59,7 +58,7 @@ export function MissionControl({ client }: { client: Client }) {
 	const overview = useSessionOverview(client);
 	const metrics = useOperatorMetrics(client, project);
 	const { controls } = useSessionCommands();
-	const workspaces = useQuery({ queryKey: ["workspaces"], queryFn: () => client.call(routes.workspaces, emptyInput) });
+	const workspaces = useQuery(workspacesQuery(client));
 	const items = overview.data?.sessions;
 	const projects = workspaces.data;
 	const shown = useMemo(

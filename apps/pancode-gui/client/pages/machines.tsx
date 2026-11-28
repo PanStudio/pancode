@@ -30,6 +30,7 @@ import {
 } from "./machines-model.js";
 import { useWorkspaceSelection, WorkspacePicker } from "./workspace-selection.js";
 import "./machines.css";
+import { freshMeta, metaQuery } from "../api/queries.js";
 
 type MachinesDraft = {
 	draft: MachineDraft;
@@ -418,8 +419,7 @@ export function MachinesPage({ client, local }: { client: Client; local: Client 
 		? { id: request.operationId, workspaceId: request.workspaceId, action: request.body.action }
 		: null;
 	const meta = useQuery({
-		queryKey: ["meta"],
-		queryFn: ({ signal }) => client.call(routes.meta, emptyInput, undefined, signal),
+		...metaQuery(client),
 		refetchOnMount: "always",
 		retry: false,
 	});
@@ -479,8 +479,7 @@ export function MachinesPage({ client, local }: { client: Client; local: Client 
 		mutationFn: async (sent: MachineRequest) => {
 			try {
 				// Read the epoch for every explicit attempt. A restart loses server idempotency records.
-				const currentMeta = await client.call(routes.meta, emptyInput);
-				queries.setQueryData(["meta"], currentMeta);
+				const currentMeta = await freshMeta(client, queries);
 				if (sent.epoch !== null && sent.epoch !== currentMeta.epoch)
 					throw new Error("PanCode restarted. Review the original workspace's records before making a new request.");
 				store.update((current) => ({

@@ -5,8 +5,8 @@ import { useEffect, useState } from "react";
 import { useSearchParams } from "react-router";
 import type { ArenaMatch, ArenaMatchSummary, ArenaStartRequest } from "../../contracts/arena.js";
 import { routes } from "../../contracts/runtime-routes.js";
-import { ApiProblem, type Client } from "../api/client.js";
-import { useOperation } from "../api/queries.js";
+import { ApiProblem, type Client, problemCode } from "../api/client.js";
+import { targetsQuery, useOperation } from "../api/queries.js";
 import { Boundary, PanelEmpty, PanelHeading } from "../design/panel.js";
 import { emptyState } from "../design/panel-model.js";
 import { InspectionError } from "../design/run-inspection.js";
@@ -65,9 +65,9 @@ export function ArenaPage({ client }: { client: Client }) {
 			client.call(routes.arenaStandings, { params: { id: selection.id }, query: {}, body: {} }, undefined, signal),
 	});
 	const packError =
-		matches.error instanceof ApiProblem && matches.error.problem.code === "unsupported"
+		problemCode(matches.error) === "unsupported"
 			? matches.error
-			: standings.error instanceof ApiProblem && standings.error.problem.code === "unsupported"
+			: problemCode(standings.error) === "unsupported"
 				? standings.error
 				: null;
 	return (
@@ -434,9 +434,7 @@ function NewMatch({
 	const operation = useOperation(client, operationId);
 	const targets = useQuery({
 		meta: { errorSurface: "inline" },
-		queryKey: ["targets", workspaceId],
-		queryFn: ({ signal }) =>
-			client.call(routes.targetsList, { params: { id: workspaceId }, query: {}, body: {} }, undefined, signal),
+		...targetsQuery(client, workspaceId),
 	});
 	const start = useMutation({
 		meta: { errorSurface: "inline" },

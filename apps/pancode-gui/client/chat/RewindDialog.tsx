@@ -30,6 +30,7 @@ import {
 	undoPoint,
 } from "./rewind-model.js";
 import "./rewind.css";
+import { sessionCapabilitiesQuery } from "../api/queries.js";
 
 const EXPORT_FAILED = "The transcript could not be exported.";
 
@@ -141,8 +142,7 @@ function RewindDialog({
 	const [outcome, setOutcome] = useState<SnapshotOutcome | null>(null);
 	const capabilities = useQuery({
 		meta: { errorSurface: "inline" },
-		queryKey: ["session-capabilities", id],
-		queryFn: () => client.call(routes.sessionCapabilities, { params: { id }, query: {}, body: {} }),
+		...sessionCapabilitiesQuery(client, id),
 		enabled: open,
 		staleTime: Number.POSITIVE_INFINITY,
 		retry: false,

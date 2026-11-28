@@ -3,12 +3,12 @@
 import { useQuery } from "@tanstack/react-query";
 import { useEffect } from "react";
 import { Link, useSearchParams } from "react-router";
-import { routes } from "../../contracts/runtime-routes.js";
-import { type Client, emptyInput } from "../api/client.js";
+import type { Client } from "../api/client.js";
 import { formatTime } from "../api/clock.js";
 import { setPageTitle } from "../interaction/announcer.js";
 import { OperatorMetrics, useOperatorMetrics } from "./operator-metrics.js";
 import "./usage.css";
+import { workspacesQuery } from "../api/queries.js";
 
 export function MetricsPage({ client }: { client: Client }) {
 	useEffect(() => {
@@ -17,7 +17,7 @@ export function MetricsPage({ client }: { client: Client }) {
 	}, []);
 	const [search, setSearch] = useSearchParams();
 	const workspace = search.get("workspace") ?? "";
-	const workspaces = useQuery({ queryKey: ["workspaces"], queryFn: () => client.call(routes.workspaces, emptyInput) });
+	const workspaces = useQuery(workspacesQuery(client));
 	const metrics = useOperatorMetrics(client, workspace);
 	return (
 		<section className="usage-page">
