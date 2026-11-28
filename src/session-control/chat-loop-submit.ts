@@ -15,24 +15,17 @@ import {
 import type { LiveBudgetView } from "../domains/context/budget/live-view.js";
 import { requestFits } from "../domains/context/budget/request-fit.js";
 import { stepCheckpointApplies } from "../domains/context/fold/contract.js";
-import {
-	acceptsImageInput,
-	modelEndpointKey,
-	registerForegroundStream,
-	runtimeTargetSnapshot,
-} from "../domains/providers/index.js";
+import { acceptsImageInput } from "../domains/providers/index.js";
 import { visionObservationText } from "../domains/providers/vision-sidecar.js";
 import type { ContextSnapshot } from "../domains/session/context-accounting.js";
 import { readPromptCompileRecords } from "../domains/session/prompt-manifest.js";
 import { activePath, findLastEntry } from "../domains/session/tree/active-path.js";
-import type { TelemetrySessionLease } from "../domains/telemetry/session-journals.js";
-import { replaceEngineMessages } from "../engine/agent.js";
 import { countImageBlocks } from "../engine/image-context.js";
-import type { AnthropicMessagesCompat } from "../engine/types.js";
 import { modelMayActivateSkills } from "../lib/autonomy/autonomy.js";
 import type { TurnControlRecord } from "../lib/turn-control/index.js";
 import { resolveSessionTools } from "../tools/agent-tools.js";
 import { scopedCapabilityShapes, scopeShapesDelta } from "../tools/gateway/scope-shapes.js";
+import { commitSubmittedTurn } from "./chat-loop/submit-commit.js";
 import { runSubmittedTurn } from "./chat-loop/submit-run.js";
 import { settleSubmittedTurn } from "./chat-loop/submit-settle.js";
 import { INTERRUPT_CANCEL_REASON, type SubmitTurn, TRIAGE_INTERRUPT_REASON } from "./chat-loop/submit-turn.js";
@@ -49,13 +42,11 @@ import {
 import type { ChatLoopScope } from "./chat-loop-scope.js";
 import { withSettledHistory } from "./message-list-digest.js";
 import { resolveFitOutputReserve, turnAdmissionRemedy } from "./output-reserve.js";
-import { retireActiveUserContextForNextOperator } from "./session-replay-messages.js";
 import { compactCommandHint, routeCommandHint } from "./surface-hints.js";
 import type { AwaitedTurnStart } from "./turn-middleware.js";
 import { DEFAULT_STEERING_MODE, type SteeringMode } from "./turn-queues.js";
 import { TurnAdmissionError } from "./turn-runtime.js";
-import type { ChatLoopSubmitState } from "./turn-state.js";
-import { type AgentRuntime, clearActiveInterrupt } from "./turn-state.js";
+import type { AgentRuntime, ChatLoopSubmitState } from "./turn-state.js";
 import { isWorkerShareNote } from "./worker-share.js";
 
 /**
@@ -100,15 +91,11 @@ export function createChatLoopSubmit(loop: ChatLoopScope, state: ChatLoopSubmitS
 		noteTurnControlCollection,
 		nullRuntimeAdmissionReason,
 		operatorMemory,
-		operatorTurnIndex,
-		outcomeCollector,
-		persistence,
 		prepareCompactionPaint,
 		queuedForTriage,
 		queues,
 		recordCanceledBeforeAdmission,
 		refuseSkillRequests,
-		retrySettings,
 		setTurnPreparation,
 		stepStarts,
 		submittedTurnOrigin,
@@ -118,7 +105,7 @@ export function createChatLoopSubmit(loop: ChatLoopScope, state: ChatLoopSubmitS
 	return async function submit(text: string, options: ChatSubmitOptions = {}): Promise<void> {
 		let owner: AbortController | null = null;
 		// Until the prompt runs there is no foreground stream to release.
-		const turn: SubmitTurn = { promptStarted: false, releaseForeground: () => {} };
+		const turn: SubmitTurn = { promptStarted: false, releaseForeground: () => {}, turnLease: undefined };
 		const generation = loop.submitGeneration;
 		const admissionCurrent = (): boolean =>
 			!loop.disposed &&
@@ -313,7 +300,6 @@ export function createChatLoopSubmit(loop: ChatLoopScope, state: ChatLoopSubmitS
 				wallMs: submittedWallAt,
 				mono: submittedAt,
 			});
-		let turnLease: TelemetrySessionLease | undefined;
 		/**
 		 * What this submit holds for its requests (the taken buffer, an armed tool choice, a flushed continuation, the
 		 * awaited gate's effects); a return before a request carries them suppresses their firings.
@@ -327,7 +313,7 @@ export function createChatLoopSubmit(loop: ChatLoopScope, state: ChatLoopSubmitS
 			const turnOrigin = deps.session?.current();
 			if (turnOrigin && deps.telemetry?.acquireTelemetrySession) {
 				try {
-					turnLease = await deps.telemetry.acquireTelemetrySession(turnOrigin, mainAgent(turnOrigin.id));
+					turn.turnLease = await deps.telemetry.acquireTelemetrySession(turnOrigin, mainAgent(turnOrigin.id));
 				} catch {
 					// The writer reports its own failures; a turn never waits on telemetry.
 				}
@@ -870,169 +856,28 @@ export function createChatLoopSubmit(loop: ChatLoopScope, state: ChatLoopSubmitS
 				turnSnapshot = captureTurnSnapshot("pending");
 			}
 
-			if (!admissionCurrent()) return;
-
-			if (options.machineTurn !== undefined) {
-				if (!options.machineTurn.onStarting() || !admissionCurrent() || state.streaming) return;
-			}
-
-			// 5. Append the user turn, then stamp and persist the snapshot.
-			// PendingSkillRequest is intent only; SkillActivation ledger entries
-			// are recorded on skill-load success.
-			const userTurnId = persistence.appendSubmittedUserTurn(
+			const committed = await commitSubmittedTurn(loop, state, turn, {
+				options,
+				admissionCurrent,
 				agentRuntime,
-				submittedText,
-				options.images?.length ? options.images : undefined,
-				options.requestContinuation === true,
-				operatorText,
-				options.display?.text,
+				interrupted,
+				previousRunSnapshot,
+				previousThinkingLevel,
+				previousModel,
 				reservedUserTurnId,
-				options.origin,
-				options.operatorAuthored === true,
-			);
-			// A turn that may only answer and call no tool (`run --output-schema`'s repair) goes out text-only, tool_choice
-			// none, with its tool list unchanged so the cached prefix holds (D8, #423). The append above reset the choice.
-			if (state.currentTurnConstraints?.mode === "answer" && state.currentTurnConstraints.allowedTools?.length === 0)
-				middlewareToolChoice.apply([{ kind: "lock_tools" }]);
-			if (referencedPaths.length > 0) deps.labelReferencedPaths?.(referencedPaths);
-			const turnIndex = operatorTurnIndex(userTurnId ?? undefined);
-			// A continuation is a synthetic user turn, which the count skips.
-			if (options.requestContinuation !== true) loop.operatorTurnsBefore = turnIndex + 1;
-			context.installMemoryRestoration(agentRuntime, submittedText, userTurnId ?? undefined);
-			context.commitMemoryTurn(agentRuntime);
-			// An interrupt was submitted while a run was active, so no caller drew
-			// it in the transcript; render it here, after the cancel notice and the
-			// cancelled run's leftovers, which is the order the ledger has. A queued
-			// entry sent from idle has no caller to draw it either.
-			if (interrupted || (options.steering === "interrupt" && options.queued !== undefined))
-				emit({
-					type: "queued_user_turn",
-					text: operatorText,
-					kind: "interrupt",
-					...(options.display ? { display: options.display } : {}),
-					...(options.origin !== undefined ? { origin: options.origin } : {}),
-				});
-			// The first submit creates its session after capture; open its writer before session events land (#434).
-			const landedSession = deps.session?.current();
-			if (!turnLease && landedSession && deps.telemetry?.acquireTelemetrySession) {
-				try {
-					turnLease = await deps.telemetry.acquireTelemetrySession(landedSession, mainAgent(landedSession.id));
-				} catch {
-					// The writer reports its own failure; telemetry cannot abort a submitted turn (#434).
-				}
-			}
-			context.logPromptCompileIfPending();
-			if (turnControlRecord) {
-				outcomeCollector.recordControl(turnControlRecord);
-				if (deps.session?.current()) {
-					try {
-						deps.session.appendEntry({
-							kind: "custom",
-							customType: "turnControl",
-							parentTurnId: state.lastTurnId,
-							display: false,
-							data: turnControlRecord,
-						});
-					} catch {
-						/* S6: ledger recording is best effort and never costs the admitted turn. */
-					}
-				}
-			}
-			// #423: Pi's native effort and tool updates preserve the cached prefix on capable models.
-			const cacheModel = agentRuntime.agent.state.model;
-			const cacheCompat =
-				cacheModel.api === "anthropic-messages" ? (cacheModel.compat as AnthropicMessagesCompat | undefined) : undefined;
-			if (
-				previousThinkingLevel !== undefined &&
-				previousThinkingLevel !== agentRuntime.runtimeResolution.effectiveThinkingLevel &&
-				!context.thinkingUsesConfigurationUpdate() &&
-				cacheCompat?.supportsMidConvoEffort !== true
-			) {
-				context.noteColdReason("thinking_change");
-			}
-			if (
-				typeof previousRunSnapshot?.toolSignature === "string" &&
-				previousRunSnapshot.toolSignature !== toolSignature &&
-				!(cacheCompat?.supportsMidConvoToolChanges === true && cacheCompat.supportsMidConvoSystemMessages === true)
-			) {
-				context.noteColdReason("tool_surface_change");
-			}
-			// A request on another target or wire model shares no cached prefix with the previous call's (#434).
-			if (
-				previousModel !== undefined &&
-				(previousModel.targetId !== agentRuntime.targetId || previousModel.modelId !== agentRuntime.wireModelId)
-			) {
-				context.noteColdReason("model_changed");
-			}
-			turnSnapshot = { ...turnSnapshot, turnId: userTurnId ?? "unknown" };
-			context.setCurrentSnapshot(turnSnapshot);
-			context.persistContextSnapshot(turnSnapshot);
-			const promptHash = compiledPrompt?.systemPromptHash ?? null;
-			state.lastRunSnapshot = {
-				targetId: agentRuntime.targetId,
-				targetUrl: agentRuntime.runtimeResolution.target.url ?? null,
-				runtimeId: agentRuntime.runtimeId,
-				runtimeKind: agentRuntime.runtimeResolution.runtimeKind,
-				wireModelId: agentRuntime.wireModelId,
-				autonomy: deps.getSettings().safety.autonomy,
-				pricedBy: agentRuntime.runtimeResolution.pricedBy,
-				compiledPromptHash: promptHash,
-				staticCompositionHash: promptHash,
-				promptSignature: promptHash,
+				operatorText,
+				referencedPaths,
+				turnControlRecord,
+				pendingSkillPolicy,
 				toolSignature,
-				runtimeResolution: runtimeTargetSnapshot(agentRuntime.runtimeResolution),
-				sessionId: deps.session?.current()?.id ?? null,
-				cwd: process.cwd(),
-			};
-
-			agentRuntime.agent.maxRetryDelayMs = retrySettings().maxDelayMs;
-			state.toolProseAbortReason = null;
-			state.toolProseAssessedChars = 0;
-			state.repetitionAbortReason = null;
-			clearActiveInterrupt(state);
-			state.interruptedAssistantMessage = null;
-			state.interruptedCall = null;
-
-			// 6. Cache-disturbance honesty (T3.3)
-			context.consumeExpectedColdReasons(agentRuntime.runtimeId);
-
-			// 7. Run the prompt, then route the settled state through recovery.
-			loop.boundaryStop = null;
-			loop.budgetRoll = null;
-			state.streaming = true;
-			deps.autonomy?.turnStarted();
-			const foregroundOn = (runtime: AgentRuntime): (() => void) => {
-				const endpointKey = modelEndpointKey(runtime.runtimeResolution.target, runtime.wireModelId);
-				return endpointKey === null ? () => {} : registerForegroundStream(endpointKey);
-			};
-			turn.releaseForeground = foregroundOn(agentRuntime);
-			loop.moveForeground = (runtime) => {
-				turn.releaseForeground();
-				turn.releaseForeground = foregroundOn(runtime);
-			};
-			try {
-				options.onAdmitted?.();
-			} catch {
-				// Admission observers are bookkeeping only and cannot affect the turn.
-			}
-			const runtimePromptText = submittedText;
-			if (options.requestContinuation !== true && deps.readSessionEntries) {
-				const prior = agentRuntime.agent.state.messages;
-				const retired = retireActiveUserContextForNextOperator(prior, deps.readSessionEntries(), {
-					...(state.lastTurnId ? { activeLeafTurnId: state.lastTurnId } : {}),
-				});
-				// Only an unsent block retires, so no request's history is rewritten (bt-40).
-				if (retired.length < prior.length) replaceEngineMessages(agentRuntime.agent, retired);
-			}
-			loop.terminalTurnFailure = undefined;
-			loop.turnRetryAttempts = 0;
-			loop.providerRetryAttempts = 0;
-			const evidence = state.runEvidence.beginSubmit();
-			loop.stepTurnScope = { evidence, continuation: options.yoloContinuation === true };
-			const priorPendingSkillPolicy = state.currentPendingSkillPolicy;
-			const priorAskUserPolicy = state.currentAskUserPolicy;
-			state.currentPendingSkillPolicy = pendingSkillPolicy;
-			state.currentAskUserPolicy = askUserPolicy;
+				askUserPolicy,
+				submittedText,
+				compiledPrompt,
+				turnSnapshot,
+			});
+			if (committed === null) return;
+			const { userTurnId, turnIndex, runtimePromptText, evidence, priorPendingSkillPolicy, priorAskUserPolicy } =
+				committed;
 			try {
 				await runSubmittedTurn(loop, state, turn, {
 					options,
@@ -1066,7 +911,7 @@ export function createChatLoopSubmit(loop: ChatLoopScope, state: ChatLoopSubmitS
 		} finally {
 			// Settlements land before the lease release flushes, and possibly seals, the session's journal.
 			middleware.releaseTurnHolds(turnHolds);
-			await turnLease?.release();
+			await turn.turnLease?.release();
 			returnUnstarted();
 			if (pathMessage && !turn.promptStarted && options.queued === undefined) messagePath.neverStarted(pathMessage);
 			if (loop.submitOwner === owner) {

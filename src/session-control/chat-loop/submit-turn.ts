@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import type { TelemetrySessionLease } from "../../domains/telemetry/session-journals.js";
 
 /** Closing notice an operator interrupt leaves in the transcript and the ledger. */
 export const INTERRUPT_CANCEL_REASON = "[PanCode] run interrupted by operator; delivering the new message now.";
@@ -20,4 +21,6 @@ export interface SubmitTurn {
 	promptStarted: boolean;
 	/** Ends the foreground-stream registration of the endpoint the turn runs on now; a route move swaps it. */
 	releaseForeground: () => void;
+	/** The session writer the turn holds open from submit to settle; `submit`'s last finally releases it. */
+	turnLease: TelemetrySessionLease | undefined;
 }
