@@ -301,7 +301,10 @@ function buildAssistantMessage(input: {
 	aborted: boolean;
 	errorMessage?: string | undefined;
 }): AgentMessage & { role: "assistant" } {
-	const usage = { ...normalizeClaudeUsage(input.result?.usage, input.result?.total_cost_usd ?? 0), pancodeSdkAggregate: true };
+	const usage = {
+		...normalizeClaudeUsage(input.result?.usage, input.result?.total_cost_usd ?? 0),
+		pancodeSdkAggregate: true,
+	};
 	const message: AgentMessage & { role: "assistant" } = {
 		role: "assistant",
 		content: [{ type: "text", text: input.text }],
