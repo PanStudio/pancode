@@ -225,12 +225,37 @@ test("transient Fleet band handles 4-worker overflow, watch-pane collapse, loops
 		strictEqual(loopOnly.length, 1);
 		match(loopOnly[0] ?? "", /^Loop waiting .* · 3\/10 · next in 22s$/u);
 
-		// Row 1 drops its idle worker count when fleetBandVisible is true.
+		// Row 1 keeps the band's live count beside ready whether the band shows or not, and a plan with a step running is
+		// one run there, as the band counts it: `✓ ready` alone beside a band reading `● 1 running` hid the plan.
 		const snapshot = footerState();
 		snapshot.fleetBandVisible = true;
+		const step = snapshot.dispatchRows[0];
+		ok(step);
+		snapshot.dispatchRows = [
+			{
+				...step,
+				runId: "fleet-root",
+				agentId: "plan",
+				plan: {
+					rootId: "fleet-root",
+					name: "build-review",
+					startedAtMs: 0,
+					finishedAtMs: null,
+					state: "running",
+					requiredStepCount: 2,
+					succeededStepCount: 0,
+					costText: null,
+					steps: [
+						{ stepId: "build", kind: "agent", label: "build", state: "running" },
+						{ stepId: "review", kind: "agent", label: "review", state: "pending" },
+					],
+				},
+			},
+			{ ...step, phase: { wave: 0, stepId: "build" } },
+		];
 		const statusRow = stripTerminalSequences(renderCompactDashboard(snapshot, 96)[0] ?? "");
-		doesNotMatch(statusRow, /1 worker/u);
-		match(statusRow, /✓ ready/u);
+		match(statusRow, /✓ ready · ● 1 running/u);
+		doesNotMatch(statusRow, /worker/u);
 	} finally {
 		setPresentationTier("standard");
 	}

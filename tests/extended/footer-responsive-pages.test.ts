@@ -390,11 +390,11 @@ test("Alt+U boxed island deck matches geometry, detailed default/welcome auto-fo
 		strictEqual(footer.isExpanded(), false, "deck auto-hides while a dock owns the surface");
 		strictEqual(footer.view.render(96).length, 1);
 
-		// /fleet hides deck and suppresses Row 1 worker count
+		// /fleet hides deck; Row 1 keeps the live count the board beside it states
 		fleetOpen = true;
 		const fleetLines = footer.view.render(96).map(stripTerminalSequences);
 		strictEqual(fleetLines.length, 1);
-		doesNotMatch(fleetLines[0] ?? "", /1 worker/u);
+		match(fleetLines[0] ?? "", /✓ ready · ● 1 running/u);
 		fleetOpen = false;
 		keyContext = "idle";
 

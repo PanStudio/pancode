@@ -266,6 +266,7 @@ export function exitSpend(
 	view: TelemetryView | null | undefined,
 	visitFrom: string,
 	entries: ReadonlyArray<unknown> = [],
+	workerRunIds: Iterable<string> = [],
 ): ExitSpend {
 	if (!view) return { kind: "unavailable" };
 	const session = view.session();
@@ -296,7 +297,7 @@ export function exitSpend(
 			cost: group.usd.display,
 			breakdown: tokenBreakdown(view, group.key),
 		})),
-		verified: verifiedOutcomeWords(view, sessionVerifiedOutcomes(view, entries)),
+		verified: verifiedOutcomeWords(view, sessionVerifiedOutcomes(view, entries, workerRunIds)),
 		cache: cacheShareWords(view),
 		economy: view.economy().total,
 	};
@@ -443,8 +444,8 @@ export function createExitSummaryCollector(deps: CollectorDeps) {
 	};
 	const calls = new Map<string, { entry: unknown; cwd: string; tool: string }>();
 	const workers = new Map<string, ExitSummarySnapshot["workers"][number]>();
-	/** The run each assignment's latest attempt is, so a failover counts one worker. */
-	const assignmentRuns = new Map<string, string>();
+	/** The run and attempt each assignment's latest attempt is, so a failover counts one worker. */
+	const assignmentRuns = new Map<string, { runId: string; attempt: number }>();
 	const workerTools = new Map<string, ReadonlyArray<{ tool: string; count: number }>>();
 	/**
 	 * The session that dispatched each run, so its tool calls count on that session's Tools row, as its own calls do. A
@@ -603,11 +604,23 @@ export function createExitSummaryCollector(deps: CollectorDeps) {
 			// A council's sealed report is no worker: it runs no model and carries a member's route.
 			if (run.agentId === COUNCIL_SEALED_REPORT_AGENT_ID) return;
 			// A failover's next attempt is the same worker: it replaces the attempt before it rather than counting again.
-			const assignment = (run as { assignmentId?: unknown }).assignmentId;
+			// The steps of one plan start under the plan's root at attempt 0, and a loop repair enters at its cycle number
+			// after a step that succeeded, so a run at an attempt no higher than the assignment's, or after an attempt that
+			// succeeded, is a sibling and its own worker, as the worker stream opens it its own card. Replacing it dropped
+			// the builder of a build-review plan and the exit card said `1 worker`.
+			const { assignmentId: assignment, attempt } = run as { assignmentId?: unknown; attempt?: unknown };
 			if (typeof assignment === "string") {
+				const at = typeof attempt === "number" ? attempt : 0;
 				const earlier = assignmentRuns.get(assignment);
-				if (earlier !== undefined && earlier !== run.runId) workers.delete(earlier);
-				assignmentRuns.set(assignment, run.runId);
+				if (earlier === undefined) assignmentRuns.set(assignment, { runId: run.runId, attempt: at });
+				else if (
+					earlier.runId !== run.runId &&
+					at > earlier.attempt &&
+					workers.get(earlier.runId)?.outcome !== "succeeded"
+				) {
+					workers.delete(earlier.runId);
+					assignmentRuns.set(assignment, { runId: run.runId, attempt: at });
+				}
 			}
 			workers.set(run.runId, {
 				runId: run.runId,
@@ -784,7 +797,7 @@ export function createExitSummaryCollector(deps: CollectorDeps) {
 			} catch {
 				// An unreadable ledger counts no ledger outcome; the card still closes with the spend it has.
 			}
-			const spend = exitSpend(deps.telemetry.read?.live(), visitFrom, entries);
+			const spend = exitSpend(deps.telemetry.read?.live(), visitFrom, entries, workers.keys());
 			const autonomy = deps.autonomy?.() ?? null;
 			const sessions = new Set([...visitSessions, session.id]).size;
 			const liveTurns = Math.max(0, (deps.getTurns() ?? 0) - baseTurns - (deps.undeliveredTurns?.() ?? 0));

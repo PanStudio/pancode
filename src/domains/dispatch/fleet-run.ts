@@ -1266,6 +1266,8 @@ async function runFleetHoldingWorkspace(
 			.map((step) => step.id),
 		requiredStepCount: required.length,
 		succeededStepCount,
+		plannedStepCount: livePlan.steps.length,
+		ranStepCount: livePlan.steps.filter((step) => result.results.has(step.id)).length,
 		resolvedLoopCount: result.loops.length - failedLoops.length,
 		cleanRun,
 	};

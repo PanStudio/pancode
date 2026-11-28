@@ -16,6 +16,7 @@ import {
 	compareRuns,
 	type RunApprovalFacts,
 	type RunCell,
+	type RunCountBuckets,
 	type RunFacts,
 	type RunIntegrity,
 	type RunOrigin,
@@ -29,6 +30,7 @@ import { truncateToWidth, visibleWidth } from "../../engine/tui.js";
 import { sanitizeCallTargetText } from "../../lib/call-target/call-target.js";
 import { isHelperRun } from "../../session-control/worker-stream.js";
 import type { DispatchBoardRow } from "../dispatch-row-model.js";
+import { ACTIVE_DISPATCH_STATUSES } from "../footer-panel.js";
 import type { HarnessFactsSource } from "../harness-facts.js";
 import { actionKeyLabel } from "../keybinding-manager.js";
 import { GLYPH, pancodeTheme } from "../theme/index.js";
@@ -107,6 +109,18 @@ function bandRuns(rows: ReadonlyArray<DispatchBoardRow>): DispatchBoardRow[] {
 	if (!planLive) return [...rows];
 	return rows.filter(
 		(row) => row.plan !== undefined || row.phase === undefined || row.progress?.awaitingApproval === true,
+	);
+}
+
+/**
+ * The live runs the band counts, by state: a live plan is its plan row, not its steps. The idle footer reads these, so
+ * it never says ready alone beside a band that shows a plan running.
+ */
+export function liveRunCounts(rows: ReadonlyArray<DispatchBoardRow>, now: number): RunCountBuckets {
+	return runCountBuckets(
+		bandRuns(rows)
+			.filter((row) => ACTIVE_DISPATCH_STATUSES.has(row.status))
+			.map((row) => runFactsOf(row, now)),
 	);
 }
 

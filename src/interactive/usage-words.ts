@@ -20,10 +20,12 @@ import {
 	usageLineFigure,
 	usageSaysNothing,
 } from "../core/views/usage-words.js";
+import { pancodeStateDir } from "../core/xdg.js";
 import {
 	countVerifiedOutcomes,
 	perVerifiedOutcome,
 	runHostVerified,
+	sessionGateDecisions,
 	type VerifiedOutcomeCount,
 } from "../domains/evidence/verified-outcomes.js";
 import type { TelemetryView } from "../domains/telemetry/contract.js";
@@ -129,7 +131,7 @@ export type VerifiedOutcomeWords =
 			kind: "counted";
 			/** `3`. */
 			count: string;
-			/** `2 reproduce or numeric-compare passes`, `1 worker run host-verified`, `1 task done with a passing check`. */
+			/** `2 reproduce or numeric-compare passes`, `1 worker run host-verified`, `1 task done with a passing check`, `1 review gate passed`. */
 			parts: string[];
 			/** Session tokens over the outcomes: `4,115`, `≥4,115`, or `not measured`. */
 			tokens: string;
@@ -140,17 +142,32 @@ export type VerifiedOutcomeWords =
 /**
  * The session's verified outcomes from its whole ledger and the worker runs its telemetry references. A run's record
  * is read and its seal checked here, so a caller reads this once per render, not per row. A fork counts only what it
- * recorded itself: its `session.forked` row names the parent turn its ledger's copied entries end at.
+ * recorded itself: its `session.forked` row names the parent turn its ledger's copied entries end at. A passing review
+ * gate counts when a sealed coordinator or session scope decided it about one of those runs or `workerRunIds`.
  */
-export function sessionVerifiedOutcomes(view: TelemetryView, entries: ReadonlyArray<unknown>): VerifiedOutcomeCount {
+export function sessionVerifiedOutcomes(
+	view: TelemetryView,
+	entries: ReadonlyArray<unknown>,
+	workerRunIds: Iterable<string> = [],
+): VerifiedOutcomeCount {
 	const forkTurnId = view.session().lineage.parent?.turnId ?? null;
 	const verified = new Set<string>();
+	// A worker this process ran for the session reaches its review gates even when its records missed the session id.
+	const runIds: string[] = [...workerRunIds];
 	try {
-		for (const row of view.runs()) if (runHostVerified(view.run(row.runId))) verified.add(row.runId);
+		for (const row of view.runs()) {
+			runIds.push(row.runId);
+			if (runHostVerified(view.run(row.runId))) verified.add(row.runId);
+		}
 	} catch {
 		// A read model that cannot list runs leaves the runs out; the ledger's own outcomes still count.
 	}
-	return countVerifiedOutcomes(expandChainMessages(entries), verified, forkTurnId);
+	return countVerifiedOutcomes(
+		expandChainMessages(entries),
+		verified,
+		forkTurnId,
+		sessionGateDecisions(pancodeStateDir(), runIds),
+	);
 }
 
 /** Command checks such as unit tests are not judged outcomes, and the words say so rather than read as nothing verified. */
@@ -194,6 +211,7 @@ export function verifiedOutcomeWords(view: TelemetryView, outcomes: VerifiedOutc
 			...(outcomes.tasks > 0
 				? [plural(outcomes.tasks, "task done with a passing check", "tasks done with a passing check")]
 				: []),
+			...(outcomes.reviews > 0 ? [plural(outcomes.reviews, "review gate passed", "review gates passed")] : []),
 		],
 		tokens: usageSaysNothing(tokens) ? USAGE_NOT_MEASURED : tokens,
 		cost,

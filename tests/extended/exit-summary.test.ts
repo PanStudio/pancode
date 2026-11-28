@@ -202,7 +202,7 @@ test("a seat route's outcome share divides the credits the cost line states, not
 	const view = telemetryViewOf("session-1", [...seatCall(189_600_000), ...seatCall(189_600_000)]);
 	strictEqual(view.session().totals.usd.display, "not measured");
 	strictEqual(view.economy().total.display.seatCredits, "0.3792 credits");
-	const words = verifiedOutcomeWords(view, { total: 2, checks: 0, workers: 0, tasks: 2 });
+	const words = verifiedOutcomeWords(view, { total: 2, checks: 0, workers: 0, tasks: 2, reviews: 0 });
 	ok(words.kind === "counted");
 	strictEqual(words.cost, "0.1896 credits");
 	// No debit measured: the share stays the honest `not measured`.
@@ -211,6 +211,7 @@ test("a seat route's outcome share divides the credits the cost line states, not
 		checks: 0,
 		workers: 0,
 		tasks: 2,
+		reviews: 0,
 	});
 	ok(unpriced.kind === "counted");
 	strictEqual(unpriced.cost, "not measured");
@@ -315,6 +316,34 @@ test("the activity row names its visit scope and a worker whose writes went unre
 	const text = renderExitSummary(collector.snapshot(), "on", 160, false, "standard").join("\n");
 	match(text, /^ {2}work +0 turns · 2 workers · 0 files changed \(1 worker kept no write record\)$/mu);
 	match(text, /^ {2}workers +2 completed · 1 call refused$/mu);
+	collector.dispose();
+});
+
+test("each step of a plan counts as its own worker, and only a retry after a failure replaces the attempt before it", () => {
+	const bus = createTelemetryHub();
+	const collector = createExitSummaryCollector({
+		bus,
+		telemetry: { subscribe: () => () => {} } as unknown as TelemetryContract,
+		dispatch: { observedRunWrites: () => null },
+		session: { current: () => ({ id: "session-1", hasModelTurn: true }) } as unknown as Pick<SessionContract, "current">,
+		getTurns: () => 0,
+		getToolCounts: () => new Map(),
+		getModel: () => null,
+	});
+	const run = (runId: string, agentId: string, assignmentId: string, attempt: number, outcome: string) => {
+		bus.emit("run.started", { runId, agentId, targetId: "local", wireModelId: "m", assignmentId, attempt } as never);
+		bus.emit(outcome === "succeeded" ? "run.completed" : "run.failed", { runId, agentId, outcome } as never);
+	};
+	// A build and its review start under the plan's root at attempt 0; the repair the review asked for enters at 1.
+	run("build", "coder", "fleet-root", 0, "succeeded");
+	run("check-1", "reviewer", "fleet-root", 0, "succeeded");
+	run("repair-1", "coder", "fleet-root", 1, "succeeded");
+	// A dispatch whose first attempt failed is one worker once its retry runs.
+	run("solo-1", "coder", "solo-1", 0, "failed");
+	run("solo-2", "coder", "solo-1", 1, "succeeded");
+	const text = renderExitSummary(collector.snapshot(), "on", 160, false, "standard").join("\n");
+	match(text, /^ {2}work +0 turns · 4 workers · /mu);
+	match(text, /^ {2}workers +4 succeeded$/mu);
 	collector.dispose();
 });
 
@@ -682,7 +711,38 @@ test("the exit card divides the session's spend over its distinct verified outco
 		checks: 2,
 		workers: 1,
 		tasks: 0,
+		reviews: 0,
 	});
+	// A passing review gate is a judged outcome, once per result it judged; a failed or compete verdict is none, and a
+	// pass on a run whose host verification already counts is that run's outcome.
+	const gate = (topology: "review" | "compete", outcome: string, runId: string, digest: string) => ({
+		topology,
+		outcome,
+		subjects: [{ runId, digest }],
+	});
+	const gates = [
+		gate("review", "pass", "run-build", "d1"),
+		gate("review", "pass", "run-build", "d1"),
+		gate("review", "fail", "run-other", "d2"),
+		gate("compete", "winner", "run-other", "d3"),
+		gate("review", "pass", "run-b", "d4"),
+	] as Parameters<typeof countVerifiedOutcomes>[3];
+	deepStrictEqual(countVerifiedOutcomes(ledgerWithRuns, new Set(["run-a", "run-b"]), null, gates), {
+		total: 4,
+		checks: 2,
+		workers: 1,
+		tasks: 0,
+		reviews: 1,
+	});
+	const reviewed = verifiedOutcomeWords(telemetryViewOf("session-1", call(null)), {
+		total: 1,
+		checks: 0,
+		workers: 0,
+		tasks: 0,
+		reviews: 1,
+	});
+	ok(reviewed.kind === "counted");
+	deepStrictEqual(reviewed.parts, ["1 review gate passed"]);
 	// A run whose checks the ledger does not show counts only when there is no counted pass it could repeat.
 	deepStrictEqual(countVerifiedOutcomes(entries, new Set(["run-hidden"])).workers, 0);
 	deepStrictEqual(countVerifiedOutcomes([], new Set(["run-hidden"])).workers, 1);
