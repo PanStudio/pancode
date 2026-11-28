@@ -12,6 +12,7 @@ import type { CacheReportV1, CostReportV1, SessionTelemetryV1 } from "../../cont
 import { formatDay } from "../api/clock.js";
 import { finite } from "../api/narrow.js";
 import { humanizeKey, scalarText } from "../design/facts-model.js";
+import { matchesText } from "../design/text-match.js";
 import {
 	countText,
 	type Explainable,
@@ -20,7 +21,6 @@ import {
 	quantityParts,
 	quantityText,
 } from "../telemetry/quantity-model.js";
-import { matchesText } from "./run-inspection-model.js";
 
 interface UsageFigure extends Explainable {
 	label: string;

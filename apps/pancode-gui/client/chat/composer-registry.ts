@@ -5,7 +5,7 @@
  * Ctrl+K palette runs a command in it, and the Task actions menu opens its dialogs. Each composer registers its
  * handlers here while it is mounted.
  */
-import { draftStore } from "./composer-model.js";
+import { draftStore } from "./draft-store.js";
 import type { SlashAction } from "./slash-model.js";
 
 /** Focus handlers keyed by session, so a retry elsewhere in the turn can fill and focus this field. */

@@ -359,7 +359,7 @@ export interface BuiltBundle {
 	summary: BundleSummary;
 }
 
-export { reportBundlePath, reportBundlesDirectory } from "./store.js";
+export { reportBundlePath } from "./store.js";
 
 function packageWriter(): { pancodeVersion: string; piVersion: string } {
 	const pkg = JSON.parse(readFileSync(join(resolvePackageRoot(), "package.json"), "utf8")) as {

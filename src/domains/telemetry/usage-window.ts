@@ -3,10 +3,12 @@
 import { readFile } from "node:fs/promises";
 import { join, resolve, sep } from "node:path";
 import { cwdHash } from "../../core/cwd-hash.js";
+import type { FundingDefinitions } from "../../core/funding-config.js";
 import type { ExplanationV1, ParsedFactRef } from "../../core/telemetry/dto.js";
 import { isRecord } from "../../core/type-guards.js";
 import { explain } from "./read-model.js";
 import { parseRepoOwner, type RepoSource, repoOwner } from "./read-model-sources.js";
+import { usageReport } from "./read-model-usage.js";
 import { loadRepoTelemetrySources } from "./telemetry-source.js";
 
 /**
@@ -72,6 +74,23 @@ export async function usageWindow(
 	return {
 		repo: { owner: repoOwner(projectHash, days), ...telemetry },
 	};
+}
+
+/**
+ * `usage report`'s figure: the window of `days` ending at `now`, folded with the operator's declared pools, and what
+ * the read could not use. The CLI prints it and the GUI serves it, so both show one number.
+ */
+export async function usageReportWindow(
+	stateDir: string,
+	projectHash: string | null,
+	days: number,
+	now: number,
+	pools?: Readonly<FundingDefinitions>,
+) {
+	const from = now - days * 24 * 60 * 60 * 1000;
+	const diagnostics = emptyUsageDiagnostics();
+	const { repo } = await usageWindow(stateDir, projectHash, days, now, diagnostics);
+	return { from, to: now, report: usageReport(repo, from, now, pools), diagnostics };
 }
 
 /** The run ledger's cwd per run, while the ring keeps its row. */

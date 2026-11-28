@@ -73,7 +73,7 @@ function repositoryFilter(entry: GitHookFile): boolean {
 export type InternalGitOutcome = "hooks-off" | "overridden" | "skipped" | "yolo";
 
 /** The operation label of PanCode's read-only git (status, diff, ls-files, hash-object) after config drift. */
-export const INTERNAL_GIT_READS = "read-only git";
+const INTERNAL_GIT_READS = "read-only git";
 
 /** What one internal operation met: reported once per operation and set of changes. */
 export interface InternalGitDriftRecord {

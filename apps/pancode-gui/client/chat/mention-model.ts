@@ -103,3 +103,80 @@ export function resolveSteerTarget(target: string, running: readonly RunningRun[
 export function steerCandidates(runs: readonly RunningRun[]): string {
 	return runs.map((run) => `${run.agentId} (${run.runId.slice(0, 8)})`).join(", ");
 }
+
+/** Why an `@target` line did not steer: it names several running agents, or none of them. */
+export function steerRefusal(
+	target: string,
+	resolved: Exclude<SteerTarget, { readonly kind: "match" }>,
+	running: readonly RunningRun[],
+): string {
+	return resolved.kind === "ambiguous"
+		? `@${target} names more than one running agent. Use a run id: ${steerCandidates(resolved.candidates)}.`
+		: `No running agent is named @${target}. Running: ${steerCandidates(running)}. To reference a file of that name, write @"${target}".`;
+}
+
+/**
+ * A message that opens with `@name` can steer a running agent, so the agents whose name starts with it
+ * lead the list there. The runs are read only when the reference could name one.
+ */
+export function mentionAgents(
+	mention: MentionQuery | null,
+	canSteer: boolean,
+	runs: () => readonly RunningRun[],
+): readonly RunningRun[] {
+	if (mention === null || mention.start !== 0 || !canSteer || mention.path.includes("/")) return [];
+	const prefix = mention.path.toLowerCase();
+	return runs().filter((run) => run.agentId.toLowerCase().startsWith(prefix));
+}
+
+export interface FileMatch {
+	readonly name: string;
+	readonly path: string;
+	readonly directory: boolean;
+}
+
+/**
+ * The list under the field: with a reference under the caret, the matching running agents and then the
+ * workspace's files, each file by name with its folder trailing; otherwise the slash command's argument values.
+ * `key` is what an Esc dismisses the list for.
+ */
+export function suggestionList(
+	mention: MentionQuery | null,
+	agents: readonly RunningRun[],
+	files: readonly FileMatch[],
+	args: readonly { readonly value: string; readonly summary: string }[],
+	text: string,
+) {
+	if (mention === null)
+		return {
+			rows: args.map((row) => ({ id: `arg:${row.value}`, label: row.value, summary: row.summary })),
+			key: args.length > 0 ? text : null,
+		};
+	return {
+		rows: [
+			...agents.map((run) => ({
+				id: `agent:${run.runId}`,
+				label: run.agentId,
+				summary: `running agent · ${run.runId.slice(0, 8)}`,
+				icon: "bolt" as const,
+			})),
+			...files.map((match) => ({
+				id: `file:${match.path}`,
+				label: `${match.name}${match.directory ? "/" : ""}`,
+				summary: match.path.slice(0, match.path.length - match.name.length - (match.directory ? 1 : 0)),
+				icon: match.directory ? ("folder" as const) : ("artifacts" as const),
+				path: true,
+			})),
+		],
+		key: `${mention.start}:${mention.path}`,
+	};
+}
+
+/** What picking the active row does: steer an agent, open a folder, or add a file. */
+export function mentionPickVerb(
+	active: number,
+	agents: readonly RunningRun[],
+	files: readonly FileMatch[],
+): "steer" | "open" | "add" {
+	return active < agents.length ? "steer" : files[active - agents.length]?.directory ? "open" : "add";
+}

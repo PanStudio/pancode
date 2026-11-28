@@ -8,7 +8,14 @@ import { setTimeout } from "node:timers/promises";
 import { parseArgs } from "node:util";
 import { backgroundCapability } from "../../contracts/launch-capability.js";
 import { findLocalServer, type LocalServerMeta, launchTicket, showPage, waitForLocalServer } from "../local-server.js";
-import { getVersionInfo, readInstallerRecord, resolvePancodeDirs } from "../pancode/http-shims.js";
+import {
+	getVersionInfo,
+	readInstallerRecord,
+	resolvePancodeDirs,
+	StateFileLockTimeoutError,
+	withStateFileLock,
+	xdgBaseDir,
+} from "../pancode/http-shims.js";
 import { controlService, openApp } from "../process-policy.js";
 import type { WindowAnswer } from "../relaunch-model.js";
 import {
@@ -83,35 +90,13 @@ export async function sameInstallation(left: string, right: string) {
  * holder has exited is taken over.
  */
 async function withPublishLock<T>(directory: string, publish: () => Promise<T>): Promise<T> {
-	const lock = join(dirname(directory), `.${basename(directory)}.publish.lock`);
-	for (let attempt = 0; ; attempt += 1) {
-		try {
-			await writeFile(lock, `${process.pid}\n`, { flag: "wx", mode: 0o600 });
-			break;
-		} catch (error) {
-			if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
-		}
-		const holder = Number.parseInt((await contents(lock)) ?? "", 10);
-		let alive = true;
-		if (Number.isInteger(holder) && holder > 0 && holder !== process.pid) {
-			try {
-				process.kill(holder, 0);
-			} catch (error) {
-				alive = (error as NodeJS.ErrnoException).code === "EPERM";
-			}
-		}
-		if (!alive) {
-			await unlink(lock).catch(() => undefined);
-			continue;
-		}
-		if (attempt >= 400)
-			throw new Error(`Another process is changing the background setup (${lock}). No files were changed.`);
-		await setTimeout(25);
-	}
+	const target = join(dirname(directory), `.${basename(directory)}.publish`);
 	try {
-		return await publish();
-	} finally {
-		await unlink(lock).catch(() => undefined);
+		return await withStateFileLock(target, publish, { timeoutMs: 10_000, note: "publishing the background setup" });
+	} catch (error) {
+		if (error instanceof StateFileLockTimeoutError)
+			throw new Error(`Another process is changing the background setup (${target}.lock). No files were changed.`);
+		throw error;
 	}
 }
 /** `keptUnit` is the verified unit text left in place; without it the unit is rendered and written anew. */
@@ -675,9 +660,7 @@ export async function background(args: string[], launch: LaunchPaths, platform: 
 			values.prefix ??
 			(installed.status === "installed"
 				? installed.config.desktopPrefix
-				: process.env.XDG_DATA_HOME && isAbsolute(process.env.XDG_DATA_HOME)
-					? process.env.XDG_DATA_HOME
-					: join(homedir(), ".local/share"));
+				: xdgBaseDir(process.env.XDG_DATA_HOME, join(homedir(), ".local/share")));
 		const config = await newBackgroundConfig(port, launch, prefix);
 		const result = await installBackground(directory, config, undefined, undefined, {
 			handover: values.handover === true,

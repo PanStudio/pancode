@@ -7,8 +7,6 @@ import type { LeaderKeyController } from "./leader-key.js";
 import { isEscapeKey, type OverlayState, overlayOwnsInput } from "./overlay-lifecycle.js";
 import { terminalReportKind } from "./terminal-reports.js";
 
-export { APPLICATION_DOUBLE_TAP_MS } from "./interrupt-window.js";
-
 const ARMED_TICK_MS = 1_000;
 /**
  * How long after Esc closes something an Esc is not read as cancelling the run.

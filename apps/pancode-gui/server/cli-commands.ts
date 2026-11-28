@@ -19,8 +19,6 @@ export const CliCommand = Type.Union([
 	Type.Object({ kind: Type.Literal("hub.verifiers") }, closed),
 	Type.Object({ kind: Type.Literal("usage.report"), installation: Type.Optional(Type.Literal(true)) }, closed),
 	Type.Object({ kind: Type.Literal("run.verify"), id: Id }, closed),
-	Type.Object({ kind: Type.Literal("targets.list") }, closed),
-	Type.Object({ kind: Type.Literal("targets.probe"), id: Id }, closed),
 	Type.Object({ kind: Type.Literal("targets.use"), id: Id }, closed),
 	Type.Object({ kind: Type.Literal("targets.remove"), id: Id }, closed),
 	Type.Object({ kind: Type.Literal("targets.signout"), id: Id }, closed),
@@ -92,10 +90,6 @@ export function commandPlan(input: unknown, cwd?: string): { argv: string[]; out
 			return { argv: ["usage", "report", "--repo", cwd, "--days", "30", "--json"], output: "json" };
 		case "run.verify":
 			return { argv: ["fleet", "verify", input.id, "--json"], output: "json" };
-		case "targets.list":
-			return { argv: ["targets", "--json"], output: "json" };
-		case "targets.probe":
-			return { argv: ["targets", "--json", "--probe", "--target", input.id], output: "json" };
 		case "targets.use":
 			return { argv: ["targets", "use", input.id], output: "exit" };
 		case "targets.remove":

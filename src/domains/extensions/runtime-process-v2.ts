@@ -44,7 +44,7 @@ import { isBuiltinToolName } from "../../core/tool-names.js";
 import type { EmbeddingResponse } from "../providers/embedding/types.js";
 import { parseExtensionManifest } from "./discovery.js";
 import { extensionContentDigestWithCapture } from "./integrity.js";
-import type { ResolvedPathGrant } from "./path-grants.js";
+import { type ResolvedPathGrant, releaseCreatedRoots } from "./path-grants.js";
 import {
 	assertPlainProjectDir,
 	assertPlainWorktreeParent,
@@ -56,7 +56,6 @@ import {
 	prepareProjectDir,
 	prepareWorktreeParent,
 	readOnlyRuntimeDeclaration,
-	releaseDeclaredWriteRoots,
 } from "./runtime-sandbox.js";
 import { type PackBinaryRunRequest, parsePackBinaryRun } from "./services/binaries.js";
 import type { PackBinaryRunResult } from "./services/binary-runs.js";
@@ -388,9 +387,9 @@ export class ExtensionRuntimeProcessV2 {
 			mkdirSync(options.storeDir, { recursive: true });
 		} catch (error) {
 			rmSync(temporary, { recursive: true, force: true });
-			releaseDeclaredWriteRoots(this.createdRoots);
-			releaseDeclaredWriteRoots(this.createdProject);
-			releaseDeclaredWriteRoots(this.createdWorktrees);
+			releaseCreatedRoots(this.createdRoots);
+			releaseCreatedRoots(this.createdProject);
+			releaseCreatedRoots(this.createdWorktrees);
 			throw error;
 		}
 		this.staged = new Promise((resolve, reject) => {
@@ -432,9 +431,9 @@ export class ExtensionRuntimeProcessV2 {
 			});
 		} catch (error) {
 			rmSync(temporary, { recursive: true, force: true });
-			releaseDeclaredWriteRoots(this.createdRoots);
-			releaseDeclaredWriteRoots(this.createdProject);
-			releaseDeclaredWriteRoots(this.createdWorktrees);
+			releaseCreatedRoots(this.createdRoots);
+			releaseCreatedRoots(this.createdProject);
+			releaseCreatedRoots(this.createdWorktrees);
 			throw error;
 		}
 		this.sandbox = launch.report;
@@ -510,11 +509,11 @@ export class ExtensionRuntimeProcessV2 {
 		return this.pending.size > 0;
 	}
 	private cleanCopy(): void {
-		releaseDeclaredWriteRoots(this.createdRoots);
+		releaseCreatedRoots(this.createdRoots);
 		this.createdRoots = [];
-		releaseDeclaredWriteRoots(this.createdProject);
+		releaseCreatedRoots(this.createdProject);
 		this.createdProject = [];
-		releaseDeclaredWriteRoots(this.createdWorktrees);
+		releaseCreatedRoots(this.createdWorktrees);
 		this.createdWorktrees = [];
 		try {
 			rmSync(this.copyRoot, { recursive: true, force: true });

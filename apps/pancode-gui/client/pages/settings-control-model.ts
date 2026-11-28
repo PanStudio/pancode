@@ -206,6 +206,21 @@ export function invalidCollectionNames(names: readonly string[]): boolean {
 	return normalized.some((name, index) => !name || normalized.indexOf(name) !== index);
 }
 
+/** Drafts that now equal the saved value are done; the same object comes back when none are. */
+export function withoutSavedDrafts(
+	drafts: Readonly<Record<string, string>>,
+	controls: ReadonlyArray<Pick<SettingControl, "path" | "value">>,
+): Readonly<Record<string, string>> {
+	const next = { ...drafts };
+	let changed = false;
+	for (const control of controls) {
+		if (next[control.path] !== control.value) continue;
+		delete next[control.path];
+		changed = true;
+	}
+	return changed ? next : drafts;
+}
+
 /** A review applies only to the draft and effective value actually shown to the user. */
 export function settingReviewMatches(
 	review: { draft: string; current: string } | null,

@@ -6,8 +6,10 @@ import { sessionReadScope } from "../api/sessions.js";
 import type { FollowLatest } from "../render/follow-latest.js";
 import {
 	createTranscriptViewStore,
-	TRANSCRIPT_PAGE_SIZE,
-	TRANSCRIPT_SLICE_SIZE,
+	earlierPage,
+	mountedFrom,
+	newestPageTurn,
+	sliceStartTurn,
 	transcriptStart,
 } from "./transcript-view-model.js";
 import type { ChatTurn } from "./turns.js";
@@ -41,9 +43,9 @@ export function useTranscriptView(
 	// A view that opens at the live edge mounts its newest slice first; one returning to a saved
 	// place mounts the whole page, which is what that place was measured against.
 	const opening = initialized.current !== scope && (store.read(sessionId, scope)?.following ?? true);
-	const mounted = Math.max(start, opening ? turns.length - TRANSCRIPT_SLICE_SIZE : shownIndex);
+	const mounted = mountedFrom(turns, start, shownIndex, opening);
 	const first = turns[start]?.turnId ?? null;
-	const initialFirst = turns[Math.max(0, turns.length - TRANSCRIPT_PAGE_SIZE)]?.turnId ?? null;
+	const initialFirst = newestPageTurn(turns);
 	const latest = useRef({ first, follow, turns });
 	latest.current = { first, follow, turns };
 	const reveal = useRef(false);
@@ -54,7 +56,7 @@ export function useTranscriptView(
 		const position = saved ?? { top: 0, following: true };
 		const all = latest.current.turns;
 		setAnchor(saved?.startTurnId ?? initialFirst);
-		setShown(position.following ? (all[Math.max(0, all.length - TRANSCRIPT_SLICE_SIZE)]?.turnId ?? null) : null);
+		setShown(position.following ? sliceStartTurn(all, 0, all.length) : null);
 		latest.current.follow.restore(position);
 	}, [ready, scope, store, sessionId, initialFirst]);
 	useLayoutEffect(() => {
@@ -68,7 +70,7 @@ export function useTranscriptView(
 			return;
 		}
 		const frame = requestAnimationFrame(() => {
-			setShown(latest.current.turns[Math.max(start, shownIndex - TRANSCRIPT_SLICE_SIZE)]?.turnId ?? null);
+			setShown(sliceStartTurn(latest.current.turns, start, shownIndex));
 		});
 		return () => cancelAnimationFrame(frame);
 	}, [shown, shownIndex, start]);
@@ -93,11 +95,11 @@ export function useTranscriptView(
 		start,
 		turns: turns.slice(mounted),
 		earlier: () => {
-			const target = Math.max(0, start - TRANSCRIPT_PAGE_SIZE);
+			const page = earlierPage(turns, start, mounted);
 			follow.restore({ ...follow.snapshot(), following: false });
 			reveal.current = true;
-			setShown(turns[Math.max(target, mounted - TRANSCRIPT_SLICE_SIZE)]?.turnId ?? null);
-			setAnchor(turns[target]?.turnId ?? null);
+			setShown(page.shown);
+			setAnchor(page.anchor);
 		},
 		revealTurn: (turnId: string) => {
 			const index = turns.findIndex((turn) => turn.turnId === turnId);

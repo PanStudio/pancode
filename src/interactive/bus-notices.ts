@@ -83,7 +83,6 @@ function workerEscalationAxis(
 }
 
 export { middlewareHookFailedSessionNotice } from "../session-control/session-notices.js";
-export { WATCHDOG_NOTICE_CHECK_LIMIT, watchdogBlockersNotice } from "../session-control/watchdog-notice.js";
 
 /**
  * A tool call parked for one-shot approval (sd-01 §3.3). The text names the

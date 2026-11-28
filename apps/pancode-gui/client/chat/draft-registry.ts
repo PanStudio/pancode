@@ -4,7 +4,7 @@
 // list can discard a deleted task's draft without pulling the composer's policy (and the slash table it reads) into
 // the first-paint bundle.
 
-import type { DraftStore } from "./composer-model.js";
+import type { DraftStore } from "./draft-store.js";
 
 /** Drafts are kept per session and capped, the same way `sessionBuffer` caps projections. */
 export const MAX_DRAFT_STORES = 32;
