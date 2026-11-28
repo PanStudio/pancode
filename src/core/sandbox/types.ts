@@ -25,6 +25,14 @@ export const UNIX_SOCKET_MODES = ["block", "owned", "allow"] as const;
 export type UnixSocketMode = (typeof UNIX_SOCKET_MODES)[number];
 
 /**
+ * `safety.workerIsolation` values. children sandboxes a native worker's commands and leaves the worker process on
+ * the host with its provider credential; process also runs the worker's model calls through a per-launch host
+ * model route, so the worker holds no reusable credential, and refuses every launch that cannot (D14).
+ */
+export const WORKER_ISOLATION_MODES = ["children", "process"] as const;
+export type WorkerIsolationMode = (typeof WORKER_ISOLATION_MODES)[number];
+
+/**
  * `safety.homeReads` modes, per caller. `open` reads the whole filesystem as
  * before; `listed` hides the operator's home and, on WSL2, the Windows drive
  * mounts, and shows back only the roots the sandbox admits, PanCode's own

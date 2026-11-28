@@ -44,6 +44,7 @@ import {
 import { dispatchResultContract } from "./execution-role.js";
 import { fleetNodeSandboxAvailability } from "./fleet-preflight.js";
 import { effectiveWorkerPermissionMode, judgeWithheldCause } from "./grant-authority.js";
+import { assertWorkerIsolationAdmitted } from "./model-route-binding.js";
 import { requestedWriteNone, resolveRunRole } from "./obligation.js";
 import type { DispatchPathScope } from "./path-scope.js";
 import type { FleetPlacementPreview } from "./placement.js";
@@ -147,6 +148,11 @@ export function resolveDispatchEnvelopeStage(input: {
 		availability: placedAvailability,
 		...sandbox
 	} = placementSandboxFacts(target.runtime.kind, input.settings, input.placement, hoare, network);
+	// D14: refused here, before the permit, so a preview names the same refusal a launch would.
+	assertWorkerIsolationAdmitted(input.settings?.safety.workerIsolation, {
+		target,
+		localPlacement: input.placement.node.kind === "local",
+	});
 	const facts: Parameters<typeof resolveWriteMode>[0] = {
 		writeNone,
 		roots: writeNone ? [] : pathScope.writeBoundaries,

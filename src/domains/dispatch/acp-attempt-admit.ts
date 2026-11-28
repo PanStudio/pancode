@@ -23,6 +23,7 @@ import type { ProbeClaim } from "./bundle-types.js";
 import type { DispatchAdmissionObserver, DispatchPreparationOptions, DispatchRequest } from "./contract.js";
 import { reportDispatchDiagnostic } from "./dispatch-diagnostic.js";
 import type { EffectiveSettings } from "./envelope-stage.js";
+import { assertAcpWorkerIsolationAdmitted } from "./model-route-binding.js";
 import type { RouteDecisionV1 } from "./route-decision.js";
 import { createRunCallUsage } from "./run-call-usage.js";
 import { openRunTelemetry, type RunTelemetryJournal } from "./run-telemetry.js";
@@ -72,6 +73,7 @@ export async function admitAcpDelegation(
 					agentId: req.agentId,
 					ownerSessionId: req.ownerSessionId ?? null,
 				});
+	assertAcpWorkerIsolationAdmitted(settings?.safety.workerIsolation, lifecycle.agentConfig.id);
 	const targetId = `delegation:${lifecycle.agentConfig.id}`;
 	const runtimeId = "acp";
 	const wireModelId = req.model ?? lifecycle.agentConfig.id;

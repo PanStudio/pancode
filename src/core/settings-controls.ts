@@ -558,6 +558,7 @@ const CHOICES: Record<string, readonly string[]> = {
 	"safety.egress.main.mode": ["proxied", "off", "open"],
 	"safety.egress.workers.mode": ["off", "proxied", "open"],
 	"safety.sandboxUnixSockets": ["block", "owned", "allow"],
+	"safety.workerIsolation": ["children", "process"],
 	"safety.homeReads.main": ["open", "listed"],
 	"safety.homeReads.workers": ["open", "listed"],
 	"safety.snapshots": ["auto", "off"],
@@ -834,6 +835,10 @@ const EXTRA_HELP: Record<string, [string, string]> = {
 	"safety.sandboxUnconfinedLocalWorkers": [
 		"Unconfined local workers",
 		"When this host has no usable OS sandbox, lets dispatched workers here run their shell and check commands with no sandbox, under your account with your files and network. Off refuses such a worker before it starts. safety.sandbox: required ignores it; fleet nodes keep their own allowUnsandboxed. User settings only.",
+	],
+	"safety.workerIsolation": [
+		"Worker isolation",
+		"Children sandboxes the commands a dispatched worker runs and leaves the worker process itself on this host with your provider login. Process also sends the worker's model calls through a route on this host that adds the credential, so the worker never holds it; workers that cannot (Claude SDK, CLI and ACP agents, fleet nodes, local model servers, non-Linux hosts) are refused instead. User settings only.",
 	],
 	"safety.validationWrappers": [
 		"Validation wrappers",

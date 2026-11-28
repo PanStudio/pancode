@@ -74,6 +74,8 @@ const HOT_RELOAD_FIELDS = new Set<string>([
 	"safety.resources",
 	// Read at every dispatch admission, so the next dispatch observes a change; a running worker keeps its spec.
 	"safety.sandboxUnconfinedLocalWorkers",
+	// Read at every dispatch admission, so the next dispatch observes a change; a running worker keeps its route.
+	"safety.workerIsolation",
 	// The startup prune reads it from the live snapshot when it runs and doctor reads the file, so neither keeps an old
 	// value; it takes effect at the next prune.
 	"safety.sandboxCacheMaxGiB",

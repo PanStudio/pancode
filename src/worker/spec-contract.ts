@@ -11,6 +11,7 @@ import {
 	RUNTIME_AUTHS,
 	RUNTIME_KINDS,
 } from "../core/runtime-vocabulary.js";
+import type { ModelRouteBinding } from "../core/sandbox/egress/model-route-client.js";
 import { originKey, parseEgressAllowEntry, upstreamProxyProblem } from "../core/sandbox/egress/policy.js";
 import { homeReadRootProblem } from "../core/sandbox/home-read-roots.js";
 import {
@@ -183,6 +184,11 @@ interface WorkerSpecFields {
 	/** Only local PanCode workers may re-resolve this credential profile. */
 	authProfile?: string;
 	credentialExpiresAt?: number;
+	/**
+	 * `safety.workerIsolation: process` (D14): the worker's model calls to `origin` go through the host route, which
+	 * holds the credential. Exclusive with `apiKey`, `authProfile`, `credentialExpiresAt` and `target.auth.headers`.
+	 */
+	modelRoute?: ModelRouteBinding;
 	thinkingLevel?: ThinkingLevel;
 	/** JSON Schema enforced on the llama.cpp chat-completions request. */
 	responseSchema?: Record<string, unknown>;
@@ -400,6 +406,21 @@ export function serializeWorkerRuntimeDescriptor(runtime: RuntimeDescriptor): Se
 		// no way to tell an alias spelling from a genuinely wrong runtime.
 		...(runtime.aliases !== undefined && runtime.aliases.length > 0 ? { aliases: [...runtime.aliases] } : {}),
 	};
+}
+
+/** A routed spec names its route and carries nothing the route exists to keep on the host. */
+function validateModelRoute(spec: Record<string, unknown>): void {
+	const route = readRecord(spec.modelRoute, "WorkerSpec.modelRoute");
+	for (const key of ["origin", "route", "surrogate"] as const) readString(route[key], `WorkerSpec.modelRoute.${key}`);
+	const origin = new URL(route.origin as string);
+	const local = new URL(route.route as string);
+	if (origin.origin !== route.origin) throw new Error("WorkerSpec.modelRoute.origin must be a bare origin");
+	if (local.protocol !== "http:" || local.hostname !== "127.0.0.1")
+		throw new Error("WorkerSpec.modelRoute.route must be an http://127.0.0.1 address");
+	for (const key of ["apiKey", "authProfile", "credentialExpiresAt"] as const)
+		if (spec[key] !== undefined) throw new Error(`WorkerSpec.modelRoute excludes WorkerSpec.${key}`);
+	const auth = (spec.target as { auth?: { headers?: unknown } } | undefined)?.auth;
+	if (auth?.headers !== undefined) throw new Error("WorkerSpec.modelRoute excludes WorkerSpec.target.auth.headers");
 }
 
 function readRecord(value: unknown, source: string): Record<string, unknown> {
@@ -1370,6 +1391,7 @@ export function parseWorkerSpec(value: unknown): WorkerSpec {
 	readOptionalString(spec, "apiKey", "WorkerSpec");
 	readOptionalString(spec, "authProfile", "WorkerSpec");
 	readOptionalNumber(spec, "credentialExpiresAt", "WorkerSpec");
+	if (spec.modelRoute !== undefined) validateModelRoute(spec);
 	readOptionalEnum(spec, "thinkingLevel", "WorkerSpec", THINKING_LEVELS);
 	// A misspelled sampling policy must not silently restore the server defaults that varied handbooks.
 	readOptionalEnum(spec, "sampling", "WorkerSpec", ["deterministic"] as const);

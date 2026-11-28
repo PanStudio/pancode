@@ -31,7 +31,13 @@ import {
 } from "./defaults.js";
 import { FUNDING_ID_PATTERN } from "./funding-config.js";
 import { LIVE_CHECK_LOGIN_RUNTIMES } from "./sandbox/env-scrub.js";
-import { RESOURCE_LIMIT_KEYS, RESOURCE_LIMIT_MAX, SANDBOX_MODES, UNIX_SOCKET_MODES } from "./sandbox/types.js";
+import {
+	RESOURCE_LIMIT_KEYS,
+	RESOURCE_LIMIT_MAX,
+	SANDBOX_MODES,
+	UNIX_SOCKET_MODES,
+	WORKER_ISOLATION_MODES,
+} from "./sandbox/types.js";
 import {
 	describe,
 	expectBoolean,
@@ -100,6 +106,10 @@ function readSandboxOptions(issues: Issues, safety: Record<string, unknown>, set
 	if ("sandboxUnixSockets" in safety) {
 		const parsed = expectEnum(issues, "safety.sandboxUnixSockets", safety.sandboxUnixSockets, UNIX_SOCKET_MODES);
 		if (parsed !== undefined) settings.safety.sandboxUnixSockets = parsed;
+	}
+	if ("workerIsolation" in safety) {
+		const parsed = expectEnum(issues, "safety.workerIsolation", safety.workerIsolation, WORKER_ISOLATION_MODES);
+		if (parsed !== undefined) settings.safety.workerIsolation = parsed;
 	}
 }
 
@@ -1021,6 +1031,7 @@ export function validateSettings(raw: unknown): SettingsValidationResult {
 				"liveCheckTargets",
 				"sandboxUnixSockets",
 				"sandboxUnconfinedLocalWorkers",
+				"workerIsolation",
 				"sandboxCacheMaxGiB",
 				"homeReads",
 				"snapshots",

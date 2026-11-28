@@ -197,6 +197,7 @@ export async function spawnAttemptWorker(rt: DispatchRuntime, attempt: PreparedA
 			);
 		} else worker = spawnNow();
 	} catch (error) {
+		attempt.modelRoute?.close();
 		restorePeerOverlay();
 		prefixLeader?.release();
 		await closeRunJournal();
@@ -204,6 +205,11 @@ export async function spawnAttemptWorker(rt: DispatchRuntime, attempt: PreparedA
 		throw error;
 	}
 	if (!heldFollower) timing.workerSpawnedAt = new Date(now()).toISOString();
+	const { modelRoute } = attempt;
+	if (modelRoute !== null) {
+		const closeRoute = (): void => modelRoute.close();
+		void worker.promise.then(closeRoute, closeRoute);
+	}
 	// The wall clock and a call's timeout_ms can both stop a run; its worker is stopped once (fleet M8).
 	let workerAborted = false;
 	const abort = (): void => {
