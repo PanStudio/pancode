@@ -254,16 +254,17 @@ function refusesUncontainedLaunch(
 	if ((deps.principal ?? "main") !== "main") return false;
 	if (spec.name !== ToolNames.Bash && spec.name !== ToolNames.RunScript) return false;
 	if (deps.sandboxState === undefined || deps.containment === undefined) return false;
+	const readOnly = deps.readOnly === true || options.turnConstraints?.readOnly === true;
+	const hasBackend = readOnly ? deps.containment().readOnlySandbox === true : deps.containment().sandbox;
 	const state = deps.sandboxState();
 	const why: SandboxLaunchWhy =
 		state.mode === "off"
 			? "sandbox-off"
-			: !deps.containment().sandbox
+			: !hasBackend
 				? "no-backend"
-				: (deps.autonomy?.() ?? DEFAULT_AUTONOMY_LEVEL) === "yolo"
+				: !readOnly && (deps.autonomy?.() ?? DEFAULT_AUTONOMY_LEVEL) === "yolo"
 					? "unconfined-opt-in"
 					: "operator-authority";
-	const readOnly = deps.readOnly === true || options.turnConstraints?.readOnly === true;
 	recordUncontainedShell({
 		caller: readOnly ? "main-read-only" : "main",
 		why,

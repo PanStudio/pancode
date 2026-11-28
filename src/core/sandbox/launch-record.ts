@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { isIP } from "node:net";
 import type { Static } from "typebox";
 import type { TelemetryContext } from "../telemetry/context.js";
 import { telemetryContext, telemetryHub } from "../telemetry/hub.js";
@@ -74,24 +75,38 @@ function labelLaunch(facts: SandboxLaunchFacts, label: SandboxLaunchLabel | unde
 const MAX_HOST_LABELS = 3;
 const MAX_LABEL_CHARS = 32;
 const MAX_CLIPPED_HOST_CHARS = 64;
+const MAX_GRANTED_HOST_CHARS = 255;
 
 /**
  * A name the operator never granted keeps only its rightmost labels, each bounded, so a long or many-labelled name
  * built to carry data does not reach the journal whole. An address literal is already bounded.
  */
 function clipEgressHost(host: string): { host: string; clipped: boolean } {
-	if (/^[0-9.]+$/u.test(host) || host.includes(":")) return { host, clipped: false };
+	if (isIP(host) !== 0) return { host, clipped: false };
 	const labels = host.split(".");
 	const kept = labels.slice(-MAX_HOST_LABELS).map((label) => label.slice(0, MAX_LABEL_CHARS));
 	let clipped = kept.join(".");
-	if (clipped.length > MAX_CLIPPED_HOST_CHARS) clipped = clipped.slice(clipped.length - MAX_CLIPPED_HOST_CHARS);
+	if (clipped.length > MAX_CLIPPED_HOST_CHARS)
+		clipped = clipped.slice(clipped.length - MAX_CLIPPED_HOST_CHARS).replace(/^\.+/u, "");
 	return clipped === host ? { host, clipped: false } : { host: clipped, clipped: true };
 }
 
+/**
+ * An operator-granted origin (settings, session, or approved now) stays whole within the DNS/schema bound; any other
+ * name, or an overlong granted one, is clipped so neither the journal nor a tool result note records raw subdomain data.
+ */
+export function recordedEgressHost(receipt: Pick<EgressReceipt, "host" | "source">): {
+	host: string;
+	clipped: boolean;
+} {
+	const granted = receipt.source === "grant" || receipt.source === "session" || receipt.source === "operator";
+	return granted && receipt.host.length <= MAX_GRANTED_HOST_CHARS
+		? { host: receipt.host, clipped: false }
+		: clipEgressHost(receipt.host);
+}
+
 function destination(receipt: EgressReceipt): SandboxDestination {
-	// A granted origin equals an operator's entry, so it stays whole; any other name is clipped.
-	const granted = receipt.source === "grant" || receipt.source === "session";
-	const { host, clipped } = granted ? { host: receipt.host, clipped: false } : clipEgressHost(receipt.host);
+	const { host, clipped } = recordedEgressHost(receipt);
 	return {
 		host,
 		port: receipt.port,
@@ -128,7 +143,8 @@ export function tallySandboxLaunch(tally: SandboxLaunchTally, record: SandboxLau
 	tally.launches += 1;
 	if (record.outcome === "refused") tally.refused += 1;
 	else if (record.outcome === "launch-failed") tally.launchFailed += 1;
-	else if (record.network.mode === "open") tally.unobserved += 1;
+	else if (record.network.mode === "open" || (record.network.mode === "proxied" && !record.network.observed))
+		tally.unobserved += 1;
 	for (const destination of record.destinations ?? []) tally[destination.decision] += destination.count;
 	tally.dropped += (record.dropped ?? 0) + (record.shed ?? 0);
 }
@@ -145,7 +161,8 @@ export interface SandboxLaunchSettlement {
 export function sandboxLaunchRecord(facts: SandboxLaunchFacts, settled: SandboxLaunchSettlement): SandboxLaunchRecord {
 	const egress = settled.egress;
 	const outcome: SandboxLaunchOutcome = egress?.setupFailed === true ? "launch-failed" : settled.outcome;
-	const observed = facts.network === "proxied" && facts.confinement === "sandboxed" && outcome === "ran";
+	const observed =
+		facts.network === "proxied" && facts.confinement === "sandboxed" && outcome === "ran" && egress !== undefined;
 	const receipts = observed ? (egress?.receipts ?? []) : [];
 	const listed = receipts.slice(0, SANDBOX_RECORD_MAX_DESTINATIONS);
 	const unlisted = receipts.slice(SANDBOX_RECORD_MAX_DESTINATIONS).reduce((sum, receipt) => sum + receipt.count, 0);

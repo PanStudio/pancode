@@ -732,7 +732,8 @@ export async function runBashCommand(command: string, options: RunBashCommandOpt
 		// Checked immediately before spawn: a run deadline spent by preparation starts no command (XR-12).
 		if (armedTimeoutLimit(timeout, options.deadlineAt)?.ms === 0) {
 			if (scope !== null) forgetResourceScope(scope);
-			deliver(deadlinePassedResult());
+			if (sandbox.kind === "sandboxed") sandbox.afterExit();
+			deliver(withRecord(deadlinePassedResult(), { outcome: "refused" }));
 			return;
 		}
 		const output = createBashOutputProgressController(options.onUpdate, undefined, options.onOutput);
