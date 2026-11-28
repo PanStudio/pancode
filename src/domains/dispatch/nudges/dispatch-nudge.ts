@@ -15,6 +15,7 @@ import type {
 } from "../../middleware/index.js";
 import type { DispatchContract } from "../contract.js";
 import { refusedCallsWords } from "../failure-headline.js";
+import type { FleetRunLauncher } from "../fleet-run-launcher.js";
 import { dispatchOwnerOf, dispatchOwnership } from "../ownership.js";
 import { readRunResultFacts } from "../run-result-facts.js";
 import { isTerminalRunEnvelope, type RunOutcome } from "../types.js";
@@ -383,6 +384,16 @@ export function openDetachedBatchViews(
 		}
 		return { id: record.id, total: record.runs.length, terminal, terminalOutcomes };
 	});
+}
+
+/**
+ * A model-started detached fleet root reads as a one-run batch: open while it runs, ready to collect once it seals.
+ * Its id is the root's, which the turn controller collects as a fleet root.
+ */
+export function uncollectedFleetRootViews(
+	fleetRuns: Pick<FleetRunLauncher, "uncollected"> | null | undefined,
+): DetachedBatchNudgeView[] {
+	return (fleetRuns?.uncollected() ?? []).map((root) => ({ id: root.rootId, total: 1, terminal: root.sealed ? 1 : 0 }));
 }
 
 export function finishedDetachedBatchIds(

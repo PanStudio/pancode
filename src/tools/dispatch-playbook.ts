@@ -153,9 +153,11 @@ export async function runApprovedPlaybook(input: {
 	observer?: FleetRunObserver;
 }): Promise<PlaybookRunResult> {
 	const { preview } = input;
+	const detached = input.detach && !input.headless;
 	const launch = input.launcher.launch({
 		preview,
 		origin: "model",
+		...(detached ? { detached } : {}),
 		...(input.turnConstraints !== undefined ? { turnConstraints: input.turnConstraints } : {}),
 		...(input.toolCallId !== undefined ? { parentToolCallId: input.toolCallId } : {}),
 		...(input.observer !== undefined ? { observer: input.observer } : {}),
@@ -164,7 +166,7 @@ export async function runApprovedPlaybook(input: {
 		return { ok: false, message: `dispatch: playbook ${preview.name} did not start: ${launch.reason}` };
 	}
 	const { rootId } = launch;
-	if (input.detach && !input.headless) {
+	if (detached) {
 		const admission = await launch.admitted;
 		if (admission.status !== "started") {
 			return {

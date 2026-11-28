@@ -66,6 +66,11 @@ export interface FleetRunLaunchInput {
 	readonly turnConstraints?: TurnConstraints;
 	/** The main agent's dispatch call that asked for a model-started run. */
 	readonly parentToolCallId?: string;
+	/**
+	 * The caller answers before the run ends, so the root stays uncollected until `monitor` or the turn controller
+	 * reads its sealed result.
+	 */
+	readonly detached?: boolean;
 	readonly observer?: FleetRunObserver;
 }
 
@@ -99,6 +104,13 @@ export interface FleetRunInFlight {
 	readonly origin: FleetRunOrigin;
 }
 
+/** A detached root whose sealed result the main agent has not read yet. */
+export interface FleetRunUncollected {
+	readonly rootId: string;
+	readonly name: string;
+	readonly sealed: boolean;
+}
+
 export interface FleetRunLauncherDeps {
 	readonly dispatch: DispatchContract;
 	readonly agents: FleetRunAgentAccess;
@@ -120,12 +132,17 @@ export interface FleetRunLauncher {
 	/** The run this session started and has not seen settle. */
 	inFlight(): FleetRunInFlight | null;
 	launch(input: FleetRunLaunchInput): FleetRunLaunch;
+	/** Detached roots, running or sealed, that nothing has collected. */
+	uncollected(): ReadonlyArray<FleetRunUncollected>;
+	/** The root's sealed result reached the main agent; it no longer waits to be collected. */
+	markCollected(rootId: string): void;
 }
 
 const errorText = (error: unknown): string => (error instanceof Error ? error.message : String(error));
 
 export function createFleetRunLauncher(deps: FleetRunLauncherDeps): FleetRunLauncher {
 	let running: FleetRunInFlight | null = null;
+	const uncollected = new Map<string, FleetRunUncollected>();
 
 	const launch = (input: FleetRunLaunchInput): FleetRunLaunch => {
 		const { preview, observer = {} } = input;
@@ -152,6 +169,7 @@ export function createFleetRunLauncher(deps: FleetRunLauncherDeps): FleetRunLaun
 			};
 		}
 		running = { name: preview.name, rootId, origin: input.origin };
+		if (input.detached === true) uncollected.set(rootId, { rootId, name: preview.name, sealed: false });
 
 		const abort = new AbortController();
 		let stoppedBy: FleetRunStopper | null = null;
@@ -182,6 +200,8 @@ export function createFleetRunLauncher(deps: FleetRunLauncherDeps): FleetRunLaun
 			if (answered) return;
 			answered = true;
 			clearTimeout(admissionCap);
+			// A run that never started is answered by its admission; there is no later result to collect.
+			if (admission.status !== "started") uncollected.delete(rootId);
 			answer(admission);
 		};
 
@@ -230,6 +250,8 @@ export function createFleetRunLauncher(deps: FleetRunLauncherDeps): FleetRunLaun
 		const seal = (settledRun: { ok: true; outcome: FleetRunOutcome } | { ok: false; error: unknown }) => {
 			clearInterval(stopPoll);
 			running = null;
+			const pending = uncollected.get(rootId);
+			if (pending !== undefined) uncollected.set(rootId, { ...pending, sealed: true });
 			const outcome = settledRun.ok ? settledRun.outcome : null;
 			const refusedBeforeStep = !settledRun.ok && stoppedBy === null && !stepDispatched;
 			const cleanRun = outcome?.cleanRun ?? false;
@@ -309,5 +331,12 @@ export function createFleetRunLauncher(deps: FleetRunLauncherDeps): FleetRunLaun
 		return { status: "launched", rootId, stop, admitted, settled };
 	};
 
-	return { inFlight: () => running, launch };
+	return {
+		inFlight: () => running,
+		launch,
+		uncollected: () => [...uncollected.values()],
+		markCollected: (rootId) => {
+			uncollected.delete(rootId);
+		},
+	};
 }

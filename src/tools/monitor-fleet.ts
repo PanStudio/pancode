@@ -115,6 +115,8 @@ export async function monitorFleetRoot(input: {
 	timeoutMs: number;
 	signal: AbortSignal | undefined;
 	ownership: DispatchOwnership;
+	/** A wait or collect returned the sealed result, so the root no longer waits to be collected. */
+	onCollected?: (rootId: string) => void;
 }): Promise<ToolResult> {
 	const { rootId, mode } = input;
 	const view = readView(rootId);
@@ -131,7 +133,12 @@ export async function monitorFleetRoot(input: {
 			message: `monitor: fleet root '${rootId}' is a playbook run, not one worker run; mode=status names its step run ids, which mode=${mode} observes`,
 		};
 	}
-	if (mode === "wait" || mode === "collect") return waitForSeal(rootId, view, mode, input.timeoutMs, input.signal);
+	if (mode === "wait" || mode === "collect") {
+		const result = await waitForSeal(rootId, view, mode, input.timeoutMs, input.signal);
+		if (result.kind === "ok" && result.details?.complete === true && result.details.fleetEnd !== undefined)
+			input.onCollected?.(rootId);
+		return result;
+	}
 	if (mode === "status") {
 		return { kind: "ok", output: viewLines(view).join("\n"), details: { ...viewDetails(view), mode } };
 	}

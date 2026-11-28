@@ -12,6 +12,7 @@ import { renderFactField, renderPricing } from "../core/telemetry/render.js";
 import { pancodeStateDir } from "../core/xdg.js";
 import type { DispatchContract } from "../domains/dispatch/contract.js";
 import { isFleetRootId } from "../domains/dispatch/fleet-root-record.js";
+import type { FleetRunLauncher } from "../domains/dispatch/fleet-run-launcher.js";
 import { sealedAnswerBudgetBytes } from "../domains/dispatch/handback.js";
 import { type DispatchOwnership, dispatchOwnerOf, dispatchOwnership } from "../domains/dispatch/ownership.js";
 import { isTerminalRunEnvelope, type RunEnvelope } from "../domains/dispatch/types.js";
@@ -72,6 +73,8 @@ export interface MonitorToolDeps {
 	dispatch: DispatchContract;
 	runEvents?: Pick<DispatchRunEventRegistry, "eventTail">;
 	jobs?: JobOperations;
+	/** The session's fleet launcher, told when a model-started root's result is collected. */
+	fleetRuns?: Pick<FleetRunLauncher, "markCollected">;
 }
 
 /** A revision fence retains changes that land while a durable snapshot is being read. */
@@ -737,6 +740,7 @@ export function createMonitorTool(deps: MonitorToolDeps): ToolSpec {
 					),
 					signal: options?.signal,
 					ownership: ownershipFor(deps, options),
+					...(deps.fleetRuns !== undefined ? { onCollected: deps.fleetRuns.markCollected } : {}),
 				});
 			}
 			if (mode === "list") {
