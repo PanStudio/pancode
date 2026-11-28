@@ -47,14 +47,6 @@ import type { ToolSpec } from "./tool-spec.js";
  * surfaces the rejection message back to the model.
  */
 
-/**
- * Per-tool execution mode override forwarded to pi-agent-core's
- * `AgentTool.executionMode`. Parallel tools may run concurrently with other
- * parallel tool calls; sequential tools run one at a time and prevent any
- * other tool in the batch from running in parallel with them. Leaving this
- * undefined defers to the agent loop's global `toolExecution` setting.
- */
-
 export function createRegistry(deps: RegistryDeps): ToolRegistry {
 	const tools = new Map<ToolName, ToolSpec>();
 	/**
