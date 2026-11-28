@@ -15,14 +15,17 @@ import { isRecord } from "../core/type-guards.js";
 import { playbookTaskRefusal } from "../domains/agents/playbook-task.js";
 import { type FleetRunCard, fleetRunCard, fleetRunCardText } from "../domains/dispatch/fleet-run-card.js";
 import type { FleetRunLauncher, FleetRunObserver, FleetRunSettlement } from "../domains/dispatch/fleet-run-launcher.js";
-import {
-	compileFleetRunPreview,
-	type FleetRunPreview,
-	type FleetRunPreviewInput,
-} from "../domains/dispatch/fleet-run-preview.js";
+import type { FleetRunPreview, FleetRunPreviewResult } from "../domains/dispatch/fleet-run-preview.js";
 import { requestedWriteNone } from "../domains/dispatch/obligation.js";
 import { canonicalWriteRoots } from "../domains/dispatch/writer-set.js";
 import type { ToolCallDispatchLanding, ToolCallDispatchTask } from "../domains/middleware/types.js";
+import type { DependencyPlanAdmission } from "./dispatch-dependency-plan.js";
+import {
+	type DispatchPlanView,
+	describeDispatchPlan,
+	type ResolvedDispatchPlanArtifact,
+	withResolvedDispatchPlan,
+} from "./dispatch-plan.js";
 import { fleetEndAnswer } from "./monitor-fleet.js";
 import type { ToolResult } from "./tool-spec.js";
 
@@ -88,6 +91,17 @@ export function playbookRefFromArgs(
 	};
 }
 
+/** The session's playbook surface as dispatch reaches it: its fleet launcher and the compile `/fleet run` uses. */
+export interface DispatchPlaybookPort {
+	readonly launcher: FleetRunLauncher;
+	/** The root the launcher runs in; hooks judge the steps' directories against it. */
+	readonly workspaceRoot: () => string;
+	/** Compile a playbook the way this session's `/fleet run` does: its workspace, recipes, routes and budget. */
+	readonly preview: (name: string, vars: Readonly<Record<string, string>>) => FleetRunPreviewResult;
+	/** False when the process ends with the turn (headless): a detached root would end with it, so runs stay attached. */
+	readonly detachable: boolean;
+}
+
 /** What admission seals for a playbook call: the preview its card showed, which is the plan the run executes. */
 export interface PlaybookExecutionSnapshot {
 	readonly kind: "playbook";
@@ -95,18 +109,16 @@ export interface PlaybookExecutionSnapshot {
 	readonly preview: FleetRunPreview;
 	/** The card text the operator approves; a preview call answers with it. */
 	readonly text: string;
+	readonly planView: DispatchPlanView;
 }
-
-/** Everything compiling a playbook needs from the session; the name and variables come from the call. */
-export type PlaybookPreviewInput = Omit<FleetRunPreviewInput, "name" | "vars" | "resume">;
 
 export type CompiledPlaybook =
 	| { readonly ok: true; readonly preview: FleetRunPreview; readonly card: FleetRunCard; readonly text: string }
 	| { readonly ok: false; readonly message: string };
 
 /** The preview `/fleet run` would show for this call, or every reason it cannot run. */
-export function compilePlaybookRun(ref: PlaybookRef, input: PlaybookPreviewInput): CompiledPlaybook {
-	const result = compileFleetRunPreview({ ...input, name: ref.name, vars: ref.vars });
+export function compilePlaybookRun(ref: PlaybookRef, compile: DispatchPlaybookPort["preview"]): CompiledPlaybook {
+	const result = compile(ref.name, ref.vars);
 	if (!result.ok) {
 		// The compiler words a missing variable for the command line; dispatch takes variables in playbook.vars.
 		const missingVars = result.diagnostics.some((line) => line.includes("unresolved template variables"));
@@ -134,6 +146,70 @@ export function playbookDetachRefusal(preview: FleetRunPreview): string | null {
 	const writer = preview.plan.steps.find((step) => step.scope === "workspace");
 	if (writer === undefined) return null;
 	return `dispatch: playbook '${preview.name}' cannot detach: step '${writer.id}' writes this checkout while the turn goes on. Run it attached (omit detach), or give the playbook isolation: worktree`;
+}
+
+const CLI_START = (name: string) => `pancode fleet run ${name} "<task>"`;
+
+/**
+ * Admission's playbook branch, or null when the call names no playbook: compile the card `/fleet run` would show,
+ * refuse what cannot run, and seal the card as this call's plan. A run seals a fleet artifact whose source carries
+ * the card's identity, so the call is plan scale and parks once on the card; a preview seals nothing and stays
+ * read-only.
+ */
+export function admitPlaybookCall(
+	admission: Pick<DependencyPlanAdmission, "deps" | "costCeilingUsd" | "markPrepared" | "trustExecution" | "fail">,
+	args: Record<string, unknown>,
+): Record<string, unknown> | null {
+	const parsed = playbookRefFromArgs(args);
+	if (!parsed.ok) return admission.fail(args, parsed.message);
+	if (parsed.ref === null) return null;
+	const ref = parsed.ref;
+	const port = admission.deps.playbooks;
+	if (port === undefined) {
+		return admission.fail(
+			args,
+			`dispatch: playbooks cannot start in this session; the operator can start one with ${CLI_START(ref.name)}`,
+		);
+	}
+	try {
+		const compiled = compilePlaybookRun(ref, port.preview);
+		if (!compiled.ok) return admission.fail(args, compiled.message);
+		const { preview, card, text } = compiled;
+		const refusal = ref.detach && port.detachable ? playbookDetachRefusal(preview) : null;
+		if (refusal !== null) return admission.fail(args, refusal);
+		if (ref.preview) {
+			const marked = admission.markPrepared(args);
+			return admission.trustExecution(marked, {
+				kind: "playbook",
+				ref,
+				preview,
+				text,
+				planView: describeDispatchPlan(marked),
+			});
+		}
+		const artifact: ResolvedDispatchPlanArtifact = {
+			version: 3,
+			topology: "fleet",
+			source: { kind: "playbook", name: preview.name, planHash: preview.planHash },
+			maxWorkers: preview.plan.maxWorkers,
+			onFailure: preview.plan.onFailure,
+			tasks: [],
+			costCeilingUsd: admission.costCeilingUsd(),
+			deadlineMs: null,
+		};
+		const marked = admission.markPrepared(withResolvedDispatchPlan(args, artifact));
+		const sealed = describeDispatchPlan(marked, true);
+		if (!sealed.planScale) throw new Error(`dispatch: playbook ${preview.name} plan could not be sealed`);
+		return admission.trustExecution(marked, {
+			kind: "playbook",
+			ref,
+			preview,
+			text,
+			planView: { ...sealed, text, fleetRun: card },
+		});
+	} catch (error) {
+		return admission.fail(args, error);
+	}
 }
 
 /**
@@ -253,12 +329,11 @@ export async function runApprovedPlaybook(input: {
  */
 export async function runPlaybookCall(input: {
 	snapshot: PlaybookExecutionSnapshot;
-	launcher: FleetRunLauncher | undefined;
+	port: DispatchPlaybookPort | undefined;
 	/** The planHash of the plan admission sealed for this call, or null when it sealed none. */
 	sealedPlanHash: string | null;
 	/** An operator approved this call, or the session runs in yolo. */
 	authorized: boolean;
-	headless: boolean;
 	turnConstraints?: TurnConstraints;
 	toolCallId?: string;
 	signal?: AbortSignal;
@@ -266,10 +341,10 @@ export async function runPlaybookCall(input: {
 	const { ref, preview, text } = input.snapshot;
 	const details = { mode: "playbook", playbook: preview.name };
 	if (ref.preview) return { kind: "ok", output: playbookPreviewText(ref, text), details: { ...details, preview: true } };
-	if (input.launcher === undefined) {
+	if (input.port === undefined) {
 		return {
 			kind: "error",
-			message: `dispatch: playbooks cannot start here; the operator can start it with pancode fleet run ${preview.name} "<task>"`,
+			message: `dispatch: playbooks cannot start in this session; the operator can start one with ${CLI_START(preview.name)}`,
 			details,
 		};
 	}
@@ -284,10 +359,11 @@ export async function runPlaybookCall(input: {
 		};
 	}
 	const result = await runApprovedPlaybook({
-		launcher: input.launcher,
-		preview,
+		launcher: input.port.launcher,
+		// The sealed preview is frozen; the run gets its own copy of the same plan.
+		preview: structuredClone(preview),
 		detach: ref.detach,
-		headless: input.headless,
+		headless: !input.port.detachable,
 		...(input.turnConstraints !== undefined ? { turnConstraints: input.turnConstraints } : {}),
 		...(input.toolCallId !== undefined ? { toolCallId: input.toolCallId } : {}),
 		...(input.signal !== undefined ? { signal: input.signal } : {}),

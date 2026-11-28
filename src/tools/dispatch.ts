@@ -13,6 +13,7 @@ import type { ToolCallDispatchRole, ToolCallDispatchTask, ToolCallLanding } from
 import { createDispatchAdmissionController } from "./dispatch-admission.js";
 import type { ResolvedDispatchPlanArtifact } from "./dispatch-plan.js";
 import { DISPATCH_PLAN_PREPARATION_ERROR_ARGUMENT } from "./dispatch-plan.js";
+import { playbookHookLanding } from "./dispatch-playbook.js";
 import { createDispatchRunEventRegistry } from "./dispatch-run-events.js";
 import { buildDispatchParameters, FULL_DISPATCH_SCHEMA_COMPOSITION } from "./dispatch-schema.js";
 import type { DispatchExecutionSnapshot, DispatchToolDeps } from "./dispatch-types.js";
@@ -76,9 +77,12 @@ function dispatchHookLanding(
 	plan: ResolvedDispatchPlanArtifact | undefined,
 	capabilityClassOf: (agentId: string) => string | null,
 	hasAgent: (agentId: string) => boolean,
+	playbookRoot: () => string,
 ): ToolCallLanding | null {
 	if (snapshot === undefined) return null;
 	if (snapshot.kind === "list") return { dispatch: { kind: "list" } };
+	if (snapshot.kind === "playbook")
+		return { dispatch: playbookHookLanding(snapshot.preview, playbookRoot(), capabilityClassOf) };
 	if (snapshot.kind === "apply-winner")
 		return { dispatch: { kind: "apply-winner", branch: snapshot.branch, cwd: snapshot.cwd } };
 	if (snapshot.kind === "land") return { dispatch: { kind: "land", ref: snapshot.ref, cwd: snapshot.cwd } };
@@ -189,6 +193,7 @@ export function createDispatchTool(inputDeps: DispatchToolDeps): ToolSpec {
 				admission.state.trustedResolvedPlans.get(args),
 				(agentId) => deps.getAgentSpecs().find((spec) => spec.id === agentId)?.capabilityClass ?? null,
 				(agentId) => deps.getAgentSpecs().some((spec) => spec.id === agentId),
+				() => deps.playbooks?.workspaceRoot() ?? deps.getWorkspaceRoot?.() ?? process.cwd(),
 			),
 		async run(rawArgs, options) {
 			const args = admission.prepareArguments(rawArgs);

@@ -36,7 +36,14 @@ import {
 	formatDispatchOutput,
 	withNotRetried,
 } from "./dispatch-output.js";
-import { describeDispatchPlan, RESOLVED_DISPATCH_PLAN_ARGUMENT, withResolvedPlanTaskPin } from "./dispatch-plan.js";
+import {
+	describeDispatchPlan,
+	provenancePlanSource,
+	RESOLVED_DISPATCH_PLAN_ARGUMENT,
+	sourceExecutionPlanHash,
+	withResolvedPlanTaskPin,
+} from "./dispatch-plan.js";
+import { type PlaybookExecutionSnapshot, runPlaybookCall } from "./dispatch-playbook.js";
 import { REVIEW_SINGLE_TASK_MESSAGE, reviewGateResult, runReviewGated } from "./dispatch-review.js";
 import { createDispatchRunEventRegistry } from "./dispatch-run-events.js";
 import { dependencyPlanAuthorityGranted, runDependencyPlan } from "./dispatch-scout.js";
@@ -90,6 +97,37 @@ async function runLandSnapshot(
 		: { kind: "ok", output: `dispatch land ${landing.branch ?? snapshot.ref}: ${landing.detail}.`, details };
 }
 
+/** `dispatch list`: the agent roster. */
+function listAgentCatalog(deps: RegisteredDispatchToolDeps): ToolResult {
+	const catalog = deps.getAgentCatalog?.().trim() ?? "";
+	if (catalog.length === 0) {
+		return { kind: "error", message: "dispatch: no agent catalog is available in this context" };
+	}
+	return { kind: "ok", output: catalog };
+}
+
+/** A playbook call: the session's launcher runs the preview admission sealed, as an approved `/fleet run` would. */
+async function runPlaybookSnapshot(
+	deps: RegisteredDispatchToolDeps,
+	admissionState: DispatchAdmissionState,
+	args: Record<string, unknown>,
+	snapshot: PlaybookExecutionSnapshot,
+	options: ToolInvokeOptions | undefined,
+): Promise<ToolResult> {
+	const sealed = admissionState.trustedResolvedPlans.get(args);
+	// A fleet run reads the dispatch ledger; boot recovery must settle the dead runs in it first.
+	if (!snapshot.ref.preview) await deps.dispatch.awaitStartupRecovery?.();
+	return runPlaybookCall({
+		snapshot,
+		port: deps.playbooks,
+		sealedPlanHash: sealed?.source?.kind === "playbook" ? sealed.source.planHash : null,
+		authorized: options?.approval?.actionClass === "dispatch" || deps.getAutonomy?.() === "yolo",
+		...(options?.turnConstraints !== undefined ? { turnConstraints: options.turnConstraints } : {}),
+		...(options?.toolCallId !== undefined ? { toolCallId: options.toolCallId } : {}),
+		...(options?.signal !== undefined ? { signal: options.signal } : {}),
+	});
+}
+
 export async function runDispatchTool(
 	inputDeps: DispatchToolDeps,
 	admissionState: DispatchAdmissionState,
@@ -124,14 +162,9 @@ export async function runDispatchTool(
 				"dispatch: compete/worktree application cannot run under a capability allowlist; use a native single-worker assignment",
 		};
 	}
-	if (snapshot?.kind === "list") {
-		const catalog = deps.getAgentCatalog?.().trim() ?? "";
-		if (catalog.length === 0) {
-			return { kind: "error", message: "dispatch: no agent catalog is available in this context" };
-		}
-		return { kind: "ok", output: catalog };
-	}
+	if (snapshot?.kind === "list") return listAgentCatalog(deps);
 	if (snapshot?.kind === "land") return runLandSnapshot(deps, snapshot, options);
+	if (snapshot?.kind === "playbook") return runPlaybookSnapshot(deps, admissionState, args, snapshot, options);
 	// Gate evidence and compete recovery below must not race the boot's own recovery of the same groups.
 	await deps.dispatch.awaitStartupRecovery?.();
 	try {
@@ -310,7 +343,7 @@ export async function runDispatchTool(
 			topology: planView.topology,
 			taskCount: planView.taskCount,
 			approval: authenticatedApproval !== undefined ? "operator" : autonomy === "yolo" ? "yolo" : "read-only",
-			source: resolvedPlan?.source == null ? null : { ...resolvedPlan.source },
+			source: provenancePlanSource(resolvedPlan?.source ?? null),
 			...(authenticatedApproval !== undefined
 				? {
 						approvalRequestId: authenticatedApproval.requestId,
@@ -419,7 +452,7 @@ export async function runDispatchTool(
 			if (executionPlan === undefined || resolvedPlan.source === null || reservationOwnerId === undefined) {
 				return { kind: "error", message: "dispatch: trusted dependency plan is unavailable" };
 			}
-			if (executionPlan.hash !== resolvedPlan.source.executionPlanHash) {
+			if (executionPlan.hash !== sourceExecutionPlanHash(resolvedPlan.source)) {
 				return { kind: "error", message: "dispatch: dependency plan hash drifted after admission" };
 			}
 			if (!dependencyPlanAuthorityGranted(resolvedPlan, authenticatedApproval !== undefined, autonomy === "yolo")) {

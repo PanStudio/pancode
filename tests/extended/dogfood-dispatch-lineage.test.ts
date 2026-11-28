@@ -323,7 +323,6 @@ for (const mode of ["single", "parallel", "review", "compete", "council"] as con
 							synthesis: "judge",
 						}
 					: {}),
-				lineage: { parentRunId: "forged", rootRunId: "forged", depth: 99, attempt: 99 },
 			};
 			// Tool options are supplied by the host, independently of model args.
 			const result = await withTelemetryContext(
@@ -448,8 +447,8 @@ it("model tool JSON cannot author lineage, while a trusted retry keeps its exist
 			lineage: childLineage,
 			hostRun,
 		});
-		strictEqual(result.kind, "ok");
-		strictEqual(f.captured[0]?.lineage, undefined, "model fields cannot become host authority");
+		match(result.kind === "error" ? result.message : "", /^dispatch: unknown fields lineage, hostRun; nothing/u);
+		strictEqual(f.captured.length, 0, "model fields cannot become host authority");
 		const retry = { ...childLineage, parentRunId: "previous-attempt", attempt: 1 };
 		const run = await f.bundle.contract.dispatch({
 			agentId: "scout",

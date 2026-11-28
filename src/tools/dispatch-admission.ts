@@ -70,6 +70,8 @@ import {
 	withCompeteCandidateRoute,
 	withResolvedDispatchPlan,
 } from "./dispatch-plan.js";
+import { admitPlaybookCall } from "./dispatch-playbook.js";
+import { unknownDispatchFieldRefusal } from "./dispatch-schema.js";
 import {
 	loadVerifiedScoutSource,
 	prepareScoutContinuation,
@@ -372,6 +374,19 @@ function operatorTurnText(deps: DispatchToolDeps): string {
 			.join("\n");
 	}
 	return "";
+}
+
+/** `dispatch land`: Land lands on the session's own checkout, never a path the model names. */
+function admitLandCall(
+	admission: Pick<DependencyPlanAdmission, "deps" | "markPrepared" | "trustExecution" | "fail">,
+	args: Record<string, unknown>,
+): Record<string, unknown> {
+	if (typeof args.land !== "string" || args.land.trim().length === 0) {
+		return admission.fail(args, "dispatch: land must name a kept task branch: a run id or pancode/task/<run id>");
+	}
+	const { deps } = admission;
+	const cwd = deps.getWorkspaceRoot?.() ?? deps.dispatch.owner?.().cwd ?? process.cwd();
+	return admission.trustExecution(admission.markPrepared(args), { kind: "land", ref: args.land.trim(), cwd });
 }
 
 export function createDispatchAdmissionController(deps: DispatchToolDeps): DispatchAdmissionController {
@@ -730,6 +745,7 @@ export function createDispatchAdmissionController(deps: DispatchToolDeps): Dispa
 		resolveTask,
 		costCeilingUsd: resolvedCostCeiling,
 		markReservedPlan,
+		markPrepared,
 		trustExecution,
 		dispatchExecutionSnapshot,
 		fail: preparationFailure,
@@ -743,18 +759,12 @@ export function createDispatchAdmissionController(deps: DispatchToolDeps): Dispa
 	};
 
 	const prepareStrippedArguments = (args: Record<string, unknown>): Record<string, unknown> => {
-		if (args.list === true) {
-			const marked = markPrepared(args);
-			return trustExecution(marked, { kind: "list" });
-		}
-		if (args.land !== undefined) {
-			if (typeof args.land !== "string" || args.land.trim().length === 0) {
-				return shapeRejection(args, "dispatch: land must name a kept task branch: a run id or pancode/task/<run id>");
-			}
-			// The session's own workspace, never a path the model names: Land lands on the checkout the operator handed over.
-			const cwd = deps.getWorkspaceRoot?.() ?? deps.dispatch.owner?.().cwd ?? process.cwd();
-			return trustExecution(markPrepared(args), { kind: "land", ref: args.land.trim(), cwd });
-		}
+		const unknownField = unknownDispatchFieldRefusal(args, deps.getSchemaComposition?.());
+		if (unknownField !== null) return shapeRejection(args, unknownField);
+		if (args.list === true) return trustExecution(markPrepared(args), { kind: "list" });
+		if (args.land !== undefined) return admitLandCall(dependencyPlans, args);
+		const playbook = admitPlaybookCall(dependencyPlans, args);
+		if (playbook !== null) return playbook;
 		const continuation = scoutContinuationRefFromArgs(args);
 		if (!continuation.ok) return preparationFailure(args, continuation.message);
 		if (continuation.ref !== null) {
@@ -1192,7 +1202,7 @@ export function createDispatchAdmissionController(deps: DispatchToolDeps): Dispa
 		prepareArguments,
 		describeDispatchPlan(args) {
 			const snapshot = state.trustedExecutionSnapshots.get(args);
-			if (snapshot?.kind === "dispatch") return snapshot.planView;
+			if (snapshot?.kind === "dispatch" || snapshot?.kind === "playbook") return snapshot.planView;
 			const trusted = state.trustedResolvedPlans.get(args);
 			return trusted === undefined
 				? describeDispatchPlan(args)

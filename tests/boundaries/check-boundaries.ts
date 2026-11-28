@@ -834,9 +834,9 @@ const FUNCTION_LINE_EXEMPTIONS: ReadonlyMap<string, number> = new Map([
 	["src/session-control/turn-runtime.ts#createTurnRuntime", 2222],
 	["src/session-control/turn-runtime.ts#createTurnRuntime.ensureRuntime", 1812],
 	["src/session-control/turn-runtime.ts#createTurnRuntime.ensureRuntime.onAgentEvent", 530],
-	["src/tools/dispatch-admission.ts#createDispatchAdmissionController", 873],
+	["src/tools/dispatch-admission.ts#createDispatchAdmissionController", 868],
 	["src/tools/dispatch-compete.ts#runCompete", 543],
-	["src/tools/dispatch-runner.ts#runDispatchTool", 520],
+	["src/tools/dispatch-runner.ts#runDispatchTool", 515],
 	["src/tools/gateway/index.ts#createGatewayTool", 875],
 	["src/tools/gateway/mcp-capabilities.ts#createMcpCapabilitySource", 1673],
 ]);

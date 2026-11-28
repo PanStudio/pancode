@@ -49,6 +49,7 @@ export interface DependencyPlanAdmission {
 	resolveTask(request: DispatchRequest, role: NonNullable<ResolvedPlanTask["role"]>, position: number): ResolvedPlanTask;
 	costCeilingUsd(): number;
 	markReservedPlan(args: Record<string, unknown>, artifact: ResolvedDispatchPlanArtifact): Record<string, unknown>;
+	markPrepared(args: Record<string, unknown>): Record<string, unknown>;
 	trustExecution(args: Record<string, unknown>, snapshot: DispatchExecutionSnapshot): Record<string, unknown>;
 	dispatchExecutionSnapshot(args: Record<string, unknown>, fields: DispatchSnapshotFields): DispatchExecutionSnapshot;
 	fail(args: Record<string, unknown>, error: unknown): Record<string, unknown>;
