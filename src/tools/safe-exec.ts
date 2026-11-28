@@ -40,7 +40,7 @@ import {
 	typedGitMutationArgv,
 } from "./git-exec.js";
 import { checkGitFields, GIT_OPS, gitInspectArgv, isGitInspectOp } from "./git-inspect.js";
-import type { ToolInvokeOptions } from "./registry-contract.js";
+import type { ToolInvokeOptions } from "./registry/contract.js";
 import type { ToolResult, ToolResultDetails, ToolSpec } from "./tool-spec.js";
 import { truncateUtf8 } from "./truncate-utf8.js";
 import { COMMIT_IDENTITY } from "./worktree-commit.js";

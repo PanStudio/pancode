@@ -18,7 +18,7 @@ import type { ToolName } from "../../core/tool-names.js";
 import type { BudgetEconomicsPort } from "../../domains/dispatch/contract.js";
 import type { SafetyContract } from "../../domains/safety/contract.js";
 import { resolveAgentTools } from "../../tools/agent-tools.js";
-import type { ToolInvokeOptions, ToolRegistry } from "../../tools/registry-contract.js";
+import type { ToolInvokeOptions, ToolRegistry } from "../../tools/registry/contract.js";
 import type { AgentToolResult } from "../types.js";
 import type { WorkerEventEmit } from "../worker-run-types.js";
 import { createWorkerToolRegistry } from "../worker-tools.js";

@@ -12,6 +12,13 @@ import { ENVELOPE_SEAT_BELT, envelopeLines } from "../domains/extensions/envelop
 import { readExtensionInstallRecord } from "../domains/extensions/index.js";
 import { HUB_VERIFIED_LICENSES, pluginLocalPath } from "../domains/plugins/catalog.js";
 import {
+	type HubCategory,
+	type HubProvidedResource,
+	type HubTier,
+	isHubComponentKind,
+	isHubKind,
+} from "../domains/plugins/hub-types.js";
+import {
 	type PluginCandidate,
 	type PluginScope,
 	readPluginInstallRecord,
@@ -67,13 +74,6 @@ import {
 	readHubTrustState,
 	refreshRemoteIndex,
 } from "../domains/resources/hub-trust.js";
-import {
-	type HubCategory,
-	type HubProvidedResource,
-	type HubTier,
-	isHubComponentKind,
-	isHubKind,
-} from "../domains/resources/hub-types.js";
 import { validateHubPackage } from "../domains/resources/hub-validation.js";
 import { bareSkillRemedy, isBareSkillDirectory, packageBareSkill } from "../domains/resources/skills/bare-skill.js";
 import { knownSkillNames } from "../domains/resources/skills/marketplace.js";

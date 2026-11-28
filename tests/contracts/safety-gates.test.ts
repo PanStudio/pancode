@@ -41,8 +41,8 @@ import { describeCallTarget } from "../../src/lib/call-target/call-target.js";
 import { redactSecretString } from "../../src/lib/secrets/redaction.js";
 import { bashTool } from "../../src/tools/bash.js";
 import { readTool } from "../../src/tools/read.js";
+import type { PermissionRequiredMeta } from "../../src/tools/registry/contract.js";
 import { createRegistry } from "../../src/tools/registry.js";
-import type { PermissionRequiredMeta } from "../../src/tools/registry-contract.js";
 import { writeTool } from "../../src/tools/write.js";
 import { type IsolatedPancodeEnv, isolatePancodeEnv } from "../harness/scratch-env.js";
 

@@ -34,6 +34,7 @@ import { OperatorExtensions } from "../../src/domains/extensions/operator-extens
 import { installExtension, listInstalledExtensions } from "../../src/domains/extensions/state.js";
 import { loadMcpServerConfig } from "../../src/domains/mcp/index.js";
 import { bundledHubIndexPath, fetchPluginCommit, parseHubIndexRows } from "../../src/domains/plugins/catalog.js";
+import type { HubTier } from "../../src/domains/plugins/hub-types.js";
 import {
 	clearPluginSnapshots,
 	installPlugin,
@@ -69,7 +70,6 @@ import {
 	refreshRemoteIndex,
 	remoteIndexRows,
 } from "../../src/domains/resources/hub-trust.js";
-import type { HubTier } from "../../src/domains/resources/hub-types.js";
 import { isolatePancodeEnv } from "../harness/scratch-env.js";
 
 const SAMPLE_KIT = path.resolve(import.meta.dirname, "../fixtures/plugins/sample-kit");

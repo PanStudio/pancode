@@ -9,8 +9,8 @@ import { Type } from "typebox";
 import { literalUnion } from "../core/telemetry/enums.js";
 import { DRAFT_LABELS } from "../core/views/draft-words.js";
 import { NOTICE_LEVELS, type NoticeLevel } from "../core/views/notice-words.js";
-import type { ViewArtifactCategory, ViewArtifactFormat } from "../domains/session/view-artifacts.js";
 import type { UserTask } from "../domains/user-tasks/store.js";
+import type { ViewArtifactCategory, ViewArtifactFormat } from "../session-control/view-artifacts.js";
 import { ACP_PROMPT_META_KEY, closed } from "./types.js";
 import { wireSteeringCopy, wireSteeringName } from "./types-session.js";
 

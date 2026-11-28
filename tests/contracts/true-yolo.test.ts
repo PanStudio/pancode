@@ -64,8 +64,8 @@ import { invokeRegisteredTool, type ToolFinishEvent } from "../../src/tools/agen
 import { bashTool } from "../../src/tools/bash.js";
 import { createGatewayTool } from "../../src/tools/gateway/index.js";
 import { jobCommandEffect } from "../../src/tools/job-command.js";
+import type { ToolInvokeOptions } from "../../src/tools/registry/contract.js";
 import { createRegistry } from "../../src/tools/registry.js";
-import type { ToolInvokeOptions } from "../../src/tools/registry-contract.js";
 import { createRunScriptTool, runScriptSafetyProjection } from "../../src/tools/run-script.js";
 import { writeTool } from "../../src/tools/write.js";
 import { isolatePancodeEnv } from "../harness/scratch-env.js";

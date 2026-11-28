@@ -10,12 +10,12 @@ import { createMemoryInterventionRegistration } from "../../src/domains/memory/i
 import { reflectionRequest } from "../../src/domains/memory/observations.js";
 import { memoryRecordFromPromotion } from "../../src/domains/memory/promotion.js";
 import { MemoryRuntime } from "../../src/domains/memory/runtime.js";
-import { memoryRouteJson, redactForMemoryRoute } from "../../src/domains/memory/secret-text.js";
 import { TaskMemoryBank } from "../../src/domains/memory/task-bank.js";
 import type { TaskMemoryModelRequest } from "../../src/domains/memory/task-memory-policy.js";
 import { runTaskMemoryPolicy } from "../../src/domains/memory/task-memory-policy.js";
 import type { SessionEntry } from "../../src/domains/session/index.js";
 import { observationSourceUnits } from "../../src/domains/session/memory-source.js";
+import { memoryRouteJson, redactForMemoryRoute } from "../../src/lib/secrets/memory-route.js";
 import { createRedactionTally, headForRedaction, redactSecretsText } from "../../src/lib/secrets/redact.js";
 import { RedactedStringProjection } from "../../src/lib/secrets/redaction.js";
 

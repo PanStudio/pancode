@@ -8,7 +8,7 @@ import { PANE_INTERRUPT_KEYS, PANES_PRESET_IDS, type PaneInterruptKey } from "..
 import { flowHandoffRefusal } from "../domains/safety/information-flow.js";
 import { maskCommandOutput } from "../lib/output-mask/output-mask.js";
 import { panesToolSurface } from "./panes-surface.js";
-import type { RegistryDeps } from "./registry-contract.js";
+import type { RegistryDeps } from "./registry/contract.js";
 import type { ToolResult, ToolSpec } from "./tool-spec.js";
 
 /**

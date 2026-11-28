@@ -4,10 +4,10 @@ import { deepStrictEqual } from "node:assert/strict";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { it } from "node:test";
+import { INTEROP_AGENT_KINDS } from "../../src/core/interop-agents.js";
 import { interopUserHome } from "../../src/core/xdg.js";
 import { scanAgentConfigs } from "../../src/domains/context/adoption.js";
 import { discoverInteropInventory } from "../../src/domains/interop/inventory.js";
-import { INTEROP_AGENT_KINDS } from "../../src/domains/interop/registry.js";
 import { loadSkills } from "../../src/domains/resources/skills/loader.js";
 import { isolatePancodeEnv } from "../harness/scratch-env.js";
 

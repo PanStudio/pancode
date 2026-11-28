@@ -9,13 +9,13 @@ import type { Fact } from "../../core/telemetry/fact.js";
 import type { CallMessageObserver } from "../../core/telemetry/producer.js";
 import type { CallUsage, Pricing } from "../../core/telemetry/schemas.js";
 import { isRecord } from "../../core/type-guards.js";
+import { type MemoryRouteText, memoryRouteJson, redactForMemoryRoute } from "../../lib/secrets/memory-route.js";
 import type { ToolResultDigestProvenance } from "../../tools/result-disposition.js";
 import {
 	buildMemoryInterventionUserPrompt,
 	MEMORY_INTERVENTION_SYSTEM_PROMPT,
 } from "../prompts/memory-intervention.js";
 import type { BackgroundSkipReason } from "./background-budget.js";
-import { type MemoryRouteText, memoryRouteJson, redactForMemoryRoute } from "./secret-text.js";
 import {
 	renderTaskMemoryEntries,
 	TASK_MEMORY_CONTENT_MAX_CHARS,

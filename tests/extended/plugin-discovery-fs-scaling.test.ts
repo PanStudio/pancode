@@ -100,8 +100,8 @@ function project(skillPlugins: number): string {
 
 /** What the agents and resources domains run at boot, in that order. */
 function bootDiscovery(cwd: string): void {
-	const diagnostics: Parameters<typeof discoverAgentRecipes>[1] = [];
-	const recipes = discoverAgentRecipes(cwd, diagnostics);
+	const diagnostics: Parameters<typeof discoverAgentRecipes>[2] = [];
+	const recipes = discoverAgentRecipes(loadSkills, cwd, diagnostics);
 	ok(
 		recipes.some((recipe) => recipe.source === "plugin" && recipe.boundSkillPaths?.length === 1),
 		`fixture recipe did not bind its skill: ${JSON.stringify(diagnostics)} ${JSON.stringify(recipes.map((r) => [r.id, r.source]))}`,

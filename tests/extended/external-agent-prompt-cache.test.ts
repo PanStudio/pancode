@@ -7,7 +7,7 @@ import { afterEach, beforeEach, describe, it } from "node:test";
 import { loadDomains } from "../../src/core/domain-loader.js";
 import { telemetryHub } from "../../src/core/telemetry/hub.js";
 import type { AgentsContract } from "../../src/domains/agents/index.js";
-import { AgentsDomainModule } from "../../src/domains/agents/module.js";
+import { createAgentsDomainModule } from "../../src/domains/agents/module.js";
 import { ConfigDomainModule } from "../../src/domains/config/module.js";
 import { createContextDomainModule } from "../../src/domains/context/module.js";
 import { ExtensionsDomainModule } from "../../src/domains/extensions/module.js";
@@ -19,6 +19,7 @@ import { createPromptsDomainModule } from "../../src/domains/prompts/module.js";
 import type { ProvidersContract } from "../../src/domains/providers/index.js";
 import { ProvidersDomainModule } from "../../src/domains/providers/module.js";
 import { ResourcesDomainModule } from "../../src/domains/resources/module.js";
+import { loadSkills } from "../../src/domains/resources/skills/loader.js";
 import { SafetyDomainModule } from "../../src/domains/safety/module.js";
 import { SessionDomainModule } from "../../src/domains/session/module.js";
 import { TelemetryDomainModule } from "../../src/domains/telemetry/module.js";
@@ -52,7 +53,7 @@ describe("external-agent settings reach the session prompt cache", { concurrency
 			ExtensionsDomainModule,
 			PluginsDomainModule,
 			ResourcesDomainModule,
-			AgentsDomainModule,
+			createAgentsDomainModule({ loadSkills }),
 			ProvidersDomainModule,
 			TelemetryDomainModule,
 			SessionDomainModule,
@@ -141,7 +142,10 @@ describe("external-agent settings reach the session prompt cache", { concurrency
 		try {
 			const config = loaded.getContract("config");
 			ok(config?.update);
-			const agents = await AgentsDomainModule.createExtension({ bus: telemetryHub(), getContract: loaded.getContract });
+			const agents = await createAgentsDomainModule({ loadSkills }).createExtension({
+				bus: telemetryHub(),
+				getContract: loaded.getContract,
+			});
 			const contract = agents.contract as AgentsContract;
 			try {
 				await agents.extension.start();
