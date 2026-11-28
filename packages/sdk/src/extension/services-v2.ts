@@ -14,14 +14,17 @@ export type ExtensionWorkPlace = "workspace" | { worktree: string; sub?: string 
 
 export interface ExtensionRunRequest {
 	prompt: string;
-	target: string;
-	model: string;
+	/** With `model`, or neither: then `run` resolves the operator's default target and model as a headless run would. */
+	target?: string;
+	model?: string;
 	thinking?: string;
 	/** Defaults to the workspace. */
 	cwd?: ExtensionWorkPlace;
 	/** Must be one the manifest's `runs.autonomy` lists; defaults to `default`. */
 	autonomy?: "default" | "yolo";
 	readOnly?: boolean;
+	/** `false` runs with `--no-delegate`: the run's agent dispatches no workers of its own. */
+	delegate?: false;
 	/** The text of a `run --answers` file, at most 64 KiB. */
 	answers?: string;
 	/** At most the manifest's `runs.maxTimeoutSeconds`. */
@@ -233,6 +236,13 @@ export type ExtensionCheckResolution =
 			 * that are untracked or changed since HEAD. At most 256 files and 32 MiB, else `ok: false`.
 			 */
 			inputs: ReadonlyArray<string>;
+			/**
+			 * A catalog check's declared definition as `check` and `measure` run it in this place, the verifier catalog's
+			 * entry as JSON; a sweep run's has the run directory on its argv. Absent for a derived check.
+			 */
+			check?: Readonly<Record<string, unknown>>;
+			/** A sweep run's directory, relative to the place, as the check's `runs` names it. */
+			run?: string;
 	  }
 	| { ok: false; message: string };
 
@@ -245,13 +255,17 @@ export interface ExtensionVerify {
 	 * one (a package script, a toolchain check) through `pancode verifiers dry-run` in the place.
 	 */
 	check(id: string, place?: ExtensionWorkPlace): Promise<ExtensionCheckResult>;
-	/** Run a catalog check's command and read one finite number, `metric`, from its numeric payload. */
-	measure(
-		id: string,
-		metric: string,
-		place?: ExtensionWorkPlace,
-	): Promise<{ ok: true; value: number } | { ok: false; reason: string }>;
+	/**
+	 * Run a catalog check's command and read one finite number, `metric`, from its numeric payload. A result whose
+	 * command ran carries `receipt`, naming the run to `claims.finish` as `check` would; its execution is `succeeded`,
+	 * `failed`, `timed-out` or `aborted`, and a plain measurement never yields a claim.
+	 */
+	measure(id: string, metric: string, place?: ExtensionWorkPlace): Promise<ExtensionMeasureResult>;
 }
+
+export type ExtensionMeasureResult =
+	| { ok: true; value: number; receipt: string }
+	| { ok: false; reason: string; receipt?: string };
 
 export interface ExtensionClaims {
 	/**
@@ -263,11 +277,13 @@ export interface ExtensionClaims {
 	begin(run: string, checks: ReadonlyArray<string>): Promise<Record<string, string[]>>;
 	/**
 	 * Record the claims the run's checks were judged into and test the hypotheses `begin` bound. A hypothesis in
-	 * `withoutClaim` is tested on the run alone, never with the claim as its evidence. The claim id per check.
+	 * `withoutClaim` is tested on the run alone, never with the claim as its evidence. The claim id per check. An
+	 * outcome `{ check, execution: "aborted" }` names a check the run stopped before judging: its hypotheses are tested
+	 * as aborted, with no receipt and never a claim.
 	 */
 	finish(
 		run: string,
-		outcomes: ReadonlyArray<{ check: string; receipt: string }>,
+		outcomes: ReadonlyArray<{ check: string; receipt: string } | { check: string; execution: "aborted" }>,
 		options?: { withoutClaim?: ReadonlyArray<string> },
 	): Promise<Record<string, string>>;
 	/** The project's latest ledger records, newest last. */

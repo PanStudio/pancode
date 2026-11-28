@@ -104,7 +104,6 @@ export const LAYER_EXEMPTIONS: {
 		["src/domains/providers -> src/domains/telemetry", 1],
 		["src/domains/quota -> src/domains/providers", 2],
 		["src/domains/report -> src/domains/session", 1],
-		["src/domains/research -> src/domains/dispatch", 1],
 		["src/domains/resources -> src/domains/agents", 7],
 		["src/domains/resources -> src/domains/extensions", 3],
 		["src/domains/resources -> src/domains/gateway", 6],

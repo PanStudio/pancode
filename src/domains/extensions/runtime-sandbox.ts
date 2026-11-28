@@ -21,6 +21,7 @@ import {
 	settingsFileMasks,
 	workerSandboxMasks,
 } from "../../core/sandbox/worker-process.js";
+import { taskWorktreeClaimParent } from "../../core/task-worktree-claim.js";
 import { workspaceTrustDirectory } from "../../core/workspace-trust.js";
 import { pancodeConfigDir } from "../../core/xdg.js";
 import { isExtensionId } from "./discovery.js";
@@ -70,6 +71,8 @@ export interface ExtensionLaunchRoots {
 	bootstrap: string;
 	/** The project directory of a runtime that declares `runtime.state.project`, and whether this session may write it. */
 	project?: { dir: string; writable: boolean };
+	/** The worktree parent of a runtime that declares `services.worktrees`, which it may read. */
+	worktrees?: string;
 	/** Paths the operator named on this verb's command line: write roots bound writable, existing read paths readable. */
 	grants?: ReadonlyArray<ResolvedPathGrant>;
 }
@@ -164,6 +167,25 @@ export function extensionProjectDir(workspace: string, extensionId: string): { r
 	return { root, dir };
 }
 
+/**
+ * The worktree parent a runtime that declares `services.worktrees` may read: `<repository root>/.pancode/worktrees/
+ * ext-<id>/`, where the worktrees service makes its worktrees, or undefined outside a repository.
+ */
+export function extensionWorktreeParent(
+	workspace: string,
+	extensionId: string,
+): { root: string; dir: string } | undefined {
+	if (!isExtensionId(extensionId)) throw new Error(`invalid extension id '${extensionId}' for worktree directory`);
+	const root = repositoryRoot(canonicalizeExistingPath(workspace));
+	if (root === null) return undefined;
+	return { root, dir: path.join(taskWorktreeClaimParent(root), `ext-${extensionId}`) };
+}
+
+/** Create the worktree parent before launch, since Node grants reads only below a directory that exists then. */
+export function prepareWorktreeParent(parent: { root: string; dir: string }): string[] {
+	return plainDirectories(parent.root, path.relative(parent.root, parent.dir).split(path.sep), "the worktree directory");
+}
+
 /** Create the project directory before launch so the sandbox binds exactly it; the components it created. */
 export function prepareProjectDir(project: { root: string; dir: string }): string[] {
 	return plainDirectories(
@@ -174,12 +196,11 @@ export function prepareProjectDir(project: { root: string; dir: string }): strin
 }
 
 /**
- * Verify that any existing components of `project.dir` below `project.root` are plain directories, without creating
- * missing ones. Used in read-only sessions so a symlink along `.pancode/data/<id>` is still refused.
+ * Verify that any existing components of `dir` below `root` are plain directories, without creating missing ones.
  */
-export function assertPlainProjectDir(project: { root: string; dir: string }): void {
-	let current = project.root;
-	for (const segment of path.relative(project.root, project.dir).split(path.sep)) {
+function assertPlainDir(root: string, dir: string, label: string): void {
+	let current = root;
+	for (const segment of path.relative(root, dir).split(path.sep)) {
 		if (segment === "" || segment === ".") continue;
 		current = path.join(current, segment);
 		let stat: ReturnType<typeof lstatSync>;
@@ -189,9 +210,24 @@ export function assertPlainProjectDir(project: { root: string; dir: string }): v
 			if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
 			throw error;
 		}
-		if (!stat.isDirectory())
-			throw new Error(`the project directory passes through ${current}, which is not a plain directory`);
+		if (!stat.isDirectory()) throw new Error(`${label} passes through ${current}, which is not a plain directory`);
 	}
+}
+
+/**
+ * Verify that any existing components of `project.dir` below `project.root` are plain directories, without creating
+ * missing ones. Used in read-only sessions so a symlink along `.pancode/data/<id>` is still refused.
+ */
+export function assertPlainProjectDir(project: { root: string; dir: string }): void {
+	assertPlainDir(project.root, project.dir, "the project directory");
+}
+
+/**
+ * Verify that any existing components of `parent.dir` below `parent.root` are plain directories, without creating
+ * missing ones. Used in read-only sessions so a symlink along `.pancode/worktrees/ext-<id>` is still refused.
+ */
+export function assertPlainWorktreeParent(parent: { root: string; dir: string }): void {
+	assertPlainDir(parent.root, parent.dir, "the worktree directory");
 }
 
 /**
@@ -251,6 +287,31 @@ function projectDataMask(
 		}
 	}
 	return [{ path: dataDir, kind: "directory", ...(reveal.length > 0 ? { reveal } : {}) }];
+}
+
+/**
+ * Hide `.pancode/worktrees/` (task worktrees and other extensions' `ext-<other>/` directories) behind an empty tmpfs,
+ * revealing only this runtime's own `ext-<id>/` directory read-only when it declares `services.worktrees` and the
+ * directory exists.
+ */
+function worktreesMask(workspace: string, worktrees: string | undefined): SandboxMaskedPath[] {
+	const root = repositoryRoot(workspace);
+	if (root === null) return [];
+	const worktreesDir = taskWorktreeClaimParent(root);
+	try {
+		if (!lstatSync(worktreesDir).isDirectory()) return [];
+	} catch {
+		return [];
+	}
+	const reveal: Array<{ source: string; target: string }> = [];
+	if (worktrees !== undefined) {
+		try {
+			if (lstatSync(worktrees).isDirectory()) reveal.push({ source: worktrees, target: worktrees });
+		} catch {
+			// In a read-only session the directory may not exist yet: keep the worktrees root masked with nothing revealed.
+		}
+	}
+	return [{ path: worktreesDir, kind: "directory", ...(reveal.length > 0 ? { reveal } : {}) }];
 }
 
 /**
@@ -333,11 +394,13 @@ function planLaunch(input: {
 	let invocation: ReturnType<typeof composeWorkerSandboxInvocation>;
 	try {
 		// An extension never reads PanCode's settings, which can hold target auth headers, so they are masked always.
-		// `.pancode/data/` is masked to hide sibling extensions' project data, revealing only this extension's own dir.
+		// `.pancode/data/` and `.pancode/worktrees/` are masked to hide sibling extensions' data and worktrees,
+		// revealing only this extension's own directories when declared.
 		const base = [
 			...workerSandboxMasks(),
 			...settingsMasks(roots, writable),
 			...projectDataMask(workspace, roots.project),
+			...worktreesMask(workspace, roots.worktrees),
 		];
 		invocation = composeWorkerSandboxInvocation(
 			{
@@ -354,6 +417,7 @@ function planLaunch(input: {
 					path.dirname(roots.packageCopy),
 					path.dirname(roots.bootstrap),
 					...(roots.project !== undefined ? [roots.project.dir] : []),
+					...(roots.worktrees !== undefined ? [roots.worktrees] : []),
 					...grants.filter((grant) => grant.access === "read" && grant.exists).map((grant) => grant.canonical),
 				],
 				network: net,

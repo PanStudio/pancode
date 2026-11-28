@@ -1,16 +1,14 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 /**
- * PLAN+EDIT: one headless main-agent run of this same build in the iteration's worktree, through `run --output-format
- * stream-json` (schema v3). PanCode's own agent both plans and edits. The run inherits the operator's environment so its
- * targets and credentials resolve as an interactive run's would; it runs at the campaign's autonomy (`default`, or
- * contained `yolo` with the operator's autonomous caps) with dispatch off, and the campaign's remaining wall time and
- * spend are passed down as `--timeout` and `--max-cost-usd`. A yolo run's audit comes back on the `autonomy` frame.
+ * PLAN+EDIT: one headless main-agent run in the iteration's worktree, through the host's runs service (a `run
+ * --output-format stream-json` of the host's own build). PanCode's own agent both plans and edits. The run resolves the
+ * operator's target and model as a headless run would unless the campaign names both; it runs at the campaign's
+ * autonomy (`default`, or contained `yolo`) with dispatch off, under the campaign's remaining wall time, and under its
+ * remaining spend when the campaign has a cost cap. A yolo run's audit comes back on the `autonomy` frame.
  */
-import { spawn } from "node:child_process";
-import { isRecord } from "../../core/type-guards.js";
-import { withContainedYoloPin } from "../../lib/autonomy/autonomy.js";
-import { costFromPricing } from "./budget.js";
+import type { ExtensionRunEnd, ExtensionRuns } from "pancode/sdk/extension";
+import { costFromPricing } from "./budget.ts";
 import {
 	RESEARCH_OPEN_DECISION_LIMIT,
 	type ResearchAgentAutonomy,
@@ -18,15 +16,19 @@ import {
 	type ResearchCampaign,
 	type ResearchCost,
 	type ResearchJournalEvent,
-} from "./types.js";
+} from "./types.ts";
+
+const FRAME_PAGE = 1000;
+const FRAME_WAIT_MS = 30_000;
 
 export interface AgentRunRequest {
+	/** The worktree service's id for the iteration's worktree. */
 	worktree: string;
 	prompt: string;
 	autonomy: ResearchAutonomy;
 	target?: string;
 	model?: string;
-	timeoutSeconds?: number;
+	timeoutSeconds: number;
 	maxCostUsd?: number;
 	signal?: AbortSignal;
 }
@@ -44,44 +46,26 @@ export interface AgentRunResult {
 
 export type AgentRunner = (request: AgentRunRequest) => Promise<AgentRunResult>;
 
-export function agentRunArgv(request: Omit<AgentRunRequest, "signal">): string[] {
-	return [
-		"run",
-		"--output-format",
-		"stream-json",
-		"--cwd",
-		request.worktree,
-		"--no-delegate",
-		"--autonomy",
-		request.autonomy,
-		...(request.target !== undefined ? ["--target", request.target] : []),
-		...(request.model !== undefined ? ["--model", request.model] : []),
-		...(request.timeoutSeconds !== undefined ? ["--timeout", String(request.timeoutSeconds)] : []),
-		...(request.maxCostUsd !== undefined ? ["--max-cost-usd", String(request.maxCostUsd)] : []),
-		request.prompt,
-	];
+function isRecord(value: unknown): value is Record<string, unknown> {
+	return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
 /**
- * Fold the frames of a `run --output-format stream-json` stream into the run's result. The v2 `run_end` envelope
- * carries the session, outcome, answer and failure; spend is the sum of the stream's `agent_end` usage, as the
- * campaign has always counted it, and a yolo run's audit is its `autonomy` frame.
+ * Fold a run's stream frames into its result. The `run_end` envelope (schema v3) carries the session, outcome, answer
+ * and failure; spend is the sum of the stream's `agent_end` usage, and a yolo run's audit is its `autonomy` frame.
  */
-export function parseAgentRunFrames(stdout: string, exitCode: number | null, stderr: string): AgentRunResult {
+export function foldAgentRunFrames(
+	frames: ReadonlyArray<Readonly<Record<string, unknown>>>,
+	exitCode: number | null,
+	stderr: string,
+): AgentRunResult {
 	let sessionId: string | null = null;
 	let outcome: string | null = null;
 	let text: string | null = null;
 	let error: string | null = null;
 	const costs: unknown[] = [];
 	let autonomy: ResearchAgentAutonomy | undefined;
-	for (const line of stdout.split("\n")) {
-		if (!line.startsWith("{")) continue;
-		let frame: Record<string, unknown>;
-		try {
-			frame = JSON.parse(line) as Record<string, unknown>;
-		} catch {
-			continue;
-		}
+	for (const frame of frames) {
 		if (frame.type === "session" && typeof frame.id === "string") sessionId = frame.id;
 		if (frame.type === "agent_end") {
 			const usage = frame.usage as { cost?: unknown } | undefined;
@@ -137,43 +121,45 @@ function readAutonomyAudit(value: unknown): ResearchAgentAutonomy | undefined {
 	};
 }
 
-/** Spawn this build's `run` for one iteration. `entry` is the CLI script; the current process's is the default. */
-export function createSpawnAgentRunner(
-	entry: string | undefined = process.argv[1],
-	execArgv: ReadonlyArray<string> = process.execArgv,
-): AgentRunner {
-	return (request) =>
-		new Promise((resolve, reject) => {
-			if (entry === undefined) {
-				reject(new Error("cannot find this build's CLI entry to start the agent run"));
-				return;
-			}
-			const child = spawn(process.execPath, [...execArgv, entry, ...agentRunArgv(request)], {
-				cwd: request.worktree,
-				env: request.autonomy === "yolo" ? withContainedYoloPin(process.env) : process.env,
-				stdio: ["ignore", "pipe", "pipe"],
-			});
-			let stdout = "";
-			let stderr = "";
-			child.stdout.setEncoding("utf8").on("data", (chunk: string) => {
-				stdout += chunk;
-			});
-			child.stderr.setEncoding("utf8").on("data", (chunk: string) => {
-				stderr = `${stderr}${chunk}`.slice(-16_384);
-			});
-			const abort = (): void => {
-				child.kill("SIGINT");
-			};
-			request.signal?.addEventListener("abort", abort, { once: true });
-			child.once("error", (error) => {
-				request.signal?.removeEventListener("abort", abort);
-				reject(error);
-			});
-			child.once("close", (code) => {
-				request.signal?.removeEventListener("abort", abort);
-				resolve(parseAgentRunFrames(stdout, code, stderr));
-			});
+/** Run one iteration's agent through the runs service; an abort cancels the run and still waits for its end. */
+export function createServiceAgentRunner(runs: ExtensionRuns): AgentRunner {
+	return async (request) => {
+		const { id } = await runs.start({
+			prompt: request.prompt,
+			...(request.target !== undefined && request.model !== undefined
+				? { target: request.target, model: request.model }
+				: {}),
+			cwd: { worktree: request.worktree },
+			autonomy: request.autonomy,
+			delegate: false,
+			timeoutSeconds: request.timeoutSeconds,
+			...(request.maxCostUsd !== undefined ? { maxCostUsd: request.maxCostUsd } : {}),
 		});
+		const cancel = (): void => {
+			void runs.cancel(id).catch(() => {});
+		};
+		if (request.signal?.aborted === true) cancel();
+		else request.signal?.addEventListener("abort", cancel, { once: true });
+		const frames: Array<Readonly<Record<string, unknown>>> = [];
+		let end: ExtensionRunEnd;
+		try {
+			let cursor = 0;
+			for (;;) {
+				const page = await runs.frames(id, { cursor, limit: FRAME_PAGE, waitMs: FRAME_WAIT_MS });
+				frames.push(...page.frames);
+				cursor = page.next;
+				if (page.done) break;
+			}
+			end = await runs.wait(id);
+		} finally {
+			request.signal?.removeEventListener("abort", cancel);
+		}
+		return foldAgentRunFrames(
+			frames.some((frame) => frame.type === "run_end") || end.end === null ? frames : [...frames, end.end],
+			end.exitCode,
+			end.error !== undefined ? `${end.stderrTail}\n${end.error}` : end.stderrTail,
+		);
+	};
 }
 
 function percent(value: number | null): string {

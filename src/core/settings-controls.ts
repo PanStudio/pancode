@@ -618,6 +618,12 @@ const OPTIONAL_NUMBERS = new Set(["safety.review.cadenceToolCalls"]);
 const NULLABLE_NUMBERS = new Set<string>([
 	"safety.limits.templateToolCallsPerTurnMax",
 	"safety.limits.templateObservationBytesPerTurnMax",
+	"safety.resources.main.memoryMiB",
+	"safety.resources.main.tasks",
+	"safety.resources.main.cpuPercent",
+	"safety.resources.workers.memoryMiB",
+	"safety.resources.workers.tasks",
+	"safety.resources.workers.cpuPercent",
 ]);
 const OPTIONAL_STRINGS = new Set([
 	"fleet.default.node",
@@ -627,6 +633,30 @@ const OPTIONAL_STRINGS = new Set([
 	"store.projectId",
 ]);
 const EXTRA_HELP: Record<string, [string, string]> = {
+	"safety.resources.main.memoryMiB": [
+		"Main command memory ceiling (MiB)",
+		"Memory, without swap, all processes of one of the main session's commands may hold together; the kernel ends the command past it. Linux with a systemd user manager only; a host that cannot enforce it refuses the command. Empty is no ceiling.",
+	],
+	"safety.resources.main.tasks": [
+		"Main command process ceiling",
+		"Processes and threads one of the main session's commands may run at once; past it the command cannot start more. Linux with a systemd user manager only; a host that cannot enforce it refuses the command. Empty is no ceiling.",
+	],
+	"safety.resources.main.cpuPercent": [
+		"Main command CPU ceiling (%)",
+		"CPU one of the main session's commands may use, 100 being one core. Linux with a systemd user manager only; a host that cannot enforce it refuses the command. Empty is no ceiling.",
+	],
+	"safety.resources.workers.memoryMiB": [
+		"Worker command memory ceiling (MiB)",
+		"Memory, without swap, all processes of one of a dispatched worker's commands may hold together; the kernel ends the command past it. Linux with a systemd user manager only; a host that cannot enforce it refuses the command. Empty is no ceiling.",
+	],
+	"safety.resources.workers.tasks": [
+		"Worker command process ceiling",
+		"Processes and threads one of a dispatched worker's commands may run at once; past it the command cannot start more. Linux with a systemd user manager only; a host that cannot enforce it refuses the command. Empty is no ceiling.",
+	],
+	"safety.resources.workers.cpuPercent": [
+		"Worker command CPU ceiling (%)",
+		"CPU one of a dispatched worker's commands may use, 100 being one core. Linux with a systemd user manager only; a host that cannot enforce it refuses the command. Empty is no ceiling.",
+	],
 	"context.compaction.provider": [
 		"Provider compaction",
 		"Use private native checkpoints on compatible Codex routes. Off uses portable PanCode summaries; switching routes generates a portable summary from the retained history.",

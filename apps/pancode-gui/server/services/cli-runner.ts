@@ -4,22 +4,20 @@ import { type CliCommand, commandPlan } from "../cli-commands.js";
 import { runPancodeCommand, stopPancodeCommand } from "../process-policy.js";
 import { AppProblem } from "./problem.js";
 
-/** Closed-set classifier for `pancode arena` exit 2 when `extension:arena` is absent, disabled, or failed to load. */
-export function arenaPackProblem(stderr: string): AppProblem | null {
-	if (stderr.includes("pancode arena: extension:arena is not installed;"))
+/** Closed-set classifier for `pancode arena|research` exit 2 when its pack is absent, disabled, or failed to load. */
+export function packProblem(pack: "arena" | "research", stderr: string): AppProblem | null {
+	const named = `The ${pack} extension (extension:${pack})`;
+	if (stderr.includes(`pancode ${pack}: extension:${pack} is not installed;`))
 		return new AppProblem(
 			"unsupported",
-			"The arena extension (extension:arena) is not installed. Run pancode hub install extension:arena to install it.",
+			`${named} is not installed. Run pancode hub install extension:${pack} to install it.`,
 		);
-	if (stderr.includes("pancode arena: extension:arena is disabled;"))
+	if (stderr.includes(`pancode ${pack}: extension:${pack} is disabled;`))
+		return new AppProblem("unsupported", `${named} is disabled. Run pancode extensions enable ${pack} to enable it.`);
+	if (stderr.includes(`pancode ${pack}: extension:${pack} is installed but does not load;`))
 		return new AppProblem(
 			"unsupported",
-			"The arena extension (extension:arena) is disabled. Run pancode extensions enable arena to enable it.",
-		);
-	if (stderr.includes("pancode arena: extension:arena is installed but does not load;"))
-		return new AppProblem(
-			"unsupported",
-			"The arena extension (extension:arena) is installed but did not load. Run pancode extensions list to see why.",
+			`${named} is installed but did not load. Run pancode extensions list to see why.`,
 		);
 	return null;
 }
@@ -112,8 +110,9 @@ export class CliRunner {
 				// research report whose recomputed grades disagree with the journal.
 				const recordOnOne = command.kind === "machines.check" || command.kind === "research.report";
 				if (code !== 0 && !(recordOnOne && code === 1)) {
-					if (code === 2 && command.kind.startsWith("arena.")) {
-						const pack = arenaPackProblem(stderrHead);
+					const verb = command.kind.split(".")[0];
+					if (code === 2 && (verb === "arena" || verb === "research")) {
+						const pack = packProblem(verb, stderrHead);
 						if (pack) {
 							reject(pack);
 							return;

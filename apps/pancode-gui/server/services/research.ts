@@ -12,7 +12,7 @@ import {
 } from "../../contracts/research.js";
 import { renderUsdLimit, renderUsdSpend } from "../pancode/http-shims.js";
 import { runPancodeCommand, stopPancodeCommand } from "../process-policy.js";
-import type { CliRunner } from "./cli-runner.js";
+import { type CliRunner, packProblem } from "./cli-runner.js";
 import { fingerprint, type OperationRegistry } from "./operations.js";
 import { AppProblem } from "./problem.js";
 import type { WorkspaceService } from "./workspaces.js";
@@ -24,7 +24,7 @@ const SETTLE_MS = 5 * 60_000;
 /** A stopped `research start` archives the iteration `interrupted` and cleans up; SIGKILL comes only if that stalls. */
 const KILL_GRACE_MS = 15_000;
 const STDOUT_LIMIT = 8 * 1024 * 1024;
-const LINE = /^research (r[0-9]{8}-[0-9]{6}-[0-9a-f]{4}): (.*)$/;
+const LINE = /^pancode research: (r[0-9]{8}-[0-9]{6}-[0-9a-f]{4}): (.*)$/;
 
 type ToolResult = { id: string; message: string };
 
@@ -247,6 +247,11 @@ export class ResearchService {
 						id: view.id,
 						message: `Campaign ${view.id} stopped${view.stop ? ` (${view.stop.reason}: ${view.stop.detail})` : ""} with ${view.ratchets} ${view.ratchets === 1 ? "ratchet" : "ratchets"}.`,
 					});
+					return;
+				}
+				const pack = code === 2 ? packProblem("research", lastError) : null;
+				if (pack) {
+					reject(pack);
 					return;
 				}
 				reject(

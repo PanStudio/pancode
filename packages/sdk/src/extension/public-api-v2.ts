@@ -66,6 +66,8 @@ export interface ExtensionRuntimeSnapshotV2 extends ExtensionRuntimeSnapshot {
 	plugin: { id: string; prompts: readonly string[] } | null;
 	/** Id of this extension's workspace that holds the screen, or null. `workspace` stays the project directory. */
 	activeWorkspace: string | null;
+	/** The version of the PanCode hosting the runtime. */
+	pancodeVersion: string;
 }
 
 /**

@@ -38,7 +38,7 @@ export interface ExtensionClaimsService {
 	begin(run: string, checks: ReadonlyArray<string>): Promise<Record<string, string[]>>;
 	finish(
 		run: string,
-		outcomes: ReadonlyArray<{ check: string; receipt: string }>,
+		outcomes: ReadonlyArray<{ check: string; receipt: string } | { check: string; execution: "aborted" }>,
 		options?: { withoutClaim?: ReadonlyArray<string> },
 	): Promise<Record<string, string>>;
 	read(options?: {
@@ -145,6 +145,13 @@ export function createExtensionClaimsService(deps: ExtensionClaimsServiceDeps): 
 			const seenReceipts = new Set<string>();
 			const judged: Array<{ check: string; execution: string; claim: ClaimRecord | null }> = [];
 			for (const outcome of outcomes) {
+				// A check the run stopped before judging: a negative record of the run alone, never a claim.
+				if (outcome !== null && typeof outcome === "object" && !("receipt" in outcome)) {
+					if (outcome.execution !== "aborted" || typeof outcome.check !== "string" || outcome.check.length === 0)
+						throw new ExtensionClaimsError("invalid", 'an outcome without a receipt is { check, execution: "aborted" }');
+					judged.push({ check: outcome.check, execution: "aborted", claim: null });
+					continue;
+				}
 				const receiptId = String(outcome?.receipt);
 				const receipt = deps.receipts.get(receiptId);
 				if (receipt === undefined || receipt.check !== outcome.check)

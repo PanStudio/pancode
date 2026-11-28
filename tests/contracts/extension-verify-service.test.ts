@@ -93,17 +93,42 @@ describe("extension verify service", () => {
 	it("resolves a check with the uncommitted files it names, and refuses one the project cannot run", async () => {
 		const { repo, verify, cleanup } = project();
 		try {
-			assert.deepEqual(await verify.resolve("sane"), {
-				ok: true,
+			const declared = await verify.resolve("sane");
+			assert.deepEqual(declared.ok && { kind: declared.kind, inputs: declared.inputs, run: declared.run }, {
 				kind: "catalog",
 				inputs: [".pancode/verifiers.yaml"],
+				run: undefined,
 			});
+			assert.equal(declared.ok && (declared.check?.numeric as { reference?: string } | undefined)?.reference, "ref.json");
+			assert.deepEqual(declared.ok && declared.check?.command, ["node", "score.js"]);
 			writeFileSync(join(repo, "ref.json"), '{"score":99}\n');
 			writeFileSync(join(repo, "value.txt"), "99\n");
 			const sane = await verify.resolve("sane");
 			assert.deepEqual(sane.ok && sane.inputs, [".pancode/verifiers.yaml", "ref.json"]);
 			const unknown = await verify.resolve("nope/never");
 			assert.equal(unknown.ok, false);
+		} finally {
+			cleanup();
+		}
+	});
+
+	it("resolves one run of a sweep to the declared check with the run directory on its argv", async () => {
+		const { repo, verify, cleanup } = project();
+		try {
+			const reading = ["node", "-e", "process.stdout.write('{}')"];
+			writeFileSync(
+				join(repo, ".pancode/verifiers.yaml"),
+				JSON.stringify({ version: 2, checks: [check("sweep", reading, { runs: "runs" })] }),
+			);
+			mkdirSync(join(repo, "runs/a"), { recursive: true });
+			const run = await verify.resolve("sweep/a");
+			assert.equal(run.ok && run.run, "runs/a");
+			assert.deepEqual(run.ok && run.check?.command, [...reading, "runs/a"]);
+			assert.equal(run.ok && run.check?.id, "sweep");
+			assert.equal(run.ok && run.check?.runs, "runs");
+			const derived = await verify.resolve("test");
+			assert.equal(derived.ok && derived.kind, "package");
+			assert.equal(derived.ok && derived.check, undefined);
 		} finally {
 			cleanup();
 		}
@@ -157,13 +182,14 @@ describe("extension verify service", () => {
 	it("measures a metric from a check's JSON payload, and reports a missing key or an aborted run", async () => {
 		const { verify, cleanup } = project();
 		try {
-			assert.deepEqual(await verify.measure("score", "score"), { ok: true, value: 100 });
+			const measured = await verify.measure("score", "score");
+			assert.equal(measured.ok && measured.value, 100);
 			const missing = await verify.measure("score", "speed");
 			assert.equal(missing.ok, false);
 			const scope = createExtensionRequestScope();
 			scope.end();
 			const aborted = await verify.measure("score", "score", "workspace", scope);
-			assert.deepEqual(aborted, { ok: false, reason: "aborted" });
+			assert.equal(!aborted.ok && aborted.reason, "aborted");
 		} finally {
 			cleanup();
 		}
@@ -243,6 +269,55 @@ describe("extension claims service", () => {
 		assert.equal(readClaims(realpathSync(repo)).records.length, 0);
 	});
 
+	it("tests a hypothesis on a measurement's own run, and on a run stopped before judging, never with a claim", async (t) => {
+		const env = await isolatePancodeEnv("pancode-ext-claims-");
+		t.after(() => env.restore());
+		const { repo, verify, receipts, cleanup } = project();
+		t.after(cleanup);
+		const claims = createExtensionClaimsService({ extensionId: "research", workspace: repo, sessionId: null, receipts });
+		const slate = `${JSON.stringify({
+			schema: HYPOTHESIS_SLATE_SCHEMA,
+			hypotheses: [
+				{
+					id: "H1",
+					statement: "the score improves",
+					prediction: "score rises",
+					status: "proposed",
+					experiment: { successCriterion: { kind: "verify", verifyId: "score", statement: "score rises" } },
+				},
+			],
+		})}\n`;
+		const h1 = (await claims.hypotheses("campaign/measure", slate)).H1;
+		assert.ok(typeof h1 === "string");
+		const tests = () => readClaims(realpathSync(repo)).hypothesisTests.filter((entry) => entry.hypothesis === h1);
+
+		await claims.begin("run-m1", ["score"]);
+		const measured = await verify.measure("score", "score");
+		assert.ok(measured.ok);
+		assert.deepEqual(await claims.finish("run-m1", [{ check: "score", receipt: measured.receipt }]), {});
+		const missing = await verify.measure("score", "speed");
+		assert.ok(!missing.ok && typeof missing.receipt === "string");
+		await claims.begin("run-m2", ["score"]);
+		await claims.finish("run-m2", [{ check: "score", receipt: missing.receipt as string }]);
+		await claims.begin("run-m3", ["score"]);
+		assert.deepEqual(await claims.finish("run-m3", [{ check: "score", execution: "aborted" }]), {});
+		assert.deepEqual(
+			tests().map((entry) => [entry.execution, entry.outcome, entry.claim]),
+			[
+				["succeeded", "tested", undefined],
+				["failed", "tested", undefined],
+				["aborted", "tested", undefined],
+			],
+		);
+		assert.equal(readClaims(realpathSync(repo)).records.length, 0);
+		await assert.rejects(
+			claims.finish("run-m4", [
+				{ check: "score", execution: "succeeded" } as unknown as { check: string; receipt: string },
+			]),
+			(error: ExtensionClaimsError) => error.code === "invalid",
+		);
+	});
+
 	it("claims a check run in an extension worktree for the project, naming the worktree it ran in", async (t) => {
 		const env = await isolatePancodeEnv("pancode-ext-claims-");
 		t.after(() => env.restore());
@@ -264,7 +339,8 @@ describe("extension claims service", () => {
 		const claims = createExtensionClaimsService({ extensionId: "research", workspace: repo, sessionId: null, receipts });
 		const tree = await worktrees.create();
 		writeFileSync(join(tree.path, "value.txt"), "50\n");
-		assert.deepEqual(await verify.measure("score", "score", { worktree: tree.id }), { ok: true, value: 50 });
+		const measured = await verify.measure("score", "score", { worktree: tree.id });
+		assert.equal(measured.ok && measured.value, 50);
 		const result = await verify.check("sane", { worktree: tree.id });
 		assert.equal(result.ok, false);
 		await claims.begin("run-3", ["sane"]);

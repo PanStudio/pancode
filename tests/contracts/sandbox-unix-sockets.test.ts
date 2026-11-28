@@ -20,9 +20,23 @@ import { join } from "node:path";
 import { type TestContext, test } from "node:test";
 import type { ExtensionRuntimeDeclarationV2 } from "@pancode/sdk/pack";
 import { readSettings } from "../../src/core/config.js";
+import { runCommandVector } from "../../src/core/safe-exec.js";
 import { sandboxAvailability, untrustedBwrapReason, wslKind } from "../../src/core/sandbox/availability.js";
 import { buildBwrapInvocation } from "../../src/core/sandbox/bwrap.js";
 import { mainSandboxPolicy, planMainSandboxSpawn } from "../../src/core/sandbox/main-session.js";
+import {
+	busSocketPaths,
+	capabilityFromProbe,
+	hostResourceStatus,
+	planResourceScope,
+	resourceLimitRefusal,
+	resourceStatus,
+	resourceStatusLine,
+	resourceStatusRefuses,
+	scopeArgs,
+	scopeLaunchFailure,
+	settleResourceScope,
+} from "../../src/core/sandbox/resource-limits.js";
 import { buildSeatbeltInvocation } from "../../src/core/sandbox/seatbelt.js";
 import { sandboxFilterProgram } from "../../src/core/sandbox/seccomp.js";
 import { sandboxStatus, sandboxStatusLine } from "../../src/core/sandbox/status.js";
@@ -851,4 +865,171 @@ test("socket discovery finds the pane host's socket and a home daemon's past a l
 		tmux.masks.some((mask) => mask.path === paneHost),
 		tmux.masks.map((mask) => mask.path).join(", "),
 	);
+});
+
+test("resource ceilings: the probe, the refusal, the scope arguments, a launch failure and the status line", () => {
+	const delegated = "memory.max=268435456\nmemory.swap.max=0\npids.max=64\ncpu.max=100000 100000\n";
+	const probe = (stdout: string, more: Partial<Parameters<typeof capabilityFromProbe>[0]> = {}) => ({
+		status: 0,
+		stdout,
+		stderr: "",
+		timedOut: false,
+		...more,
+	});
+	const states = (capability: ReturnType<typeof capabilityFromProbe>) => [
+		capability.memoryMiB.state,
+		capability.tasks.state,
+		capability.cpuPercent.state,
+	];
+	assert.deepEqual(states(capabilityFromProbe(probe(delegated), true)), ["enforced", "enforced", "enforced"]);
+	// Swap not accounted to cgroups lets a memory ceiling page out; with no swap there is nowhere to go.
+	const swapless = delegated.replace("memory.swap.max=0", "memory.swap.max=missing");
+	assert.deepEqual(states(capabilityFromProbe(probe(swapless), false)), ["enforced", "enforced", "enforced"]);
+	const spilled = capabilityFromProbe(probe(swapless), true);
+	assert.match("reason" in spilled.memoryMiB ? spilled.memoryMiB.reason : "enforced", /spill into swap/u);
+	const pidless = capabilityFromProbe(probe(delegated.replace("pids.max=64", "pids.max=missing")), false);
+	assert.deepEqual(states(pidless), ["enforced", "unavailable", "enforced"]);
+	const busless = capabilityFromProbe(
+		probe("", { status: 1, stderr: "Failed to connect to bus: No medium found\n" }),
+		false,
+	);
+	assert.deepEqual(states(busless), ["unavailable", "unavailable", "unavailable"]);
+
+	assert.equal(resourceLimitRefusal({ memoryMiB: 64, cpuPercent: 50 }, "main", pidless), null);
+	assert.match(
+		resourceLimitRefusal({ memoryMiB: 64, tasks: 8 }, "workers", pidless) ?? "",
+		/^safety\.resources\.workers\.tasks is set but this host cannot enforce it \(.*pids\.max reads missing\)\); the command was not run/u,
+	);
+	assert.deepEqual(scopeArgs({ memoryMiB: 64, tasks: 8, cpuPercent: 50 }, "pancode-cmd-1.scope"), [
+		"--user",
+		"--scope",
+		"--quiet",
+		"--unit=pancode-cmd-1.scope",
+		"-p",
+		"OOMPolicy=stop",
+		"-p",
+		"MemoryMax=64M",
+		"-p",
+		"MemorySwapMax=0",
+		"-p",
+		"TasksMax=8",
+		"-p",
+		"CPUQuota=50%",
+		"--",
+	]);
+
+	// Only exit 1 with no output and nothing but systemd-run's own lines reads as a scope that never started.
+	const busFailure = "Failed to connect to bus: No medium found\n";
+	assert.equal(scopeLaunchFailure({ exitCode: 1, stdoutBytes: 0, stderr: busFailure }), busFailure.trim());
+	const bus256Failure = "Failed to connect to user scope bus via local transport: Connection refused\n";
+	assert.equal(scopeLaunchFailure({ exitCode: 1, stdoutBytes: 0, stderr: bus256Failure }), bus256Failure.trim());
+	assert.equal(
+		scopeLaunchFailure({ exitCode: 1, stdoutBytes: 0, stderr: "Failed to get D-Bus connection: No such file\n" }),
+		"Failed to get D-Bus connection: No such file",
+	);
+	assert.equal(scopeLaunchFailure({ exitCode: 1, stdoutBytes: 3, stderr: busFailure }), null);
+	assert.equal(scopeLaunchFailure({ exitCode: 2, stdoutBytes: 0, stderr: busFailure }), null);
+	assert.equal(scopeLaunchFailure({ exitCode: 1, stdoutBytes: 0, stderr: `${busFailure}make: *** Error 1\n` }), null);
+	assert.equal(scopeLaunchFailure({ exitCode: 1, stdoutBytes: 0, stderr: "Failed to start: x\n" }), null);
+
+	// Bus socket extraction observes filesystem paths and flags abstract/non-file D-Bus transports as unobservable.
+	assert.deepEqual(
+		busSocketPaths({
+			XDG_RUNTIME_DIR: "/run/user/1000",
+			DBUS_SESSION_BUS_ADDRESS: "unix:path=/run/user/1000/bus,guid=abc",
+		}),
+		{ paths: ["/run/user/1000/bus", "/run/user/1000/systemd/private"], observable: true },
+	);
+	assert.equal(busSocketPaths({ DBUS_SESSION_BUS_ADDRESS: "unix:abstract=/tmp/dbus-xyz" }).observable, false);
+
+	const refused = resourceStatus(pidless, { main: { tasks: 8 }, workers: undefined });
+	assert.equal(resourceStatusRefuses(refused), true);
+	assert.match(
+		resourceStatusLine(refused),
+		/^memory, cpu enforceable per command \(systemd user scope\); tasks unavailable \(.*\); main: tasks 8; workers: none set; a set limit this host cannot enforce refuses its commands; disk quota not enforced; per-process limits not offered$/u,
+	);
+	const unset = resourceStatus(busless, { main: undefined, workers: undefined });
+	assert.equal(resourceStatusRefuses(unset), false);
+	assert.equal(unset.disk, "not enforced");
+});
+
+test("under a systemd user scope a command's ceilings hold and nothing of it outlives the run", async (t) => {
+	const status = hostResourceStatus({
+		main: { memoryMiB: 64, tasks: 8, cpuPercent: 50 },
+		workers: { memoryMiB: null, tasks: null, cpuPercent: null },
+	});
+	if (resourceStatusRefuses(status)) {
+		t.skip(`resource ceilings not enforceable here: ${status.reason}`);
+		return;
+	}
+	const memory = await runCommandVector("awk", ['BEGIN { s = "x"; while (1) s = s s }'], {
+		resourceLimits: { memoryMiB: 64 },
+		timeoutMs: 30_000,
+	});
+	assert.notEqual(memory.exitCode, 0);
+	assert.match(memory.resourceNote ?? "", /memory ceiling 64 MiB \(safety\.resources\.main\.memoryMiB\) reached/u);
+	const tasks = await runCommandVector("sh", ["-c", "for i in 1 2 3 4 5 6 7 8 9 10 11 12; do sleep 2 & done; wait"], {
+		resourceLimits: { tasks: 4 },
+		timeoutMs: 30_000,
+	});
+	assert.match(tasks.stderr, /fork|Resource temporarily unavailable/iu);
+	// A process the command left running is ended with its scope rather than outliving the run.
+	const started = performance.now();
+	const left = await runCommandVector("sh", ["-c", "sleep 30 & echo left"], { resourceLimits: { cpuPercent: 50 } });
+	assert.equal(left.stdout.trim(), "left");
+	assert.ok(performance.now() - started < 10_000);
+	const units = spawnSync(
+		"systemctl",
+		["--user", "list-units", `pancode-cmd-${process.pid}-*`, "--all", "--no-legend"],
+		{
+			encoding: "utf8",
+		},
+	);
+	assert.equal(units.stdout.trim(), "");
+
+	// A command overriding bus env vars does not break systemd-run and still receives its own env values.
+	const customEnv = await runCommandVector(
+		"sh",
+		["-c", 'printf "xdg=%s dbus=%s" "$XDG_RUNTIME_DIR" "$DBUS_SESSION_BUS_ADDRESS"'],
+		{
+			env: { XDG_RUNTIME_DIR: "/nonexistent/custom-xdg", DBUS_SESSION_BUS_ADDRESS: "unix:path=/nonexistent/bus" },
+			resourceLimits: { cpuPercent: 50 },
+		},
+	);
+	assert.equal(customEnv.exitCode, 0, customEnv.stderr);
+	assert.equal(customEnv.stdout, "xdg=/nonexistent/custom-xdg dbus=unix:path=/nonexistent/bus");
+
+	// When systemctl cannot reach the user bus at settlement, the launch stays unconfirmed so bus errors refuse.
+	const planned = planResourceScope(
+		{ limits: { cpuPercent: 50 }, scope: "main" },
+		{ file: "/bin/true", args: [], env: {} },
+	);
+	assert.equal(planned.kind, "scoped");
+	if (planned.kind === "scoped") {
+		const deadSettlement = await settleResourceScope({
+			...planned.scope,
+			systemctlEnv: { XDG_RUNTIME_DIR: "/nonexistent/dead-bus", LC_ALL: "C" },
+		});
+		assert.equal(deadSettlement.launchUnconfirmed, true);
+	}
+
+	// Losing the user bus after a passing probe invalidates the cache and refuses before launch (exit 126).
+	const prevXdg = process.env.XDG_RUNTIME_DIR;
+	const prevDbus = process.env.DBUS_SESSION_BUS_ADDRESS;
+	const emptyRuntime = mkdtempSync(join(tmpdir(), "pancode-nobus-"));
+	t.after(() => {
+		if (prevXdg === undefined) delete process.env.XDG_RUNTIME_DIR;
+		else process.env.XDG_RUNTIME_DIR = prevXdg;
+		if (prevDbus === undefined) delete process.env.DBUS_SESSION_BUS_ADDRESS;
+		else process.env.DBUS_SESSION_BUS_ADDRESS = prevDbus;
+		rmSync(emptyRuntime, { recursive: true, force: true });
+	});
+	process.env.XDG_RUNTIME_DIR = emptyRuntime;
+	delete process.env.DBUS_SESSION_BUS_ADDRESS;
+	const refusedAfterLoss = await runCommandVector("sh", ["-c", "echo should-not-run"], {
+		resourceLimits: { memoryMiB: 64 },
+	});
+	assert.equal(refusedAfterLoss.launched, false);
+	assert.equal(refusedAfterLoss.exitCode, 126);
+	assert.match(refusedAfterLoss.stderr, /safety\.resources\.main\.memoryMiB/u);
 });

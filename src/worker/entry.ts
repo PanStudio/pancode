@@ -33,6 +33,7 @@ import {
 } from "../core/git-commit-attribution.js";
 import { installProxyFromEnv } from "../core/proxy-env.js";
 import { withWorkerGitHookPaths } from "../core/sandbox/git-hooks-fingerprint.js";
+import { configureWorkerResourceLimits } from "../core/sandbox/resource-limits.js";
 import { configureWorkerProcessSandbox } from "../core/sandbox/worker-process.js";
 
 process.env.AI_AGENT = AI_AGENT_NAME;
@@ -227,6 +228,8 @@ async function main(): Promise<number> {
 		withWorkerGitHookPaths(spec.sandbox, spec.taskWorktree?.path ?? process.cwd()),
 		spec.envelope.sandbox.confinesWrites,
 	);
+	// And under the sealed `safety.resources.workers` ceilings, each command in its own systemd scope (D13).
+	configureWorkerResourceLimits(spec.limits.resources);
 	// The dispatching session's own workers may write its dev extension folders; another session's may not.
 	if (spec.devRootOwner !== undefined) adoptDevRootOwner(spec.devRootOwner);
 	const attribution = withManagedGitCommitAttributionEnvironment(process.env, {
