@@ -3,13 +3,13 @@
 import type { Static } from "typebox";
 import { Type } from "typebox";
 import { Value } from "typebox/value";
-import type { RunStatus } from "../../../../../src/domains/dispatch/types.js";
 import {
 	readDispatchHistory,
 	readRunHistoryEntries,
 	readRunHistoryEntry,
 	readRunInspection,
 } from "../../../../../src/domains/dispatch/index.js";
+import type { RunStatus } from "../../../../../src/domains/dispatch/types.js";
 import { Id } from "../../../contracts/common.js";
 import type { TraceIdentity, TraceRequest, TraceRun, TraceRunStatus } from "../../../contracts/traces.js";
 import { AppProblem } from "../../services/problem.js";
