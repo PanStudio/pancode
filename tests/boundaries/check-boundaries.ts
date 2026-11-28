@@ -698,6 +698,7 @@ const COMPOSITION_ROOT_FUNCTIONS: ReadonlySet<string> = new Set([
 	"printJsonSessionHeader",
 	"createSystemOneOneShot",
 	"createProductionAutoCompact",
+	"replayCompactionHistory",
 	"readSessionEntriesForCompact",
 	"readFlowSessionEntries",
 	"readRecentSessionEntriesForContract",
