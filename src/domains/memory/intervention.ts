@@ -5,10 +5,7 @@ import { statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { DEFAULT_SETTINGS, type MemoryDeliveryMode, type MemoryLessonsMode } from "../../core/defaults.js";
-import { sha256Hex } from "../../core/hash.js";
 import { neutralizeFraming } from "../../core/reminder-framing.js";
-import type { TelemetryContext } from "../../core/telemetry/context.js";
-import type { Fact } from "../../core/telemetry/fact.js";
 import { MIDDLEWARE_HOOKS } from "../../core/telemetry/session-vocabulary.js";
 import { ToolNames } from "../../core/tool-names.js";
 import { effectiveToolCall, gatewayChainReceipts } from "../../core/tool-surface.js";
@@ -19,7 +16,6 @@ import type { MiddlewareEffect, MiddlewareHookInput } from "../middleware/types.
 import { MEMORY_CONSOLIDATION_SYSTEM_PROMPT } from "../prompts/memory-intervention.js";
 import { callChangesTree, checkPassedForCall } from "../safety/run-effects.js";
 import { ceilChars } from "../session/context-accounting.js";
-import { BACKGROUND_SKIP_REASONS, type BackgroundSkipReason } from "./background-budget.js";
 import {
 	atWorkspaceRoot,
 	COMMAND_EVIDENCE_REF_PREFIX,
@@ -32,7 +28,22 @@ import {
 	verifyReceiptCommand,
 	verifyRunPassed,
 } from "./command-evidence.js";
-import { type MemoryCommitScope, MemoryCommitState } from "./commit-state.js";
+import { MemoryCommitState } from "./commit-state.js";
+import {
+	budgetSkipped,
+	collapseWhitespace,
+	entryRevision,
+	type FailedAttempt,
+	type InterventionScope,
+	NO_EFFECTS,
+	noTokens,
+	type PendingOffer,
+	type ShownRead,
+	setBounded,
+	type TrajectoryStep,
+	YIELDED_REASONS,
+} from "./intervention/scope.js";
+import { createInterventionTelemetry } from "./intervention/telemetry.js";
 import {
 	chainChildText,
 	documentationChange,
@@ -62,13 +73,7 @@ import {
 	repositoryRelativePath,
 } from "./lesson-evidence.js";
 import { type KeptLesson, renderKeptLesson } from "./lesson-projection.js";
-import {
-	type TaskMemoryBankDelta,
-	type TaskMemoryTelemetryDecision,
-	type TaskMemoryTelemetryTier,
-	type TaskMemoryTelemetryTrigger,
-	taskMemoryBankDelta,
-} from "./memory-events.js";
+import type { TaskMemoryTelemetryDecision, TaskMemoryTelemetryTier } from "./memory-events.js";
 import { exercisesWork, fixPairOf, type MemoryNoteEvidence } from "./notes.js";
 import { sharesInvocationTarget } from "./recipes.js";
 import { lessonsForTask } from "./relevance.js";
@@ -82,12 +87,8 @@ import {
 	type TaskMemoryPolicyReason,
 	type TaskMemoryPolicyResult,
 	type TaskMemoryRoute,
-	type TaskMemoryTrajectoryStep,
 } from "./task-memory-policy.js";
-import type { TaskMemoryActivityEvent } from "./task-memory-status.js";
 import { positiveInteger, shortText } from "./util.js";
-
-const noTokens: Fact<number> = { kind: "absent", reason: "not-applicable" };
 
 const MEMORY_INTERVENTION_REGISTRATION_ID = "observer.memory-intervention";
 const MEMORY_INTERVENTION_DEFAULT_WINDOW_STEPS = 8;
@@ -95,23 +96,9 @@ const MEMORY_INTERVENTION_DEFAULT_MAX_TOKENS = 2_000;
 const MEMORY_INTERVENTION_DEFAULT_EVERY_N_TOOLS = 10;
 /** Two full deadlines are enough evidence to stop spending this session's endpoint. */
 const MEMORY_INTERVENTION_TIMEOUT_BACKOFF_THRESHOLD = 2;
-
-export const MEMORY_INTERVENTION_ACTIVITY_LIMIT = 20;
 /** Recurrences after submission of a failure the reminder was about before it counts as contradicted. */
 const MEMORY_DELIVERY_CONTRADICTED_RECURRENCES = 2;
 const MEMORY_DELIVERY_WATCH_LIMIT = 16;
-
-/** Reasons a step yielded to occupancy; its triggers stay pending and it runs again when the endpoint has room. */
-const YIELDED_REASONS: ReadonlySet<TaskMemoryPolicyReason> = new Set(["endpoint_busy", "endpoint_preempted"]);
-
-/**
- * The background budget refused the step before it sent anything (spend,
- * quota or time). Its triggers are not re-armed: the next cadence tick decides
- * again, so a refused step is never retried in a loop.
- */
-function budgetSkipped(reason: TaskMemoryPolicyReason): boolean {
-	return !YIELDED_REASONS.has(reason) && BACKGROUND_SKIP_REASONS.has(reason as BackgroundSkipReason);
-}
 
 /** Reasons that mean the model tier cannot run right now; deterministic rules keep working. */
 const UNAVAILABLE_REASONS: ReadonlySet<TaskMemoryPolicyReason> = new Set([
@@ -127,7 +114,6 @@ const UNAVAILABLE_REASONS: ReadonlySet<TaskMemoryPolicyReason> = new Set([
  * never learned which of its notes had been right.
  */
 const MEMORY_INTERVENTION_TURN_END_MIN_TOOLS = 2;
-const NO_EFFECTS: ReadonlyArray<MiddlewareEffect> = [];
 /** A firing that delivered an approved lesson matched it; the registration's own evidence names a failure recurrence. */
 const DURABLE_LESSON_EVIDENCE = "match:durable-lesson@task-memory";
 /**
@@ -154,8 +140,6 @@ function operatorRequestsCommandRepeat(text: string): boolean {
 	});
 }
 
-type TrajectoryStep = TaskMemoryTrajectoryStep;
-
 const TURN_LOG_LIMIT = 40;
 /** Produced reminders awaiting submission; the oldest is released first. */
 const PENDING_OFFER_LIMIT = 32;
@@ -169,14 +153,6 @@ const VERIFIED_COMMAND_LIMIT = 256;
 /** Line ranges kept per read path, and paths kept, for binding a `memory_note` quote to what a read showed. */
 const SHOWN_READS_PER_PATH = 8;
 const SHOWN_READ_PATHS = 256;
-
-/** One read's shown physical lines, 1-based and inclusive, and the file's size and mtime when it was read. */
-interface ShownRead {
-	start: number;
-	end: number;
-	bytes: number;
-	mtimeMs: number;
-}
 const TURN_LOG_READ_EXCERPT_CHARS = 240;
 
 /** Reasons that mean the model never produced a usable answer, so the bank it left says nothing. */
@@ -202,101 +178,211 @@ const UNANSWERED_REASONS: ReadonlySet<TaskMemoryPolicyReason> = new Set([
 	"scope_changed",
 ]);
 
-interface DeliveryWatch {
-	entries: Array<{ id: string; content: string; entry: TaskMemoryEntry }>;
-	/** Tool step at submission; only evidence after it speaks for the reminder. */
-	step: number;
-	/** Failure episodes the reminder was written about that were still open when it was submitted. */
-	fingerprints: Set<string>;
-	recurrences: number;
-	/** Entries whose own evidence a later receipt satisfied. */
-	supported: Set<string>;
-	/** Entries already reported held; only a later contradiction is still news. */
-	heldReported: Set<string>;
-}
-
-interface FailedAttempt {
-	entryId: string;
-	attempts: number;
-	firstStep: number;
-	callDescription: string;
-	errorDigest: string;
-}
-
 /**
  * Rules-only proactive-memory policy. It observes bounded tool history and
  * emits only cited, advisory reminders through the existing visible channel.
  */
 export function createMemoryInterventionRegistration(deps: MemoryInterventionDeps): MemoryInterventionRegistration {
-	let generation = 0;
-	let stepContext: TelemetryContext | undefined;
-	let commitState: MemoryCommitState | null = null;
-	let commitScope: MemoryCommitScope | null = null;
-	let commitBridgeEnabled = false;
+	const scope: InterventionScope = {
+		deps,
+		generation: 0,
+		stepContext: undefined,
+		commitState: null,
+		commitScope: null,
+		commitBridgeEnabled: false,
+		generationController: new AbortController(),
+		observedSessionId: undefined,
+		disposed: false,
+		pending: new Map<string, PendingToolStep>(),
+		trajectory: [],
+		failures: new Map<string, FailedAttempt>(),
+		deliveries: [],
+		turnLog: [],
+		succeededCommands: new Set<string>(),
+		succeededSegments: new Map<string, CommandSegment>(),
+		unpassedVerifyChecks: new Map<string, string>(),
+		observedReads: new Map<string, string[]>(),
+		failedForFix: new Map<string, { segment: CommandSegment; step: number }>(),
+		shownReads: new Map<string, ShownRead[]>(),
+		armsSinceLessonPass: 0,
+		armsInScope: 0,
+		checkStepThisTurn: 0,
+		lastTreeChangeStep: 0,
+		evidenceSequence: 0,
+		turnSequence: 0,
+		lessonPassTurn: -1,
+		toolStep: 0,
+		lastTurnEndStep: 0,
+		lastWorkspaceChangeStep: 0,
+		reactivateAfterCompaction: false,
+		lastInjectedOperationFingerprint: null,
+		currentTask: "(current task unavailable)",
+		toolsSinceMemoryStep: 0,
+		toolsSinceLessonPass: 0,
+		shellStepsSinceLessonPass: 0,
+		lastLaunchYielded: false,
+		lastLaunchUnavailable: false,
+		lastLaunchSkipped: false,
+		lessonDelivered: false,
+		consecutiveErrors: 0,
+		lastPromptedBoundary: null,
+		lastInjectedMessage: null,
+		lastDecision: null,
+		pendingTriggers: new Set<MemoryInterventionTriggerReason>(),
+		activity: [],
+		annotatedThisTurn: new Set<string>(),
+		operatorAskedRepeat: false,
+		telemetryBankSnapshot: deps.bank.snapshot(),
+		promptedStepInFlight: false,
+		promptedStepTier: "rules",
+		outstandingStep: Promise.resolve(),
+		rulesInjectedSincePromptedStep: false,
+		annotatedSinceTurnEnd: false,
+		consecutiveLlmTimeouts: 0,
+		contextLostAt: null,
+		durableLessonsChecked: false,
+		durableWatch: new Map<string, ReadonlyArray<string>>(),
+		deliveredLessons: new Set<string>(),
+		offeredLessons: new Set<string>(),
+		pendingOffers: new Map<string, PendingOffer>(),
+		submittedContents: new Set<string>(),
+		sectionCarries: () => false,
+		get captureContentGuard() {
+			return captureContentGuard;
+		},
+		get workspaceRoot() {
+			return workspaceRoot;
+		},
+		get produceOffer() {
+			return produceOffer;
+		},
+		get releaseOffer() {
+			return releaseOffer;
+		},
+		get offerCurrent() {
+			return offerCurrent;
+		},
+		get citedStillHolds() {
+			return citedStillHolds;
+		},
+		get openFailureEpisodes() {
+			return openFailureEpisodes;
+		},
+		get keptLessons() {
+			return keptLessons;
+		},
+		get sideLessonArmed() {
+			return sideLessonArmed;
+		},
+		get idleLessonWorth() {
+			return idleLessonWorth;
+		},
+		get observeDeclaration() {
+			return observeDeclaration;
+		},
+		get noteCheckOrChange() {
+			return noteCheckOrChange;
+		},
+		get noteFailedForFix() {
+			return noteFailedForFix;
+		},
+		get fixNotes() {
+			return fixNotes;
+		},
+		get notifyTurnBoundary() {
+			return notifyTurnBoundary;
+		},
+		get observeSession() {
+			return observeSession;
+		},
+		get cancelStoppedTurn() {
+			return cancelStoppedTurn;
+		},
+		get settings() {
+			return settings;
+		},
+		get runPromptedStep() {
+			return runPromptedStep;
+		},
+		get emitTelemetry() {
+			return emitTelemetry;
+		},
+		get citedEntries() {
+			return citedEntries;
+		},
+		get citedEntryCount() {
+			return citedEntryCount;
+		},
+		get startDeliveryWatch() {
+			return startDeliveryWatch;
+		},
+		get keptLessonsForPass() {
+			return keptLessonsForPass;
+		},
+		get reviewKnowledge() {
+			return reviewKnowledge;
+		},
+		get settleDeliveries() {
+			return settleDeliveries;
+		},
+		get noteCommandEvidence() {
+			return noteCommandEvidence;
+		},
+		get noteReadEvidence() {
+			return noteReadEvidence;
+		},
+		get recordShownRead() {
+			return recordShownRead;
+		},
+		get observeBeforeTool() {
+			return observeBeforeTool;
+		},
+		get observeAfterTool() {
+			return observeAfterTool;
+		},
+		get rememberSucceededCommand() {
+			return rememberSucceededCommand;
+		},
+		get noteVerifyRun() {
+			return noteVerifyRun;
+		},
+		get surfaceDurableLessons() {
+			return surfaceDurableLessons;
+		},
+		get surfaceForVerificationGap() {
+			return surfaceForVerificationGap;
+		},
+		get surfaceForSubject() {
+			return surfaceForSubject;
+		},
+		get surfaceRecipeForFailure() {
+			return surfaceRecipeForFailure;
+		},
+		get settleDurableLessons() {
+			return settleDurableLessons;
+		},
+		get annotateRepeatedFailure() {
+			return annotateRepeatedFailure;
+		},
+		get rememberFailure() {
+			return rememberFailure;
+		},
+	};
 	const captureContentGuard = (content?: string): (() => boolean) => {
-		const capturedGeneration = generation;
-		const owner = commitState;
-		const scope = commitScope;
+		const capturedGeneration = scope.generation;
+		const owner = scope.commitState;
+		const capturedScope = scope.commitScope;
 		const stamp = owner?.capture();
 		const offer = content === undefined ? undefined : offerForContent(content);
 		return () =>
-			!disposed &&
+			!scope.disposed &&
 			// A reminder buffered before memory went off is not sent after it.
 			settings().enabled &&
-			generation === capturedGeneration &&
-			commitState === owner &&
-			(!owner || (!!stamp && !!scope && owner.isCurrent(stamp, scope))) &&
+			scope.generation === capturedGeneration &&
+			scope.commitState === owner &&
+			(!owner || (!!stamp && !!capturedScope && owner.isCurrent(stamp, capturedScope))) &&
 			(offer === undefined || offerCurrent(offer));
 	};
-	let generationController = new AbortController();
-	let observedSessionId: string | undefined;
-	let disposed = false;
-	const pending = new Map<string, PendingToolStep>();
-	const trajectory: TrajectoryStep[] = [];
-	const failures = new Map<string, FailedAttempt>();
-	const deliveries: DeliveryWatch[] = [];
-	/** This turn's calls in order, for the turn-end lesson pass. */
-	const turnLog: string[] = [];
-	/**
-	 * Complete commands this session scope executed successfully, each exactly
-	 * as the shell tool received it and taken only from that tool's own success
-	 * receipt. A lesson is grounded by equality with one of these and by nothing
-	 * else.
-	 */
-	const succeededCommands = new Set<string>();
-	/** The evidence identity of every segment those receipts vouch for, by key; nothing else satisfies a command claim. */
-	const succeededSegments = new Map<string, CommandSegment>();
-	/** Keys of commands a verify run executed from the root without passing, to the check id that ran them (CLI-P52). */
-	const unpassedVerifyChecks = new Map<string, string>();
-	/**
-	 * Excerpts of successful read results, by repository-relative path, exactly
-	 * as the turn log showed them to the lesson pass. A source-cited lesson is
-	 * grounded only by a quote inside one of these that the current checkout
-	 * still holds (`lessonEvidence`).
-	 */
-	const observedReads = new Map<string, string[]>();
-	/** The last lone failed shell invocation per command subject, waiting for a success that fixes it. */
-	const failedForFix = new Map<string, { segment: CommandSegment; step: number }>();
-	/**
-	 * The line ranges each successful read showed, with the file's size and mtime as the read saw them, per path. A
-	 * `memory_note` quote is checked against exactly these lines while the file is unchanged.
-	 */
-	const shownReads = new Map<string, ShownRead[]>();
-	/** Evidence arms (fix pairs, verified declared `done`s) since the last side lesson pass, and in the whole scope. */
-	let armsSinceLessonPass = 0;
-	let armsInScope = 0;
-	/** A check passed in this operator turn: a declared `done` beside it is the third side arm (DESIGN 4.4, MD14). */
-	/**
-	 * The step of this operator turn's last passed check, and of the session's last change of the tree: a declared
-	 * `done` beside a check no change came after is the third side arm (DESIGN 4.4, MD14).
-	 */
-	let checkStepThisTurn = 0;
-	let lastTreeChangeStep = 0;
-	/** Orders every check and change those two record, a gateway chain's steps included. */
-	let evidenceSequence = 0;
-	/** Operator turns in this scope, and the one the last side lesson pass ran in: at most one pass per turn. */
-	let turnSequence = 0;
-	let lessonPassTurn = -1;
 	const workspaceRoot = (): string => {
 		try {
 			return deps.workspaceRoot?.() ?? process.cwd();
@@ -305,115 +391,42 @@ export function createMemoryInterventionRegistration(deps: MemoryInterventionDep
 		}
 	};
 	const groundingOf = (entry: TaskMemoryEntry) =>
-		lessonEvidence(entry, { succeededCommands, observedReads, workspaceRoot: workspaceRoot() });
-	let toolStep = 0;
-	let lastTurnEndStep = 0;
-	/**
-	 * Step of the last call that changed the workspace. A failure before it
-	 * belongs to an older tree: rerunning the same check after an edit is the
-	 * verification the finish contract asks for, not a repeat.
-	 */
-	let lastWorkspaceChangeStep = 0;
-	let reactivateAfterCompaction = false;
-	let lastInjectedOperationFingerprint: string | null = null;
-	let currentTask = "(current task unavailable)";
-	let toolsSinceMemoryStep = 0;
-	// Counted apart from the maintenance cadence: an interval step that fired on
-	// a turn's last tools left nothing "since the last step" and starved the pass.
-	let toolsSinceLessonPass = 0;
-	// Shell steps since the last lesson pass. One shell command is enough for an
-	// idle lesson pass; reads alone need as many tools as the turn-end pass does.
-	let shellStepsSinceLessonPass = 0;
-	// The last launch yielded to occupancy. Until the endpoint has room, a new
-	// boundary keeps its triggers pending instead of recording another drop.
-	let lastLaunchYielded = false;
-	// The last launch found the model tier unavailable. Mid-turn boundaries keep
-	// their triggers pending; a turn end or the guardian's recovery wake retries.
-	let lastLaunchUnavailable = false;
-	// The budget refused the last launch. The guardian's idle wake must not ask
-	// again before the next turn boundary, or a refused step would loop.
-	let lastLaunchSkipped = false;
-	/** The current after_tool evaluation delivered approved lessons, so its firing names that match (C-32). */
-	let lessonDelivered = false;
-	let consecutiveErrors = 0;
-	let lastPromptedBoundary: string | null = null;
-	let lastInjectedMessage: string | null = null;
-	let lastDecision: TaskMemoryPolicyResult["decision"] | null = null;
-	const pendingTriggers = new Set<MemoryInterventionTriggerReason>();
-	const activity: TaskMemoryActivityEvent[] = [];
-	const annotatedThisTurn = new Set<string>();
-	let operatorAskedRepeat = false;
-	let telemetryBankSnapshot = deps.bank.snapshot();
-	let promptedStepInFlight = false;
-	// The tier of the step currently holding the single in-flight slot, so a
-	// dropped boundary can name what it was starved by.
-	let promptedStepTier: TaskMemoryTelemetryTier = "rules";
-	let outstandingStep: Promise<void> = Promise.resolve();
-	let rulesInjectedSincePromptedStep = false;
-	let annotatedSinceTurnEnd = false;
-	let consecutiveLlmTimeouts = 0;
-	/** Last compaction or working-set reduction in this scope; cadence reminders must cite a fact older than it. */
-	let contextLostAt: string | null = null;
-	// Approved lessons are looked up once per session scope, at its first workspace change.
-	let durableLessonsChecked = false;
-	/** Surfaced lesson id to the commands it quotes, until one of them succeeds in this session. */
-	const durableWatch = new Map<string, ReadonlyArray<string>>();
-	/** Approved lessons whose reminder this session submitted, by any trigger. */
-	const deliveredLessons = new Set<string>();
-	/** Approved lessons with a produced reminder not yet submitted; not offered again meanwhile. */
-	const offeredLessons = new Set<string>();
-	/** Produced reminders awaiting the host's submission receipt, oldest first. */
-	const pendingOffers = new Map<string, PendingOffer>();
-	/** Exact contents already submitted this scope; the same text is never offered again. */
-	const submittedContents = new Set<string>();
-	/**
-	 * Whether this session's `# Memory` section (or a `# Memory update` it was sent) already carries a lesson, as the
-	 * host last reported it with the turn's task. No reminder repeats a fact the section carries (DESIGN 4.4).
-	 */
-	let sectionCarries: (id: string) => boolean = () => false;
+		lessonEvidence(entry, {
+			succeededCommands: scope.succeededCommands,
+			observedReads: scope.observedReads,
+			workspaceRoot: workspaceRoot(),
+		});
 	let offerSequence = 0;
-
-	interface PendingOffer {
-		readonly offer: MemoryInterventionOffer;
-		readonly generation: number;
-		/** Delivery accounting the submission receipt starts, given the offer as registered. */
-		readonly onSubmitted: (offer: MemoryInterventionOffer) => void;
-		/**
-		 * Requests submitted without this text since it was produced. A reminder
-		 * rides the next request (an annotation) or the one after the next flush
-		 * (a deferred reminder); one that misses more was dropped before it
-		 * reached the model, and holding it would keep its lessons from being
-		 * offered again for the rest of the session.
-		 */
-		missedSubmissions: number;
-	}
+	const { emitTelemetry, citedEntries, citedEntryCount } = createInterventionTelemetry(scope);
 
 	return {
 		captureMemoryAuthority: () =>
-			commitScope && commitState ? { scope: { ...commitScope }, stamp: commitState.capture() } : null,
-		bindCommitScope(scope) {
-			commitBridgeEnabled = true;
+			scope.commitScope && scope.commitState
+				? { scope: { ...scope.commitScope }, stamp: scope.commitState.capture() }
+				: null,
+		bindCommitScope(next) {
+			scope.commitBridgeEnabled = true;
 			if (
-				commitScope?.sessionId === scope.sessionId &&
-				commitScope.branchAnchorTurnId === scope.branchAnchorTurnId &&
-				commitState
+				scope.commitScope?.sessionId === next.sessionId &&
+				scope.commitScope.branchAnchorTurnId === next.branchAnchorTurnId &&
+				scope.commitState
 			)
 				return;
-			if (commitState) reset();
-			commitScope = { ...scope };
-			commitState = new MemoryCommitState(scope, generation);
-			observedSessionId = scope.sessionId;
-			stepContext = { sessionId: scope.sessionId, agent: { role: "memory", id: scope.sessionId } };
+			if (scope.commitState) reset();
+			scope.commitScope = { ...next };
+			scope.commitState = new MemoryCommitState(next, scope.generation);
+			scope.observedSessionId = next.sessionId;
+			scope.stepContext = { sessionId: next.sessionId, agent: { role: "memory", id: next.sessionId } };
 		},
 		notifyContextCommitted(input) {
-			return commitState?.notifyContextCommitted(input, generation);
+			return scope.commitState?.notifyContextCommitted(input, scope.generation);
 		},
 		prepareRestoration(currentState, maxTokens) {
-			if (!commitScope || !settings().enabled) return null;
+			if (!scope.commitScope || !settings().enabled) return null;
 			return (
-				commitState?.prepareRestoration({
-					scope: commitScope,
-					generation,
+				scope.commitState?.prepareRestoration({
+					scope: scope.commitScope,
+					generation: scope.generation,
 					bank: deps.bank.snapshot(),
 					currentState,
 					maxTokens: Math.min(maxTokens, settings().maxTokens),
@@ -421,29 +434,32 @@ export function createMemoryInterventionRegistration(deps: MemoryInterventionDep
 			);
 		},
 		canAcknowledgeRestoration(offer) {
-			return !!commitScope && !!commitState?.canAcknowledgeRestoration(offer, commitScope, generation);
+			return (
+				!!scope.commitScope && !!scope.commitState?.canAcknowledgeRestoration(offer, scope.commitScope, scope.generation)
+			);
 		},
 		acknowledgeRestoration(offer) {
-			if (!commitScope || !commitState?.acknowledgeRestoration(offer, commitScope, generation)) return false;
+			if (!scope.commitScope || !scope.commitState?.acknowledgeRestoration(offer, scope.commitScope, scope.generation))
+				return false;
 			deps.bank.recordInjection(offer.citedEntryIds);
 			return true;
 		},
 		releaseRestoration(offer) {
-			return !!commitScope && !!commitState?.releaseRestoration(offer, commitScope, generation);
+			return !!scope.commitScope && !!scope.commitState?.releaseRestoration(offer, scope.commitScope, scope.generation);
 		},
 		isContentCurrent: captureContentGuard,
-		hasPendingOffers: () => !disposed && pendingOffers.size > 0,
+		hasPendingOffers: () => !scope.disposed && scope.pendingOffers.size > 0,
 		acknowledgeSubmission(texts) {
-			if (disposed || pendingOffers.size === 0) return [];
+			if (scope.disposed || scope.pendingOffers.size === 0) return [];
 			const acknowledged: MemoryInterventionOffer[] = [];
-			for (const [id, pending] of [...pendingOffers]) {
+			for (const [id, pending] of [...scope.pendingOffers]) {
 				if (!texts.some((text) => text.includes(pending.offer.content))) {
 					pending.missedSubmissions += 1;
 					if (pending.missedSubmissions >= OFFER_MISSED_SUBMISSION_LIMIT) releaseOffer(id);
 					continue;
 				}
-				pendingOffers.delete(id);
-				if (pending.generation !== generation) continue;
+				scope.pendingOffers.delete(id);
+				if (pending.generation !== scope.generation) continue;
 				rememberSubmittedContent(pending.offer.content);
 				try {
 					pending.onSubmitted(pending.offer);
@@ -455,8 +471,8 @@ export function createMemoryInterventionRegistration(deps: MemoryInterventionDep
 			return acknowledged;
 		},
 		offerLessonsForTask(task, carried) {
-			sectionCarries = carried;
-			if (disposed || !settings().enabled) return "";
+			scope.sectionCarries = carried;
+			if (scope.disposed || !settings().enabled) return "";
 			try {
 				const lessons = lessonsForTask(
 					task,
@@ -475,9 +491,9 @@ export function createMemoryInterventionRegistration(deps: MemoryInterventionDep
 			const root = workspaceRoot();
 			if (args.command !== undefined) {
 				const claim = commandSegment(args.command, root);
-				const ran = claim === null ? undefined : succeededSegments.get(claim.key);
+				const ran = claim === null ? undefined : scope.succeededSegments.get(claim.key);
 				if (ran === undefined) {
-					const check = claim === null ? undefined : unpassedVerifyChecks.get(claim.key);
+					const check = claim === null ? undefined : scope.unpassedVerifyChecks.get(claim.key);
 					return {
 						refused:
 							check === undefined
@@ -494,10 +510,10 @@ export function createMemoryInterventionRegistration(deps: MemoryInterventionDep
 			if (args.path !== undefined) return shownQuote(args.note, args.path, root);
 			return null;
 		},
-		sideArmCount: () => armsInScope,
+		sideArmCount: () => scope.armsInScope,
 		reset,
 		dispose(): void {
-			disposed = true;
+			scope.disposed = true;
 			reset();
 		},
 		id: MEMORY_INTERVENTION_REGISTRATION_ID,
@@ -506,19 +522,19 @@ export function createMemoryInterventionRegistration(deps: MemoryInterventionDep
 		evidence: "count:failure-recurrence@task-memory",
 		evaluate(input, context): ReadonlyArray<MiddlewareEffect> {
 			observeSession(input);
-			if (input.hook === "turn_end" || input.hook === "turn_start") lastLaunchSkipped = false;
+			if (input.hook === "turn_end" || input.hook === "turn_start") scope.lastLaunchSkipped = false;
 			if (input.hook === "turn_end") notifyTurnBoundary("end");
 			else if (input.hook === "turn_start" && input.metadata?.requestContinuation !== true) notifyTurnBoundary("start");
-			if (disposed || !settings().enabled) return NO_EFFECTS;
+			if (scope.disposed || !settings().enabled) return NO_EFFECTS;
 			try {
 				switch (input.hook) {
 					case "before_tool":
 						observeBeforeTool(input);
 						return NO_EFFECTS;
 					case "after_tool": {
-						lessonDelivered = false;
+						scope.lessonDelivered = false;
 						const effects = observeAfterTool(input);
-						if (lessonDelivered && effects.length > 0) context?.evidence?.(DURABLE_LESSON_EVIDENCE);
+						if (scope.lessonDelivered && effects.length > 0) context?.evidence?.(DURABLE_LESSON_EVIDENCE);
 						return effects;
 					}
 					case "turn_end": {
@@ -530,12 +546,12 @@ export function createMemoryInterventionRegistration(deps: MemoryInterventionDep
 						// Middleware continuations can evaluate turn_end again without any
 						// completed tools. They are not new memory boundaries and must not
 						// replace the prior operator-visible outcome or emit telemetry.
-						if (toolStep <= lastTurnEndStep) return NO_EFFECTS;
+						if (scope.toolStep <= scope.lastTurnEndStep) return NO_EFFECTS;
 						settleDeliveries(false);
 						// A mid-turn annotation already reported this boundary's rules-tier
 						// outcome. Reporting silence again would double-count one decision.
-						const alreadyReported = annotatedSinceTurnEnd;
-						annotatedSinceTurnEnd = false;
+						const alreadyReported = scope.annotatedSinceTurnEnd;
+						scope.annotatedSinceTurnEnd = false;
 						const started = process.hrtime.bigint();
 						const effects = decideRepeatedFailure();
 						if (alreadyReported && effects.length === 0) return effects;
@@ -555,25 +571,25 @@ export function createMemoryInterventionRegistration(deps: MemoryInterventionDep
 						// Recall grows the working set; it is an observability point, not
 						// context loss that should reactivate compacted task memory.
 						if (input.metadata?.stage === "working_set_recall") return NO_EFFECTS;
-						contextLostAt = new Date().toISOString();
-						if (!commitBridgeEnabled) reactivateAfterCompaction = true;
+						scope.contextLostAt = new Date().toISOString();
+						if (!scope.commitBridgeEnabled) scope.reactivateAfterCompaction = true;
 						return NO_EFFECTS;
 					case "turn_start": {
 						if (input.metadata?.requestContinuation !== true) {
-							operatorAskedRepeat = false;
-							turnLog.length = 0;
-							turnSequence += 1;
-							checkStepThisTurn = 0;
+							scope.operatorAskedRepeat = false;
+							scope.turnLog.length = 0;
+							scope.turnSequence += 1;
+							scope.checkStepThisTurn = 0;
 						}
 						if (input.text?.trim()) {
 							// Bounded first: this runs synchronously at turn start on a prompt of any length.
-							currentTask = shortText(redactForMemoryRoute(headForRedaction(input.text, 16_384)), 2_000);
-							operatorAskedRepeat = operatorRequestsCommandRepeat(input.text);
+							scope.currentTask = shortText(redactForMemoryRoute(headForRedaction(input.text, 16_384)), 2_000);
+							scope.operatorAskedRepeat = operatorRequestsCommandRepeat(input.text);
 						}
 						// Mid-turn annotations are spent per turn, not per session: the same
 						// command failing again in a later turn is news again.
-						annotatedThisTurn.clear();
-						const shouldReactivate = reactivateAfterCompaction;
+						scope.annotatedThisTurn.clear();
+						const shouldReactivate = scope.reactivateAfterCompaction;
 						const started = process.hrtime.bigint();
 						const effects = reactivateKnowledge();
 						if (shouldReactivate) {
@@ -612,16 +628,16 @@ export function createMemoryInterventionRegistration(deps: MemoryInterventionDep
 			}
 			const boundaryHook =
 				input.hook === "turn_end" || (input.hook === "after_tool" && input.metadata?.stage === "tool_batch_end");
-			if (input.hook === "turn_end" && !disposed && settings().enabled && sideLessonArmed())
-				pendingTriggers.add("turn_end");
-			if (disposed || !settings().enabled || !boundaryHook || pendingTriggers.size === 0) return NO_EFFECTS;
-			const boundary = input.turnId ?? input.metadata?.userTurnId?.toString() ?? `tool-step:${toolStep}`;
-			if (boundary === lastPromptedBoundary) return NO_EFFECTS;
+			if (input.hook === "turn_end" && !scope.disposed && settings().enabled && sideLessonArmed())
+				scope.pendingTriggers.add("turn_end");
+			if (scope.disposed || !settings().enabled || !boundaryHook || scope.pendingTriggers.size === 0) return NO_EFFECTS;
+			const boundary = input.turnId ?? input.metadata?.userTurnId?.toString() ?? `tool-step:${scope.toolStep}`;
+			if (boundary === scope.lastPromptedBoundary) return NO_EFFECTS;
 			// One row rather than none, so a headless operator reading the log sees
 			// why the tier never ran instead of finding nothing and guessing.
 			if (deps.deliversDeferredReminders === false) {
 				emitTelemetry(
-					[...pendingTriggers],
+					[...scope.pendingTriggers],
 					"rules",
 					"silent",
 					"no_consumer",
@@ -630,7 +646,7 @@ export function createMemoryInterventionRegistration(deps: MemoryInterventionDep
 					noTokens,
 					process.hrtime.bigint(),
 				);
-				pendingTriggers.clear();
+				scope.pendingTriggers.clear();
 				return NO_EFFECTS;
 			}
 			if (deps.deferBoundaryPolicy?.()) return NO_EFFECTS;
@@ -639,10 +655,10 @@ export function createMemoryInterventionRegistration(deps: MemoryInterventionDep
 			// drop is recorded, because a starved cadence and a quiet one are
 			// otherwise indistinguishable in the telemetry log. Triggers stay pending
 			// so the next free boundary still runs for them.
-			if (promptedStepInFlight) {
+			if (scope.promptedStepInFlight) {
 				emitTelemetry(
-					[...pendingTriggers],
-					promptedStepTier,
+					[...scope.pendingTriggers],
+					scope.promptedStepTier,
 					"dropped",
 					"step_in_flight",
 					0,
@@ -652,9 +668,9 @@ export function createMemoryInterventionRegistration(deps: MemoryInterventionDep
 				);
 				return NO_EFFECTS;
 			}
-			if (lastLaunchYielded && endpointStillBusy()) return NO_EFFECTS;
-			if (lastLaunchUnavailable && input.hook !== "turn_end") return NO_EFFECTS;
-			lastPromptedBoundary = boundary;
+			if (scope.lastLaunchYielded && endpointStillBusy()) return NO_EFFECTS;
+			if (scope.lastLaunchUnavailable && input.hook !== "turn_end") return NO_EFFECTS;
+			scope.lastPromptedBoundary = boundary;
 			// The rules tier may already have spoken for this boundary, either as a
 			// turn_end reminder in prior effects or as a mid-turn tool annotation.
 			const priorRulesReminder =
@@ -665,41 +681,42 @@ export function createMemoryInterventionRegistration(deps: MemoryInterventionDep
 		},
 		runPromptedStep,
 		pendingWork(): boolean {
-			if (disposed || !settings().enabled) return false;
-			return pendingTriggers.size > 0 || idleLessonWorth();
+			if (scope.disposed || !settings().enabled) return false;
+			return scope.pendingTriggers.size > 0 || idleLessonWorth();
 		},
 		owesBoundaryStep(): boolean {
 			return (
-				!disposed &&
+				!scope.disposed &&
 				settings().enabled &&
 				deps.deliversDeferredReminders !== false &&
-				!promptedStepInFlight &&
-				!lastLaunchUnavailable &&
-				!lastLaunchSkipped &&
-				pendingTriggers.size > 0
+				!scope.promptedStepInFlight &&
+				!scope.lastLaunchUnavailable &&
+				!scope.lastLaunchSkipped &&
+				scope.pendingTriggers.size > 0
 			);
 		},
 		async runIdleStep(): Promise<MemoryStepLaunchOutcome> {
-			if (disposed || !settings().enabled || promptedStepInFlight) return "none";
+			if (scope.disposed || !settings().enabled || scope.promptedStepInFlight) return "none";
 			if (deps.deliversDeferredReminders === false) return "none";
 			// Checked before arming `idle_review`, which would otherwise wait for the
 			// next tool boundary and run a lesson pass mid-turn.
-			if (lastLaunchSkipped) return "skipped";
-			if (pendingTriggers.size === 0) {
+			if (scope.lastLaunchSkipped) return "skipped";
+			if (scope.pendingTriggers.size === 0) {
 				if (!idleLessonWorth()) return "none";
-				pendingTriggers.add("idle_review");
+				scope.pendingTriggers.add("idle_review");
 			}
-			if (lastLaunchYielded && endpointStillBusy()) return "yielded";
-			lastPromptedBoundary = `idle:${toolStep}`;
+			if (scope.lastLaunchYielded && endpointStillBusy()) return "yielded";
+			scope.lastPromptedBoundary = `idle:${scope.toolStep}`;
 			return launchPromptedStep(false);
 		},
 		signalLoop(): void {
-			if (!disposed && settings().enabled && settings().surfaces.correct === "model") pendingTriggers.add("loop_signal");
+			if (!scope.disposed && settings().enabled && settings().surfaces.correct === "model")
+				scope.pendingTriggers.add("loop_signal");
 		},
-		lastDecision: () => lastDecision,
-		recentActivity: () => [...activity],
-		stepInFlight: () => promptedStepInFlight,
-		whenIdle: () => outstandingStep,
+		lastDecision: () => scope.lastDecision,
+		recentActivity: () => [...scope.activity],
+		stepInFlight: () => scope.promptedStepInFlight,
+		whenIdle: () => scope.outstandingStep,
 	};
 
 	/**
@@ -713,18 +730,18 @@ export function createMemoryInterventionRegistration(deps: MemoryInterventionDep
 	): MemoryInterventionOffer | null {
 		// The registry holds the text as the host frame delivers it, so the submission receipt still finds it.
 		const content = neutralizeFraming(spec.content.trim());
-		if (content.length === 0 || submittedContents.has(content)) return null;
-		for (const pending of pendingOffers.values())
-			if (pending.offer.content === content && pending.generation === generation) return pending.offer;
+		if (content.length === 0 || scope.submittedContents.has(content)) return null;
+		for (const pending of scope.pendingOffers.values())
+			if (pending.offer.content === content && pending.generation === scope.generation) return pending.offer;
 		const offer: MemoryInterventionOffer = Object.freeze({
 			...spec,
 			id: `mo-${(++offerSequence).toString(36)}`,
 			content,
 			workspaceRoot: spec.workspaceRoot ?? workspaceRoot(),
 		});
-		pendingOffers.set(offer.id, { offer, generation, onSubmitted, missedSubmissions: 0 });
-		while (pendingOffers.size > PENDING_OFFER_LIMIT) {
-			const [oldest] = pendingOffers.keys();
+		scope.pendingOffers.set(offer.id, { offer, generation: scope.generation, onSubmitted, missedSubmissions: 0 });
+		while (scope.pendingOffers.size > PENDING_OFFER_LIMIT) {
+			const [oldest] = scope.pendingOffers.keys();
 			if (oldest === undefined) break;
 			releaseOffer(oldest);
 		}
@@ -732,23 +749,23 @@ export function createMemoryInterventionRegistration(deps: MemoryInterventionDep
 	}
 
 	function releaseOffer(id: string): void {
-		const pending = pendingOffers.get(id);
-		pendingOffers.delete(id);
-		for (const lesson of pending?.offer.lessons ?? []) offeredLessons.delete(lesson.id);
+		const pending = scope.pendingOffers.get(id);
+		scope.pendingOffers.delete(id);
+		for (const lesson of pending?.offer.lessons ?? []) scope.offeredLessons.delete(lesson.id);
 		// The first-change surfacing never reached the model; leaving the check
 		// spent would hide those lessons for the rest of the session.
-		if (pending?.offer.trigger.reasons.includes("durable_lesson")) durableLessonsChecked = false;
+		if (pending?.offer.trigger.reasons.includes("durable_lesson")) scope.durableLessonsChecked = false;
 	}
 
 	function rememberSubmittedContent(content: string): void {
-		submittedContents.add(content);
-		if (submittedContents.size > SUBMITTED_CONTENT_LIMIT)
-			submittedContents.delete(submittedContents.values().next().value ?? content);
+		scope.submittedContents.add(content);
+		if (scope.submittedContents.size > SUBMITTED_CONTENT_LIMIT)
+			scope.submittedContents.delete(scope.submittedContents.values().next().value ?? content);
 	}
 
 	function offerForContent(content: string): MemoryInterventionOffer | undefined {
 		const text = neutralizeFraming(content.trim());
-		for (const pending of pendingOffers.values()) if (text.includes(pending.offer.content)) return pending.offer;
+		for (const pending of scope.pendingOffers.values()) if (text.includes(pending.offer.content)) return pending.offer;
 		return undefined;
 	}
 
@@ -760,8 +777,8 @@ export function createMemoryInterventionRegistration(deps: MemoryInterventionDep
 	 * stale. Unrelated activity in between changes none of these.
 	 */
 	function offerCurrent(offer: MemoryInterventionOffer): boolean {
-		const pending = pendingOffers.get(offer.id);
-		if (disposed || (pending !== undefined && pending.generation !== generation)) return false;
+		const pending = scope.pendingOffers.get(offer.id);
+		if (scope.disposed || (pending !== undefined && pending.generation !== scope.generation)) return false;
 		if (offer.kind === "durable_lesson") {
 			const live = new Map([...keptLessons(), ...fixNotes()].map((lesson) => [lesson.id, lesson.revision]));
 			return offer.lessons.every((lesson) => live.get(lesson.id) === lesson.revision);
@@ -780,7 +797,7 @@ export function createMemoryInterventionRegistration(deps: MemoryInterventionDep
 		}
 		if (offer.trigger.failures.length === 0) return true;
 		const open = offer.trigger.failures.filter(
-			(episode) => failures.get(episode.fingerprint)?.firstStep === episode.firstStep,
+			(episode) => scope.failures.get(episode.fingerprint)?.firstStep === episode.firstStep,
 		);
 		// A correction about failures that all resolved is stale; one cited
 		// failure resolving also makes the text claim something no longer true.
@@ -805,7 +822,8 @@ export function createMemoryInterventionRegistration(deps: MemoryInterventionDep
 	): boolean {
 		if (entryRevision(entry) === cited.revision) return true;
 		return offer.trigger.failures.some(
-			(episode) => episode.entryId === cited.id && failures.get(episode.fingerprint)?.firstStep === episode.firstStep,
+			(episode) =>
+				episode.entryId === cited.id && scope.failures.get(episode.fingerprint)?.firstStep === episode.firstStep,
 		);
 	}
 
@@ -813,7 +831,7 @@ export function createMemoryInterventionRegistration(deps: MemoryInterventionDep
 	function openFailureEpisodes(
 		fingerprints?: ReadonlySet<string>,
 	): Array<{ fingerprint: string; firstStep: number; entryId: string }> {
-		return [...failures]
+		return [...scope.failures]
 			.filter(([fingerprint]) => fingerprints === undefined || fingerprints.has(fingerprint))
 			.map(([fingerprint, failure]) => ({ fingerprint, firstStep: failure.firstStep, entryId: failure.entryId }));
 	}
@@ -835,27 +853,27 @@ export function createMemoryInterventionRegistration(deps: MemoryInterventionDep
 	 * started it.
 	 */
 	function launchPromptedStep(priorRulesReminder: boolean): Promise<MemoryStepLaunchOutcome> {
-		const triggers = [...pendingTriggers];
-		pendingTriggers.clear();
-		const priorToolsSinceMemoryStep = toolsSinceMemoryStep;
-		const priorToolsSinceLessonPass = toolsSinceLessonPass;
-		const priorShellStepsSinceLessonPass = shellStepsSinceLessonPass;
+		const triggers = [...scope.pendingTriggers];
+		scope.pendingTriggers.clear();
+		const priorToolsSinceMemoryStep = scope.toolsSinceMemoryStep;
+		const priorToolsSinceLessonPass = scope.toolsSinceLessonPass;
+		const priorShellStepsSinceLessonPass = scope.shellStepsSinceLessonPass;
 		const consolidates = triggers.includes("turn_end") || triggers.includes("idle_review");
-		const priorArms = armsSinceLessonPass;
-		const priorLessonPassTurn = lessonPassTurn;
-		toolsSinceMemoryStep = 0;
+		const priorArms = scope.armsSinceLessonPass;
+		const priorLessonPassTurn = scope.lessonPassTurn;
+		scope.toolsSinceMemoryStep = 0;
 		if (consolidates) {
-			toolsSinceLessonPass = 0;
-			shellStepsSinceLessonPass = 0;
-			armsSinceLessonPass = 0;
-			lessonPassTurn = turnSequence;
+			scope.toolsSinceLessonPass = 0;
+			scope.shellStepsSinceLessonPass = 0;
+			scope.armsSinceLessonPass = 0;
+			scope.lessonPassTurn = scope.turnSequence;
 		}
-		consecutiveErrors = 0;
-		const rulesAlreadySpoke = rulesInjectedSincePromptedStep || priorRulesReminder;
-		rulesInjectedSincePromptedStep = false;
-		const stepGeneration = generation;
+		scope.consecutiveErrors = 0;
+		const rulesAlreadySpoke = scope.rulesInjectedSincePromptedStep || priorRulesReminder;
+		scope.rulesInjectedSincePromptedStep = false;
+		const stepGeneration = scope.generation;
 		const contentCurrent = captureContentGuard();
-		promptedStepInFlight = true;
+		scope.promptedStepInFlight = true;
 		notifyStepActivity();
 		let outcome: MemoryStepLaunchOutcome = "none";
 		const settled = runPromptedStep({
@@ -872,45 +890,45 @@ export function createMemoryInterventionRegistration(deps: MemoryInterventionDep
 					// end still covers this work; the triggers and the interval count do
 					// not, so the cadence decides again instead of every tool step.
 					if (consolidates) {
-						toolsSinceLessonPass += priorToolsSinceLessonPass;
-						shellStepsSinceLessonPass += priorShellStepsSinceLessonPass;
-						armsSinceLessonPass += priorArms;
-						lessonPassTurn = priorLessonPassTurn;
+						scope.toolsSinceLessonPass += priorToolsSinceLessonPass;
+						scope.shellStepsSinceLessonPass += priorShellStepsSinceLessonPass;
+						scope.armsSinceLessonPass += priorArms;
+						scope.lessonPassTurn = priorLessonPassTurn;
 					}
-					lastLaunchYielded = false;
-					lastLaunchUnavailable = false;
-					lastLaunchSkipped = true;
+					scope.lastLaunchYielded = false;
+					scope.lastLaunchUnavailable = false;
+					scope.lastLaunchSkipped = true;
 					outcome = "skipped";
 					return;
 				}
-				lastLaunchSkipped = false;
+				scope.lastLaunchSkipped = false;
 				const yielded = YIELDED_REASONS.has(result.reason);
 				const unavailable = UNAVAILABLE_REASONS.has(result.reason);
 				if (yielded || unavailable) {
 					// Nothing was reviewed: restore the work the step claimed so a later
 					// step reviews it. A yielded step retries once the endpoint has room;
 					// an unavailable one parks until a turn end or recovery wake.
-					for (const trigger of triggers) pendingTriggers.add(trigger);
-					toolsSinceMemoryStep += priorToolsSinceMemoryStep;
+					for (const trigger of triggers) scope.pendingTriggers.add(trigger);
+					scope.toolsSinceMemoryStep += priorToolsSinceMemoryStep;
 					if (consolidates) {
-						toolsSinceLessonPass += priorToolsSinceLessonPass;
-						shellStepsSinceLessonPass += priorShellStepsSinceLessonPass;
-						armsSinceLessonPass += priorArms;
-						lessonPassTurn = priorLessonPassTurn;
+						scope.toolsSinceLessonPass += priorToolsSinceLessonPass;
+						scope.shellStepsSinceLessonPass += priorShellStepsSinceLessonPass;
+						scope.armsSinceLessonPass += priorArms;
+						scope.lessonPassTurn = priorLessonPassTurn;
 					}
-					lastPromptedBoundary = null;
-					lastLaunchYielded = yielded;
-					lastLaunchUnavailable = unavailable;
+					scope.lastPromptedBoundary = null;
+					scope.lastLaunchYielded = yielded;
+					scope.lastLaunchUnavailable = unavailable;
 					outcome = yielded ? "yielded" : "unavailable";
 					return;
 				}
-				lastLaunchYielded = false;
-				lastLaunchUnavailable = false;
+				scope.lastLaunchYielded = false;
+				scope.lastLaunchUnavailable = false;
 				outcome = "ran";
 				// A rules-only reminder can win the visible boundary while the optional
 				// background route resolves to null. Preserve the operator-visible
 				// injected outcome instead of overwriting it with that no-client silence.
-				if (rulesAlreadySpoke && result.decision === "silent") lastDecision = "injected";
+				if (rulesAlreadySpoke && result.decision === "silent") scope.lastDecision = "injected";
 				const offer = result.offer;
 				if (result.reminder === null || offer === undefined) return;
 				deps.onDeferredReminder?.(offer.content, () => contentCurrent() && offerCurrent(offer));
@@ -920,10 +938,10 @@ export function createMemoryInterventionRegistration(deps: MemoryInterventionDep
 				// covers a throwing delivery sink, which must not surface anywhere.
 			})
 			.finally(() => {
-				if (stepGeneration === generation) promptedStepInFlight = false;
+				if (stepGeneration === scope.generation) scope.promptedStepInFlight = false;
 				notifyStepActivity();
 			});
-		outstandingStep = settled;
+		scope.outstandingStep = settled;
 		return settled.then(() => outcome);
 	}
 
@@ -935,9 +953,9 @@ export function createMemoryInterventionRegistration(deps: MemoryInterventionDep
 	function sideLessonArmed(): boolean {
 		return (
 			lessonsMode() === "side" &&
-			armsSinceLessonPass > 0 &&
-			lessonPassTurn !== turnSequence &&
-			toolsSinceLessonPass >= MEMORY_INTERVENTION_TURN_END_MIN_TOOLS
+			scope.armsSinceLessonPass > 0 &&
+			scope.lessonPassTurn !== scope.turnSequence &&
+			scope.toolsSinceLessonPass >= MEMORY_INTERVENTION_TURN_END_MIN_TOOLS
 		);
 	}
 
@@ -962,10 +980,10 @@ export function createMemoryInterventionRegistration(deps: MemoryInterventionDep
 		// The model's own words reach the bank, its file and a restored context only through the memory route's redaction.
 		const open = items.length > 0 ? redactForMemoryRoute(headForRedaction(items.join("; "), 4_096)) : "";
 		deps.bank.updateStatus(`declared ${state}${open.length > 0 ? `; remaining: ${open}` : ""}`);
-		if (state !== "done" || checkStepThisTurn <= lastTreeChangeStep || lessonsMode() !== "side") return;
-		checkStepThisTurn = 0;
-		armsSinceLessonPass += 1;
-		armsInScope += 1;
+		if (state !== "done" || scope.checkStepThisTurn <= scope.lastTreeChangeStep || lessonsMode() !== "side") return;
+		scope.checkStepThisTurn = 0;
+		scope.armsSinceLessonPass += 1;
+		scope.armsInScope += 1;
 	}
 
 	/**
@@ -999,8 +1017,8 @@ export function createMemoryInterventionRegistration(deps: MemoryInterventionDep
 		const args = call.args === undefined ? undefined : { ...call.args };
 		const root = workspaceRoot();
 		if (settled.ok && checkPassedForCall(call.toolName, args, details, root)) {
-			evidenceSequence += 1;
-			checkStepThisTurn = evidenceSequence;
+			scope.evidenceSequence += 1;
+			scope.checkStepThisTurn = scope.evidenceSequence;
 			return;
 		}
 		if (!settled.ran) return;
@@ -1008,8 +1026,8 @@ export function createMemoryInterventionRegistration(deps: MemoryInterventionDep
 			(settled.ok && WORKSPACE_CHANGING_CLASSES.has(String(settled.actionClass))) ||
 			callChangesTree(call.toolName, args, root)
 		) {
-			evidenceSequence += 1;
-			lastTreeChangeStep = evidenceSequence;
+			scope.evidenceSequence += 1;
+			scope.lastTreeChangeStep = scope.evidenceSequence;
 		}
 	}
 
@@ -1024,9 +1042,10 @@ export function createMemoryInterventionRegistration(deps: MemoryInterventionDep
 		if (segments.length !== 1 || segment === undefined || !exercisesWork(segment)) return;
 		const subject = commandSubject(segment.argv, root);
 		if (subject === null) return;
-		failedForFix.delete(subject.key);
-		failedForFix.set(subject.key, { segment, step: toolStep });
-		if (failedForFix.size > VERIFIED_COMMAND_LIMIT) failedForFix.delete(failedForFix.keys().next().value ?? subject.key);
+		scope.failedForFix.delete(subject.key);
+		scope.failedForFix.set(subject.key, { segment, step: scope.toolStep });
+		if (scope.failedForFix.size > VERIFIED_COMMAND_LIMIT)
+			scope.failedForFix.delete(scope.failedForFix.keys().next().value ?? subject.key);
 	}
 
 	/**
@@ -1037,18 +1056,18 @@ export function createMemoryInterventionRegistration(deps: MemoryInterventionDep
 	function pairFix(segment: CommandSegment): void {
 		if (!exercisesWork(segment)) return;
 		const subject = commandSubject(segment.argv, workspaceRoot());
-		const waiting = subject === null ? undefined : failedForFix.get(subject.key);
+		const waiting = subject === null ? undefined : scope.failedForFix.get(subject.key);
 		if (subject === null || waiting === undefined) return;
-		if (waiting.step <= lastWorkspaceChangeStep) {
-			failedForFix.delete(subject.key);
+		if (waiting.step <= scope.lastWorkspaceChangeStep) {
+			scope.failedForFix.delete(subject.key);
 			return;
 		}
 		const failed = waiting.segment;
 		if (failed.key !== segment.key && !fixPairOf(failed, segment)) return;
-		failedForFix.delete(subject.key);
+		scope.failedForFix.delete(subject.key);
 		if (failed.key === segment.key || lessonsMode() === "off") return;
-		armsSinceLessonPass += 1;
-		armsInScope += 1;
+		scope.armsSinceLessonPass += 1;
+		scope.armsInScope += 1;
 		try {
 			deps.onFixPair?.({ failed, fixed: segment });
 		} catch {
@@ -1092,18 +1111,18 @@ export function createMemoryInterventionRegistration(deps: MemoryInterventionDep
 
 	function observeSession(input: MiddlewareHookInput): void {
 		if (input.sessionId !== undefined) {
-			if (observedSessionId !== undefined && observedSessionId !== input.sessionId) reset();
-			observedSessionId = input.sessionId;
+			if (scope.observedSessionId !== undefined && scope.observedSessionId !== input.sessionId) reset();
+			scope.observedSessionId = input.sessionId;
 		}
-		const sessionId = input.sessionId ?? (input.runId === undefined ? observedSessionId : undefined);
+		const sessionId = input.sessionId ?? (input.runId === undefined ? scope.observedSessionId : undefined);
 		if (sessionId === undefined && input.runId === undefined) return;
 		const owner =
 			sessionId !== undefined
 				? { sessionId, ...(input.runId === undefined ? {} : { runId: input.runId }) }
 				: { sessionId: null, runId: input.runId as string };
-		const sameOwner = stepContext?.sessionId === owner.sessionId && stepContext?.runId === owner.runId;
-		const turnId = input.turnId ?? (sameOwner ? stepContext?.turnId : undefined);
-		stepContext = {
+		const sameOwner = scope.stepContext?.sessionId === owner.sessionId && scope.stepContext?.runId === owner.runId;
+		const turnId = input.turnId ?? (sameOwner ? scope.stepContext?.turnId : undefined);
+		scope.stepContext = {
 			...owner,
 			agent: { role: "memory", id: owner.sessionId ?? (input.runId as string) },
 			...(turnId === undefined ? {} : { turnId }),
@@ -1111,108 +1130,108 @@ export function createMemoryInterventionRegistration(deps: MemoryInterventionDep
 	}
 
 	function cancelStoppedTurn(): void {
-		if (!promptedStepInFlight && pendingTriggers.size === 0 && toolStep <= lastTurnEndStep) {
+		if (!scope.promptedStepInFlight && scope.pendingTriggers.size === 0 && scope.toolStep <= scope.lastTurnEndStep) {
 			// Nothing of this registration's is pending, so no generation bump or telemetry row;
 			// the owner still drops its own in-flight content work.
 			deps.onContentCancelled?.();
 			return;
 		}
-		const tier = promptedStepInFlight ? promptedStepTier : "rules";
+		const tier = scope.promptedStepInFlight ? scope.promptedStepTier : "rules";
 		// Retain completed bank entries, but revoke pending content and delivery
 		// authority. Late provider usage still belongs to its captured origin.
-		generation += 1;
-		pendingOffers.clear();
-		offeredLessons.clear();
-		commitState?.cancel(generation);
+		scope.generation += 1;
+		scope.pendingOffers.clear();
+		scope.offeredLessons.clear();
+		scope.commitState?.cancel(scope.generation);
 		deps.onContentCancelled?.();
-		generationController.abort();
-		generationController = new AbortController();
-		promptedStepInFlight = false;
-		outstandingStep = Promise.resolve();
-		pendingTriggers.clear();
-		toolsSinceMemoryStep = 0;
-		consecutiveErrors = 0;
-		lastTurnEndStep = toolStep;
-		rulesInjectedSincePromptedStep = false;
-		annotatedSinceTurnEnd = false;
-		lastDecision = "silent";
+		scope.generationController.abort();
+		scope.generationController = new AbortController();
+		scope.promptedStepInFlight = false;
+		scope.outstandingStep = Promise.resolve();
+		scope.pendingTriggers.clear();
+		scope.toolsSinceMemoryStep = 0;
+		scope.consecutiveErrors = 0;
+		scope.lastTurnEndStep = scope.toolStep;
+		scope.rulesInjectedSincePromptedStep = false;
+		scope.annotatedSinceTurnEnd = false;
+		scope.lastDecision = "silent";
 		emitTelemetry(["turn_end"], tier, "silent", "scope_changed", 0, noTokens, noTokens, process.hrtime.bigint());
 	}
 
 	function reset(): void {
-		pendingOffers.clear();
-		submittedContents.clear();
-		offeredLessons.clear();
-		sectionCarries = () => false;
+		scope.pendingOffers.clear();
+		scope.submittedContents.clear();
+		scope.offeredLessons.clear();
+		scope.sectionCarries = () => false;
 		try {
 			const lessons = deps.bank.snapshot().knowledge.filter((entry) => entry.durable === true);
-			if (lessons.length > 0) deps.onScopeEnd?.({ sessionId: observedSessionId, lessons });
+			if (lessons.length > 0) deps.onScopeEnd?.({ sessionId: scope.observedSessionId, lessons });
 		} catch {
 			// Same contract as onInjectedEntries: the store's failure is not the session's.
 		}
 		settleDeliveries(true);
-		commitState?.dispose();
-		commitState = null;
-		commitScope = null;
-		generation += 1;
-		generationController.abort();
-		generationController = new AbortController();
+		scope.commitState?.dispose();
+		scope.commitState = null;
+		scope.commitScope = null;
+		scope.generation += 1;
+		scope.generationController.abort();
+		scope.generationController = new AbortController();
 		deps.bank.clear();
-		pending.clear();
-		turnLog.length = 0;
-		succeededCommands.clear();
-		succeededSegments.clear();
-		unpassedVerifyChecks.clear();
-		observedReads.clear();
-		failedForFix.clear();
-		shownReads.clear();
-		armsSinceLessonPass = 0;
-		armsInScope = 0;
-		checkStepThisTurn = 0;
-		lastTreeChangeStep = 0;
-		evidenceSequence = 0;
-		turnSequence = 0;
-		lessonPassTurn = -1;
-		trajectory.length = 0;
-		failures.clear();
-		toolStep = 0;
-		lastTurnEndStep = 0;
-		lastWorkspaceChangeStep = 0;
-		reactivateAfterCompaction = false;
-		lastInjectedOperationFingerprint = null;
-		currentTask = "(current task unavailable)";
-		toolsSinceMemoryStep = 0;
-		toolsSinceLessonPass = 0;
-		shellStepsSinceLessonPass = 0;
-		lastLaunchYielded = false;
-		lastLaunchUnavailable = false;
-		lastLaunchSkipped = false;
-		consecutiveErrors = 0;
-		lastPromptedBoundary = null;
-		lastInjectedMessage = null;
-		lastDecision = null;
-		pendingTriggers.clear();
-		activity.length = 0;
-		annotatedThisTurn.clear();
-		operatorAskedRepeat = false;
-		telemetryBankSnapshot = deps.bank.snapshot();
-		promptedStepInFlight = false;
-		promptedStepTier = "rules";
-		outstandingStep = Promise.resolve();
-		rulesInjectedSincePromptedStep = false;
-		annotatedSinceTurnEnd = false;
-		consecutiveLlmTimeouts = 0;
-		durableLessonsChecked = false;
-		durableWatch.clear();
-		deliveredLessons.clear();
-		contextLostAt = null;
-		observedSessionId = undefined;
-		stepContext = undefined;
+		scope.pending.clear();
+		scope.turnLog.length = 0;
+		scope.succeededCommands.clear();
+		scope.succeededSegments.clear();
+		scope.unpassedVerifyChecks.clear();
+		scope.observedReads.clear();
+		scope.failedForFix.clear();
+		scope.shownReads.clear();
+		scope.armsSinceLessonPass = 0;
+		scope.armsInScope = 0;
+		scope.checkStepThisTurn = 0;
+		scope.lastTreeChangeStep = 0;
+		scope.evidenceSequence = 0;
+		scope.turnSequence = 0;
+		scope.lessonPassTurn = -1;
+		scope.trajectory.length = 0;
+		scope.failures.clear();
+		scope.toolStep = 0;
+		scope.lastTurnEndStep = 0;
+		scope.lastWorkspaceChangeStep = 0;
+		scope.reactivateAfterCompaction = false;
+		scope.lastInjectedOperationFingerprint = null;
+		scope.currentTask = "(current task unavailable)";
+		scope.toolsSinceMemoryStep = 0;
+		scope.toolsSinceLessonPass = 0;
+		scope.shellStepsSinceLessonPass = 0;
+		scope.lastLaunchYielded = false;
+		scope.lastLaunchUnavailable = false;
+		scope.lastLaunchSkipped = false;
+		scope.consecutiveErrors = 0;
+		scope.lastPromptedBoundary = null;
+		scope.lastInjectedMessage = null;
+		scope.lastDecision = null;
+		scope.pendingTriggers.clear();
+		scope.activity.length = 0;
+		scope.annotatedThisTurn.clear();
+		scope.operatorAskedRepeat = false;
+		scope.telemetryBankSnapshot = deps.bank.snapshot();
+		scope.promptedStepInFlight = false;
+		scope.promptedStepTier = "rules";
+		scope.outstandingStep = Promise.resolve();
+		scope.rulesInjectedSincePromptedStep = false;
+		scope.annotatedSinceTurnEnd = false;
+		scope.consecutiveLlmTimeouts = 0;
+		scope.durableLessonsChecked = false;
+		scope.durableWatch.clear();
+		scope.deliveredLessons.clear();
+		scope.contextLostAt = null;
+		scope.observedSessionId = undefined;
+		scope.stepContext = undefined;
 	}
 
 	function carriedBySection(id: string): boolean {
 		try {
-			return sectionCarries(id);
+			return scope.sectionCarries(id);
 		} catch {
 			return false;
 		}
@@ -1260,7 +1279,7 @@ export function createMemoryInterventionRegistration(deps: MemoryInterventionDep
 		});
 		const live = settings();
 		// A detached answer keeps the turn that launched it, even if the foreground advances (#434).
-		const launchContext = stepContext;
+		const launchContext = scope.stepContext;
 		const isCurrent = captureContentGuard();
 		// The workspace and the failure episodes this step is reasoning about are
 		// captured with its authority: paths are checked against the session's
@@ -1268,11 +1287,11 @@ export function createMemoryInterventionRegistration(deps: MemoryInterventionDep
 		// the episodes that were open when it was asked for.
 		const launchRoot = workspaceRoot();
 		const launchFailures = openFailureEpisodes(
-			new Set(trajectory.filter((step) => step.outcome === "error").map((step) => step.operationFingerprint)),
+			new Set(scope.trajectory.filter((step) => step.outcome === "error").map((step) => step.operationFingerprint)),
 		);
-		if (disposed || !live.enabled) {
+		if (scope.disposed || !live.enabled) {
 			const result = silent("no_client");
-			lastDecision = result.decision;
+			scope.lastDecision = result.decision;
 			return result;
 		}
 		const started = process.hrtime.bigint();
@@ -1286,7 +1305,7 @@ export function createMemoryInterventionRegistration(deps: MemoryInterventionDep
 		const consolidate =
 			input.triggerReasons?.includes("turn_end") === true || input.triggerReasons?.includes("idle_review") === true;
 		let tier: TaskMemoryTelemetryTier = "rules";
-		promptedStepTier = tier;
+		scope.promptedStepTier = tier;
 		let promptedResult: TaskMemoryPolicyResult;
 		// A boundary that never reached the model is a skipped boundary rather than
 		// a policy decision, and `dropped` is the telemetry outcome for exactly
@@ -1294,7 +1313,7 @@ export function createMemoryInterventionRegistration(deps: MemoryInterventionDep
 		// produced and the policy vocabulary has no value for a step that never ran.
 		let telemetryDecision: TaskMemoryTelemetryDecision | null = null;
 		try {
-			if (consecutiveLlmTimeouts >= MEMORY_INTERVENTION_TIMEOUT_BACKOFF_THRESHOLD) {
+			if (scope.consecutiveLlmTimeouts >= MEMORY_INTERVENTION_TIMEOUT_BACKOFF_THRESHOLD) {
 				promptedResult = silent("llm_timeout_backoff");
 			} else {
 				const client = deps.getModelClient?.() ?? null;
@@ -1302,21 +1321,21 @@ export function createMemoryInterventionRegistration(deps: MemoryInterventionDep
 					promptedResult = silent("no_client");
 				} else if (deps.backgroundEndpointBusy?.() === true) {
 					tier = "llm";
-					promptedStepTier = tier;
+					scope.promptedStepTier = tier;
 					attemptRoute = client.route;
 					promptedResult = silent("endpoint_busy");
 					telemetryDecision = "dropped";
 				} else {
 					tier = "llm";
-					promptedStepTier = tier;
+					scope.promptedStepTier = tier;
 					const runClient = (selected: TaskMemoryModelClient, timeoutMs: number) => {
 						attemptRoute = selected.route;
 						return runTaskMemoryPolicy(deps.bank, selected, {
 							purpose: consolidate ? "memory.lesson" : input.deterministicTrigger ? "memory.correct" : "memory.bank",
 							isCurrent,
-							signal: generationController.signal,
-							task: input.task?.trim() || currentTask,
-							trajectory: [...trajectory],
+							signal: scope.generationController.signal,
+							task: input.task?.trim() || scope.currentTask,
+							trajectory: [...scope.trajectory],
 							workspaceRoot: launchRoot,
 							deterministicTrigger: input.deterministicTrigger,
 							maxTokens: live.maxTokens,
@@ -1326,13 +1345,13 @@ export function createMemoryInterventionRegistration(deps: MemoryInterventionDep
 								? {
 										pass: {
 											systemPrompt: MEMORY_CONSOLIDATION_SYSTEM_PROMPT,
-											trajectoryText: turnLog.join("\n"),
+											trajectoryText: scope.turnLog.join("\n"),
 											keptLessons: keptLessonsForPass(),
 										},
 									}
 								: {}),
-							previousReminder: lastInjectedMessage,
-							contextLostAt,
+							previousReminder: scope.lastInjectedMessage,
+							contextLostAt: scope.contextLostAt,
 							timeoutMs,
 							...(deps.onEnvelope === undefined || deps.tracesEnvelopes?.() === false
 								? {}
@@ -1409,8 +1428,8 @@ export function createMemoryInterventionRegistration(deps: MemoryInterventionDep
 		}
 		if (!isCurrent()) return { ...promptedResult, reminder: null, effects: NO_EFFECTS };
 		if (YIELDED_REASONS.has(promptedResult.reason) || budgetSkipped(promptedResult.reason)) telemetryDecision = "dropped";
-		if (tier === "llm" && promptedResult.decision === "timeout") consecutiveLlmTimeouts += 1;
-		else if (tier === "llm" && telemetryDecision !== "dropped") consecutiveLlmTimeouts = 0;
+		if (tier === "llm" && promptedResult.decision === "timeout") scope.consecutiveLlmTimeouts += 1;
+		else if (tier === "llm" && telemetryDecision !== "dropped") scope.consecutiveLlmTimeouts = 0;
 		let offer: MemoryInterventionOffer | undefined;
 		if (promptedResult.decision === "injected" && promptedResult.reminder !== null) {
 			const cited = citedEntries(promptedResult.reminder);
@@ -1421,7 +1440,7 @@ export function createMemoryInterventionRegistration(deps: MemoryInterventionDep
 					tier: "llm",
 					content: promptedResult.reminder,
 					cited: cited.map((entry) => ({ id: entry.id, revision: entryRevision(entry) })),
-					trigger: { reasons: triggers, step: toolStep, failures: launchFailures },
+					trigger: { reasons: triggers, step: scope.toolStep, failures: launchFailures },
 					lessons: [],
 					workspaceRoot: launchRoot,
 				},
@@ -1436,10 +1455,10 @@ export function createMemoryInterventionRegistration(deps: MemoryInterventionDep
 				promptedResult = { ...promptedResult, decision: "gated", reason: "resolved_failure", reminder: null };
 			} else {
 				offer = produced;
-				lastInjectedMessage = produced.content;
+				scope.lastInjectedMessage = produced.content;
 			}
 		}
-		lastDecision = promptedResult.decision;
+		scope.lastDecision = promptedResult.decision;
 		// Exactly the entries the answered call's prompt was rendered from. An
 		// entry cut for budget was never put in front of the model, so its silence
 		// about it says nothing.
@@ -1490,79 +1509,6 @@ export function createMemoryInterventionRegistration(deps: MemoryInterventionDep
 		};
 	}
 
-	function emitTelemetry(
-		triggerReasons: ReadonlyArray<TaskMemoryTelemetryTrigger>,
-		tier: TaskMemoryTelemetryTier,
-		decision: TaskMemoryTelemetryDecision,
-		reason: TaskMemoryPolicyReason,
-		citedEntries: number,
-		inputTokens: Fact<number>,
-		outputTokens: Fact<number>,
-		started: bigint,
-		operations: {
-			calls?: TaskMemoryPolicyResult["calls"];
-			bankOperations: number;
-			droppedOperations: number;
-			refusalReason?: string;
-			resumeAt?: string;
-		} = {
-			bankOperations: 0,
-			droppedOperations: 0,
-		},
-		route?: TaskMemoryRoute,
-		context: TelemetryContext | null | undefined = stepContext,
-	): void {
-		const next = deps.bank.snapshot();
-		const bankDelta = taskMemoryBankDelta(telemetryBankSnapshot, next);
-		telemetryBankSnapshot = next;
-		const latencyMs = Number(process.hrtime.bigint() - started) / 1_000_000;
-		try {
-			deps.telemetry?.record({
-				...(context == null ? {} : { context }),
-				triggerReasons,
-				tier,
-				bankDelta,
-				decision,
-				reason,
-				...(operations.calls === undefined ? {} : { calls: operations.calls }),
-				bankOperations: operations.bankOperations,
-				droppedOperations: operations.droppedOperations,
-				...(operations.refusalReason === undefined ? {} : { refusalReason: operations.refusalReason }),
-				citedEntries,
-				inputTokens,
-				outputTokens,
-				latencyMs,
-				...(route === undefined ? {} : { route }),
-				...(operations.resumeAt === undefined ? {} : { resumeAt: operations.resumeAt }),
-			});
-		} catch {
-			// Observability must never steer or block the memory policy.
-		}
-		const event: TaskMemoryActivityEvent = {
-			at: new Date().toISOString(),
-			triggerReasons: [...new Set(triggerReasons)],
-			tier,
-			decision,
-			reason,
-			citedEntries,
-			bankWrites: countBankWrites(bankDelta),
-			latencyMs,
-			...(operations.resumeAt === undefined ? {} : { resumeAt: operations.resumeAt }),
-		};
-		activity.unshift(event);
-		if (activity.length > MEMORY_INTERVENTION_ACTIVITY_LIMIT) activity.length = MEMORY_INTERVENTION_ACTIVITY_LIMIT;
-	}
-
-	function citedEntries(message: string | null): TaskMemoryEntry[] {
-		if (message === null) return [];
-		const snapshot = deps.bank.snapshot();
-		return [...snapshot.knowledge, ...snapshot.procedural].filter((entry) => message.includes(`[${entry.id}]`));
-	}
-
-	function citedEntryCount(message: string | null): number {
-		return citedEntries(message).length;
-	}
-
 	/**
 	 * Start delivery accounting for a reminder the host submitted: the cited
 	 * entries' injection counts, and for the model tier the durable proposal and
@@ -1587,19 +1533,19 @@ export function createMemoryInterventionRegistration(deps: MemoryInterventionDep
 			// fail the request that carried the reminder.
 			return;
 		}
-		deliveries.push({
+		scope.deliveries.push({
 			entries: entries.map((entry) => ({ id: entry.id, content: entry.content, entry })),
-			step: toolStep,
+			step: scope.toolStep,
 			fingerprints: new Set(
 				offer.trigger.failures
-					.filter((episode) => failures.get(episode.fingerprint)?.firstStep === episode.firstStep)
+					.filter((episode) => scope.failures.get(episode.fingerprint)?.firstStep === episode.firstStep)
 					.map((episode) => episode.fingerprint),
 			),
 			recurrences: 0,
 			supported: new Set(),
 			heldReported: new Set(),
 		});
-		if (deliveries.length > MEMORY_DELIVERY_WATCH_LIMIT) deliveries.shift();
+		if (scope.deliveries.length > MEMORY_DELIVERY_WATCH_LIMIT) scope.deliveries.shift();
 	}
 
 	function keptLessonsForPass(): ReadonlyArray<{ id: string; text: string }> {
@@ -1646,11 +1592,11 @@ export function createMemoryInterventionRegistration(deps: MemoryInterventionDep
 	function settleDeliveries(final: boolean): void {
 		const outcomes: MemoryDeliveryOutcome[] = [];
 		const bank = new Map(deps.bank.snapshot().knowledge.map((entry) => [entry.id, entry]));
-		for (let index = deliveries.length - 1; index >= 0; index -= 1) {
-			const watch = deliveries[index];
+		for (let index = scope.deliveries.length - 1; index >= 0; index -= 1) {
+			const watch = scope.deliveries[index];
 			if (watch === undefined) continue;
 			if (watch.recurrences >= MEMORY_DELIVERY_CONTRADICTED_RECURRENCES) {
-				deliveries.splice(index, 1);
+				scope.deliveries.splice(index, 1);
 				outcomes.push({ entries: watch.entries.map(({ id, content }) => ({ id, content })), kind: "contradicted" });
 				continue;
 			}
@@ -1664,7 +1610,7 @@ export function createMemoryInterventionRegistration(deps: MemoryInterventionDep
 			for (const delivered of held) watch.heldReported.add(delivered.id);
 			if (held.length > 0) outcomes.push({ entries: held.map(({ id, content }) => ({ id, content })), kind: "held" });
 		}
-		if (final) deliveries.length = 0;
+		if (final) scope.deliveries.length = 0;
 		if (outcomes.length === 0 && !final) return;
 		try {
 			deps.onDeliveryOutcomes?.(outcomes, final);
@@ -1676,7 +1622,7 @@ export function createMemoryInterventionRegistration(deps: MemoryInterventionDep
 	/** A successful receipt segment satisfies a delivered lesson whose evidence command has that identity. */
 	function noteCommandEvidence(segment: CommandSegment): void {
 		const root = workspaceRoot();
-		for (const watch of deliveries)
+		for (const watch of scope.deliveries)
 			for (const delivered of watch.entries) {
 				if (delivered.entry.durable !== true || delivered.entry.evidenceCommand === undefined) continue;
 				const claim = commandSegment(delivered.entry.evidenceCommand, root);
@@ -1687,7 +1633,7 @@ export function createMemoryInterventionRegistration(deps: MemoryInterventionDep
 	/** A successful read that showed a delivered lesson's quoted source, which the checkout still holds. */
 	function noteReadEvidence(path: string, excerpt: string, root: string): void {
 		const shown = collapseWhitespace(excerpt);
-		for (const watch of deliveries)
+		for (const watch of scope.deliveries)
 			for (const delivered of watch.entries) {
 				const source = delivered.entry.evidenceSource;
 				if (delivered.entry.durable !== true || source === undefined) continue;
@@ -1705,12 +1651,12 @@ export function createMemoryInterventionRegistration(deps: MemoryInterventionDep
 		const { startLine: start, endLine: end } = range ?? {};
 		if (typeof start !== "number" || typeof end !== "number" || end < start || range?.partialLine === true) return;
 		if (typeof file?.bytes !== "number" || typeof file.mtimeMs !== "number") return;
-		const ranges = shownReads.get(path) ?? [];
-		shownReads.delete(path);
+		const ranges = scope.shownReads.get(path) ?? [];
+		scope.shownReads.delete(path);
 		ranges.push({ start, end, bytes: file.bytes, mtimeMs: file.mtimeMs });
 		if (ranges.length > SHOWN_READS_PER_PATH) ranges.splice(0, ranges.length - SHOWN_READS_PER_PATH);
-		shownReads.set(path, ranges);
-		if (shownReads.size > SHOWN_READ_PATHS) shownReads.delete(shownReads.keys().next().value ?? path);
+		scope.shownReads.set(path, ranges);
+		if (scope.shownReads.size > SHOWN_READ_PATHS) scope.shownReads.delete(scope.shownReads.keys().next().value ?? path);
 	}
 
 	/**
@@ -1720,7 +1666,7 @@ export function createMemoryInterventionRegistration(deps: MemoryInterventionDep
 	 */
 	function shownQuote(note: string, pathArg: string, root: string): MemoryNoteEvidence | { refused: string } {
 		const path = repositoryRelativePath(pathArg, [root]);
-		const shown = path === null ? [] : (shownReads.get(path) ?? []);
+		const shown = path === null ? [] : (scope.shownReads.get(path) ?? []);
 		if (path === null || shown.length === 0)
 			return { refused: `${pathArg} was not read in this session; read it first, or leave path out` };
 		let size: { bytes: number; mtimeMs: number } | null = null;
@@ -1753,38 +1699,39 @@ export function createMemoryInterventionRegistration(deps: MemoryInterventionDep
 	function observeBeforeTool(input: MiddlewareHookInput): void {
 		const prepared = prepareToolStep(input);
 		if (prepared === null) return;
-		setBounded(pending, pendingKey(input, prepared.operationFingerprint), prepared, settings().windowSteps);
+		setBounded(scope.pending, pendingKey(input, prepared.operationFingerprint), prepared, settings().windowSteps);
 	}
 
 	function observeAfterTool(input: MiddlewareHookInput): ReadonlyArray<MiddlewareEffect> {
 		const fallback = prepareToolStep(input);
 		if (fallback === null) return NO_EFFECTS;
 		const key = pendingKey(input, fallback.operationFingerprint);
-		const prepared = pending.get(key) ?? fallback;
-		pending.delete(key);
+		const prepared = scope.pending.get(key) ?? fallback;
+		scope.pending.delete(key);
 		const outcome = input.metadata?.resultKind === "error" ? "error" : "ok";
-		toolStep += 1;
-		toolsSinceMemoryStep += 1;
-		toolsSinceLessonPass += 1;
-		if (prepared.toolName === ToolNames.Bash) shellStepsSinceLessonPass += 1;
+		scope.toolStep += 1;
+		scope.toolsSinceMemoryStep += 1;
+		scope.toolsSinceLessonPass += 1;
+		if (prepared.toolName === ToolNames.Bash) scope.shellStepsSinceLessonPass += 1;
 		const live = settings();
 		// The model tiers of bank maintenance and correction run only when their surface says `model`; the rules tier below
 		// (failure entries, repeated-failure annotation and reminder) runs either way.
-		if (live.surfaces.bank === "model" && toolsSinceMemoryStep >= live.everyNTools) pendingTriggers.add("interval");
+		if (live.surfaces.bank === "model" && scope.toolsSinceMemoryStep >= live.everyNTools)
+			scope.pendingTriggers.add("interval");
 		if (outcome === "error") {
-			for (const watch of deliveries) {
+			for (const watch of scope.deliveries) {
 				if (watch.fingerprints.has(prepared.operationFingerprint)) watch.recurrences += 1;
 			}
-			consecutiveErrors += 1;
-			if (live.surfaces.correct === "model" && consecutiveErrors >= 2 && !operatorAskedRepeat)
-				pendingTriggers.add("tool_error_streak");
+			scope.consecutiveErrors += 1;
+			if (live.surfaces.correct === "model" && scope.consecutiveErrors >= 2 && !scope.operatorAskedRepeat)
+				scope.pendingTriggers.add("tool_error_streak");
 		} else {
-			consecutiveErrors = 0;
+			scope.consecutiveErrors = 0;
 		}
 		const digest = resultDigest(input, outcome);
 		const step: TrajectoryStep = {
 			...prepared,
-			step: toolStep,
+			step: scope.toolStep,
 			outcome,
 			resultDigest: digest.text,
 			resultDigestProvenance: digest.provenance,
@@ -1817,7 +1764,7 @@ export function createMemoryInterventionRegistration(deps: MemoryInterventionDep
 		const readExcerpt =
 			readPath === null ? "" : shortText(redactForMemoryRoute(digest.text), TURN_LOG_READ_EXCERPT_CHARS);
 		if (readPath !== null) {
-			recordObservedRead(observedReads, readPath, readExcerpt);
+			recordObservedRead(scope.observedReads, readPath, readExcerpt);
 			noteReadEvidence(readPath, readExcerpt, root);
 			recordShownRead(readPath, input.toolResultDetails);
 		}
@@ -1827,23 +1774,25 @@ export function createMemoryInterventionRegistration(deps: MemoryInterventionDep
 				: readExcerpt
 					? ` => ${readExcerpt}`
 					: "";
-		turnLog.push(
-			`${toolStep}. ${outcome === "ok" ? "ok" : "FAILED"}: ${shortText(redactForMemoryRoute(command ?? prepared.callDescription), TURN_LOG_CALL_MAX_CHARS)}${excerpt}`,
+		scope.turnLog.push(
+			`${scope.toolStep}. ${outcome === "ok" ? "ok" : "FAILED"}: ${shortText(redactForMemoryRoute(command ?? prepared.callDescription), TURN_LOG_CALL_MAX_CHARS)}${excerpt}`,
 		);
 		observeChainSteps(prepared.toolName, input);
-		while (turnLog.length > TURN_LOG_LIMIT) turnLog.shift();
-		trajectory.push(step);
-		if (trajectory.length > live.windowSteps) trajectory.splice(0, trajectory.length - live.windowSteps);
+		while (scope.turnLog.length > TURN_LOG_LIMIT) scope.turnLog.shift();
+		scope.trajectory.push(step);
+		if (scope.trajectory.length > live.windowSteps)
+			scope.trajectory.splice(0, scope.trajectory.length - live.windowSteps);
 		if (outcome === "ok" && WORKSPACE_CHANGING_CLASSES.has(String(input.metadata?.actionClass))) {
-			lastWorkspaceChangeStep = toolStep;
+			scope.lastWorkspaceChangeStep = scope.toolStep;
 		}
 		if (input.metadata?.resultKind === "ok") {
 			// Only an explicit receipt for this exact operation closes its failure
 			// episode. Keep the bank entry and trajectory as history; this does not
 			// verify the surrounding task or reinterpret tool exit classifications.
-			failures.delete(step.operationFingerprint);
-			annotatedThisTurn.delete(step.operationFingerprint);
-			if (lastInjectedOperationFingerprint === step.operationFingerprint) lastInjectedOperationFingerprint = null;
+			scope.failures.delete(step.operationFingerprint);
+			scope.annotatedThisTurn.delete(step.operationFingerprint);
+			if (scope.lastInjectedOperationFingerprint === step.operationFingerprint)
+				scope.lastInjectedOperationFingerprint = null;
 		}
 		if (outcome !== "error") {
 			if (outcome !== "ok") return NO_EFFECTS;
@@ -1877,16 +1826,16 @@ export function createMemoryInterventionRegistration(deps: MemoryInterventionDep
 		if (!atWorkspaceRoot(root, at)) return;
 		const segments = commandSegments(command, root, at);
 		for (const form of new Set([command, ...segments.map((segment) => segment.text)])) {
-			succeededCommands.add(form);
-			if (succeededCommands.size > VERIFIED_COMMAND_LIMIT) {
-				succeededCommands.delete(succeededCommands.values().next().value ?? form);
+			scope.succeededCommands.add(form);
+			if (scope.succeededCommands.size > VERIFIED_COMMAND_LIMIT) {
+				scope.succeededCommands.delete(scope.succeededCommands.values().next().value ?? form);
 			}
 		}
 		for (const segment of segments) {
-			succeededSegments.delete(segment.key);
-			succeededSegments.set(segment.key, segment);
-			if (succeededSegments.size > VERIFIED_COMMAND_LIMIT) {
-				succeededSegments.delete(succeededSegments.keys().next().value ?? segment.key);
+			scope.succeededSegments.delete(segment.key);
+			scope.succeededSegments.set(segment.key, segment);
+			if (scope.succeededSegments.size > VERIFIED_COMMAND_LIMIT) {
+				scope.succeededSegments.delete(scope.succeededSegments.keys().next().value ?? segment.key);
 			}
 			noteCommandEvidence(segment);
 			settleDurableLessons(segment);
@@ -1905,7 +1854,7 @@ export function createMemoryInterventionRegistration(deps: MemoryInterventionDep
 		if (command === null) return;
 		const keys = commandSegments(command, root).map((segment) => segment.key);
 		if (verifyRunPassed(settledOk, details)) {
-			for (const key of keys) unpassedVerifyChecks.delete(key);
+			for (const key of keys) scope.unpassedVerifyChecks.delete(key);
 			rememberSucceededCommand(command, undefined);
 			return;
 		}
@@ -1913,7 +1862,7 @@ export function createMemoryInterventionRegistration(deps: MemoryInterventionDep
 		if (!isRecord(details) || details.launched === false) return;
 		if (isRecord(details.judgement) && details.judgement.execution === "unavailable") return;
 		const check = typeof details.check === "string" ? details.check : "";
-		for (const key of keys) setBounded(unpassedVerifyChecks, key, check, VERIFIED_COMMAND_LIMIT);
+		for (const key of keys) setBounded(scope.unpassedVerifyChecks, key, check, VERIFIED_COMMAND_LIMIT);
 	}
 
 	/**
@@ -1930,8 +1879,8 @@ export function createMemoryInterventionRegistration(deps: MemoryInterventionDep
 	function surfaceDurableLessons(args: Readonly<Record<string, unknown>> | undefined): ReadonlyArray<MiddlewareEffect> {
 		// The first-change broadcast is an opt-in (`delivery: broadcast`): it repeats the section, and none of the
 		// lane broadcasts settled (DESIGN 5).
-		if (durableLessonsChecked || !settings().enabled || deliveryMode() !== "broadcast") return NO_EFFECTS;
-		durableLessonsChecked = true;
+		if (scope.durableLessonsChecked || !settings().enabled || deliveryMode() !== "broadcast") return NO_EFFECTS;
+		scope.durableLessonsChecked = true;
 		const changed = new Set(touchedPaths(ToolNames.Write, args));
 		const pending = commandLessons().filter((lesson) => !lesson.commands.recommended.some(commandSucceeded));
 		return deliverDurableLessons("durable_lesson", [
@@ -2046,7 +1995,7 @@ export function createMemoryInterventionRegistration(deps: MemoryInterventionDep
 		const chosen: KeptLesson[] = [];
 		let lines: string[] = [];
 		for (const lesson of candidates) {
-			if (deliveredLessons.has(lesson.id) || offeredLessons.has(lesson.id)) continue;
+			if (scope.deliveredLessons.has(lesson.id) || scope.offeredLessons.has(lesson.id)) continue;
 			if (carriedBySection(lesson.id)) continue;
 			if (!channelCarries(trigger, lesson)) continue;
 			const next = [...lines, renderKeptLesson(lesson)];
@@ -2061,7 +2010,7 @@ export function createMemoryInterventionRegistration(deps: MemoryInterventionDep
 				tier: "rules",
 				content: lines.join("\n"),
 				cited: chosen.map((lesson) => ({ id: lesson.id, revision: lesson.revision })),
-				trigger: { reasons: [trigger], step: toolStep, failures: [] },
+				trigger: { reasons: [trigger], step: scope.toolStep, failures: [] },
 				lessons: chosen.map(({ id, revision, appliesWhen, avoidWhen, approval, evidenceRefs }) => ({
 					id,
 					revision,
@@ -2073,9 +2022,9 @@ export function createMemoryInterventionRegistration(deps: MemoryInterventionDep
 			},
 			() => {
 				for (const lesson of chosen) {
-					offeredLessons.delete(lesson.id);
-					deliveredLessons.add(lesson.id);
-					durableWatch.set(lesson.id, lesson.commands.recommended);
+					scope.offeredLessons.delete(lesson.id);
+					scope.deliveredLessons.add(lesson.id);
+					scope.durableWatch.set(lesson.id, lesson.commands.recommended);
 				}
 				reportDurableLessons(
 					chosen.map((lesson) => lesson.id),
@@ -2084,8 +2033,8 @@ export function createMemoryInterventionRegistration(deps: MemoryInterventionDep
 			},
 		);
 		if (offer === null) return NO_EFFECTS;
-		for (const lesson of chosen) offeredLessons.add(lesson.id);
-		lastDecision = "injected";
+		for (const lesson of chosen) scope.offeredLessons.add(lesson.id);
+		scope.lastDecision = "injected";
 		emitTelemetry(
 			[trigger],
 			"rules",
@@ -2096,7 +2045,7 @@ export function createMemoryInterventionRegistration(deps: MemoryInterventionDep
 			noTokens,
 			process.hrtime.bigint(),
 		);
-		lessonDelivered = true;
+		scope.lessonDelivered = true;
 		return [{ kind: "annotate_tool_result", message: offer.content, severity: "info" }];
 	}
 
@@ -2107,9 +2056,9 @@ export function createMemoryInterventionRegistration(deps: MemoryInterventionDep
 	 * nothing about it.
 	 */
 	function settleDurableLessons(segment: CommandSegment): void {
-		if (durableWatch.size === 0) return;
+		if (scope.durableWatch.size === 0) return;
 		const root = workspaceRoot();
-		const held = [...durableWatch]
+		const held = [...scope.durableWatch]
 			.filter(([, commands]) =>
 				commands.some((quoted) => {
 					const claim = commandSegment(quoted, root);
@@ -2118,7 +2067,7 @@ export function createMemoryInterventionRegistration(deps: MemoryInterventionDep
 			)
 			.map(([id]) => id);
 		if (held.length === 0) return;
-		for (const id of held) durableWatch.delete(id);
+		for (const id of held) scope.durableWatch.delete(id);
 		reportDurableLessons([], held);
 	}
 
@@ -2126,13 +2075,13 @@ export function createMemoryInterventionRegistration(deps: MemoryInterventionDep
 	function commandSucceeded(quoted: string): boolean {
 		const claim = commandSegment(quoted, workspaceRoot());
 		if (claim === null) return false;
-		for (const segment of succeededSegments.values()) if (receiptVouches(claim, segment)) return true;
+		for (const segment of scope.succeededSegments.values()) if (receiptVouches(claim, segment)) return true;
 		return false;
 	}
 
 	function reportDurableLessons(delivered: ReadonlyArray<string>, held: ReadonlyArray<string>): void {
 		try {
-			deps.onDurableLessonOutcomes?.({ sessionId: observedSessionId, delivered, held });
+			deps.onDurableLessonOutcomes?.({ sessionId: scope.observedSessionId, delivered, held });
 		} catch {
 			// Same contract as onInjectedEntries: the store's failure is not the session's.
 		}
@@ -2151,13 +2100,13 @@ export function createMemoryInterventionRegistration(deps: MemoryInterventionDep
 		for (const child of children) {
 			const details = isRecord(child.result.details) ? child.result.details : {};
 			const settled = child.admission.outcome === "ok" && child.admission.decision === "allowed" && details.kind === "ok";
-			const label = `${toolStep}.${child.id}`;
+			const label = `${scope.toolStep}.${child.id}`;
 			if (child.capability === ToolNames.Bash && typeof child.args.command === "string") {
-				shellStepsSinceLessonPass += 1;
+				scope.shellStepsSinceLessonPass += 1;
 				// The same receipt rule a direct shell call meets.
 				const succeeded = successfulShellReceipt(settled, details);
 				if (succeeded) rememberSucceededCommand(child.args.command, child.args.cwd);
-				turnLog.push(
+				scope.turnLog.push(
 					`${label} ${succeeded ? "ok" : "FAILED"}: ${shortText(redactForMemoryRoute(child.args.command), TURN_LOG_CALL_MAX_CHARS)}`,
 				);
 				continue;
@@ -2172,10 +2121,10 @@ export function createMemoryInterventionRegistration(deps: MemoryInterventionDep
 			const excerpt =
 				path === null ? "" : shortText(redactForMemoryRoute(chainChildText(child.result)), TURN_LOG_READ_EXCERPT_CHARS);
 			if (path !== null) {
-				recordObservedRead(observedReads, path, excerpt);
+				recordObservedRead(scope.observedReads, path, excerpt);
 				noteReadEvidence(path, excerpt, workspaceRoot());
 			}
-			turnLog.push(
+			scope.turnLog.push(
 				`${label} ${settled ? "ok" : "FAILED"}: ${shortText(`${child.capability}${path === null ? "" : ` ${path}`}`, TURN_LOG_CALL_MAX_CHARS)}${excerpt ? ` => ${excerpt}` : ""}`,
 			);
 		}
@@ -2188,10 +2137,10 @@ export function createMemoryInterventionRegistration(deps: MemoryInterventionDep
 	 * itself, which the model reads on its very next round.
 	 */
 	function annotateRepeatedFailure(step: TrajectoryStep): ReadonlyArray<MiddlewareEffect> {
-		if (operatorAskedRepeat || annotatedThisTurn.has(step.operationFingerprint)) return NO_EFFECTS;
-		const failure = failures.get(step.operationFingerprint);
+		if (scope.operatorAskedRepeat || scope.annotatedThisTurn.has(step.operationFingerprint)) return NO_EFFECTS;
+		const failure = scope.failures.get(step.operationFingerprint);
 		if (failure === undefined) return NO_EFFECTS;
-		const occurrences = trajectory.filter(
+		const occurrences = scope.trajectory.filter(
 			(candidate) =>
 				candidate.outcome === "error" &&
 				candidate.operationFingerprint === step.operationFingerprint &&
@@ -2201,7 +2150,7 @@ export function createMemoryInterventionRegistration(deps: MemoryInterventionDep
 				// tried that.
 				candidate.resultDigest === step.resultDigest &&
 				candidate.step >= failure.firstStep &&
-				candidate.step > lastWorkspaceChangeStep,
+				candidate.step > scope.lastWorkspaceChangeStep,
 		).length;
 		if (occurrences < 2) return NO_EFFECTS;
 		const message = boundedReminder(
@@ -2211,12 +2160,12 @@ export function createMemoryInterventionRegistration(deps: MemoryInterventionDep
 		if (message.length === 0) return NO_EFFECTS;
 		const offer = correctiveOffer(failure, step.operationFingerprint, message, "repeated_failure");
 		if (offer === null) return NO_EFFECTS;
-		annotatedThisTurn.add(step.operationFingerprint);
+		scope.annotatedThisTurn.add(step.operationFingerprint);
 		// Claim the turn-end channel too, so one repeated failure is surfaced once.
-		lastInjectedOperationFingerprint = step.operationFingerprint;
-		lastDecision = "injected";
-		rulesInjectedSincePromptedStep = true;
-		annotatedSinceTurnEnd = true;
+		scope.lastInjectedOperationFingerprint = step.operationFingerprint;
+		scope.lastDecision = "injected";
+		scope.rulesInjectedSincePromptedStep = true;
+		scope.annotatedSinceTurnEnd = true;
 		emitTelemetry(
 			["repeated_failure"],
 			"rules",
@@ -2231,7 +2180,7 @@ export function createMemoryInterventionRegistration(deps: MemoryInterventionDep
 	}
 
 	function rememberFailure(step: TrajectoryStep): void {
-		const previous = failures.get(step.operationFingerprint);
+		const previous = scope.failures.get(step.operationFingerprint);
 		const attempts = (previous?.attempts ?? 0) + 1;
 		const firstStep = previous?.firstStep ?? step.step;
 		const content = proceduralContent(step.callDescription, attempts, firstStep, step.resultDigest);
@@ -2246,7 +2195,7 @@ export function createMemoryInterventionRegistration(deps: MemoryInterventionDep
 			}
 		}
 		setBounded(
-			failures,
+			scope.failures,
 			step.operationFingerprint,
 			{
 				entryId,
@@ -2261,29 +2210,29 @@ export function createMemoryInterventionRegistration(deps: MemoryInterventionDep
 
 	function decideRepeatedFailure(): ReadonlyArray<MiddlewareEffect> {
 		try {
-			if (operatorAskedRepeat) {
-				lastDecision = "silent";
+			if (scope.operatorAskedRepeat) {
+				scope.lastDecision = "silent";
 				return NO_EFFECTS;
 			}
-			for (let index = trajectory.length - 1; index >= 0; index -= 1) {
-				const step = trajectory[index];
+			for (let index = scope.trajectory.length - 1; index >= 0; index -= 1) {
+				const step = scope.trajectory[index];
 				if (
 					step === undefined ||
 					step.outcome !== "error" ||
-					step.step <= lastTurnEndStep ||
-					step.operationFingerprint === lastInjectedOperationFingerprint
+					step.step <= scope.lastTurnEndStep ||
+					step.operationFingerprint === scope.lastInjectedOperationFingerprint
 				) {
 					continue;
 				}
-				const failure = failures.get(step.operationFingerprint);
+				const failure = scope.failures.get(step.operationFingerprint);
 				if (failure === undefined || step.step < failure.firstStep) continue;
-				const occurrences = trajectory.filter(
+				const occurrences = scope.trajectory.filter(
 					(candidate) =>
 						candidate.outcome === "error" &&
 						candidate.operationFingerprint === step.operationFingerprint &&
 						candidate.resultDigest === step.resultDigest &&
 						candidate.step >= failure.firstStep &&
-						candidate.step > lastWorkspaceChangeStep,
+						candidate.step > scope.lastWorkspaceChangeStep,
 				).length;
 				if (occurrences < 2) continue;
 				const message = boundedReminder(
@@ -2293,35 +2242,35 @@ export function createMemoryInterventionRegistration(deps: MemoryInterventionDep
 				if (message.length === 0) return NO_EFFECTS;
 				const offer = correctiveOffer(failure, step.operationFingerprint, message, "turn_end");
 				if (offer === null) return NO_EFFECTS;
-				lastInjectedOperationFingerprint = step.operationFingerprint;
-				lastInjectedMessage = offer.content;
-				lastDecision = "injected";
-				rulesInjectedSincePromptedStep = true;
+				scope.lastInjectedOperationFingerprint = step.operationFingerprint;
+				scope.lastInjectedMessage = offer.content;
+				scope.lastDecision = "injected";
+				scope.rulesInjectedSincePromptedStep = true;
 				return [
 					{ kind: "inject_reminder", message: offer.content, severity: "advisory", source: "memory", audience: "model" },
 				];
 			}
-			lastDecision = "silent";
+			scope.lastDecision = "silent";
 			return NO_EFFECTS;
 		} finally {
-			lastTurnEndStep = toolStep;
+			scope.lastTurnEndStep = scope.toolStep;
 		}
 	}
 
 	function reactivateKnowledge(): ReadonlyArray<MiddlewareEffect> {
-		if (!reactivateAfterCompaction) return NO_EFFECTS;
-		reactivateAfterCompaction = false;
+		if (!scope.reactivateAfterCompaction) return NO_EFFECTS;
+		scope.reactivateAfterCompaction = false;
 		const prefix = "Memory: execution state restored after compaction:\n";
 		const maxTokens = settings().maxTokens;
 		const prefixTokens = ceilChars(prefix.length);
 		const rendered = deps.bank.renderRestoredState(Math.max(0, maxTokens - prefixTokens));
 		if (rendered.length === 0) {
-			lastDecision = "silent";
+			scope.lastDecision = "silent";
 			return NO_EFFECTS;
 		}
 		const message = boundedReminder(`${prefix}${rendered}`, maxTokens);
 		if (message.length === 0) {
-			lastDecision = "silent";
+			scope.lastDecision = "silent";
 			return NO_EFFECTS;
 		}
 		const snapshot = deps.bank.snapshot();
@@ -2334,17 +2283,17 @@ export function createMemoryInterventionRegistration(deps: MemoryInterventionDep
 				tier: "rules",
 				content: message,
 				cited: cited.map((entry) => ({ id: entry.id, revision: entryRevision(entry) })),
-				trigger: { reasons: ["post_compaction"], step: toolStep, failures: [] },
+				trigger: { reasons: ["post_compaction"], step: scope.toolStep, failures: [] },
 				lessons: [],
 			},
 			startDeliveryWatch,
 		);
 		if (offer === null) {
-			lastDecision = "silent";
+			scope.lastDecision = "silent";
 			return NO_EFFECTS;
 		}
-		lastInjectedMessage = offer.content;
-		lastDecision = "injected";
+		scope.lastInjectedMessage = offer.content;
+		scope.lastDecision = "injected";
 		return [
 			{ kind: "inject_reminder", message: offer.content, severity: "advisory", source: "memory", audience: "model" },
 		];
@@ -2366,7 +2315,7 @@ export function createMemoryInterventionRegistration(deps: MemoryInterventionDep
 				cited: entry === undefined ? [] : [{ id: entry.id, revision: entryRevision(entry) }],
 				trigger: {
 					reasons: [reason],
-					step: toolStep,
+					step: scope.toolStep,
 					failures: [{ fingerprint, firstStep: failure.firstStep, entryId: failure.entryId }],
 				},
 				lessons: [],
@@ -2411,33 +2360,9 @@ function proceduralContent(call: string, attempts: number, firstStep: number, er
 	return `${call} failed ${attempts} time${attempts === 1 ? "" : "s"}; first observed at step ${firstStep}: ${error}.`;
 }
 
-/** The content revision a reminder cites; a rewrite under the same id is a different fact. */
-function entryRevision(entry: Pick<TaskMemoryEntry, "content">): string {
-	return sha256Hex(entry.content).slice(0, 16);
-}
-
-function collapseWhitespace(value: string): string {
-	return value.replace(/\s+/gu, " ").trim();
-}
-
 function boundedReminder(message: string, maxTokens: number): string {
 	const maxChars = maxTokens * 4;
 	if (maxChars <= 0) return "";
 	const normalized = message.replace(/[^\S\n]+/gu, " ").trim();
 	return normalized.length <= maxChars ? normalized : normalized.slice(0, maxChars).trimEnd();
-}
-
-function countBankWrites(delta: TaskMemoryBankDelta): number {
-	return [delta.status, delta.knowledge, delta.procedural].reduce(
-		(total, entry) => total + entry.added + entry.updated + entry.deleted,
-		0,
-	);
-}
-
-function setBounded<K, V>(map: Map<K, V>, key: K, value: V, capacity: number): void {
-	if (!map.has(key) && map.size >= capacity) {
-		const oldest = map.keys().next().value;
-		if (oldest !== undefined) map.delete(oldest);
-	}
-	map.set(key, value);
 }

@@ -28,7 +28,7 @@ import {
 	markMemoryOffRecording,
 	primeMemoryRepositoryFingerprint,
 } from "../../domains/memory/index.js";
-import { MEMORY_INTERVENTION_ACTIVITY_LIMIT } from "../../domains/memory/intervention.js";
+import { MEMORY_INTERVENTION_ACTIVITY_LIMIT } from "../../domains/memory/intervention/telemetry.js";
 import { createMemoryRecallUseRegistration } from "../../domains/memory/recall-use.js";
 import { createMemorySessionProjection } from "../../domains/memory/session-projection.js";
 import {
