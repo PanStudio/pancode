@@ -1,7 +1,7 @@
 {
 	"source": {
 		"path": "hub/index.yaml",
-		"sha256": "93bd427e16f70c5b75caabaf49c344f1ac8236fd15bf41ce020c6bf625d85971",
+		"sha256": "ab1486e65e0815e1cd82487af9a3625760fb28ca61a911457264c815e5e3fc51",
 		"rows": 46,
 		"revoked": 0
 	},
@@ -48,7 +48,7 @@
 			"source": {
 				"path": "hub/packs/extensions/music"
 			},
-			"sha256": "c3e47082733ac732109b294766128ccac40b6a2d7a978265b20fa191cdd0b936",
+			"sha256": "81d455455a1e7cf11b161b31a5c43c2920501983cfd8a0aa6944c92c75d9e1a4",
 			"install": "pancode hub install extension:music"
 		},
 		{

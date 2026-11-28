@@ -40,6 +40,7 @@ import { skinEpoch } from "../theme/tokens.js";
 import { projectFooterRenderState } from "./chrome-projection.js";
 import type { ThinkingRailFacts } from "./context-rail.js";
 import { renderDeckDrawer } from "./deck-drawer.js";
+import { type ExtensionFact, extensionFactsKey } from "./extension-facts.js";
 import type { FleetBand } from "./fleet-band.js";
 import type { ComposerKeyContext, KeyHintFacts } from "./key-hints.js";
 import type { Notification, NotificationCenter } from "./notifications.js";
@@ -81,9 +82,8 @@ export interface FooterDashboardDeps {
 	getLastCommand?: () => string | null;
 	getQuotaSnapshots?: () => QuotaProviders;
 	getConnections?: () => { mcp: string[]; plugins: string[] };
-	getExtensionStatus?: () => ReadonlyArray<string>;
-	/** Owner-labelled, pre-styled extension status facts for the compact second line. */
-	getExtensionFacts?: (width: number) => ReadonlyArray<string>;
+	/** Live extension status facts for row 2 and the Alt+U deck. */
+	getExtensionFacts?: () => ReadonlyArray<ExtensionFact>;
 	/** The active extension workspace's footer line, with how to leave it. */
 	getWorkspaceLine?: (width: number) => string | null;
 	getLifecycleHint?: () => string | null;
@@ -147,8 +147,8 @@ export interface FooterDashboardDeps {
 export interface FooterDashboardRenderState {
 	/** Session-wide presentation tier; absent uses the default tier. */
 	outputStyle?: OutputStyle;
-	/** Extension status facts that join detailed Route row 3 or idle Row 2 right slot. */
-	extensionFacts?: ReadonlyArray<string>;
+	/** Live extension status facts: idle Row 2 right slot (ahead of the onboarding whisper) and the deck's Extensions island. */
+	extensionFacts?: ReadonlyArray<ExtensionFact>;
 	/** Active extension workspace leave chord, slotted into the bottom bar without adding an extra row. */
 	workspaceLine?: string | null;
 	quota?: QuotaProviders;
@@ -234,7 +234,6 @@ function factsSourceFromDeps(deps: FooterDashboardDeps): HarnessFactsSource {
 		...(deps.getSessionInfo ? { getSessionInfo: deps.getSessionInfo } : {}),
 		...(deps.getLastTurnSummary ? { getLastTurnSummary: deps.getLastTurnSummary } : {}),
 		...(deps.getExtensionStats ? { getExtensionStats: deps.getExtensionStats } : {}),
-		...(deps.getExtensionStatus ? { getExtensionStatus: deps.getExtensionStatus } : {}),
 		...(deps.getLifecycleHint ? { getLifecycleHint: deps.getLifecycleHint } : {}),
 		...(deps.getConnections ? { getConnections: deps.getConnections } : {}),
 		...(deps.getTaskMemoryStatus ? { getTaskMemoryStatus: deps.getTaskMemoryStatus } : {}),
@@ -268,6 +267,7 @@ class FooterView extends Text {
 	private composedFleetBoard = false;
 	private composedDeckRev = -1;
 	private composedTimeBucket = "";
+	private composedExtKey = "";
 
 	constructor(
 		private readonly compose: (width: number, refreshFacts: boolean) => string[],
@@ -278,6 +278,7 @@ class FooterView extends Text {
 		private readonly getFleetBoard: () => boolean = () => false,
 		private readonly getDeckRev: () => number = () => 0,
 		private readonly getTimeBucket: () => string = () => "0",
+		private readonly getExtKey: (width: number) => string = () => "",
 	) {
 		super("", 0, 0);
 	}
@@ -296,6 +297,7 @@ class FooterView extends Text {
 		this.composedFleetBoard = this.getFleetBoard();
 		this.composedDeckRev = this.getDeckRev();
 		this.composedTimeBucket = this.getTimeBucket();
+		this.composedExtKey = this.getExtKey(width);
 		if (next.length === this.composedLines.length && next.every((line, index) => line === this.composedLines[index])) {
 			return;
 		}
@@ -315,10 +317,11 @@ class FooterView extends Text {
 			this.getWelcome() !== this.composedWelcome ||
 			this.getFleetBoard() !== this.composedFleetBoard ||
 			this.getDeckRev() !== this.composedDeckRev ||
-			this.getTimeBucket() !== this.composedTimeBucket
+			this.getTimeBucket() !== this.composedTimeBucket ||
+			this.getExtKey(width) !== this.composedExtKey
 		) {
-			// Pure clock/spinner ticks or keyContext changes reuse the cached facts snapshot
-			// without re-running `facts.snapshot()` (`contextUsage` / `#historyBudget` / `providers.list`).
+			// Pure clock/spinner ticks, extension status updates, or keyContext changes reuse the cached
+			// facts snapshot without re-running `facts.snapshot()` (`contextUsage` / `#historyBudget` / `providers.list`).
 			this.composeAt(width, factsChanged);
 		}
 		return this.composedLines;
@@ -345,6 +348,12 @@ export function buildFooterDashboard(deps: FooterDashboardDeps): FooterDashboard
 		const sec = Math.floor(now / 1000);
 		return lastTimeKind === "animate" && motionEnabled() ? `${sec}:${animationStep(now)}` : `${sec}`;
 	};
+	const extKey = (width: number): string => {
+		const extFacts = deps.getExtensionFacts?.();
+		const ws = deps.getWorkspaceLine?.(width);
+		if ((!extFacts || extFacts.length === 0) && !ws) return "";
+		return `${extensionFactsKey(extFacts)}\x1d${ws ?? ""}`;
+	};
 	const view = new FooterView(
 		(width, refreshFacts) => composeFooter(width, refreshFacts),
 		terminalRows,
@@ -354,6 +363,7 @@ export function buildFooterDashboard(deps: FooterDashboardDeps): FooterDashboard
 		fleetBoardOpenProbe,
 		() => deckOverrideRev,
 		timeBucket,
+		extKey,
 	);
 	let branchSlot: string | null = null;
 	// Cached snapshot & readiness so pure clock/spinner ticks and keyContext switches never
@@ -440,10 +450,7 @@ export function buildFooterDashboard(deps: FooterDashboardDeps): FooterDashboard
 		}
 		const fleetBandVisible = deps.fleetBand ? deps.fleetBand.isVisible() : deps.isFleetBandVisible?.() === true;
 		const workspace = deps.getWorkspaceLine?.(width) ?? null;
-		const combinedExtensionFacts = [
-			...(deps.getExtensionFacts?.(width) ?? []),
-			...snapshot.extensions.statusLines.map((line) => pancodeTheme().fg("annotation", line)),
-		];
+		const extensionFacts = deps.getExtensionFacts?.() ?? [];
 		const baseState = projectFooterRenderState(snapshot, {
 			width,
 			now,
@@ -455,7 +462,7 @@ export function buildFooterDashboard(deps: FooterDashboardDeps): FooterDashboard
 			compactKeysDoor,
 			fleetBandVisible,
 			fleetBoardOpen,
-			...(combinedExtensionFacts.length > 0 ? { extensionFacts: combinedExtensionFacts } : {}),
+			...(extensionFacts.length > 0 ? { extensionFacts } : {}),
 			...(workspace ? { workspaceLine: workspace } : {}),
 			...(keyContext ? { keyContext } : {}),
 			...(deps.getKeyHintFacts ? { keyHintFacts: deps.getKeyHintFacts() } : {}),
@@ -479,7 +486,7 @@ export function buildFooterDashboard(deps: FooterDashboardDeps): FooterDashboard
 		const lifecycleHint = snapshot.extensions.lifecycleHint;
 		const lifecycleLine = lifecycleHint ? [fitDashboardLine(pancodeTheme().fg("annotation", lifecycleHint), width)] : [];
 		// Footer stack order (top to bottom): Alert row -> Fleet band -> Context progress -> Deck drawer -> Status bar / Row 2.
-		// Workspace leave chord slots into the bottom bar (`workspaceLine`) and extension status lines fold into Route row 3.
+		// Workspace leave chord slots into the bottom bar (`workspaceLine`); extension facts get the deck's Extensions island.
 		const { alertRows, bodyRows } = renderStatusLineParts(current, width, rows);
 		const fleetRows = deps.fleetBand ? deps.fleetBand.render(width) : [];
 		const contextProgressRows = deps.contextProgress && rows >= 20 ? deps.contextProgress.render(width) : [];
