@@ -1095,6 +1095,8 @@ test("allowed egress leaves through safety.egress.upstreamProxy by name with its
 	const upstreamUrl = `http://ops:s3cr%20t@127.0.0.1:${(upstream.address() as AddressInfo).port}`;
 	assert.equal(upstreamProxyProblem(upstreamUrl), null);
 	assert.notEqual(upstreamProxyProblem("socks5://127.0.0.1:1080"), null);
+	assert.notEqual(upstreamProxyProblem("http://%zz@127.0.0.1:8080"), null);
+	assert.notEqual(upstreamProxyProblem("http://ops:%zz@127.0.0.1:8080"), null);
 	assert.equal(redactedUpstreamProxy(upstreamUrl).includes("s3cr"), false);
 	const { proxy, port } = await servedEgressProxy({
 		grants: egressGrants(["internal.corp.test:443"], []),
