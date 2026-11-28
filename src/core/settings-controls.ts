@@ -14,6 +14,7 @@ import {
 	THINKING_LEVELS,
 	WORKER_PERMISSION_MODES,
 } from "./defaults.js";
+import { redactedUpstreamProxy } from "./sandbox/egress/policy.js";
 import { getAtPath, setAtPath } from "./session-routing.js";
 import {
 	SETTINGS_AREA_GROUPS,
@@ -1094,7 +1095,16 @@ export function settingControl(path: string): SettingControl | undefined {
 	return SETTING_CONTROLS.find((control) => control.path === path);
 }
 
-export function formatControlValue(value: unknown): string {
+export const REDACTED_PROXY_PATH = "safety.egress.upstreamProxy";
+
+/** True when a setting value carries credentials that no display or prefill may show. */
+export function hasRedactedControlCredentials(path: string, value: unknown): boolean {
+	if (path !== REDACTED_PROXY_PATH || typeof value !== "string") return false;
+	return redactedUpstreamProxy(value) !== value;
+}
+
+export function formatControlValue(value: unknown, path?: string): string {
+	if (path === REDACTED_PROXY_PATH && typeof value === "string") return redactedUpstreamProxy(value);
 	return value === undefined || value === null
 		? "(automatic)"
 		: typeof value === "object"

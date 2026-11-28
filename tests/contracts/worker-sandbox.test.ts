@@ -12,7 +12,12 @@ import { runBashCommand } from "../../src/core/bash-exec.js";
 import { readSettings } from "../../src/core/config.js";
 import { sandboxAvailability, sandboxNetworkIsolation } from "../../src/core/sandbox/availability.js";
 import { egressResultNote } from "../../src/core/sandbox/egress/bridge.js";
-import { egressGrants, redactedUpstreamProxy, upstreamProxyProblem } from "../../src/core/sandbox/egress/policy.js";
+import {
+	egressGrants,
+	isDeniedEgressAddress,
+	redactedUpstreamProxy,
+	upstreamProxyProblem,
+} from "../../src/core/sandbox/egress/policy.js";
 import { createEgressProxy } from "../../src/core/sandbox/egress/proxy.js";
 import { EGRESS_UNGRANTED } from "../../src/core/sandbox/egress/setup.js";
 import { mainLaunchEgress, mainSandboxPolicy, planMainSandboxSpawn } from "../../src/core/sandbox/main-session.js";
@@ -23,6 +28,7 @@ import {
 	configureWorkerProcessSandbox,
 	planSandboxedSpawn,
 } from "../../src/core/sandbox/worker-process.js";
+import { formatControlValue, hasRedactedControlCredentials } from "../../src/core/settings-controls.js";
 import { readLayeredSettings } from "../../src/core/settings-layers.js";
 import { type ToolName, ToolNames } from "../../src/core/tool-names.js";
 import { captureProjectSurface, recordProjectSurfaceTrust } from "../../src/core/workspace-trust.js";
@@ -658,4 +664,64 @@ test("safety.egress is user-set, a project may only lower a mode, and the launch
 	assert.equal(mainLaunchEgress(proxied, "seatbelt", true), "open");
 	assert.equal(mainLaunchEgress({ network: true }, "bwrap", true), "open");
 	assert.equal(mainLaunchEgress({ network: false, egress: proxied.egress }, "bwrap", true), "off");
+});
+
+test("egress proxy refuses mismatched Host headers, screens IPv4-translated IPv6, and redacts upstreamProxy control values (P3)", async (t) => {
+	assert.equal(isDeniedEgressAddress("::ffff:0:169.254.169.254"), true);
+	assert.equal(isDeniedEgressAddress("::ffff:0:127.0.0.1"), true);
+	const secretProxy = "http://user:s3cr3t@proxy.corp.test:3128";
+	assert.equal(formatControlValue(secretProxy, "safety.egress.upstreamProxy"), "http://***@proxy.corp.test:3128");
+	assert.equal(hasRedactedControlCredentials("safety.egress.upstreamProxy", secretProxy), true);
+	assert.equal(hasRedactedControlCredentials("safety.egress.upstreamProxy", "http://proxy.corp.test:3128"), false);
+
+	const target = createHttpServer((req, res) => res.end(`host=${req.headers.host}`));
+	await new Promise<void>((resolve) => target.listen(0, "127.0.0.1", resolve));
+	t.after(() => target.close());
+	const targetPort = (target.address() as AddressInfo).port;
+	let asked = 0;
+	const proxy = createEgressProxy({
+		grants: egressGrants([`allowed.test:${targetPort}`], []),
+		ask: async () => {
+			asked += 1;
+			return false;
+		},
+		lookup: async () => [{ address: "93.184.216.34", family: 4 }],
+		dial: () => connect({ host: "127.0.0.1", port: targetPort }),
+	});
+	const listener = createServer();
+	await new Promise<void>((resolve) => listener.listen(0, "127.0.0.1", resolve));
+	proxy.serve(listener);
+	t.after(() => proxy.close());
+	const proxyPort = (listener.address() as AddressInfo).port;
+	const send = (raw: string): Promise<string> =>
+		new Promise((resolve, reject) => {
+			const sock = connect({ host: "127.0.0.1", port: proxyPort });
+			const chunks: Buffer[] = [];
+			sock.on("connect", () => sock.write(raw));
+			sock.on("data", (c) => chunks.push(c));
+			sock.on("close", () => resolve(Buffer.concat(chunks).toString("utf8")));
+			sock.on("error", reject);
+		});
+
+	assert.match(
+		await send(
+			`GET http://allowed.test:${targetPort}/ HTTP/1.1\r\nHost: evil.test:${targetPort}\r\nConnection: close\r\n\r\n`,
+		),
+		/^HTTP\/1\.1 400 /u,
+	);
+	assert.match(
+		await send(`CONNECT allowed.test:${targetPort} HTTP/1.1\r\nHost: evil.test:${targetPort}\r\n\r\n`),
+		/^HTTP\/1\.1 400 /u,
+	);
+	assert.match(
+		await send("CONNECT [::ffff:0:169.254.169.254]:80 HTTP/1.1\r\nHost: [::ffff:0:169.254.169.254]:80\r\n\r\n"),
+		/^HTTP\/1\.1 403 /u,
+	);
+	assert.equal(asked, 0);
+	assert.match(
+		await send(
+			`GET http://allowed.test:${targetPort}/ HTTP/1.1\r\nHost: allowed.test:${targetPort}\r\nConnection: close\r\n\r\n`,
+		),
+		new RegExp(`host=allowed\\.test:${targetPort}`, "u"),
+	);
 });

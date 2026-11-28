@@ -152,12 +152,18 @@ function v4FromGroups(high: number, low: number): string {
 	return `${high >> 8}.${high & 0xff}.${low >> 8}.${low & 0xff}`;
 }
 
-/** The IPv4 address an IPv6 transition form carries: mapped, compatible, NAT64 or 6to4. */
+/** The IPv4 address an IPv6 transition form carries: mapped, compatible, translated, NAT64 or 6to4. */
 function embeddedIpv4(address: string): string | null {
 	const g = ipv6Groups(address);
 	if (g === null) return null;
 	const [g0 = 0, g1 = 0, g2 = 0, g3 = 0, g4 = 0, g5 = 0, g6 = 0, g7 = 0] = g;
-	if (g0 === 0 && g1 === 0 && g2 === 0 && g3 === 0 && g4 === 0 && (g5 === 0xffff || g5 === 0))
+	if (
+		g0 === 0 &&
+		g1 === 0 &&
+		g2 === 0 &&
+		g3 === 0 &&
+		((g4 === 0 && (g5 === 0xffff || g5 === 0)) || (g4 === 0xffff && g5 === 0))
+	)
 		return v4FromGroups(g6, g7);
 	if (g0 === 0x64 && g1 === 0xff9b && g2 === 0 && g3 === 0 && g4 === 0 && g5 === 0) return v4FromGroups(g6, g7);
 	if (g0 === 0x2002) return v4FromGroups(g1, g2);

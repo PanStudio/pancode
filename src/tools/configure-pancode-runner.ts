@@ -426,8 +426,8 @@ function changedSettingLines(path: string, before: unknown, after: unknown): str
 		after === undefined
 			? `${path}: (removed)`
 			: before === undefined
-				? `${path}: ${formatControlValue(after)}`
-				: `${path}: ${formatControlValue(before)} → ${formatControlValue(after)}`,
+				? `${path}: ${formatControlValue(after, path)}`
+				: `${path}: ${formatControlValue(before, path)} → ${formatControlValue(after, path)}`,
 	];
 }
 

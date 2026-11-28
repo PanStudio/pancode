@@ -174,6 +174,26 @@ function parseAuthority(authority: string): EgressOrigin | null {
 	return egressOrigin(match[1] ?? "", Number(match[2]));
 }
 
+/** Splits an HTTP Host header into an origin, using `defaultPort` when no port is given. */
+function parseHostHeader(header: string, defaultPort: number): EgressOrigin | null {
+	const match = /^(\[[^\]]+\]|[^:[\]]+)(?::(\d{1,5}))?$/u.exec(header.trim());
+	if (match === null) return null;
+	return egressOrigin(match[1] ?? "", match[2] === undefined ? defaultPort : Number(match[2]));
+}
+
+/** True when `Host` is absent or names the same canonical origin that was authorized. */
+function hostHeaderMatches(header: string | undefined, origin: EgressOrigin, defaultPort: number): boolean {
+	if (header === undefined) return true;
+	const parsed = parseHostHeader(header, defaultPort);
+	return parsed !== null && originKey(parsed) === originKey(origin);
+}
+
+/** Canonical Host header value for a plain HTTP origin. */
+function canonicalHttpHost(origin: EgressOrigin): string {
+	if (origin.port === 80) return origin.host.includes(":") ? `[${origin.host}]` : origin.host;
+	return originKey(origin);
+}
+
 /**
  * The per-launch egress proxy. It answers HTTP CONNECT, absolute-form plain
  * HTTP and SOCKS5 CONNECT on one listener (the first byte tells them apart),
@@ -312,7 +332,7 @@ export function createEgressProxy(options: EgressProxyOptions): EgressProxy {
 
 	httpServer.on("connect", (req: http.IncomingMessage, client: net.Socket, head: Buffer) => {
 		const origin = parseAuthority(req.url ?? "");
-		if (origin === null) {
+		if (origin === null || !hostHeaderMatches(req.headers.host, origin, origin.port)) {
 			client.end("HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n");
 			return;
 		}
@@ -351,6 +371,13 @@ export function createEgressProxy(options: EgressProxyOptions): EgressProxy {
 				.end("PanCode egress proxy: only http:// requests and CONNECT tunnels\n");
 			return;
 		}
+		if (!hostHeaderMatches(req.headers.host, origin, 80)) {
+			res
+				.writeHead(400, { "content-type": "text/plain", connection: "close" })
+				.end("PanCode egress proxy: Host header does not match request URL\n");
+			return;
+		}
+		const canonicalHost = canonicalHttpHost(origin);
 		req.pause();
 		open(origin, false).then(
 			({ upstream, viaProxy }) => {
@@ -359,12 +386,13 @@ export function createEgressProxy(options: EgressProxyOptions): EgressProxy {
 					if (!HOP_BY_HOP.has(name) && value !== undefined) headers[name] = value;
 				}
 				if (req.headers["transfer-encoding"] !== undefined) headers["transfer-encoding"] = req.headers["transfer-encoding"];
+				headers.host = canonicalHost;
 				headers.connection = "close";
 				if (viaProxy && upstreamProxy?.authorization !== undefined)
 					headers["proxy-authorization"] = upstreamProxy.authorization;
 				const forward = http.request({
 					method: req.method,
-					path: viaProxy ? url.href : `${url.pathname}${url.search}`,
+					path: viaProxy ? `http://${canonicalHost}${url.pathname}${url.search}` : `${url.pathname}${url.search}`,
 					headers,
 					setHost: false,
 					createConnection: () => upstream,
