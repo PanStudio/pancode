@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+
 import type { OutputStyle } from "../core/defaults.js";
 import type { ViewArtifact } from "../domains/session/view-artifacts.js";
 import type { TelemetryView } from "../domains/telemetry/contract.js";
