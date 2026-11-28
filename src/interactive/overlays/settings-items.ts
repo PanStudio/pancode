@@ -585,7 +585,7 @@ export function buildSettingItems(
 function yoloAcceptanceNote(settings: Readonly<PancodeSettings>): string {
 	const yolo = settings.safety.yoloAccepted ? "accepted" : "not yet accepted";
 	const unconfined = settings.safety.yoloUnconfinedAccepted ? "accepted" : "not accepted";
-	return `Yolo is ${yolo}; unconfined yolo is ${unconfined} (safety.yoloAccepted and safety.yoloUnconfinedAccepted in settings.yaml).`;
+	return `YOLO is ${yolo}; unconfined YOLO is ${unconfined} (safety.yoloAccepted and safety.yoloUnconfinedAccepted in settings.yaml).`;
 }
 
 function fleetProfileRows(

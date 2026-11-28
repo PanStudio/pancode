@@ -412,7 +412,7 @@ export async function conversationSteps(run: SmokeRun) {
 		await taskMenu.getByRole("menuitem", { name: "Close session", exact: true }).waitFor();
 		await page
 			.locator(".composer")
-			.getByText("Working freedom for this session", { exact: true })
+			.getByText("Autonomy for this session", { exact: true })
 			.waitFor({ state: "attached" });
 		await check("session-controls");
 		const menuBounds = await taskMenu.locator(".wb-menu__panel").boundingBox();

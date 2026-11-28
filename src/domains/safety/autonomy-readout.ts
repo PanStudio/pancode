@@ -50,7 +50,7 @@ export function autonomyWindowReadout(
 ): AutonomyWindowReadout | null {
 	const { dot, narrow } = options;
 	if (status.halted !== null) {
-		return { text: narrow ? "yolo paused" : `yolo paused ${dot} ${options.resumeHint}`, tone: "warning", halted: true };
+		return { text: narrow ? "YOLO paused" : `YOLO paused ${dot} ${options.resumeHint}`, tone: "warning", halted: true };
 	}
 	const { caps, usage } = status;
 	const minutes = Math.floor(usage.activeMs / 60_000);

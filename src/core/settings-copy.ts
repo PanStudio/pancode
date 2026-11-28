@@ -222,7 +222,7 @@ export const SETTINGS_DESCRIPTIONS_BY_ID = {
 /** Longer, optional guidance shown beneath the one-line description when there is room. */
 export const SETTINGS_HELP_BY_ID: Partial<Record<string, string>> = {
 	"safety.autonomy":
-		"Default edits the workspace, dispatches routine work, and runs your shell commands without asking inside an OS sandbox where the host has one (workspace and scratch roots writable, credentials hidden). Commands that leave the sandbox, outward actions and former hard blocks are first reviewed by the safety judge against your requests, larger dispatch plans ask you, and destructive workspace operations run after a snapshot /rewind can undo. Yolo shows no approval cards: it keeps default's sandbox and safety judge, and a call that would need your approval is refused back to PanCode instead. Both modes still ask you questions. Unconfined yolo (safety.yoloConfinement, accepted once) skips approvals and the sandbox; only the yolo floor and rules in an approved .pancode/safety.yaml block. Yolo's first activation asks you to accept it once, and it is refused as root outside a container.",
+		"Default edits the workspace, dispatches routine work, and runs your shell commands without asking inside an OS sandbox where the host has one (workspace and scratch roots writable, credentials hidden). Commands that leave the sandbox, outward actions and former hard blocks are first reviewed by the safety judge against your requests, larger dispatch plans ask you, and destructive workspace operations run after a snapshot /rewind can undo. YOLO shows no approval cards: it keeps default's sandbox and safety judge, and a call that would need your approval is refused back to PanCode instead. Both modes still ask you questions. Unconfined YOLO (safety.yoloConfinement, accepted once) skips approvals and the sandbox; only the YOLO floor and rules in an approved .pancode/safety.yaml block. YOLO's first activation asks you to accept it once, and it is refused as root outside a container.",
 	"chat.maxOutputTokens":
 		"Clamped down to each model's max-output cap and the remaining context window. Set 0 to use per-model caps only.",
 	"context.toolResultMaxBytes":
@@ -459,16 +459,16 @@ export const EXTRA_HELP: Record<string, [string, string]> = {
 		"How many bytes of tool output a prompt template's budget may give its turn when it asks for more than Tool output per turn. Empty lets a template only lower that limit.",
 	],
 	"safety.limits.autonomousToolCalls": [
-		"Yolo stretch tool calls",
-		"Tool calls one yolo stretch runs before it pauses for you to resume; 0 turns this cap off.",
+		"YOLO stretch tool calls",
+		"Tool calls one YOLO stretch runs before it pauses for you to resume; 0 turns this cap off.",
 	],
 	"safety.limits.autonomousMinutes": [
-		"Yolo stretch minutes",
-		"Minutes of active turn time one yolo stretch runs before it pauses for you to resume; 0 turns this cap off.",
+		"YOLO stretch minutes",
+		"Minutes of active turn time one YOLO stretch runs before it pauses for you to resume; 0 turns this cap off.",
 	],
 	"safety.limits.autonomousTokens": [
-		"Yolo stretch tokens",
-		"Tokens one yolo stretch spends before it pauses for you to resume; 0 turns this cap off.",
+		"YOLO stretch tokens",
+		"Tokens one YOLO stretch spends before it pauses for you to resume; 0 turns this cap off.",
 	],
 	"fleet.limits.runTimeoutMs": [
 		"Worker run time",
@@ -579,16 +579,16 @@ export const EXTRA_HELP: Record<string, [string, string]> = {
 		"Seconds a permission card or ask_user question waits for you before PanCode resolves it and keeps working: the parked call is denied, each unanswered question takes its recommended option unless that option leaves the workspace, and the session summary counts both. Any key on the card or question holds it. 0 waits forever, except that a yolo question waits 300 s at most, and after one lapses with no key pressed since, later questions wait at most 30 s. User settings only.",
 	],
 	"safety.yoloAccepted": [
-		"Yolo accepted",
-		"Set when you accept the one-time card that turns yolo on. Turn it off to see the card again. User settings only.",
+		"YOLO accepted",
+		"Set when you accept the one-time card that turns YOLO on. Turn it off to see the card again. User settings only.",
 	],
 	"safety.yoloConfinement": [
-		"Yolo confinement",
-		"contained keeps default's sandbox, snapshots and safety judge, and refuses back to the agent what would wait for you, so nothing stops. unconfined is the skip-permissions yolo: no sandbox unless safety.sandbox is required, only the yolo floor and your approved safety.yaml rules block, and it has its own one-time card. User settings only.",
+		"YOLO confinement",
+		"contained keeps default's sandbox, snapshots and safety judge, and refuses back to the agent what would wait for you, so nothing stops. unconfined is the skip-permissions YOLO: no sandbox unless safety.sandbox is required, only the YOLO floor and your approved safety.yaml rules block, and it has its own one-time card. User settings only.",
 	],
 	"safety.yoloUnconfinedAccepted": [
-		"Unconfined yolo accepted",
-		"Set when you accept the separate card for unconfined yolo; unconfined takes effect only when this is on, headless runs included. Turn it off to see that card again. User settings only.",
+		"Unconfined YOLO accepted",
+		"Set when you accept the separate card for unconfined YOLO; unconfined takes effect only when this is on, headless runs included. Turn it off to see that card again. User settings only.",
 	],
 	"safety.judge.enabled": [
 		"Safety judge",

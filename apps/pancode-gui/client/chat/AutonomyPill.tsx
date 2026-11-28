@@ -13,8 +13,8 @@ import { type AutonomyLevel, autonomyMenu, currentAutonomy, UNRECOGNIZED_MODE_NO
 import { useSessionTelemetry } from "./session-telemetry.js";
 
 const LEVELS: Readonly<Record<AutonomyLevel, { label: string; short: string; icon: "shield" | "bolt" }>> = {
-	default: { label: "Ask first", short: "Ask first", icon: "shield" },
-	yolo: { label: "Run without approvals", short: "Auto-run", icon: "bolt" },
+	default: { label: "Default", short: "Default", icon: "shield" },
+	yolo: { label: "YOLO", short: "YOLO", icon: "bolt" },
 };
 
 /**
@@ -104,7 +104,7 @@ export function AutonomyPill({
 				<Icon name="chevronDown" />
 			</summary>
 			<fieldset className="autonomy__panel">
-				<legend className="autonomy__title">Working freedom for this session</legend>
+				<legend className="autonomy__title">Autonomy for this session</legend>
 				{menu.rows.map((row) => (
 					<button
 						key={row.level}
@@ -128,10 +128,10 @@ export function AutonomyPill({
 						<p>{menu.confirmation}</p>
 						<div>
 							<button type="button" className="primary" disabled={set.isPending} onClick={() => set.mutate("yolo")}>
-								{set.isPending ? "Switching…" : "Run without approvals"}
+								{set.isPending ? "Switching…" : "Switch to YOLO"}
 							</button>
 							<button type="button" onClick={() => setConfirming(false)}>
-								Keep approvals
+								Keep Default
 							</button>
 						</div>
 					</div>

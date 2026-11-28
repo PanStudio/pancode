@@ -593,7 +593,7 @@ test("the footer shows YOLO mode, escalates ending/paused windows to the alert r
 		{ ...status, halted: { kind: "calls", limit: 600, detail: "600-call cap", usage: status.usage } },
 		160,
 	);
-	match(paused, /yolo paused · Enter continues/u);
+	match(paused, /YOLO paused · Enter continues/u);
 
 	// At 70/73 the turn's budget is nearly spent, so the window escalates to the alert row, narrow form when narrow.
 	const turn = { ...status, turn: { toolCalls: 70, budget: 73 } };
