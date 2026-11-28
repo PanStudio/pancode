@@ -23,7 +23,6 @@ import {
 	recordEndpointThroughput,
 	refineRuntimeTargetWithModelHints,
 } from "../../domains/providers/index.js";
-import type { HostInsertSource } from "../../domains/session/entries.js";
 import { readDiffusionFrame } from "../../engine/apis/diffusion-frames.js";
 import { setGlobalDefaultMaxOutputTokens } from "../../engine/apis/index.js";
 import { hasAssistantGenerationDelta } from "../../engine/generation-delta.js";
@@ -32,14 +31,11 @@ import { createRequestStructures } from "../../engine/request-structure.js";
 import type { AgentEvent, AgentMessage, EngineModel, Usage } from "../../engine/types.js";
 import type { resolveAgentTools } from "../../tools/agent-tools.js";
 import { closeAskUserInterviewOnAssistantTurn } from "../../tools/ask-user.js";
-import { completionOfToolResult, FINISH_DECLARATION_REMINDER, finishRoundDue } from "../../tools/finish.js";
+import { completionOfToolResult } from "../../tools/finish.js";
 import {
 	type AssistantCallTiming,
 	type BackendCacheVerdict,
 	backendCacheVerdict,
-	claimToolMarkupReprompt,
-	classifyTurnEnding,
-	endedOnCancelledInterview,
 	estimatedUsageForInterruptedTurn,
 	extractText,
 	extractThinking,
@@ -47,17 +43,13 @@ import {
 	HOST_STATUS_NOTICE_KEY,
 	hasStructuredToolCall,
 	isEmptyAbortedAssistantMessage,
-	noAnswerReprompt,
 	noteWrittenCalls,
-	rebaseToolMarkupReprompt,
 	sumRunUsage,
-	type ToolMarkupRepromptBudget,
 	terminalFailureFromAssistantMessage,
 	toolCallLabel,
 	toolNamesFromAgentState,
 	toolResultSummary,
 } from "../chat-loop-messages.js";
-import { withSettledHistory } from "../message-list-digest.js";
 import {
 	assessDraftLoop,
 	assessRepetition,
@@ -68,11 +60,11 @@ import {
 	toolCallFloodAbortReason,
 } from "../repetition-detector.js";
 import { assessToolProseLoop, runtimeNarratesToolCalls, shouldAssessToolProse } from "../tool-prose-loop.js";
-import { OVERSIZED_RESULT_STOP } from "../turn-context.js";
 import { stalledRequestEnd } from "../turn-recovery.js";
 import type { AgentRuntime, ChatLoopTarget } from "../turn-state.js";
 import { createStreamAdmission } from "./admission.js";
 import { createCallTelemetry } from "./calls.js";
+import { createContinuation } from "./continuation.js";
 import { TurnAdmissionError } from "./errors.js";
 import type { AgentBuildScope, TurnRuntimeScope } from "./scope.js";
 import { createTranscriptStream } from "./stream.js";
@@ -241,6 +233,9 @@ function buildAgentRuntime(rt: TurnRuntimeScope, inputs: AgentBuildInputs): Agen
 		admittedMessages: [],
 		admittedSystemPrompt: "",
 		getCurrentAgentSignal: () => undefined,
+		requiredToolReminder: null,
+		turnEndFiredFor: null,
+		pendingTerminalToolResult: null,
 		get requestStructure() {
 			return requestStructure;
 		},
@@ -256,7 +251,6 @@ function buildAgentRuntime(rt: TurnRuntimeScope, inputs: AgentBuildInputs): Agen
 	const { stampCallFailure, settleModelCall, abandonModelCall, openModelCall } = calls;
 	const watchdog = createStallWatchdog(scope);
 	const { clearStallTimer, armStallTimer, callWait, noteFirstOutput, firstOutputMs } = watchdog;
-	let requiredToolReminder: string | null = null;
 	const toolGates = createToolGates(scope);
 	rt.clearCurrentWatchdog();
 	let runIdentity = deps.turnIdentity?.();
@@ -320,221 +314,14 @@ function buildAgentRuntime(rt: TurnRuntimeScope, inputs: AgentBuildInputs): Agen
 	rt.clearCurrentWatchdog = clearStallTimer;
 	rt.callWait = callWait;
 
-	handle.agent.prepareNextTurnWithContext = async (_completed, signal?: AbortSignal) => {
-		scope.stallSuspendDepth += 1;
-		scope.guardStopCause = null;
-		// Host messages queued during the tool batch (X6). Taken now, so a cancel, a throw or an early return below
-		// drops them unrecorded; they enter the ledger only where they enter the outgoing context.
-		const hostMessages = deps.queueHandOver?.takeHostMessages?.() ?? [];
-		try {
-			if (!currentRun() || signal?.aborted || state.activeInterruptReason !== null) return undefined;
-			if (deps.hasQueuedSteering?.()) await deps.continuity?.pause();
-			const handoffChanged = (await deps.continuity?.settle(signal)) ?? false;
-			if (!currentRun() || signal?.aborted || state.activeInterruptReason !== null) return undefined;
-			const continued = await deliverInRunContinuation(signal);
-			const requirementChanged = requiredToolReminder !== null;
-			if (requiredToolReminder !== null) {
-				// Context-only host tails preserve task authority and the cached prefix (#423).
-				pushHostInsert("required-tool", { role: "user", content: requiredToolReminder, timestamp: Date.now() });
-				requiredToolReminder = null;
-			}
-			const contextChanged =
-				(await middleware.prepareToolContinuation(localRuntime, signal)) ||
-				handoffChanged ||
-				continued ||
-				requirementChanged;
-			// Retracting or installing only replaces or appends messages, so the install's publications read the history the
-			// guard's last publication checked: the guard runs it in that settled stretch (SC-6).
-			let restored = false as boolean;
-			const update = await context
-				.postToolContinuationGuard(localRuntime, signal, contextChanged, () => {
-					if (!currentRun() || signal?.aborted || state.activeInterruptReason !== null) return;
-					restored = withSettledHistory(() => context.installMemoryRestoration(localRuntime));
-				})
-				.catch((error: unknown) => {
-					// PanCode's guard, not the route, ended the turn (CLI-3).
-					if (error instanceof Error && error.name === OVERSIZED_RESULT_STOP) scope.guardStopCause = "oversized_tool_result";
-					throw error;
-				});
-			if (!currentRun() || signal?.aborted || state.activeInterruptReason !== null) return undefined;
-			// A tool hook changed a pinned block, or the guard's compaction dropped one: it rides the next request.
-			const pinned = context.appendPinnedContext(localRuntime);
-			// Last, nearest the next request, and recorded as they are pushed, so a rebuild replays the order sent.
-			for (const host of hostMessages)
-				pushHostInsert(
-					host.source,
-					{ role: "user", content: host.text, timestamp: Date.now() },
-					host.rule !== undefined ? { rule: host.rule } : undefined,
-				);
-			const tail = pinned || hostMessages.length > 0;
-			// Preparation can be long (compaction). A message typed during it is
-			// handed over now so Pi's poll right after this hook takes it.
-			deps.queueHandOver?.afterPrepareNextTurn();
-			// Compaction owns any replacement snapshot. Without one, publish the
-			// already-accounted reminder through context, not message events that
-			// would manufacture a new operator turn and reset task authority.
-			const messages = { messages: [...localRuntime.agent.state.messages], tools: [...localRuntime.agent.state.tools] };
-			if (!restored && update !== undefined) return tail ? { ...update, context: messages } : update;
-			return contextChanged || restored || tail ? { context: messages } : undefined;
-		} finally {
-			scope.stallSuspendDepth -= 1;
-			scope.lastActivityAt = performance.now();
-		}
-	};
-
-	// The run's final turn is where turn_end fires, so a middleware
-	// request_continuation (stalled turn, open tasks, finish contract,
-	// detached batches, skill wait) carries the run on inside it instead of
-	// resubmitting a fresh prompt after the turn rendered Done, which showed
-	// the operator two completions for one request. agent_end fires turn_end
-	// only for a final message this hook never saw: an engine that does not
-	// call finishTurn, or its thrown-failure path.
-	let turnEndFiredFor: AgentMessage | null = null;
-	handle.agent.finishTurn = async (turn) => {
-		// The tool batch has settled and no request has left for the next round.
-		if (currentRun() && deps.stopAtToolBoundary?.() === true) return { action: "end" };
-		// A tool batch that did not terminate, or an operator message already
-		// queued, carries the run on: this is not its final turn.
-		const final = !hasStructuredToolCall(turn.message) || pendingTerminalToolResult !== null;
-		// Operator messages waiting in PanCode's queue reach the engine here, after
-		// the tool batch and before Pi's steering poll, so the check below sees
-		// them and the run carries on with them instead of ending around them.
-		// An errored or aborted turn hands nothing over; the settle path decides.
-		if (
-			turn.message.stopReason !== "error" &&
-			turn.message.stopReason !== "aborted" &&
-			state.activeInterruptReason === null
-		) {
-			deps.queueHandOver?.atFinishTurn(final);
-		}
-		// A declared turn still settles before a queued message carries the run on: its terminal row, turn_end and seal
-		// belong to it, and the returns after turn_end below hand the queue over (FX-38).
-		if (!final || (localRuntime.agent.hasQueuedMessages?.() === true && state.turnCompletion === null)) return undefined;
-		// `finish` is turn-terminal (fleet design 4.3, FX-38): a required tool still pending after a declared completion
-		// asks for nothing more.
-		if (state.turnCompletion !== null) requiredToolReminder = null;
-		if (requiredToolReminder !== null && currentRun() && state.activeInterruptReason === null) {
-			return { action: "continue" };
-		}
-		// A call the model only wrote out never ran, and an empty reply answered nothing. One more round through normal
-		// admission lets it make the call or answer, and PanCode never parses or runs the markup itself. A guard's lock
-		// already told it tools are off, and an interview the operator dismissed is theirs to follow up.
-		const reprompt =
-			turn.message.stopReason === "stop" &&
-			!endedOnCancelledInterview(localRuntime.agent.state.messages.filter((message) => message !== turn.message))
-				? noAnswerReprompt(classifyTurnEnding([turn.message]), state.turnCallsDone)
-				: null;
-		const repromptBudget: ToolMarkupRepromptBudget | null =
-			reprompt !== null &&
-			currentRun() &&
-			state.activeInterruptReason === null &&
-			!state.synthesisToolLock &&
-			!state.toolBudgetLock &&
-			state.activeUserTurnId !== null
-				? claimToolMarkupReprompt(state.toolMarkupReprompt, state.activeUserTurnId, state.turnToolCalls)
-				: null;
-		if (repromptBudget !== null && reprompt !== null) {
-			state.toolMarkupReprompt = repromptBudget;
-			requiredToolReminder = reprompt.reminder;
-			deps.emitNotice(reprompt.notice, "warning", reprompt.noticeKey);
-			return { action: "continue" };
-		}
-		const terminal = pendingTerminalToolResult;
-		pendingTerminalToolResult = null;
-		if (terminal) persistence.appendTerminalToolAssistantTurn(terminal);
-		context.flushReconciledSnapshot();
-		turnEndFiredFor = turn.message;
-		scope.stallSuspendDepth += 1;
-		// Fleet design 4.3: an unattended turn that did work and ended undeclared gets one round pinned to finish. A
-		// zero-tool turn the stalled-turn nudge flags counts as work there, the nudge yielding to it (memory design MD14).
-		const finishRoundFor = (calledWork: boolean): boolean =>
-			finishRoundDue({
-				headless: deps.headless === true,
-				origin: state.currentTurnOrigin?.origin,
-				promptOrigin: state.promptOrigin,
-				declared: state.turnCompletion !== null,
-				calledWork,
-				spent: state.finishRoundSpent,
-				toolsLocked: state.synthesisToolLock || state.toolBudgetLock,
-				endedOnTerminalTool: terminal !== null,
-				finishAttached: localRuntime.agent.state.tools.some((tool) => tool.name === ToolNames.Finish),
-			});
-		let stalledYield = false;
-		try {
-			stalledYield = await middleware.fireTurnEnd(
-				localRuntime,
-				localRuntime.agent.state.messages,
-				terminal ?? undefined,
-				() => finishRoundFor(true),
-			);
-		} finally {
-			scope.stallSuspendDepth -= 1;
-			scope.lastActivityAt = performance.now();
-		}
-		if (!currentRun() || state.activeInterruptReason !== null) return undefined;
-		if (turn.message.stopReason === "error" || turn.message.stopReason === "aborted") return undefined;
-		// `finish` is turn-terminal (fleet design 4.3): a declared turn takes no further round, whatever asked.
-		if (state.turnCompletion !== null) return undefined;
-		if (!state.continuation.requested) {
-			if (!finishRoundFor(state.turnCalledWork || stalledYield)) return undefined;
-			state.finishRoundSpent = true;
-			middlewareToolChoice.apply([{ kind: "require_tool", toolName: ToolNames.Finish }]);
-			requiredToolReminder = FINISH_DECLARATION_REMINDER;
-			return { action: "continue" };
-		}
-		state.continuation.carryIntoRun();
-		return { action: "continue" };
-	};
-	// What the post-settle resubmit did between runs, done inside this one:
-	// a fresh per-turn tool count, the turn controller's collection, a
-	// turn_start marked as a continuation, and the buffered continuation
-	// reminders as model-only context.
-	const pushHostInsert = (source: HostInsertSource, message: AgentMessage, options?: { rule: string }): void => {
-		if (deps.hostInserts) deps.hostInserts.insert(localRuntime, source, [message], options);
-		else localRuntime.agent.state.messages.push(message);
-	};
-	const deliverInRunContinuation = async (signal?: AbortSignal): Promise<boolean> => {
-		if (!state.continuation.takeInRun()) return false;
-		state.turnToolCalls = 0;
-		state.toolMarkupReprompt = rebaseToolMarkupReprompt(state.toolMarkupReprompt);
-		state.turnToolNames = [];
-		state.turnCallsDone = [];
-		state.turnCollectedDetachedBatch = false;
-		middlewareToolChoice.reset();
-		let block: string | null = null;
-		try {
-			block = (await deps.prepareInRunContinuation?.(signal)) ?? null;
-		} catch {
-			// Collection is best effort; the continuation reminder still goes out.
-		}
-		if (!currentRun() || signal?.aborted || state.activeInterruptReason !== null) return false;
-		middleware.fireTurnStart(localRuntime, "", 0, true);
-		// The reminder block leads: only a block opening the message is host
-		// framing, and the orientation block quotes scout findings.
-		// Buffered reminders wait for the next unlocked request: they may ask for a tool.
-		const locked = state.synthesisToolLock || state.toolBudgetLock;
-		const content = [locked ? "" : middleware.flushPendingReminders(), block]
-			.filter((part): part is string => part !== null && part.length > 0)
-			.join("\n\n");
-		if (content.length === 0) return false;
-		pushHostInsert("continuation", { role: "user", content, timestamp: Date.now() });
-		persistence.appendInRunContinuation();
-		return true;
-	};
+	const continuation = createContinuation(scope);
+	handle.agent.prepareNextTurnWithContext = continuation.prepareNextTurnWithContext;
+	handle.agent.finishTurn = continuation.finishTurn;
 
 	// First call of the run is the one whose verdict says whether the
 	// backend reused the session prefix; later calls in a tool loop are
 	// trivially warm.
 	let runFirstCallVerdict: BackendCacheVerdict | null = null;
-	// artifact plan/review/report set ToolResult.terminate=true so the agent
-	// loop skips the follow-up LLM call that would otherwise produce the
-	// assistant message carrying the turn's terminal stopReason. Track the
-	// most recent terminating tool result here; a real assistant
-	// message_end (the follow-up call did happen, e.g. another tool in the
-	// same batch did not also set terminate) clears it. If it is still set
-	// at agent_end, no terminal ledger row was ever written for this turn,
-	// so one is synthesized below.
-	let pendingTerminalToolResult: { toolCallId: string; toolName: string } | null = null;
 	// Per streamed assistant message: how far each block was last checked for repetition. The prose filter
 	// hands every delta a fresh partial object, so the counters reset on the message lifecycle, not identity.
 	const repetitionCheck = { text: 0, thinking: 0 };
@@ -568,7 +355,7 @@ function buildAgentRuntime(rt: TurnRuntimeScope, inputs: AgentBuildInputs): Agen
 		scope.lastActivityAt = eventClock;
 		let enrichedEvent = event;
 		if (event.type === "message_end" && event.message.role === "assistant") {
-			requiredToolReminder = middlewareToolChoice.completeRound(event.message);
+			scope.requiredToolReminder = middlewareToolChoice.completeRound(event.message);
 			const cutOff = outputLimitCutOffToolCallIds(event.message);
 			for (const id of cutOff) rt.cutOffToolCalls.add(id);
 			// One line states the limit where it applies, instead of one failed call per call (bt-39 a).
@@ -749,7 +536,7 @@ function buildAgentRuntime(rt: TurnRuntimeScope, inputs: AgentBuildInputs): Agen
 		}
 		if (publicEvent?.type === "message_end" && publicEvent.message.role === "assistant") scope.cutStalledRequest = null;
 		if (publicEvent?.type === "agent_start") {
-			turnEndFiredFor = null;
+			scope.turnEndFiredFor = null;
 			scope.cutStalledRequest = null;
 			state.continuation.clearInRun();
 			scope.apiCallStartedAt = null;
@@ -757,7 +544,7 @@ function buildAgentRuntime(rt: TurnRuntimeScope, inputs: AgentBuildInputs): Agen
 			scope.preInvocationStage = "transform";
 			scope.placeholderKeySent = false;
 			runFirstCallVerdict = null;
-			pendingTerminalToolResult = null;
+			scope.pendingTerminalToolResult = null;
 			clearStallTimer();
 			scope.toolsInFlight = 0;
 			scope.stallSuspendDepth = 0;
@@ -919,7 +706,7 @@ function buildAgentRuntime(rt: TurnRuntimeScope, inputs: AgentBuildInputs): Agen
 		if (enrichedEvent.type === "message_end") {
 			persistence.appendQueuedUserTurn(enrichedEvent.message);
 			const isAssistant = enrichedEvent.message?.role === "assistant";
-			if (isAssistant) pendingTerminalToolResult = null;
+			if (isAssistant) scope.pendingTerminalToolResult = null;
 			const timing: AssistantCallTiming | null =
 				isAssistant && scope.apiCallStartedAt !== null
 					? {
@@ -979,7 +766,7 @@ function buildAgentRuntime(rt: TurnRuntimeScope, inputs: AgentBuildInputs): Agen
 				? null
 				: completionOfToolResult(enrichedEvent.toolName, enrichedEvent.result);
 			if (completion !== null) state.turnCompletion = completion;
-			pendingTerminalToolResult =
+			scope.pendingTerminalToolResult =
 				(enrichedEvent.result as { terminate?: boolean } | undefined)?.terminate === true
 					? { toolCallId: enrichedEvent.toolCallId, toolName: enrichedEvent.toolName }
 					: null;
@@ -988,17 +775,17 @@ function buildAgentRuntime(rt: TurnRuntimeScope, inputs: AgentBuildInputs): Agen
 			await deps.continuity?.pause();
 			clearStallTimer();
 			if (!currentRun()) return;
-			const terminal = pendingTerminalToolResult;
-			pendingTerminalToolResult = null;
+			const terminal = scope.pendingTerminalToolResult;
+			scope.pendingTerminalToolResult = null;
 			if (terminal) {
 				persistence.appendTerminalToolAssistantTurn(terminal);
 			}
 			context.flushReconciledSnapshot();
 			const finalAssistant = [...enrichedEvent.messages].reverse().find((message) => message.role === "assistant");
-			if (terminal !== null || finalAssistant === undefined || finalAssistant !== turnEndFiredFor) {
+			if (terminal !== null || finalAssistant === undefined || finalAssistant !== scope.turnEndFiredFor) {
 				await middleware.fireTurnEnd(localRuntime, enrichedEvent.messages, terminal ?? undefined);
 			}
-			turnEndFiredFor = null;
+			scope.turnEndFiredFor = null;
 		}
 	};
 	handle.agent.subscribe((event) => {

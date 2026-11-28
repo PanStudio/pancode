@@ -149,6 +149,18 @@ export interface AgentBuildScope {
 	admittedMessages: readonly AgentMessage[];
 	admittedSystemPrompt: string;
 	getCurrentAgentSignal: () => AbortSignal | undefined;
+	/** The reminder for a tool the next round must call; a pending one carries the run on at finishTurn. */
+	requiredToolReminder: string | null;
+	turnEndFiredFor: AgentMessage | null;
+	// artifact plan/review/report set ToolResult.terminate=true so the agent
+	// loop skips the follow-up LLM call that would otherwise produce the
+	// assistant message carrying the turn's terminal stopReason. Track the
+	// most recent terminating tool result here; a real assistant
+	// message_end (the follow-up call did happen, e.g. another tool in the
+	// same batch did not also set terminate) clears it. If it is still set
+	// at agent_end, no terminal ledger row was ever written for this turn,
+	// so one is synthesized below.
+	pendingTerminalToolResult: { toolCallId: string; toolName: string } | null;
 	readonly requestStructure: RequestStructures;
 	readonly currentRun: () => boolean;
 	readonly localRuntime: AgentRuntime;
