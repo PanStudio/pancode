@@ -63,8 +63,9 @@ test("project and local settings cannot override user autonomy, whether trusted 
 });
 
 // Retired level names must not regain meaning on any operator input surface.
-// tests/extended/knob-aliases.test.ts carries the same CLI guard outside CI.
 test("no CLI flag or settings editor accepts a retired autonomy name", () => {
+	strictEqual(parseRunCliArgs(["--autonomy", "default", "task"]).autonomy, "default");
+	strictEqual(parseRunCliArgs(["--autonomy", "yolo", "task"]).autonomy, "yolo");
 	for (const retired of ["suggest", "auto-edit", "full-auto", "capable", "read-only"]) {
 		strictEqual(parseRunCliArgs(["--autonomy", retired, "task"]).diagnostics[0]?.type, "error", retired);
 		strictEqual(extractGlobalFlags(["--autonomy", retired]).error, "--autonomy must be default|yolo", retired);

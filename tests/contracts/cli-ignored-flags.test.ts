@@ -261,6 +261,57 @@ describe("run --delegate-tools", () => {
 	});
 });
 
+describe("run task bounds", () => {
+	it("parses explicit task bounds without interpreting task prose", () => {
+		const parsed = parseRunCliArgs([
+			"--turn-mode",
+			"proposal",
+			"--allow-tools",
+			"context,tasks",
+			"--no-delegate",
+			"Plan it",
+		]);
+		deepStrictEqual(parsed.diagnostics, []);
+		deepStrictEqual(parsed.constraints, {
+			mode: "proposal",
+			allowedTools: ["context", "tasks"],
+			toolSurfaceSources: [
+				{
+					tools: ["context", "tasks"],
+					source: "--allow-tools",
+					remedy: "Restart the session with a wider --allow-tools list, then resubmit.",
+				},
+			],
+			delegation: "forbidden",
+		});
+		deepStrictEqual(parseRunCliArgs(["--allow-tools", "none", "Hello"]).constraints, {
+			allowedTools: [],
+			toolSurfaceSources: [
+				{
+					tools: [],
+					source: "--allow-tools",
+					remedy: "Restart the session with a wider --allow-tools list, then resubmit.",
+				},
+			],
+		});
+		equal(parseRunCliArgs(["Do not use tools"]).constraints, undefined);
+		equal(parseRunCliArgs(["--turn-mode", "guess"]).diagnostics[0]?.type, "error");
+	});
+
+	it("accepts the agent, agent profile and agent runtime flags", () => {
+		const parsed = parseRunCliArgs([
+			"--agent",
+			"scout",
+			"--agent-profile",
+			"code",
+			"--agent-runtime",
+			"llamacpp",
+			"task",
+		]);
+		deepStrictEqual(parsed.diagnostics, []);
+	});
+});
+
 describe("run --max-context-tokens", () => {
 	it("accepts the = form exactly like the space form", () => {
 		const inline = parseRunCliArgs(["--max-context-tokens=8192", "task"]);
