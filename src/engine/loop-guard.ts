@@ -20,8 +20,6 @@ import {
 	resolveGuardrail,
 	resolveTemplateCeiling,
 	templateBudgetLimit,
-	workerSynthesisReserveBlockReason,
-	workerSynthesisReserveDirective,
 	workerToolCallCapExceededReason,
 	workerToolCallCapSynthesisReason,
 } from "../core/guardrails.js";
@@ -61,7 +59,7 @@ import { synthesisLockoutDirective } from "./loop-guard-synthesis.js";
 
 export { stripDeadToolCallMarkup };
 
-export const LOOP_GUARD_REGISTRATION_ID = "guard.loop";
+const LOOP_GUARD_REGISTRATION_ID = "guard.loop";
 
 /**
  * Loop blocks tolerated per user turn before the turn is interrupted. Combined
@@ -251,25 +249,6 @@ export interface CreateLoopGuardRegistrationOptions {
 	 */
 	toolCallSoftLimit?: number;
 	/**
-	 * Worker only: tools that carry this agent's deliverable rather than its
-	 * exploration, admitted inside a reserve window alongside `read`. The
-	 * reserve exists to end broad discovery, not to stop an agent from
-	 * finishing: for an agent whose product is a report the tail is reads and
-	 * prose, but for one whose product is files the tail is reads and writes,
-	 * and blocking those made the last calls of every editing run bounce. Empty
-	 * for read-only agents, which keeps the reserve read-only exactly as before.
-	 */
-	deliveryTools?: ReadonlyArray<string>;
-	/**
-	 * Worker only: calls held back from the tail of {@link toolCallCeiling} for
-	 * verification reads and synthesis. Entering the window annotates one tool
-	 * result with a one-shot reserve directive and blocks further non-read
-	 * calls; reads still flow through the repetition and stagnation detectors.
-	 * Inactive when absent, zero, or not smaller than the cap, so existing
-	 * small-cap deployments and tests keep their exact behavior.
-	 */
-	toolCallReserve?: number;
-	/**
 	 * Orchestrator only: soft/hard per-turn tool-call budget. Crossing the soft
 	 * budget blocks this and every further call in the turn with a
 	 * stop-and-summarize directive; the hard ceiling additionally interrupts
@@ -318,15 +297,6 @@ export function createLoopGuardRegistration(options: CreateLoopGuardRegistration
 	const cap = options.toolCallCeiling;
 	let advisoryEmitted = false;
 	const synthesisLockout = options.turnSynthesisLockout === true;
-	const deliveryTools = [...new Set(options.deliveryTools ?? [])];
-	const reserveAdmits = (tool: string | undefined): boolean => isReserveAdmittedTool(tool, deliveryTools);
-	/**
-	 * Per-round non-compliance inside a reserve window. A reserve block is
-	 * steering rather than a runaway signal, so it never spends the lifetime
-	 * cap; this is what still bounds it. Reset by every admitted call, so the
-	 * total is bounded by the reserve's own remaining calls.
-	 */
-	let reserveDenials: { denials: number; correlationId?: string } = { denials: 0 };
 	/**
 	 * Run-level bound on refused attempts, counted per call and blind to
 	 * correlation. Every other bound here is per model round, which is correct
@@ -353,12 +323,6 @@ export function createLoopGuardRegistration(options: CreateLoopGuardRegistration
 		if (deniedAttempts <= denialBudget) return effects;
 		return [{ kind: "block_tool", reason: synthesisBackstopReason(input.toolName ?? "unknown"), severity: "hard-block" }];
 	};
-	// Reserve window bounds. Active only when a cap exists and is strictly
-	// larger than the reserve; a call is inside the window when its attempt
-	// ordinal exceeds this threshold but has not passed the cap itself.
-	const reserve = options.toolCallReserve ?? 0;
-	const reserveThreshold = cap !== undefined && reserve > 0 && cap > reserve ? cap - reserve : null;
-	let reserveDirectiveEmitted = false;
 	const blocksByTurn = new Map<string, number>();
 	const lastBlockedCallByTurn = new Map<string, string>();
 	/** Per turn: the call blocked last and how many times in a row it was blocked. */
@@ -1504,23 +1468,6 @@ export function createLoopGuardRegistration(options: CreateLoopGuardRegistration
 						severity: "warn",
 					});
 				}
-				// One-shot reserve directive: the first executed call inside the
-				// reserve window carries the steering annotation, so the model is
-				// told about the reserve without a blocked call spending budget.
-				if (
-					reserveThreshold !== null &&
-					cap !== undefined &&
-					!reserveDirectiveEmitted &&
-					count > reserveThreshold &&
-					count <= cap
-				) {
-					reserveDirectiveEmitted = true;
-					effects.push({
-						kind: "annotate_tool_result",
-						message: workerSynthesisReserveDirective(Math.max(0, cap - count), cap),
-						severity: "warn",
-					});
-				}
 				return effects;
 			}
 			const now = options.now?.() ?? Date.now();
@@ -1628,43 +1575,7 @@ export function createLoopGuardRegistration(options: CreateLoopGuardRegistration
 				const step = evaluateStepPolicy(input, turnKey, now);
 				if (step !== null) return step;
 
-				// Synthesis reserve (workers): the tail of the lifetime cap is held for
-				// verification reads and delivery. Discovery calls bounce with a
-				// steering reason that never carries the cap's machine prefix, so cap
-				// telemetry, worker aborts, and A2's cap-exhaustion notice stay
-				// untouched; reads and this agent's delivery tools keep flowing through
-				// the repetition and stagnation detectors below. The refusal is resolved
-				// before the call is counted: a call the harness refused never ran, so it
-				// does not spend the lifetime cap. The bound on refusals is reserveDenials
-				// and the synthesis backstop, both per model round.
-				if (
-					reserveThreshold !== null &&
-					cap !== undefined &&
-					!rejudge &&
-					count >= reserveThreshold &&
-					!reserveAdmits(input.toolName)
-				) {
-					if (reachesLockoutBackstop(reserveDenials, input)) {
-						if (synthesisLockout) {
-							capLockout = {
-								denials: 0,
-								...(input.correlationId !== undefined ? { correlationId: input.correlationId } : {}),
-							};
-							options.onSynthesisLockout?.();
-						}
-						return [{ kind: "block_tool", reason: workerToolCallCapSynthesisReason(cap), severity: "hard-block" }];
-					}
-					return [
-						{
-							kind: "block_tool",
-							reason: workerSynthesisReserveBlockReason(input.toolName ?? "unknown", Math.max(1, cap - count), cap),
-							severity: "hard-block",
-						},
-					];
-				}
-
 				if (!rejudge && !chainWrapper) count += 1;
-				reserveDenials = { denials: 0 };
 				if (cap !== undefined && count > cap) {
 					// No tool body executes past the cap. With the synthesis lockout
 					// wired the run is not aborted on the spot: the first crossing flips
@@ -1802,10 +1713,6 @@ export function createLoopGuardRegistration(options: CreateLoopGuardRegistration
 			return verdict;
 		},
 	};
-}
-
-function isReserveAdmittedTool(tool: string | undefined, deliveryTools: ReadonlyArray<string>): boolean {
-	return tool === ToolNames.Read || (tool !== undefined && deliveryTools.includes(tool));
 }
 
 export function resolveDeliveryTools(

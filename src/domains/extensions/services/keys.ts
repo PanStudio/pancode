@@ -11,7 +11,7 @@
 
 import type { ExtensionKeyDeclaration } from "@pancode/sdk/pack";
 
-export const EXTENSION_KEYS_MAX = 2;
+const EXTENSION_KEYS_MAX = 2;
 
 const KEY_PATTERN = /^alt\+([a-z])$/u;
 

@@ -17,6 +17,9 @@ import {
 	replayEntries,
 	replayEntryKinds,
 	replayIndex,
+	replayPlayControl,
+	replaySeekKey,
+	replayStateText,
 	replayWindow,
 } from "./trace-replay-model.js";
 import "./trace-replay.css";
@@ -56,6 +59,7 @@ export function TraceReplay({ client, run, timeline, live }: TraceReplayProps) {
 	const nextId = next?.key ?? null;
 	const delay = current && next ? replayDelay(current, next, speed, reducedMotion) : null;
 	const atEnd = index === entries.length - 1;
+	const play = replayPlayControl(following, playing, atEnd, entries.length);
 
 	useEffect(() => {
 		if (eventId === null && currentId !== null) setEventId(currentId);
@@ -107,7 +111,7 @@ export function TraceReplay({ client, run, timeline, live }: TraceReplayProps) {
 	const seek = (position: number) => {
 		setPlaying(false);
 		setFollowing(false);
-		setEventId(entries[Math.max(0, Math.min(entries.length - 1, position))]?.key ?? null);
+		setEventId(replaySeekKey(entries, position));
 	};
 	const toggle = () => {
 		if (following) {
@@ -155,7 +159,7 @@ export function TraceReplay({ client, run, timeline, live }: TraceReplayProps) {
 					<h2 id={`${id}-title`}>Trace replay</h2>
 				</div>
 				<span className="trace-replay__state" role="status">
-					{following && capturing ? "Following capture" : playing ? "Playing recording" : "Recording paused"}
+					{replayStateText(following, capturing, playing)}
 				</span>
 			</div>
 			<p className="panel-note">
@@ -171,10 +175,10 @@ export function TraceReplay({ client, run, timeline, live }: TraceReplayProps) {
 					className="trace-replay__play"
 					onClick={toggle}
 					disabled={entries.length < 2 && !following}
-					aria-label={following || playing ? "Pause replay" : atEnd ? "Replay from first entry" : "Play recorded entries"}
+					aria-label={play.label}
 				>
-					<Icon name={following || playing ? "stop" : "play"} />
-					{following || playing ? "Pause" : atEnd && entries.length > 1 ? "Replay" : "Play"}
+					<Icon name={play.icon} />
+					{play.text}
 				</button>
 				<button type="button" onClick={() => seek(index + 1)} disabled={!next} title="Next entry">
 					<span>Step</span>

@@ -19,6 +19,7 @@ import { dismissAll, LiveRegions, NoticeToasts, notify, useNotices } from "./des
 import { PwaBoot } from "./design/pwa.js";
 import { Reconnect } from "./design/reconnect.js";
 import { LEFT_SIDEBAR, RIGHT_SIDEBAR, Splitter } from "./design/Splitter.js";
+import { useMediaQuery } from "./design/use-media-query.js";
 import { appCommands, liveStopTarget, type PaletteTask } from "./interaction/commands.js";
 import { focusComposerSoon } from "./interaction/focus-return.js";
 import { HelpFrame, PaletteFrame, preloadDialogs } from "./interaction/LazyDialogs.js";
@@ -38,6 +39,7 @@ import {
 	taskRows,
 	taskTitle,
 	wizardModeFor,
+	workspacesByRecency,
 } from "./shell/shell-model.js";
 import { staleBundle } from "./shell/stale-bundle-model.js";
 import { TaskSidebar } from "./shell/TaskSidebar.js";
@@ -58,30 +60,6 @@ const ReportDialog = lazy(() =>
 
 const PHONE = "(max-width: 760px)";
 
-function usePhone(): boolean {
-	const [phone, setPhone] = useState(() => typeof matchMedia === "function" && matchMedia(PHONE).matches);
-	useEffect(() => {
-		const query = matchMedia(PHONE);
-		const change = () => setPhone(query.matches);
-		query.addEventListener("change", change);
-		change();
-		return () => query.removeEventListener("change", change);
-	}, []);
-	return phone;
-}
-
-function useDocked(): boolean {
-	const [docked, setDocked] = useState(() => typeof matchMedia === "function" && matchMedia(ASIDE_DOCK_QUERY).matches);
-	useEffect(() => {
-		const query = matchMedia(ASIDE_DOCK_QUERY);
-		const change = () => setDocked(query.matches);
-		query.addEventListener("change", change);
-		change();
-		return () => query.removeEventListener("change", change);
-	}, []);
-	return docked;
-}
-
 export function App({ client, local }: { client: Client; local: Client }) {
 	return (
 		<div className="app-layout">
@@ -99,8 +77,8 @@ function Workbench({ client, local }: { client: Client; local: Client }) {
 	const { controls, requestClose } = useSessionCommands();
 	const navigate = useNavigate();
 	const location = useLocation();
-	const phone = usePhone();
-	const docked = useDocked();
+	const phone = useMediaQuery(PHONE);
+	const docked = useMediaQuery(ASIDE_DOCK_QUERY);
 	const asideExpanded = useAsideExpanded();
 	const [asideSlot, setAsideSlot] = useState<HTMLElement | null>(null);
 	const [connection, setConnection] = useState<ConnectionState>(client.signedIn ? "Connecting…" : "Not connected");
@@ -213,7 +191,7 @@ function Workbench({ client, local }: { client: Client; local: Client }) {
 		const known = new Set(workspaces.data?.map((workspace) => workspace.id));
 		for (const candidate of [snapshot?.workspaceId, routeWorkspace, remembered])
 			if (candidate && known.has(candidate)) return candidate;
-		return [...(workspaces.data ?? [])].sort((a, b) => b.openedAt.localeCompare(a.openedAt))[0]?.id ?? null;
+		return workspacesByRecency(workspaces.data ?? [])[0]?.id ?? null;
 	}, [snapshot?.workspaceId, routeWorkspace, remembered, workspaces.data]);
 	useEffect(() => {
 		if (snapshot?.workspaceId) rememberWorkspace(snapshot.workspaceId);

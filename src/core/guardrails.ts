@@ -24,9 +24,9 @@ interface GuardrailValues {
 	turnToolCallBudget: number;
 	/**
 	 * Lifetime cap on tool calls a dispatched worker may execute. It bounds
-	 * admitted calls, not attempts: a call the harness refuses (a reserve-window
-	 * steering block, a synthesis-lockout denial) never ran and never spends the
-	 * cap, because a worker must not be killed by the harness's own refusals.
+	 * admitted calls, not attempts: a call the harness refuses (a
+	 * synthesis-lockout denial) never ran and never spends the cap, because a
+	 * worker must not be killed by the harness's own refusals.
 	 * Attempts stay bounded by the loop-block budget and the synthesis backstop.
 	 *
 	 * Sized so a recipe's declared budget is what actually binds. A writer that
@@ -120,33 +120,6 @@ export function templateBudgetLimit(
 	const allowed = Math.max(operator, ceiling ?? operator);
 	if (template <= allowed) return { limit: template, bound: "template" };
 	return { limit: allowed, bound: allowed > operator ? "ceiling" : "operator" };
-}
-
-/**
- * One-shot annotation attached to the first tool result inside the reserve
- * window. Advisory: the call that carried it still ran; only subsequent
- * non-read calls are blocked.
- */
-export function workerSynthesisReserveDirective(remaining: number, cap: number): string {
-	return (
-		`budget reserve: only ${remaining} of your ${cap} tool calls remain, and they are reserved for verification ` +
-		"reads and synthesis. Stop broad exploration now: re-read the locations you will cite, then answer in prose. " +
-		"Calls that are not reads will be blocked."
-	);
-}
-
-/**
- * Block reason for a non-read call inside the reserve window. Deliberately
- * does NOT start with the `workerToolCallCap reached (` machine prefix:
- * reserve blocks are steering, not cap exhaustion, and must never trip
- * {@link mentionsWorkerToolCallCap} or the worker abort predicates.
- */
-export function workerSynthesisReserveBlockReason(tool: string, remaining: number, cap: number): string {
-	return (
-		`workerToolCallReserve: only ${remaining} of ${cap} tool calls remain and they are reserved for verification ` +
-		`reads and synthesis; ${tool} is not a read. Re-read any locations you will cite, then answer in prose from ` +
-		"what you have gathered."
-	);
 }
 
 export function workerToolCallCapExceededReason(cap: number): string {

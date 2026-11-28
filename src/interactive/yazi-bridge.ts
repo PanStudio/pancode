@@ -84,7 +84,6 @@ export interface YaziBridgeDeps {
 	/** TUI lease used only by the no-mux, in-terminal chooser. */
 	stopUi?: () => void;
 	startUi?: () => void;
-	runTerminalChooser?: (options: { cwd: string; profileMode: YaziProfileMode }) => Promise<YaziTerminalChooserResult>;
 	statPath?: (path: string) => "file" | "directory" | "other";
 	livenessMs?: number;
 	pickToken?: () => string;
@@ -531,16 +530,13 @@ export function createYaziBridge(deps: YaziBridgeDeps): YaziBridge {
 		}
 		const mode = options.once || settings.profile === "user" ? "chooser" : settings.mode;
 		if (!deps.mux?.available()) {
-			const result = await (
-				deps.runTerminalChooser ??
-				((choiceOptions) =>
-					runYaziTerminalChooser({
-						...choiceOptions,
-						stopUi: deps.stopUi ?? (() => {}),
-						startUi: deps.startUi ?? (() => {}),
-						requestRender: deps.requestRender,
-					}))
-			)({ cwd: deps.getCwd(), profileMode: settings.profile });
+			const result = await runYaziTerminalChooser({
+				cwd: deps.getCwd(),
+				profileMode: settings.profile,
+				stopUi: deps.stopUi ?? (() => {}),
+				startUi: deps.startUi ?? (() => {}),
+				requestRender: deps.requestRender,
+			});
 			if (result.status === "chosen") {
 				paneCwd = result.choice.cwd;
 				insert(result.choice.paths, result.choice.cwd);

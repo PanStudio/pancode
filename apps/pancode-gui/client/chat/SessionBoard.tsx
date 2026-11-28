@@ -7,6 +7,7 @@ import type { MemoryDecision } from "../../contracts/review.js";
 import { routes } from "../../contracts/runtime-routes.js";
 import type { Client } from "../api/client.js";
 import { heldSessionQuery } from "../api/session-query.js";
+import { RetryAlert } from "../design/run-inspection.js";
 import { StatusMark } from "../design/status.js";
 import {
 	boardView,
@@ -507,12 +508,13 @@ function MemoryReview({ client, workspaceId, titleId }: { client: Client; worksp
 			<h4 id={titleId}>{memoryReviewHeading(rows.length)}</h4>
 			{pending.isPending ? <p className="drill__note">Reading pending lessons…</p> : null}
 			{pending.error ? (
-				<p role="alert" className="drill__note drill__note--error">
-					{pending.error.message}{" "}
-					<button type="button" className="drill__btn" onClick={() => void pending.refetch()}>
-						Try again
-					</button>
-				</p>
+				<RetryAlert
+					retry={() => void pending.refetch()}
+					className="drill__note drill__note--error"
+					buttonClassName="drill__btn"
+				>
+					{pending.error.message}
+				</RetryAlert>
 			) : null}
 			{pending.data && rows.length === 0 ? <p className="drill__note">{MEMORY_REVIEW_EMPTY}</p> : null}
 			{rows.length > 0 ? (

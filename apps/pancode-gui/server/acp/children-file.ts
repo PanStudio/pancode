@@ -69,7 +69,7 @@ export class ChildrenFile {
 		});
 	}
 	orphan(row: ChildRow) {
-		return ownerDead(row.ownerPid, row.ownerBirthToken);
+		return ownerDead({ pid: row.ownerPid, birth: row.ownerBirthToken });
 	}
 	async reap(row: ChildRow) {
 		// Recheck both identities immediately before each signal. No row means no candidate.

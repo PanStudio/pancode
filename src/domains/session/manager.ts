@@ -17,13 +17,18 @@ import {
 	type SessionTreeNode,
 	sessionPaths,
 } from "../../engine/session.js";
+import { startSessionHeartbeat } from "../../lib/heartbeat/heartbeat.js";
+import {
+	liveSessionOwner,
+	liveSessionRefusal,
+	registeredLiveOwner,
+	SessionLiveError,
+} from "../../lib/heartbeat/live-owner.js";
 import { collectSessionEntries } from "./compaction/session-entries.js";
 import type { SessionEntryInput, SessionMeta, TurnInput } from "./contract.js";
 import { isSessionEntry, type SessionEntry } from "./entries.js";
 import { SessionEntriesIndex } from "./entries-index.js";
 import { checkSessionFormatVersion } from "./format-version.js";
-import { startSessionHeartbeat } from "./heartbeat.js";
-import { liveSessionOwner, liveSessionRefusal, registeredLiveOwner, SessionLiveError } from "./live-owner.js";
 
 /**
  * Wraps engine/session.ts so the session domain can track the single in-memory

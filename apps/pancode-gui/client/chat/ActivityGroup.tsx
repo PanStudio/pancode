@@ -39,7 +39,8 @@ import { isAwaitingAnswer } from "./permission-state.js";
 import { ReasoningDisclosure } from "./Reasoning.js";
 import { WorkerRunRecord } from "./RunRecordLine.js";
 import { ToolCard } from "./tool-cards.js";
-import { describeTool, presentTool } from "./tool-presentation.js";
+import { describeTool } from "./tool-presentation.js";
+import { activityRows, soloActivity } from "./transcript-view-model.js";
 import "./chat-turn.css";
 
 export interface ActivityGroupProps {
@@ -205,19 +206,9 @@ export const ActivityGroup = memo(function ActivityGroup({
 	const decisions = useMemo(() => callDecisions(session.permissions), [session.permissions]);
 	const summary = summarizeActivity(items, decisions);
 	const running = runningItem(items);
-	// While a request is waiting, its card is the statement; the engine's "pending" notice beside it
-	// says the same thing twice. Once answered, the notice is the record.
-	const waiting = session.permissions.some(isAwaitingAnswer);
-	const rows = waiting ? items.filter((item) => item.kind !== "notice" || item.toolKind === "safety") : items;
-	// One settled call needs no group around it: "1 tool completed" over a single row is two clicks to
-	// read one line. The row stands in the transcript by itself. A change is left grouped, because its
-	// row opens to a diff and the turn already lists its changes at the end. The markup stays the same
-	// either way, so a row the operator opened while it ran keeps its state when the group settles.
-	const only = rows.length === 1 && items.length === 1 ? rows[0] : undefined;
-	const solo =
-		settled &&
-		only?.kind === "tool" &&
-		presentTool(only, workspaceRoot === undefined ? {} : { workspaceRoot }).body !== "diff";
+	const rows = activityRows(items, session.permissions.some(isAwaitingAnswer));
+	// A solo row keeps the same markup, so a row the operator opened while it ran keeps its state when the group settles.
+	const solo = soloActivity(items, rows, settled, workspaceRoot);
 	const open = solo || activityOpen(userOpen, settled, summary);
 	const detail =
 		summary.waiting > 0

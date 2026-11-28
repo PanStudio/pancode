@@ -15,7 +15,7 @@ import type { EconomyUnit } from "../../core/telemetry/economy.js";
 import type { QuotaAccess, QuotaOverage, QuotaQualification } from "../../core/telemetry/schemas.js";
 import type { QuotaStatus } from "../../core/telemetry/session-vocabulary.js";
 
-export type { QuotaAccess, QuotaOverage, QuotaQualification, QuotaStatus };
+export type { QuotaAccess, QuotaOverage, QuotaQualification };
 
 /** One rate-limit window reported by a provider. */
 export interface UsageWindow {

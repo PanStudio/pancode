@@ -28,12 +28,6 @@ import { economyTotalKnown } from "../core/views/usage-words.js";
 import { pancodeStateDir } from "../core/xdg.js";
 import { fleetRootStepRunIds } from "../domains/dispatch/fleet-root-seal.js";
 import {
-	loadRunCallsTelemetrySource,
-	loadRunScopeFiles,
-	loadRunTelemetrySource,
-	loadSessionTelemetrySource,
-} from "../domains/session/telemetry-source.js";
-import {
 	TELEMETRY_INSTALL_ID,
 	telemetryImportedStateDir,
 	telemetrySessionDirectory,
@@ -53,6 +47,12 @@ import { timeline } from "../domains/telemetry/read-model-timeline.js";
 import { whyStopped } from "../domains/telemetry/read-model-why-stopped.js";
 import type { SealVerdict } from "../domains/telemetry/seal.js";
 import { describeSealMismatch, readTelemetryScopeFilesSync, verifyTelemetryScope } from "../domains/telemetry/seal.js";
+import {
+	loadRunCallsTelemetrySource,
+	loadRunScopeFiles,
+	loadRunTelemetrySource,
+	loadSessionTelemetrySource,
+} from "../domains/telemetry/telemetry-source.js";
 import { explainRepoRef, isRepoRef, usageWindow } from "../domains/telemetry/usage-window.js";
 import { formatColumns, printError } from "./argv.js";
 import { resolveSessionSelector, resolveTelemetryTarget } from "./telemetry-target.js";

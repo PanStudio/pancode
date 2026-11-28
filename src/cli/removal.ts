@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import { existsSync, lstatSync, rmSync, unlinkSync } from "node:fs";
-import { openSessions, printable } from "../domains/session/heartbeat.js";
+import { openSessions, printable } from "../lib/heartbeat/heartbeat.js";
 import type { LifecyclePresenter } from "./lifecycle-presenter.js";
 
 /**

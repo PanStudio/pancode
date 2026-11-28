@@ -60,6 +60,7 @@ import type {
 	AcpToolKind,
 } from "./types.js";
 import {
+	ACP_ADMISSION_REASONS,
 	ACP_AGENT_META_KEY,
 	ACP_MAX_CHUNK_BYTES,
 	ACP_MAX_MODEL_ID_BYTES,
@@ -70,6 +71,7 @@ import {
 	ACP_MIN_TOOL_PROGRESS_INTERVAL_MS,
 	ACP_NOTICE_META_KEY,
 	ACP_TOOL_TIMING_META_KEY,
+	type AcpAdmissionReason,
 } from "./types.js";
 
 export interface AcpServerSession {
@@ -281,32 +283,12 @@ const TOOL_KIND_BY_NAME: Record<string, AcpToolKind> = {
 	steer: "other",
 };
 
-/**
- * The admission reasons this server puts on the wire (CONTRACT C001 §4). The
- * engine's runtime-resolution diagnostics are a larger and faster-moving set
- * (`runtime-target-unsupported`, `runtime-use-unsupported`,
- * `required-capability-missing`, …), and a client cannot branch on codes the
- * profile never promised, so anything outside this set is reported as the
- * catch-all rather than leaking an engine-internal identifier.
- */
-const ACP_ADMISSION_REASONS = new Set([
-	"orchestrator-not-configured",
-	"target-unknown",
-	"target-not-configured",
-	"target-not-found",
-	"runtime-not-registered",
-	"model-not-configured",
-	"chat-unsupported",
-	"streaming-unsupported",
-	"context-window-exceeded",
-	"handoff-skill-refused",
-	"admission-failed",
-]);
+const ACP_ADMISSION_REASON_SET: ReadonlySet<string> = new Set(ACP_ADMISSION_REASONS);
 
 /** A refusal whose notice carries no settings path and tells the client what to do instead, so it crosses the wire as text. */
 const ACP_VISIBLE_ADMISSION_REASONS = new Set(["handoff-skill-refused"]);
 
-const ACP_ADMISSION_FALLBACK_REASON = "admission-failed";
+const ACP_ADMISSION_FALLBACK_REASON: AcpAdmissionReason = "admission-failed";
 
 /**
  * Host information lines are not reply text: context engine status (working set, the compaction row, the no-gain line)
@@ -325,7 +307,7 @@ function isHostInfoNotice(level: unknown, noticeKey: unknown): boolean {
 }
 
 function admissionReason(raw: string): string {
-	return ACP_ADMISSION_REASONS.has(raw) ? raw : ACP_ADMISSION_FALLBACK_REASON;
+	return ACP_ADMISSION_REASON_SET.has(raw) ? raw : ACP_ADMISSION_FALLBACK_REASON;
 }
 
 export function toolKind(name: string | undefined): AcpToolKind {

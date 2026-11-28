@@ -24,6 +24,7 @@
 
 import { closeSync, constants, fstatSync, openSync, readSync, statSync } from "node:fs";
 import { join } from "node:path";
+import { HOST_VERIFICATION_EVENT } from "../../core/host-verification.js";
 import {
 	type OwnerIdentity,
 	ownerIdentity,
@@ -58,7 +59,6 @@ import {
 } from "./run-directory-records.js";
 import { RUN_FEED_READ_TAIL_BYTES, type RunFeedLine, readRunFeedLine, runFeedPath } from "./run-feed.js";
 import { type LedgerSnapshot, readLedgerSnapshot } from "./state.js";
-import { HOST_VERIFICATION_EVENT } from "./verification-slot.js";
 
 /** How often a pending ask is checked for an answer, and the ledger and feeds of foreign runs are read. */
 const CROSS_PROCESS_POLL_MS = 500;

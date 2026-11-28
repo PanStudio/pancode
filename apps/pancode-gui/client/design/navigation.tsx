@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useLocation } from "react-router";
 import { announce, composeTitle, useLiveState } from "../interaction/announcer.js";
+import { readPref, writePref } from "../interaction/prefs.js";
 
 /** `--paper` from client/design/brand.css, light and dark. scripts/sync-brand.mjs writes and checks these two. */
 export const THEME_COLORS: Readonly<Record<"light" | "dark", string>> = {
@@ -29,20 +30,8 @@ const SIDEBAR_KEY = "pancode-gui-sidebar";
 
 /** The desktop sidebar's collapsed state. It is a per-browser preference, kept like the theme. */
 export function useSidebarCollapsed(): readonly [boolean, () => void] {
-	const [collapsed, setCollapsed] = useState(() => {
-		try {
-			return localStorage.getItem(SIDEBAR_KEY) === "collapsed";
-		} catch {
-			return false;
-		}
-	});
-	useEffect(() => {
-		try {
-			localStorage.setItem(SIDEBAR_KEY, collapsed ? "collapsed" : "expanded");
-		} catch {
-			/* The choice holds for this tab. */
-		}
-	}, [collapsed]);
+	const [collapsed, setCollapsed] = useState(() => readPref(SIDEBAR_KEY) === "collapsed");
+	useEffect(() => writePref(SIDEBAR_KEY, collapsed ? "collapsed" : "expanded"), [collapsed]);
 	const toggle = useCallback(() => setCollapsed((current) => !current), []);
 	const first = useRef(true);
 	useEffect(() => {

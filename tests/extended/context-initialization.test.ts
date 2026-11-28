@@ -7,6 +7,7 @@ import { it } from "node:test";
 import { runInitCommand } from "../../src/cli/init.js";
 import { createContextOperation } from "../../src/core/context-operation.js";
 import { presentationTier, setPresentationTier } from "../../src/core/presentation-tier.js";
+import { resolveToolBudgetEnvelope } from "../../src/core/run-budget-envelope.js";
 import { runCommandVector } from "../../src/core/safe-exec.js";
 import { createTelemetryHub } from "../../src/core/telemetry/hub.js";
 import { loadRecipesFromDir } from "../../src/domains/agents/registry.js";
@@ -18,7 +19,6 @@ import {
 } from "../../src/domains/context/bootstrap-prompt.js";
 import { fitGeneratedHandbook, normalizeHandbookRule } from "../../src/domains/context/handbook-budget.js";
 import { parsePancodeMd, serializePancodeMd } from "../../src/domains/context/pancode-md.js";
-import { resolveToolBudgetEnvelope } from "../../src/domains/dispatch/budget-envelope.js";
 import { resolveDeliveryTools } from "../../src/engine/loop-guard.js";
 import { stripTerminalSequences, visibleWidth } from "../../src/engine/tui.js";
 import { createContextActivityStore, formatContextActivityRailLines } from "../../src/interactive/context-activity.js";

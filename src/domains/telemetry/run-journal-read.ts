@@ -3,7 +3,7 @@
 /**
  * The light per-run telemetry reader: one run's journal as the read model's `JournalSource`, for a caller that folds
  * run rows without the telemetry domain module. It reads what `loadRunCallsTelemetrySource`
- * (src/domains/session/telemetry-source.ts) reads for a run, through the same state boundary and the same unknown
+ * (src/domains/telemetry/telemetry-source.ts) reads for a run, through the same state boundary and the same unknown
  * coverage on an unreadable journal, but its static closure holds only the journal reader, the paths and the read
  * model, never `./index.ts` and the extension graph behind it, so `fleet status` over ledger rows stays a leaf path.
  */

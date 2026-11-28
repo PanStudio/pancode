@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
-import { loadRepoTelemetrySources } from "../session/telemetry-source.js";
+
 import type { JournalSource } from "./read-model-sources.js";
+import { loadRepoTelemetrySources } from "./telemetry-source.js";
 
 /** How far back `config inspect` reads a workspace's hook runs (#434). */
 export const HOOK_RUN_WINDOW_DAYS = 7;

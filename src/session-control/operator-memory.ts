@@ -96,8 +96,6 @@ interface OperatorMemoryDeps {
 	emit(report: OperatorMemoryReport): void;
 	/** A headless `pancode run` has no `/remember`; its notices name only what the CLI can do. */
 	headless?: boolean;
-	/** Background classification bound; tests shorten it. */
-	classifyTimeoutMs?: number;
 }
 
 type Placement =
@@ -258,7 +256,7 @@ export function createOperatorMemory(deps: OperatorMemoryDeps): OperatorMemory {
 		const placement = capture.placement;
 		if (placement === undefined) return;
 		const controller = new AbortController();
-		const timer = setTimeout(() => controller.abort(), deps.classifyTimeoutMs ?? 20_000);
+		const timer = setTimeout(() => controller.abort(), 20_000);
 		timer.unref?.();
 		void classifyOperatorStatement(client, capture.text, basename(store.cwd()), controller.signal)
 			.then(async (verdict) => {
