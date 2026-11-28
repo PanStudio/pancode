@@ -74,7 +74,7 @@ Contributions are accepted under the [Contributor License Agreement](CLA.md): yo
 | `pnpm run typecheck` | Check TypeScript across source, tests and scripts with `tsrs --fast`, falling back to `tsc` where tsrs cannot run. See [Typechecking](#typechecking). |
 | `pnpm run typecheck:tsc` / `pnpm run typecheck:compare` | Check with TypeScript's own `tsc`, or run both and fail if their diagnostics differ. Use them when `typecheck` reports something surprising or stays silent about an error you expect. |
 | `pnpm run lint` | Check formatting and Biome rules (any warning fails), source boundaries, license headers, catalog pins and repository hygiene. |
-| `pnpm run check:gui` | Check GUI browser and server TypeScript and lint rules. |
+| `pnpm run check:gui` | Check GUI browser and server TypeScript, lint rules and client bundle budgets. |
 | `pnpm run build` | Build `dist/` without emptying it, so a running PanCode from this tree keeps working; chunks no live process needs are pruned afterwards. |
 | `pnpm run build:release` | Clean build that empties `dist/` first. Use it for packaging, never in a tree another session runs from. |
 | `pnpm run test` | Default contract selection. Needs a build. |

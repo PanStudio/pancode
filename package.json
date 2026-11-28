@@ -132,7 +132,7 @@
 		"test:list": "node scripts/ci-tests.mjs list",
 		"check:lane": "node scripts/check-lane.mjs",
 		"check:packed-install": "node scripts/check-packed-install.mjs",
-		"check:gui": "node scripts/pnpm.mjs --filter pancode-gui typecheck && node scripts/pnpm.mjs --filter pancode-gui lint",
+		"check:gui": "node scripts/pnpm.mjs --filter pancode-gui typecheck && node scripts/pnpm.mjs --filter pancode-gui lint && node scripts/pnpm.mjs --filter pancode-gui bundle:check",
 		"ci": "node scripts/ci.mjs",
 		"release:build": "node scripts/release/build.mjs",
 		"release:smoke": "node scripts/release/smoke.mjs",

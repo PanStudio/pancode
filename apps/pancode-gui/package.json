@@ -21,7 +21,8 @@
 		"perf": "node --import tsx scripts/perf-workload.ts",
 		"test:pwa": "node --import tsx --test tests/real/background-pwa.test.ts",
 		"test:full": "node ../../scripts/ci-tests.mjs gui",
-		"check:brand": "node scripts/sync-brand.mjs --check && node scripts/check-contrast.mjs"
+		"check:brand": "node scripts/sync-brand.mjs --check && node scripts/check-contrast.mjs",
+		"bundle:check": "vite build && node scripts/bundle-report.mjs --client dist/client"
 	},
 	"dependencies": {
 		"@hono/node-server": "2.1.8",
