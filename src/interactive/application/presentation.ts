@@ -6,7 +6,7 @@
  * parts, the setting actions, the yazi bridge, the notice sinks and the attach controller.
  */
 
-import { openDetachedBatchViews } from "../../domains/dispatch/nudges/dispatch-nudge.js";
+import { openDetachedBatchViews, uncollectedFleetRootViews } from "../../domains/dispatch/nudges/dispatch-nudge.js";
 import { type PromptRef, promptRefs } from "../../domains/extensions/operator-commands.js";
 import { setDiffusionFramesEnabled } from "../../engine/apis/diffusion-frames.js";
 import { createAgentProgress } from "../../engine/tui.js";
@@ -248,7 +248,7 @@ export function createAppPresentation(scope: ApplicationScope) {
 		write: (data) => terminal.write(data),
 		enabled: () => deps.getSettings?.().interface.desktopNotifications ?? false,
 		interactiveTty: () => process.stdout.isTTY === true,
-		getOpenBatches: () => openDetachedBatchViews(deps.dispatch),
+		getOpenBatches: () => [...openDetachedBatchViews(deps.dispatch), ...uncollectedFleetRootViews(deps.fleetRuns)],
 	});
 	const busNoticeSink = {
 		appendReplayBlock: (renderBlock: Parameters<typeof chatPanel.appendReplayBlock>[0]) =>

@@ -107,6 +107,7 @@ export async function runInteractiveSurface(surface: BootSurfaceInput, seams: Bo
 		providers,
 		dispatch,
 		...(agents ? { agents } : {}),
+		...(toolBootstrap.fleetRuns ? { fleetRuns: toolBootstrap.fleetRuns } : {}),
 		...(() => {
 			const scheduling = result.getContract("scheduling");
 			return scheduling ? { scheduling } : {};

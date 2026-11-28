@@ -35,6 +35,7 @@ import { bindDockedWorkerApproval } from "./worker-activity.js";
 export type OverlayLifecycleApplicationDeps = Pick<
 	import("./interactive-deps.js").InteractiveDeps,
 	| "agents"
+	| "fleetRuns"
 	| "bus"
 	| "chat"
 	| "commitSetting"
@@ -707,6 +708,7 @@ export function createOverlayLifecycle(deps: OverlayLifecycleRuntimeDeps): Overl
 		standingTurnConstraints: () => deps.app.chat.toolLimits?.(),
 		...(deps.setFleetRunPhase ? { setFleetRunPhase: deps.setFleetRunPhase } : {}),
 		...(deps.fleetPlans ? { fleetPlans: deps.fleetPlans } : {}),
+		...(deps.app.fleetRuns ? { fleetRuns: deps.app.fleetRuns } : {}),
 	});
 
 	const openResumeOverlayState = overlaySessions.openResume;
@@ -723,7 +725,6 @@ export function createOverlayLifecycle(deps: OverlayLifecycleRuntimeDeps): Overl
 	const openViewOverlayState = overlayGeneralOpeners.openView;
 	const openSideQuestionOverlayState = overlayGeneralOpeners.openSideQuestion;
 	const openDraftOverlayState = overlayGeneralOpeners.openDraft;
-	const startFleetRunState = overlayGeneralOpeners.startFleetRun;
 	const startHandoffState = overlaySessions.startHandoff;
 	// The report host and the domain behind it load on the first /report, never at boot.
 	let reportHost: Promise<import("./report-flow.js").ReportHost> | null = null;
@@ -771,7 +772,7 @@ export function createOverlayLifecycle(deps: OverlayLifecycleRuntimeDeps): Overl
 		openViewOverlayState,
 		openSideQuestionOverlayState,
 		openDraftOverlayState,
-		startFleetRunState,
+		startFleetRunState: overlayGeneralOpeners.startFleetRun,
 		startHandoffState,
 		openReportState: (request) => withReportHost((host) => host.open(request)),
 		showReportStatusState: () => withReportHost((host) => host.status()),

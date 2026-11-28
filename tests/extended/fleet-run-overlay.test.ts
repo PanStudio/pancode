@@ -268,13 +268,81 @@ test("a settled fleet names its loops, and a loop checkpoint reads as progress r
 	}
 });
 
-test("a task typed after the playbook name points at --var task", () => {
-	deepStrictEqual(parseSlashCommand("/fleet run build-test Add clamp to calc.py"), {
+test("words after the playbook name are its task, refused when given twice or when the playbook has no {{task}}", async () => {
+	deepStrictEqual(parseSlashCommand("/fleet run build-test Add clamp to calc.py --var lang=py"), {
+		kind: "fleet-run",
+		name: "build-test",
+		vars: { lang: "py", task: "Add clamp to calc.py" },
+		task: "Add clamp to calc.py",
+	});
+	deepStrictEqual(parseSlashCommand("/fleet run build-test --var lang=py"), {
+		kind: "fleet-run",
+		name: "build-test",
+		vars: { lang: "py" },
+	});
+	deepStrictEqual(parseSlashCommand("/fleet run build-test Add clamp --var task=other"), {
 		kind: "usage-error",
 		command: "fleet",
-		reason: 'Unexpected argument: Add; a playbook takes its task as --var task="<text>"',
+		reason: "the task is given twice: pass it as the argument after the playbook or as --var task=..., not both",
 		subcommand: "run",
 	});
+	const scratch = await isolatePancodeEnv("pancode-fleet-task-");
+	try {
+		const root = realpathSync(scratch.dir);
+		const agents = dispatchStubContext({ settings: DEFAULT_SETTINGS }).getContract("agents");
+		ok(agents);
+		const subjects: unknown[] = [];
+		let accept: (() => void) | undefined;
+		let ran = 0;
+		const transitions = { state: "closed", handle: null, showPermission: () => false, close: noop };
+		const openers = createOverlayGeneralOpeners({
+			dispatch: {} as DispatchContract,
+			agents,
+			transitions: transitions as unknown as OverlayGeneralOpenersDeps["transitions"],
+			getSessionMeta: () => ({ cwd: root }) as ReturnType<OverlayGeneralOpenersDeps["getSessionMeta"]>,
+			terminal: { columns: 100 } as OverlayGeneralOpenersDeps["terminal"],
+			requestRender: noop,
+			closeOverlay: () => {
+				transitions.state = "closed";
+			},
+			notify: noop,
+			loadFleetSources: () => ({
+				commands: null,
+				playbook: {
+					version: 3,
+					name: "survey",
+					description: "Survey fixture",
+					path: join(root, "survey.md"),
+					body: "Survey {{area}}.",
+					maxWorkers: 1,
+					budgetUsd: null,
+					onFailure: "stop",
+					steps: [{ kind: "agent", id: "survey", agent: "coder", scope: "readonly", dependencies: [] }],
+				} as never,
+			}),
+			openFleetRunApprovalOverlay: (_tui, options) => {
+				subjects.push(options.subject);
+				accept = options.onAccept;
+				return {} as ReturnType<NonNullable<OverlayGeneralOpenersDeps["openFleetRunApprovalOverlay"]>>;
+			},
+			runFleet: () => {
+				ran += 1;
+				return new Promise<FleetRunOutcome>(noop);
+			},
+		} as Partial<OverlayGeneralOpenersDeps> as OverlayGeneralOpenersDeps);
+		openers.startFleetRun("survey", { area: "src", task: "Add clamp" }, { task: "Add clamp" });
+		deepStrictEqual(subjects, [
+			{
+				ok: false,
+				name: "survey",
+				diagnostics: ["playbook 'survey' takes no task: its prompt has no {{task}}; pass its variables (area) with --var"],
+			},
+		]);
+		accept?.();
+		strictEqual(ran, 0, "a refused task starts nothing");
+	} finally {
+		scratch.restore();
+	}
 });
 
 test("an earlier fleet read from its record counts steps and loops as the live run did", async () => {

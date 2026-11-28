@@ -819,7 +819,7 @@ const FUNCTION_LINE_EXEMPTIONS: ReadonlyMap<string, number> = new Map([
 	["src/interactive/interactive-application.ts#createInteractiveApplication", 1706],
 	["src/interactive/interactive-presentation.ts#createInteractivePresentation", 1072],
 	["src/interactive/interactive-slash-runtime.ts#createInteractiveSlashRuntime", 793],
-	["src/interactive/overlay-general-openers.ts#createOverlayGeneralOpeners", 730],
+	["src/interactive/overlay-general-openers.ts#createOverlayGeneralOpeners", 656],
 	["src/interactive/overlay-lifecycle.ts#createOverlayLifecycle", 577],
 	["src/interactive/overlay-permission-lifecycle.ts#createOverlayPermissionLifecycle", 671],
 	["src/interactive/overlays/hub.ts#openHubOverlay", 603],
@@ -833,7 +833,7 @@ const FUNCTION_LINE_EXEMPTIONS: ReadonlyMap<string, number> = new Map([
 	["src/tools/dispatch-admission.ts#createDispatchAdmissionController", 868],
 	["src/tools/dispatch-compete.ts#runCompete", 543],
 	["src/tools/dispatch-runner.ts#runDispatchTool", 515],
-	["src/tools/gateway/index.ts#createGatewayTool", 875],
+	["src/tools/gateway/index.ts#createGatewayTool", 857],
 	["src/tools/gateway/mcp-capabilities.ts#createMcpCapabilitySource", 1673],
 ]);
 

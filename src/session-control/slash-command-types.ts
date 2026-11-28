@@ -149,8 +149,8 @@ type SlashCommandVariant =
 	/** `/poll <n> <question>`: n independent participants vote; a one-round vote council with explicit members. */
 	| { kind: "poll"; options: PollCommandOptions; source: string }
 	| { kind: "handoff"; goal: string }
-	/** `/fleet run <playbook>`: compile the plan, show it for approval, dispatch on accept. */
-	| { kind: "fleet-run"; name: string; vars: Record<string, string>; resume?: string }
+	/** `/fleet run <playbook> [task words]`: compile the plan, show it for approval, dispatch on accept. */
+	| { kind: "fleet-run"; name: string; vars: Record<string, string>; task?: string; resume?: string }
 	| { kind: "fleet" }
 	/** `/loop`: a bounded recurring job, or one of its control verbs. The words are parsed by loop-command.ts. */
 	| { kind: "loop"; command: LoopCommand }
@@ -348,6 +348,8 @@ export interface PromptReferenceCard {
 /** How `/fleet run` starts: a fresh run, or one that resumes a prior root's successful prefix. */
 export interface FleetRunStartOptions {
 	resume?: string;
+	/** The task typed after the playbook name, already bound as `vars.task`; a playbook with no `{{task}}` refuses it. */
+	task?: string;
 }
 
 interface SessionCommandContext {
