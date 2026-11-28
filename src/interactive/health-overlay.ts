@@ -93,12 +93,17 @@ interface OwnerName {
 }
 
 function ownerNames(journals: ReadonlyArray<Journal>, sessionId: string | null): OwnerName[] {
+	// The current session is named apart, so it does not count toward numbering the others.
+	const totals = new Map<string, number>();
+	for (const journal of journals) {
+		const split = journal.owner.indexOf(":");
+		if (split < 0 || journal.owner === `session:${sessionId}`) continue;
+		const kind = journal.owner.slice(0, split);
+		totals.set(kind, (totals.get(kind) ?? 0) + 1);
+	}
 	const seen = new Map<string, number>();
 	const counted = (single: string, numbered: string, kind: string) => {
-		// The current session is named apart, so it does not count toward numbering the others.
-		const total = journals.filter(
-			(journal) => journal.owner.startsWith(`${kind}:`) && journal.owner !== `session:${sessionId}`,
-		).length;
+		const total = totals.get(kind) ?? 0;
 		const next = (seen.get(kind) ?? 0) + 1;
 		seen.set(kind, next);
 		return total > 1 ? `${numbered} ${next}` : single;
@@ -148,14 +153,13 @@ function journalLosses(journal: Journal, owner: OwnerName): Loss[] {
  * same counters the details show. A loss names its count and where it happened; the counters run from when each
  * writer opened.
  */
-function healthSummary(data: HealthData): { text: string; ok: boolean } {
+function healthSummary(data: HealthData, names: ReadonlyArray<OwnerName>): { text: string; ok: boolean } {
 	const health = data.health;
 	if (!health)
 		return {
 			text: "PanCode cannot check its record keeping or responsiveness: this session has no telemetry read model.",
 			ok: false,
 		};
-	const names = ownerNames(health.journals, data.sessionId);
 	const losses = [
 		...health.journals.flatMap((journal, index) => {
 			const owner = names[index];
@@ -261,7 +265,8 @@ export function healthLines(data: HealthData, width: number, tier: OutputStyle =
 	const note = (text: string) => wrapTextWithAnsi(theme.fg("annotation", text), safe);
 	const lines: string[] = [];
 
-	const summary = healthSummary(data);
+	const names = data.health ? ownerNames(data.health.journals, data.sessionId) : [];
+	const summary = healthSummary(data, names);
 	const lead = wrapTextWithAnsi(
 		`${statusChip(theme, summary.ok ? "ok" : "warning")} ${theme.fg(summary.ok ? "body" : "warning", summary.text)}`,
 		safe,
@@ -271,7 +276,6 @@ export function healthLines(data: HealthData, width: number, tier: OutputStyle =
 	// repeating it.
 	const health = data.health;
 	if (health) {
-		const names = ownerNames(health.journals, data.sessionId);
 		const shown = health.journals.flatMap((journal, index) =>
 			everyRow || journalUnhealthy(journal) ? [{ journal, name: names[index] }] : [],
 		);
