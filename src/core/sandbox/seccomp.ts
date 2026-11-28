@@ -175,10 +175,13 @@ function assemble(steps: ReadonlyArray<Step>): Buffer {
  * Pure: the seccomp program bwrap loads, as the raw `struct sock_filter`
  * array in host byte order, covering the x86_64, x32, i386, aarch64 and arm
  * ABIs; any other ABI is allowed whole. `unixSockets` adds the `block` rules.
+ * `namespaces` is the isolated worker's outer variant: `clone` and `unshare`
+ * may create namespaces, so the worker's own children start under their own
+ * bwrap, which loads the full baseline; everything else stays denied.
  * Null on a big-endian host, where the offsets differ and no covered ABI runs.
  */
 export function sandboxFilterProgram(
-	rules: { unixSockets: boolean },
+	rules: { unixSockets: boolean; namespaces?: boolean },
 	byteOrder: "BE" | "LE" = endianness(),
 ): Buffer | null {
 	if (byteOrder !== "LE") return null;
@@ -217,9 +220,9 @@ export function sandboxFilterProgram(
 	if (rules.unixSockets) steps.push(ld(SECCOMP_DATA_ARG0_LOW, "socketcall"), jeq(SYS_SOCKET, "deny", "allow"));
 	steps.push(
 		ld(SECCOMP_DATA_ARG0_LOW, "clone"),
-		{ code: BPF_JMP_JSET_K, k: CLONE_NAMESPACE_FLAGS, jt: "deny", jf: "allow" },
+		{ code: BPF_JMP_JSET_K, k: rules.namespaces === true ? 0 : CLONE_NAMESPACE_FLAGS, jt: "deny", jf: "allow" },
 		ld(SECCOMP_DATA_ARG0_LOW, "unshare"),
-		{ code: BPF_JMP_JSET_K, k: UNSHARE_NAMESPACE_FLAGS, jt: "deny" },
+		{ code: BPF_JMP_JSET_K, k: rules.namespaces === true ? 0 : UNSHARE_NAMESPACE_FLAGS, jt: "deny" },
 		{ code: BPF_RET_K, k: SECCOMP_RET_ALLOW, label: "allow" },
 		{ code: BPF_RET_K, k: SECCOMP_RET_ERRNO | EPERM, label: "deny" },
 		{ code: BPF_RET_K, k: SECCOMP_RET_ERRNO | ENOSYS, label: "enosys" },

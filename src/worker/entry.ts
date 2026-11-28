@@ -32,6 +32,9 @@ import {
 	withManagedGitCommitAttributionEnvironment,
 } from "../core/git-commit-attribution.js";
 import { installProxyFromEnv } from "../core/proxy-env.js";
+import { adoptHostSandboxAvailability } from "../core/sandbox/availability.js";
+import { installModelRouteDispatcher } from "../core/sandbox/egress/model-route-client.js";
+import { WEB_FETCH_PROXY_PORT } from "../core/sandbox/egress/setup.js";
 import { withWorkerGitHookPaths } from "../core/sandbox/git-hooks-fingerprint.js";
 import { configureWorkerResourceLimits } from "../core/sandbox/resource-limits.js";
 import { configureWorkerProcessSandbox } from "../core/sandbox/worker-process.js";
@@ -75,6 +78,7 @@ import {
 	type WorkerSpec,
 	workerSpecToolNames,
 } from "../lib/worker-wire/spec-contract.js";
+import { routeWebFetchThroughHost } from "../tools/web-fetch-network.js";
 import { emitControlFrame, guardControlLane } from "./control-lane.js";
 import { projectWorkerEventForStdout } from "./event-projection.js";
 import { startWorkerHeartbeat } from "./heartbeat.js";
@@ -218,10 +222,16 @@ async function main(): Promise<number> {
 
 	const spec = await demux.readSpec();
 	process.title = `pancode-worker:${spec.agentId}`;
+	// D14: the provider origin is reached only through the host route, which adds the credential this process lacks.
+	if (spec.modelRoute !== undefined) await installModelRouteDispatcher(spec.modelRoute);
 	const attributionEnabled = spec.gitCommitAttribution ?? true;
 	configureGitCommitAttribution({ commitAttribution: attributionEnabled, commitAuthor: spec.gitCommitAuthor ?? "auto" });
 	// A dispatched worker is autonomous: under `auto` its commits name PanCode as author.
 	setAutonomousCommitProcess(true);
+	if (spec.isolatedSandbox !== undefined) {
+		adoptHostSandboxAvailability(spec.isolatedSandbox.executable);
+		routeWebFetchThroughHost(WEB_FETCH_PROXY_PORT);
+	}
 	// Every child this worker spawns through bash-exec or safe-exec runs under
 	// the dispatch-chosen OS sandbox from here on (decision Q8).
 	configureWorkerProcessSandbox(
@@ -409,6 +419,10 @@ async function main(): Promise<number> {
 	if (spec.sessionId) input.sessionId = spec.sessionId;
 	if (spec.telemetryContext) input.telemetryContext = { ...spec.telemetryContext };
 	if (spec.apiKey) input.apiKey = spec.apiKey;
+	else if (spec.modelRoute !== undefined) {
+		input.apiKey = spec.modelRoute.surrogate;
+		input.modelRoute = spec.modelRoute;
+	}
 	if (spec.authProfile) input.authProfile = spec.authProfile;
 	if (spec.credentialExpiresAt !== undefined) input.credentialExpiresAt = spec.credentialExpiresAt;
 	if (spec.thinkingLevel) input.thinkingLevel = spec.thinkingLevel;

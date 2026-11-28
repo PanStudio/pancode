@@ -292,6 +292,8 @@ export function sandboxLaunchFilters(
 	availability: SandboxAvailability,
 	roots: UnixSocketRoots,
 	existing: ReadonlyArray<SandboxMaskedPath>,
+	/** The isolated worker's outer launch: its program lets the worker's own children create namespaces. */
+	namespaces = false,
 ): SandboxLaunchFilters {
 	if (!availability.available || availability.executable === null) {
 		return { fields: {}, masks: [], state: { kind: "allowed" } };
@@ -304,7 +306,7 @@ export function sandboxLaunchFilters(
 	let missing = availability.degraded;
 	let seccompFilter: string | undefined;
 	if (missing === undefined) {
-		const program = sandboxFilterProgram({ unixSockets: mode === "block" });
+		const program = sandboxFilterProgram({ unixSockets: mode === "block", namespaces });
 		if (program === null) missing = "no seccomp filter for this host";
 		else {
 			try {

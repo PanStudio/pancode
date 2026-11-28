@@ -285,6 +285,17 @@ test("the sandbox status says what the main shell and a local worker get for eac
 		sandboxStatusLine(status("auto", missing)),
 		/main shell not sandboxed \(approval rails only\); local native workers refused$/u,
 	);
+	// Process isolation runs the worker itself in bwrap's network namespace, so open worker egress does not excuse it.
+	const isolation = (availability: typeof full, more: Partial<Parameters<typeof sandboxStatus>[0]> = {}) =>
+		status("auto", availability, { workerIsolationMode: "process", ...more }).workerIsolation;
+	assert.equal(status("auto", full).workerIsolation, "children");
+	assert.equal(isolation(full), "isolated");
+	assert.equal(isolation(partial), "refused");
+	assert.equal(isolation(full, { networkIsolation: "x", workerNetwork: true }), "refused");
+	assert.match(
+		sandboxStatusLine(status("auto", full, { workerIsolationMode: "process" })),
+		/local native workers isolated/u,
+	);
 });
 
 test("the seatbelt temp-directory write grant keeps read-only paths protected", () => {
