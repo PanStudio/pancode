@@ -3,13 +3,12 @@
 import { useQuery } from "@tanstack/react-query";
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { Link, NavLink, useLocation } from "react-router";
-import { routes } from "../../contracts/runtime-routes.js";
 import type { SessionOverviewItem } from "../../contracts/session-overview.js";
 import type { Workspace } from "../../contracts/sessions.js";
-import { ApiProblem, type Client, emptyInput } from "../api/client.js";
+import { type Client, problemCode } from "../api/client.js";
 import { formatTime } from "../api/clock.js";
 import type { ConnectionState } from "../api/events.js";
-import { SESSION_HISTORY_FRESHNESS } from "../api/queries.js";
+import { sessionHistoryQuery, systemQuery, workspacesQuery } from "../api/queries.js";
 import { liveElsewhereLabel } from "../chat/live-elsewhere-model.js";
 import { Icon } from "../design/icons.js";
 import { TONE_GLYPHS } from "../design/status.js";
@@ -87,7 +86,7 @@ export function TaskSidebar({
 	}, [location.pathname, location.search]);
 	const now = useMinuteClock();
 	const [shown, setShown] = useState(PROJECTS_SHOWN);
-	const workspaces = useQuery({ queryKey: ["workspaces"], queryFn: () => client.call(routes.workspaces, emptyInput) });
+	const workspaces = useQuery(workspacesQuery(client));
 	const overview = useSessionOverview(client);
 	// The installation check runs once the app is connected and idle, so the footer states a result, not "Not checked".
 	const [checkSystem, setCheckSystem] = useState(false);
@@ -97,8 +96,7 @@ export function TaskSidebar({
 		return afterBootIdle(() => setCheckSystem(true));
 	}, [connected, checkSystem]);
 	const system = useQuery({
-		queryKey: ["system"],
-		queryFn: () => client.call(routes.system, emptyInput),
+		...systemQuery(client),
 		enabled: checkSystem,
 		staleTime: 60_000,
 		refetchOnWindowFocus: false,
@@ -342,10 +340,8 @@ function ProjectGroup({
 	const expanded = open ?? current;
 	// A project the operator never opened still lists its saved tasks once it is expanded or searched.
 	const history = useQuery({
-		queryKey: ["session-history", workspace.id],
-		queryFn: () => client.call(routes.sessionHistory, { params: { id: workspace.id }, query: {}, body: {} }),
+		...sessionHistoryQuery(client, workspace.id),
 		enabled: expanded,
-		...SESSION_HISTORY_FRESHNESS,
 	});
 	const rows = useMemo(
 		() => taskRows(workspace.id, sessions, history.data ?? []),
@@ -406,7 +402,7 @@ function ProjectGroup({
 						<li className="wb-note">
 							{/* A list item may not carry the status role; the note inside it can. */}
 							<span role="status">
-								{history.error instanceof ApiProblem && history.error.problem.code === "unsupported" ? (
+								{problemCode(history.error) === "unsupported" ? (
 									"Saved tasks aren't available with this connection."
 								) : (
 									<>

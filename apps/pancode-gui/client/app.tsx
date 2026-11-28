@@ -9,7 +9,7 @@ import { routes } from "../contracts/runtime-routes.js";
 import type { SessionSummary } from "../contracts/sessions.js";
 import { useTokenRejected } from "./api/auth-state.js";
 import { BUNDLE_VERSION } from "./api/bundle-version.js";
-import { type Client, emptyInput } from "./api/client.js";
+import type { Client } from "./api/client.js";
 import { type ConnectionState, subscribe } from "./api/events.js";
 import { sessionQuery } from "./api/session-query.js";
 import { lastTokenWasRefused } from "./api/token.js";
@@ -48,6 +48,7 @@ import { launchedPath, openAppWindow, whenFocused } from "./shell/windows.js";
 import type { WizardExit } from "./wizard/Wizard.js";
 import type { WizardMode } from "./wizard/wizard-model.js";
 import "./shell/shell.css";
+import { metaQuery, sessionCommandsQuery, sessionHistoryQuery, workspacesQuery } from "./api/queries.js";
 
 // The setup wizard, its films and its styles load only when it opens.
 const Wizard = lazy(() => import("./wizard/Wizard.js"));
@@ -131,8 +132,7 @@ function Workbench({ client, local }: { client: Client; local: Client }) {
 	const layered = useLayersActive();
 	const refused = useTokenRejected() || (!client.signedIn && lastTokenWasRefused());
 	const meta = useQuery({
-		queryKey: ["meta"],
-		queryFn: () => client.call(routes.meta, emptyInput),
+		...metaQuery(client),
 		staleTime: Number.POSITIVE_INFINITY,
 		refetchOnWindowFocus: "always",
 		enabled: client.signedIn,
@@ -204,8 +204,7 @@ function Workbench({ client, local }: { client: Client; local: Client }) {
 	const runningTurnId = snapshot?.runningTurnId ?? null;
 
 	const workspaces = useQuery({
-		queryKey: ["workspaces"],
-		queryFn: () => client.call(routes.workspaces, emptyInput),
+		...workspacesQuery(client),
 		enabled: client.signedIn,
 	});
 	const routeWorkspace = /^\/workspaces\/([^/]+)/.exec(location.pathname)?.[1];
@@ -332,13 +331,7 @@ function Workbench({ client, local }: { client: Client; local: Client }) {
 		let current = true;
 		setPaletteTasks(collect());
 		void Promise.allSettled(
-			(workspaces.data ?? []).map((workspace) =>
-				queries.prefetchQuery({
-					queryKey: ["session-history", workspace.id],
-					queryFn: () => client.call(routes.sessionHistory, { params: { id: workspace.id }, query: {}, body: {} }),
-					staleTime: 30_000,
-				}),
-			),
+			(workspaces.data ?? []).map((workspace) => queries.prefetchQuery(sessionHistoryQuery(client, workspace.id))),
 		).then(() => {
 			if (current) setPaletteTasks(collect());
 		});
@@ -348,15 +341,12 @@ function Workbench({ client, local }: { client: Client; local: Client }) {
 	}, [paletteOpen, workspaces.data, overview.data, queries, client]);
 	// The open task's commands, read with the composer's own query and only while the palette is open.
 	const taskCatalog = useQuery({
-		queryKey: ["session-commands", sessionId ?? ""],
-		queryFn: () => client.call(routes.sessionCommands, { params: { id: sessionId ?? "" }, query: {}, body: {} }),
+		...sessionCommandsQuery(client, sessionId ?? ""),
 		enabled:
 			paletteOpen &&
 			sessionId !== null &&
 			snapshot?.state === "open" &&
 			!!queries.getQueryData<AgentCapabilities>(["session-capabilities", sessionId])?.commands,
-		staleTime: 30_000,
-		retry: false,
 	});
 	const openTask = useCallback(
 		(id: string) => {

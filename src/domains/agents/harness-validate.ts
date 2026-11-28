@@ -425,7 +425,7 @@ function settingsIssues(input: HarnessInput): HarnessIssue[] {
 				issues.push({
 					file,
 					field: `${field}.target`,
-					message: `names target '${profile.target}', which is not configured${suggestion(profile.target, targetIds)}; the profile is dropped silently and every agent bound to it falls back to fleet.default, so use one of ${listOf(targetIds)} or add the target with \`pancode targets add\``,
+					message: `names target '${profile.target}', which is not configured${suggestion(profile.target, targetIds)}; the profile is dropped silently and every agent bound to it falls back to fleet.default, so use one of ${listOf(targetIds)} or add the target with \`pancode configure\``,
 				});
 				continue;
 			}

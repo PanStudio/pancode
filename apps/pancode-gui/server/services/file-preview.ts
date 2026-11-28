@@ -3,7 +3,7 @@
 import { open, realpath, stat } from "node:fs/promises";
 import { isAbsolute, join, relative, sep } from "node:path";
 import type { FilePreview } from "../../contracts/sessions.js";
-import { relativePathEscapes, WORKSPACE_SECRET_PATHS } from "../pancode/http-shims.js";
+import { isSecretPath, relativePathEscapes, WORKSPACE_SECRET_PATHS } from "../pancode/http-shims.js";
 
 /** The most a preview reads. A longer file shows its start and says it stopped. */
 export const PREVIEW_MAX_BYTES = 256 * 1024;
@@ -69,6 +69,9 @@ export async function readFilePreview(root: string, input: string): Promise<File
 		return { status: "withheld", path, reason: "Secret files and Git's own directory are not shown here." };
 	const info = await stat(real);
 	if (!info.isFile()) return { status: "not-a-file", path, reason: "This is a folder or a special file, not a file." };
+	// The engine's own rule as well: home secret paths such as `.aws/credentials`, and `.npmrc` or `.pem` by content.
+	if (isSecretPath(resolved, real, false))
+		return { status: "withheld", path, reason: "Secret files and Git's own directory are not shown here." };
 	const handle = await open(real, "r");
 	try {
 		const buffer = Buffer.alloc(Math.min(info.size, PREVIEW_MAX_BYTES));

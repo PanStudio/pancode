@@ -8,7 +8,7 @@ import type { SettingControl, SettingsControls, SettingWritten } from "../../con
 import { STRUCTURED_SETTINGS } from "../../contracts/structured-settings.js";
 import { ApiProblem, type Client, emptyInput } from "../api/client.js";
 import { formatTime } from "../api/clock.js";
-import { useOperation } from "../api/queries.js";
+import { targetsOperationResult, targetsQuery, useOperation } from "../api/queries.js";
 import { Switch } from "../design/Switch.js";
 import { settingsDestination } from "../shell/shell-model.js";
 import { liveSearchWith, useSearchDraft } from "../shell/use-search-draft.js";
@@ -543,12 +543,7 @@ export function SettingsControlsView({
 	const sectionBar = useRevealCurrent<HTMLElement>(showDrafts ? "unsaved" : active);
 	const modelsVisible = editorControls.some((control) => MODEL_TARGET_PATHS[control.path]);
 	const inventory = useQuery({
-		// Keyed as the Connections page keys it: no workspace is the user's own list there too.
-		queryKey: ["targets", workspaceId ?? ""],
-		queryFn: () =>
-			workspaceId === null
-				? client.call(routes.userTargetsList, emptyInput)
-				: client.call(routes.targetsList, { ...emptyInput, params: { id: workspaceId } }),
+		...targetsQuery(client, workspaceId),
 		enabled: modelsVisible,
 	});
 	const [check, setCheck] = useState<{ operationId: string; targetId: string } | null>(null);
@@ -561,9 +556,9 @@ export function SettingsControlsView({
 		onSuccess: (value, targetId) => setCheck({ operationId: value.operationId, targetId }),
 	});
 	useEffect(() => {
-		const result = checkOperation.data?.status === "succeeded" ? checkOperation.data.result : null;
-		if (result && "targets" in result) queries.setQueryData(["targets", workspaceId ?? ""], result.targets);
-	}, [checkOperation.data, queries, workspaceId]);
+		const updated = targetsOperationResult(checkOperation.data);
+		if (updated) queries.setQueryData(targetsQuery(client, workspaceId).queryKey, updated);
+	}, [checkOperation.data, client, queries, workspaceId]);
 	const catalogFor = (control: SettingControl): ModelCatalog | undefined => {
 		const targetPath = MODEL_TARGET_PATHS[control.path];
 		if (!targetPath || control.access !== "writable") return undefined;

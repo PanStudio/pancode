@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
-import { createHash, randomBytes } from "node:crypto";
+import { randomBytes } from "node:crypto";
 import { lstat, mkdir, mkdtemp, realpath, rename, rm, rmdir, unlink, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, resolve, sep } from "node:path";
@@ -19,6 +19,7 @@ import {
 	readBackgroundConfig,
 } from "./background-config.js";
 import { desktopEntry, type LaunchPaths } from "./desktop-entry.js";
+import { sha256Hex } from "./fs-util.js";
 import { contents, installLauncher, launcherClash, launcherStatus, uninstallLauncher } from "./install.js";
 import { DEFAULT_GUI_PORT } from "./ports.js";
 import {
@@ -28,7 +29,6 @@ import {
 	windowsLauncherStatus,
 } from "./windows.js";
 
-const hash = (value: string) => createHash("sha256").update(value).digest("hex");
 type Control = typeof controlService;
 type Files = ReturnType<typeof backgroundPaths>;
 /** Resolves once the app answers; a fake in tests may resolve without its report. */
@@ -141,7 +141,7 @@ async function publishOwnedUnlocked(
 		if (unitChanged) await writeFile(join(staging, files.unit), unit, { flag: "wx", mode: 0o600 });
 		await writeFile(
 			join(staging, "owner.json"),
-			`${JSON.stringify({ v: OWNER_VERSION, owner: "pancode-gui-background", config: hash(configText), unit: hash(unit) })}\n`,
+			`${JSON.stringify({ v: OWNER_VERSION, owner: "pancode-gui-background", config: sha256Hex(configText), unit: sha256Hex(unit) })}\n`,
 			{ flag: "wx", mode: 0o600 },
 		);
 		if (replace) {
@@ -183,8 +183,8 @@ async function ownedOnce(directory: string) {
 			owner?.owner !== "pancode-gui-background" ||
 			!configText ||
 			!unit ||
-			owner.config !== hash(configText) ||
-			owner.unit !== hash(unit)
+			owner.config !== sha256Hex(configText) ||
+			owner.unit !== sha256Hex(unit)
 		)
 			throw new Error("Ownership mismatch");
 		const config = await readBackgroundConfig(files.config);

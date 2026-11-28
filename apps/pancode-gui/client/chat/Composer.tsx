@@ -135,6 +135,7 @@ import {
 import { useOutputDetail } from "./use-output-detail.js";
 import "./composer-box.css";
 import "./composer.css";
+import { sessionCapabilitiesQuery, sessionCommandsQuery } from "../api/queries.js";
 
 export interface ComposerProps {
 	readonly client: Client;
@@ -236,8 +237,7 @@ export const Composer = memo(function Composer({
 	// Read once per session and keep. Every steering route answers 409 when the
 	// agent announced nothing, so this decides what is rendered at all.
 	const capabilities = useQuery({
-		queryKey: ["session-capabilities", sessionId],
-		queryFn: () => client.call(routes.sessionCapabilities, params),
+		...sessionCapabilitiesQuery(client, sessionId),
 		enabled: sessionState === "open",
 		staleTime: Number.POSITIVE_INFINITY,
 		retry: false,
@@ -249,11 +249,8 @@ export const Composer = memo(function Composer({
 	// hub reload, so this observer lets it go stale where the palette does not.
 	const slashDraft = draft.text.trimStart().startsWith("/");
 	const commandCatalog = useQuery({
-		queryKey: ["session-commands", sessionId],
-		queryFn: () => client.call(routes.sessionCommands, params),
+		...sessionCommandsQuery(client, sessionId),
 		enabled: (actionsOpen || slashDraft) && sessionState === "open" && !!capabilities.data?.commands,
-		staleTime: 30_000,
-		retry: false,
 	});
 	// The slash palette. The textarea stays the combobox and owns every key; the list only renders.
 	const pane = usePaneActions();

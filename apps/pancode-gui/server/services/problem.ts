@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import { randomUUID } from "node:crypto";
+import type { Static, TSchema } from "typebox";
+import { Value } from "typebox/value";
 import type { Problem, ProblemCode } from "../../contracts/common.js";
 
 const statusByCode: Record<ProblemCode, number> = {
@@ -40,6 +42,22 @@ export function problemOf(error: unknown): Problem {
 	const problem = new AppProblem("internal", "The request could not be completed.").problem;
 	console.error(`[pancode:gui] ${problem.instance}`, error);
 	return problem;
+}
+
+/**
+ * `raw` cut down to `schema`'s fields; a value that still does not match is the `code` problem. `clone` keeps the
+ * caller's object intact, since Value.Clean removes the unknown fields in place.
+ */
+export function projected<S extends TSchema>(
+	schema: S,
+	raw: unknown,
+	code: ProblemCode,
+	message: string,
+	{ clone = false } = {},
+): Static<S> {
+	const value = Value.Clean(schema, clone ? structuredClone(raw) : raw);
+	if (!Value.Check(schema, value)) throw new AppProblem(code, message);
+	return value;
 }
 
 /** A request path or path segment, percent-decoded; malformed encoding is the caller's error (400), not ours. */

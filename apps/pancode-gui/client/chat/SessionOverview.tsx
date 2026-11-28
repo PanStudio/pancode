@@ -8,6 +8,7 @@ import { routes } from "../../contracts/runtime-routes.js";
 import type { Client } from "../api/client.js";
 import { emptyInput } from "../api/client.js";
 import { formatDuration } from "../api/clock.js";
+import { sessionBoardQuery, sessionTreeQuery, workspacesQuery } from "../api/queries.js";
 import type { IconName } from "../design/icons.js";
 import { Icon } from "../design/icons.js";
 import { StatusMark } from "../design/status.js";
@@ -165,7 +166,6 @@ export function SessionOverview({
 }) {
 	countRender("session-overview");
 	const [more, setMore] = useState(false);
-	const params = { params: { id: session.id }, query: {}, body: {} };
 	const open = session.state === "open";
 	const sessions = useQuery({
 		queryKey: ["sessions"],
@@ -173,8 +173,7 @@ export function SessionOverview({
 		enabled: active && more,
 	});
 	const workspaces = useQuery({
-		queryKey: ["workspaces"],
-		queryFn: () => client.call(routes.workspaces, emptyInput),
+		...workspacesQuery(client),
 		enabled: active && more,
 	});
 	const workspaceNames = new Map((workspaces.data ?? []).map((item) => [item.id, item.name]));
@@ -190,21 +189,13 @@ export function SessionOverview({
 	const settled = settledTurns(session.turns);
 	// The keys the drill-ins use, so opening one after the column costs no second request.
 	const board = useQuery({
-		queryKey: ["session-board", session.id, settled],
-		queryFn: () => client.call(routes.sessionBoard, params),
+		...sessionBoardQuery(client, session.id, settled),
 		enabled: active && open && !!capabilities.data?.board,
-		retry: false,
-		// The next settled turn changes the key; the last answer stays on screen until the new one lands,
-		// so rows (and the focus a row holds) do not vanish between the two reads.
-		placeholderData: (previous) => previous,
 	});
 	// The branches drill reads the same key, so its summary here costs no second request.
 	const tree = useQuery({
-		queryKey: ["session-tree", session.id, settled],
-		queryFn: () => client.call(routes.sessionTree, params),
+		...sessionTreeQuery(client, session.id, settled),
 		enabled: active && more && open && !!capabilities.data?.branches,
-		retry: false,
-		placeholderData: (previous) => previous,
 	});
 	const branches = tree.data ? branchView(tree.data) : null;
 	const tip = branches?.rows.filter((row) => row.tip && row.active).at(-1) ?? null;

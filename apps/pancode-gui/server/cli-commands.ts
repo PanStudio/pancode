@@ -3,10 +3,10 @@
 import { type Static, Type } from "typebox";
 import { Value } from "typebox/value";
 import { ArenaChoice, ArenaMatchId, ArenaNote, ArenaStartRequest } from "../contracts/arena.js";
-import { Id } from "../contracts/common.js";
+import { Id, Sha256 } from "../contracts/common.js";
 import { MachineAdd, MachineId } from "../contracts/machines.js";
 import { ResearchCampaignId, ResearchStartRequest } from "../contracts/research.js";
-import { MemoryDecision, MemoryId, Sha256, TrustSurface } from "../contracts/review.js";
+import { MemoryDecision, MemoryId, TrustSurface } from "../contracts/review.js";
 import { AppProblem } from "./services/problem.js";
 
 const closed = { additionalProperties: false };

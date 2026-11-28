@@ -1,16 +1,14 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
-import { createHash } from "node:crypto";
 import { constants } from "node:fs";
 import { access, lstat, mkdir, readFile, realpath, stat, unlink, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, isAbsolute, join } from "node:path";
 import { parseArgs } from "node:util";
 import { desktopEntry, type LaunchPaths, launcherId, launcherUnsupported } from "./desktop-entry.js";
+import { missing, sha256Hex } from "./fs-util.js";
 
-const hash = (value: string) => createHash("sha256").update(value).digest("hex");
 const names = { entry: `${launcherId}.desktop`, manifest: `${launcherId}.desktop.owner.json` };
-const missing = (error: unknown) => (error as NodeJS.ErrnoException).code === "ENOENT";
 
 /** A file at a launcher path that is there but is not one PanCode may read: a symlink, a directory, a hard link, too large, or another user's. */
 class UnsafeLauncherFile extends Error {}
@@ -61,7 +59,7 @@ export async function launcherStatus(prefix: string, platform: NodeJS.Platform =
 			entry !== null &&
 			value?.version === 1 &&
 			value?.owner === launcherId &&
-			value?.sha256 === hash(entry) &&
+			value?.sha256 === sha256Hex(entry) &&
 			desktopEntry(value.launch) === entry;
 		if (owned) {
 			await access(value.launch.node, constants.X_OK);
@@ -134,7 +132,7 @@ export async function installLauncher(prefix: string, paths: LaunchPaths) {
 	try {
 		await writeFile(
 			state.manifest,
-			`${JSON.stringify({ version: 1, owner: launcherId, sha256: hash(entry), launch })}\n`,
+			`${JSON.stringify({ version: 1, owner: launcherId, sha256: sha256Hex(entry), launch })}\n`,
 			{
 				flag: "wx",
 				mode: 0o600,

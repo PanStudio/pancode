@@ -2,11 +2,11 @@
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import type { CostReportV1 } from "../../contracts/wire.js";
 import { quantityParts } from "../telemetry/quantity-model.js";
+import { matchesText } from "./run-inspection-model.js";
 
 export function rankedMetricGroups(report: CostReportV1 | undefined, search: string) {
-	const terms = search.trim().toLocaleLowerCase().split(/\s+/).filter(Boolean);
 	return (report?.groups ?? [])
-		.filter((row) => terms.every((term) => row.key.toLocaleLowerCase().includes(term)))
+		.filter((row) => matchesText(search, [row.key]))
 		.sort(
 			(a, b) =>
 				(quantityParts(b.tokens).amount ?? -1) - (quantityParts(a.tokens).amount ?? -1) || a.key.localeCompare(b.key),

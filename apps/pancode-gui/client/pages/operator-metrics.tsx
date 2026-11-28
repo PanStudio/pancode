@@ -7,9 +7,8 @@ import type { UsagePerformance } from "../../contracts/reports.js";
 import { routes } from "../../contracts/runtime-routes.js";
 import type { CostReportV1, Quantity } from "../../contracts/wire.js";
 import type { Client } from "../api/client.js";
-import { emptyInput } from "../api/client.js";
 import { formatTime } from "../api/clock.js";
-import { SESSION_HISTORY_FRESHNESS } from "../api/queries.js";
+import { SESSION_HISTORY_FRESHNESS, sessionHistoryQuery, workspacesQuery } from "../api/queries.js";
 import { taskRows } from "../shell/shell-model.js";
 import { useSessionOverview } from "../shell/tasks.js";
 import { Explained } from "../telemetry/Explained.js";
@@ -42,8 +41,7 @@ export function useOperatorMetrics(client: Client, workspace = "") {
  */
 export function useScopeTasks(client: Client, workspace: string) {
 	const workspaces = useQuery({
-		queryKey: ["workspaces"],
-		queryFn: ({ signal }) => client.call(routes.workspaces, emptyInput, undefined, signal),
+		...workspacesQuery(client),
 		enabled: !workspace,
 	});
 	const ids = workspace ? [workspace] : (workspaces.data ?? []).map((row) => row.id);
@@ -52,19 +50,7 @@ export function useScopeTasks(client: Client, workspace: string) {
 	// pull its observer into the eager framework chunk for this lazy page.
 	const histories = useQuery({
 		queryKey: ["session-history", { scope: ids }],
-		queryFn: () =>
-			Promise.all(
-				ids.map((id) =>
-					queries
-						.fetchQuery({
-							queryKey: ["session-history", id],
-							queryFn: ({ signal }) =>
-								client.call(routes.sessionHistory, { params: { id }, query: {}, body: {} }, undefined, signal),
-							staleTime: SESSION_HISTORY_FRESHNESS.staleTime,
-						})
-						.catch(() => []),
-				),
-			),
+		queryFn: () => Promise.all(ids.map((id) => queries.fetchQuery(sessionHistoryQuery(client, id)).catch(() => []))),
 		enabled: ids.length > 0,
 		...SESSION_HISTORY_FRESHNESS,
 		meta: { errorSurface: "inline" },

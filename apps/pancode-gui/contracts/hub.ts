@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import { Type } from "typebox";
-import { Id } from "./common.js";
+import { Id, PlanId } from "./common.js";
 
 const closed = { additionalProperties: false };
 const record = Type.Record(Type.String(), Type.Unknown());
@@ -170,7 +170,7 @@ export const HubPlanRequest = Type.Object(
 );
 export const HubPlan = Type.Object(
 	{
-		id: Type.String({ pattern: "^[a-f0-9]{16}$" }),
+		id: PlanId,
 		createdAt: Type.String(),
 		expiresAt: Type.String(),
 		operation,
@@ -211,8 +211,8 @@ export const HubPlan = Type.Object(
 	},
 	closed,
 );
-export const HubPlanParams = Type.Object({ id: Id, planId: Type.String({ pattern: "^[a-f0-9]{16}$" }) }, closed);
-export const InstallationHubPlanParams = Type.Object({ planId: Type.String({ pattern: "^[a-f0-9]{16}$" }) }, closed);
+export const HubPlanParams = Type.Object({ id: Id, planId: PlanId }, closed);
+export const InstallationHubPlanParams = Type.Object({ planId: PlanId }, closed);
 export const HubApplyResult = Type.Object(
 	{
 		planId: Type.String(),

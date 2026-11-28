@@ -91,14 +91,11 @@ export class TargetsService {
 			? this.supervisor.installationControl(read, signal)
 			: this.supervisor.workspaceControl(workspaceId, read, signal);
 	}
-	private async cwd(workspaceId: string | null) {
-		return workspaceId === null ? this.workspaces.installationPath() : (await this.workspaces.get(workspaceId)).path;
-	}
 	async list(workspaceId: string | null, signal?: AbortSignal) {
 		return this.control(workspaceId, readTargets, signal);
 	}
 	async mutate(workspaceId: string | null, id: string, action: "probe" | "use" | "remove" | "signout", key: string) {
-		const cwd = await this.cwd(workspaceId);
+		const cwd = await this.workspaces.cwd(workspaceId);
 		return this.operations.create({
 			kind: `targets.${action}`,
 			scope: workspaceId ?? "installation",
@@ -178,7 +175,7 @@ export class TargetsService {
 		});
 	}
 	async routing(workspaceId: string | null): Promise<Routing> {
-		const cwd = await this.cwd(workspaceId);
+		const cwd = await this.workspaces.cwd(workspaceId);
 		const [rawModels, rawProfiles, rawBindings] = await Promise.all([
 			this.runner.run({ kind: "routing.models" }, cwd),
 			this.runner.run({ kind: "routing.profiles" }, cwd),
