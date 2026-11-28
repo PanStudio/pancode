@@ -155,10 +155,11 @@ export function buildBootAutonomy(input: BootAutonomyInput) {
 	// default does; only where a call would wait for a person does it differ,
 	// which `unattendedAsks` tells the registry. Prompts, auto-continuation and
 	// the footer keep the operator's level.
+	const resolveSafetySettings = () => (cells.effectiveSettingsForDispatch?.() ?? config?.get() ?? readSettings()).safety;
 	const resolveAdmissionAutonomy = (): AutonomyLevel =>
-		admissionAutonomy(resolveEffectiveAutonomy(), effectiveYoloConfinement(cells.getCurrentSettings().safety));
+		admissionAutonomy(resolveEffectiveAutonomy(), effectiveYoloConfinement(resolveSafetySettings()));
 	const unattendedYolo = (): boolean =>
-		containedYolo(resolveEffectiveAutonomy(), effectiveYoloConfinement(cells.getCurrentSettings().safety));
+		containedYolo(resolveEffectiveAutonomy(), effectiveYoloConfinement(resolveSafetySettings()));
 	// Every bash command this session runs carries its live level as an autonomy ceiling, and the contained pin while
 	// it runs contained yolo, so a pancode it starts cannot take more autonomy or less confinement than it has.
 	setToolEnvAutonomy(resolveEffectiveAutonomy, unattendedYolo);
