@@ -10,7 +10,7 @@ import { StatusMark } from "../design/status.js";
 import { useSetupStatus } from "../pages/target-onboarding.js";
 import { setAsideExpanded, useAsideExpanded } from "./aside-state.js";
 import { useShell } from "./shell-context.js";
-import { isHeld, isUntouched, STATE_LABELS, taskState, taskTitle } from "./shell-model.js";
+import { activeWork, isHeld, isUntouched, STATE_LABELS, taskTitle } from "./shell-model.js";
 import { useSessionOverview } from "./tasks.js";
 import "../chat/pane.css";
 import { workspacesQuery } from "../api/queries.js";
@@ -34,12 +34,7 @@ export function HomeAside({ client, workspace }: { client: Client; workspace: Wo
 	const live = (overview.data?.sessions ?? []).filter((session) => isHeld(session) && !isUntouched(session));
 	// "Running now" means work in motion or work waiting on the operator. An open task that sits idle
 	// is in the rail; listing it here made the heading untrue and left its row without a mark.
-	const active = live
-		.map((session) => ({ session, state: taskState(session) }))
-		.filter(
-			({ state }) =>
-				state === "working" || state === "waiting" || state === "starting" || state === "approval" || state === "question",
-		);
+	const active = activeWork(live).items;
 	const workers = live.reduce((sum, session) => sum + session.activeWorkers, 0);
 	const workersComplete = live.every((session) => session.workersComplete);
 	const status = setup.data;

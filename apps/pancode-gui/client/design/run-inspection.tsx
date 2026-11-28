@@ -41,6 +41,56 @@ export function InspectionError({
 	);
 }
 
+/** An inline alert that ends in a retry button: `{children} <button>Try again</button>`. */
+export function RetryAlert({
+	children,
+	retry,
+	busy,
+	label = "Try again",
+	className,
+	buttonClassName,
+}: {
+	children: ReactNode;
+	retry: () => void;
+	busy?: boolean;
+	label?: string;
+	className?: string;
+	buttonClassName?: string;
+}) {
+	return (
+		<p role="alert" className={className}>
+			{children}{" "}
+			<button type="button" className={buttonClassName} disabled={busy} onClick={retry}>
+				{label}
+			</button>
+		</p>
+	);
+}
+
+/** The next page of an infinite list, offered while one remains and the last refresh did not fail. */
+export function LoadOlder({
+	pages,
+	label,
+	loading = label,
+}: {
+	pages: {
+		hasNextPage: boolean;
+		isRefetchError: boolean;
+		isFetching: boolean;
+		isFetchingNextPage: boolean;
+		fetchNextPage: () => Promise<unknown>;
+	};
+	label: string;
+	loading?: string;
+}) {
+	if (!pages.hasNextPage || pages.isRefetchError) return null;
+	return (
+		<button type="button" disabled={pages.isFetching} onClick={() => void pages.fetchNextPage()}>
+			{pages.isFetchingNextPage ? loading : label}
+		</button>
+	);
+}
+
 export function InspectionTabs<T extends string>({
 	tabs,
 	value,

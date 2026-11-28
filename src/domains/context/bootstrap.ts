@@ -125,8 +125,6 @@ function progress(input: RunBootstrapInput, event: BootstrapProgressEvent): void
 	input.onProgress?.(event);
 }
 
-export { type PackageManager, packageManager } from "./package-manager.js";
-
 function stabilizeGeneratedOutput(
 	input: BootstrapGenerateInput,
 	base: BootstrapStructuredOutput,

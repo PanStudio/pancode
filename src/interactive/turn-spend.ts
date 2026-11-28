@@ -132,17 +132,10 @@ export function measuredCount(quantity: Quantity): string | null {
 	return fact.coverage.measured > 0 ? formatCount(fact.measured) : null;
 }
 
-/** The measured part of a quantity as a receipt states it, in the shared count form, or null when no call measured it. */
-function receiptCount(quantity: Quantity): string | null {
-	const fact = quantity.fact;
-	if ("kind" in fact) return fact.kind === "measured" ? formatCount(fact.value) : null;
-	return fact.coverage.measured > 0 ? formatCount(fact.measured) : null;
-}
-
 /** `in 321 · out 12` from what was measured, or null when neither side was. */
 function measuredTokens(input: Quantity, output: Quantity): string | null {
-	const inMeasured = receiptCount(input);
-	const outMeasured = receiptCount(output);
+	const inMeasured = measuredCount(input);
+	const outMeasured = measuredCount(output);
 	if (inMeasured === null && outMeasured === null) return null;
 	return [inMeasured === null ? null : `in ${inMeasured}`, outMeasured === null ? null : `out ${outMeasured}`]
 		.filter(Boolean)
@@ -150,7 +143,7 @@ function measuredTokens(input: Quantity, output: Quantity): string | null {
 }
 
 function measuredCached(cacheRead: Quantity): string | null {
-	const cached = receiptCount(cacheRead);
+	const cached = measuredCount(cacheRead);
 	return cached === null || cached === "0" ? null : cached;
 }
 

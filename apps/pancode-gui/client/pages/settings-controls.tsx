@@ -7,12 +7,12 @@ import { routes } from "../../contracts/runtime-routes.js";
 import type { SettingControl, SettingsControls, SettingWritten } from "../../contracts/settings-controls.js";
 import { STRUCTURED_SETTINGS } from "../../contracts/structured-settings.js";
 import { ApiProblem, type Client, emptyInput } from "../api/client.js";
-import { formatTime } from "../api/clock.js";
 import { targetsOperationResult, targetsQuery, useOperation } from "../api/queries.js";
 import { Switch } from "../design/Switch.js";
 import { settingsDestination } from "../shell/shell-model.js";
 import { liveSearchWith, useSearchDraft } from "../shell/use-search-draft.js";
-import { ACP_TARGET_MODEL_LIMIT, MODEL_TARGET_PATHS } from "./model-picker-model.js";
+import { modelCatalogView } from "./model-catalog-model.js";
+import { MODEL_TARGET_PATHS } from "./model-picker-model.js";
 import { ModelSelect } from "./model-select.js";
 import { StructuredSettingsEditor } from "./StructuredSettingsEditor.js";
 import {
@@ -32,6 +32,7 @@ import {
 	sourceLabel,
 	TIMING_PHRASE,
 	TIMING_SENTENCE,
+	withoutSavedDrafts,
 	writtenSentences,
 } from "./settings-control-model.js";
 import { useSettingsDrafts } from "./settings-drafts.js";
@@ -518,16 +519,8 @@ export function SettingsControlsView({
 	});
 	useEffect(() => {
 		if (!report.data) return;
-		setDrafts((current) => {
-			const next = { ...current };
-			let changed = false;
-			for (const control of report.data.controls) {
-				if (next[control.path] !== control.value) continue;
-				delete next[control.path];
-				changed = true;
-			}
-			return changed ? next : current;
-		});
+		const { controls } = report.data;
+		setDrafts((current) => withoutSavedDrafts(current, controls));
 	}, [report.data, setDrafts]);
 	// Model settings pick from their target's catalog. The inventory is read only when one is on
 	// screen, and "Check again" asks that target's endpoint for its current list.
@@ -564,56 +557,34 @@ export function SettingsControlsView({
 		if (!targetPath || control.access !== "writable") return undefined;
 		const targetControl = report.data?.controls.find((candidate) => candidate.path === targetPath);
 		const targetId = drafts[targetPath] ?? targetControl?.value ?? "";
-		if (targetId === "")
-			return {
-				models: null,
-				defaultModel: null,
-				note: `${targetControl?.label ?? targetPath} is automatic, so type an exact model id or choose a target first.`,
-			};
-		if (inventory.isPending) return { models: null, defaultModel: null, note: `Reading ${targetId}'s models…` };
-		if (!inventory.data)
-			return {
-				models: null,
-				defaultModel: null,
-				note: `The target list could not be read${inventory.error ? `: ${inventory.error.message}` : "."}`,
-			};
-		const target = inventory.data.targets.find((row) => row.id === targetId);
-		// The setting saved a connection the running engine does not list; that is what fails, not the choice itself.
-		if (!target)
-			return {
-				models: null,
-				defaultModel: null,
-				note: `PanCode's engine does not list ${targetId} among its connections, so its models cannot be shown here and new tasks cannot start on it. Repair or add it in Connections.`,
-			};
-		const checking =
-			check?.targetId === targetId &&
-			(startCheck.isPending || checkOperation.data?.status === "queued" || checkOperation.data?.status === "running");
-		const checked = check?.targetId === targetId ? checkOperation.data : undefined;
-		const source = checking
-			? `Asking ${targetId} for its models…`
-			: checked?.status === "succeeded"
-				? `${targetId} answered at ${formatTime(checked.finishedAt)}: ${target.models.length} ${target.models.length === 1 ? "model" : "models"}.`
-				: checked?.status === "failed"
-					? `The check did not finish: ${checked.problem.detail} These are the models PanCode last read from ${targetId}.`
-					: `The models PanCode last read from ${targetId}.`;
+		const view = modelCatalogView({
+			targetId,
+			targetLabel: targetControl?.label ?? targetPath,
+			inventory: {
+				pending: inventory.isPending,
+				targets: inventory.data?.targets ?? null,
+				error: inventory.error?.message ?? null,
+			},
+			check: check?.targetId === targetId ? { starting: startCheck.isPending, operation: checkOperation.data } : null,
+		});
+		const recheck = view.check;
 		return {
-			models: target.models.length > 0 ? target.models : target.defaultModel ? [target.defaultModel] : null,
-			defaultModel: target.defaultModel,
-			note: (
+			models: view.models,
+			defaultModel: view.defaultModel,
+			note: recheck ? (
 				<>
-					{source}
-					{target.modelsTruncated
-						? ` The list shows the first ${ACP_TARGET_MODEL_LIMIT}; choose Advanced: unverified model id for one not shown.`
-						: ""}{" "}
+					{view.note}{" "}
 					<button
 						type="button"
 						className="setting-control__check"
-						disabled={checking || startCheck.isPending}
-						onClick={() => startCheck.mutate(targetId)}
+						disabled={recheck.checking || startCheck.isPending}
+						onClick={() => startCheck.mutate(recheck.targetId)}
 					>
-						Check {targetId} again
+						Check {recheck.targetId} again
 					</button>
 				</>
+			) : (
+				view.note
 			),
 		};
 	};

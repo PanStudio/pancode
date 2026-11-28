@@ -119,7 +119,6 @@ export function createDispatchCore(context: DomainContext, options?: DispatchBun
 	const heartbeatSpec = options?.heartbeatSpec ?? DEFAULT_HEARTBEAT_SPEC;
 	const heartbeatIntervalMs = options?.heartbeatIntervalMs ?? DEFAULT_HEARTBEAT_INTERVAL_MS;
 	const getResilienceCooldownMs = (): number => {
-		if (options?.resilienceCooldownMs !== undefined) return options.resilienceCooldownMs;
 		const settingsVal = getEffectiveSettings()?.fleet?.retry.routeCooldownMs;
 		if (settingsVal !== undefined && settingsVal >= 0) return settingsVal;
 		return DEFAULT_RESILIENCE_COOLDOWN_MS;

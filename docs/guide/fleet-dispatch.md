@@ -128,7 +128,7 @@ immutable envelope from the recipe policy, the request, the effective worker
 budget and every clamp or escalation reason, then records the envelope on the
 run ledger row and in the run's `run.settled`. `monitor`, `fleet status` and the live fleet card print the
 recipe policy, the requested envelope, the effective envelope and the clamp or
-escalation reason ([run-budget-envelope.ts](../../src/core/run-budget-envelope.ts)).
+escalation reason ([budget-envelope.ts](../../src/domains/dispatch/budget-envelope.ts)).
 
 The envelope is advisory for every recipe; [built-in-agents.md](built-in-agents.md) describes the recipe side.
 `toolCalls` is an estimate. At that count the worker gets

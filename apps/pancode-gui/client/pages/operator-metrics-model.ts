@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import type { CostReportV1 } from "../../contracts/wire.js";
+import { matchesText } from "../design/text-match.js";
 import { quantityParts } from "../telemetry/quantity-model.js";
-import { matchesText } from "./run-inspection-model.js";
 
 export function rankedMetricGroups(report: CostReportV1 | undefined, search: string) {
 	return (report?.groups ?? [])

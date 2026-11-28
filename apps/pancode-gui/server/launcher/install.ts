@@ -5,6 +5,7 @@ import { access, lstat, mkdir, readFile, realpath, stat, unlink, writeFile } fro
 import { homedir } from "node:os";
 import { basename, isAbsolute, join } from "node:path";
 import { parseArgs } from "node:util";
+import { xdgBaseDir } from "../pancode/http-shims.js";
 import { desktopEntry, type LaunchPaths, launcherId, launcherUnsupported } from "./desktop-entry.js";
 import { missing, sha256Hex } from "./fs-util.js";
 
@@ -159,11 +160,7 @@ export async function launcher(args: string[], paths: LaunchPaths) {
 	const command = positionals[0];
 	if (positionals.length !== 1 || !["install", "status", "uninstall"].includes(command ?? ""))
 		throw new Error("Usage: pancode gui launcher install|status|uninstall [--prefix <absolute XDG data directory>]");
-	const prefix =
-		values.prefix ??
-		(process.env.XDG_DATA_HOME && isAbsolute(process.env.XDG_DATA_HOME)
-			? process.env.XDG_DATA_HOME
-			: join(homedir(), ".local/share"));
+	const prefix = values.prefix ?? xdgBaseDir(process.env.XDG_DATA_HOME, join(homedir(), ".local/share"));
 	const result =
 		command === "install"
 			? await installLauncher(prefix, paths)

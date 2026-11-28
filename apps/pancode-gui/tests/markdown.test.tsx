@@ -13,18 +13,11 @@ import {
 	jsonSummary,
 	parseJsonContainer,
 } from "../client/render/json-tree-model.js";
-import {
-	Blocks,
-	CodeBlock,
-	decodeEntities,
-	MarkdownContent,
-	MermaidBlock,
-	offersJsonTree,
-	PathOpenerContext,
-} from "../client/render/Markdown.js";
+import { Blocks, CodeBlock, MarkdownContent, MermaidBlock, PathOpenerContext } from "../client/render/Markdown.js";
 import type { MathToken } from "../client/render/markdown-model.js";
 import {
 	codeLanguage,
+	decodeEntities,
 	diffLineKind,
 	diffLines,
 	IncrementalMarkdown,
@@ -33,6 +26,7 @@ import {
 	MERMAID_MAX_SOURCE_BYTES,
 	mermaidSourceProblem,
 	numericColumns,
+	offersJsonTree,
 	pathReference,
 	safeHref,
 	settledBoundary,
