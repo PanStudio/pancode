@@ -3,9 +3,9 @@
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 // `pnpm run check:lane`: one pre-READY command for a lane branch. Runs the
 // gates a landing fails on most, in order, for the diff against the lane's
-// base: environment guards, typecheck and lint, the GUI check, OpenAPI and
-// PanHub freshness, the test files the diff adds or directly imports, and
-// the gate-list check for new test files. It runs no suite, no build and no
+// base: environment guards, typecheck and lint (which holds the PanHub pins),
+// the GUI check, OpenAPI freshness, the test files the diff adds or directly
+// imports, and the gate-list check for new test files. It runs no suite, no build and no
 // browser. Summary lines read `check: <step> pass|fail ...` or
 // `not-run: <what> | <why>`. Exit 0 when everything ran and passed, 1 on a
 // failure, 3 when everything that ran passed but something did not run.
@@ -14,12 +14,12 @@ import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, join, normalize, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { pinGateEnv } from "./gate-env.mjs";
-import { pnpmCommand } from "./pnpm.mjs";
+import { pnpmArgv } from "./pnpm.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
 /** Variables a git-driven runner exports that make a fixture write the shared repository config. */
-export const REPOSITORY_ENV = ["GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR", "GIT_PREFIX"];
+const REPOSITORY_ENV = ["GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR", "GIT_PREFIX"];
 
 const CONTRACT_SOURCES = [
 	"src/core/telemetry/context-schemas.ts",
@@ -89,19 +89,11 @@ export function selectLaneTests({ changed, added, importsOf, lists }) {
 	return { affected: [...affected].sort(), unlisted };
 }
 
-export { pnpmCommand };
-
-let pnpmPrefix;
-function pnpm() {
-	pnpmPrefix ??= pnpmCommand();
-	return pnpmPrefix;
-}
-
 /** Biome-format generated openapi JSON with the GUI package's own config, the one `pnpm run openapi` uses. */
 export function formatOpenapi(text) {
-	const [command, ...prefix] = pnpm();
+	const [command, args] = pnpmArgv(["exec", "biome", "format", "--stdin-file-path=contracts/openapi.json"]);
 	// The root biome config excludes apps/pancode-gui, so formatting from the root returns the input unchanged.
-	return spawnSync(command, [...prefix, "exec", "biome", "format", "--stdin-file-path=contracts/openapi.json"], {
+	return spawnSync(command, args, {
 		cwd: join(root, "apps/pancode-gui"),
 		input: text,
 		encoding: "utf8",
@@ -175,10 +167,7 @@ async function main() {
 		stopIfFailed();
 		return result.status === 0;
 	};
-	const runPnpm = (step, args) => {
-		const [command, ...prefix] = pnpm();
-		return run(step, command, [...prefix, ...args]);
-	};
+	const runPnpm = (step, args) => run(step, ...pnpmArgv(args));
 
 	// 1. Environment guards.
 	const exported = REPOSITORY_ENV.filter((name) => process.env[name] !== undefined);
@@ -237,13 +226,7 @@ async function main() {
 		stopIfFailed();
 	}
 
-	// 5. PanHub freshness.
-	if (changed.some((path) => path.startsWith("hub/"))) {
-		runPnpm("skills:check", ["run", "skills:check"]);
-		runPnpm("hub:check", ["run", "hub:check"]);
-	}
-
-	// 6-8. Affected and unlisted tests.
+	// 5-7. Affected and unlisted tests.
 	const lists = await import("./ci-tests.mjs");
 	const candidates = [...testFilesUnder("tests"), ...testFilesUnder("apps/pancode-gui/tests")];
 	const importsOf = new Map(

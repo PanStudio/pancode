@@ -20,11 +20,11 @@ import { parseArgs } from "node:util";
 const root = fileURLToPath(new URL("..", import.meta.url));
 const REPOSITORY = "PanStudio/pancode";
 const BLOCK_TAG = "pancode-report";
-export const CHAMPIONS_HEADER =
+const CHAMPIONS_HEADER =
 	"# Champions\n\nThank you to everyone who reported a problem and asked to be credited. Every report made PanCode better.\n\n";
 
 /** The first report block's `credit:` value, or null without a block. */
-export function blockCredit(body) {
+function blockCredit(body) {
 	const lines = String(body ?? "").split(/\r?\n/u);
 	const start = lines.findIndex((line) => line.trim() === `\`\`\`${BLOCK_TAG}`);
 	if (start < 0) return null;
@@ -42,7 +42,7 @@ const login = (author) => (author && typeof author.login === "string" && author.
  * Who asked to be credited on one issue: its author by their block, a commenter by their own block, and a reporter
  * a maintainer recorded with `credit: @handle` after the reporter agreed in the thread.
  */
-export function issueCredits(issue, maintainers = new Set()) {
+function issueCredits(issue, maintainers = new Set()) {
 	const wanted = new Map();
 	const author = login(issue.author);
 	const vote = (who, yes) => {
@@ -61,7 +61,7 @@ export function issueCredits(issue, maintainers = new Set()) {
 }
 
 /** Issue numbers cited (`#N`) in the changelog sections released after `since`, up to and including `until`. */
-export function changelogCitations(changelog, since, until) {
+function changelogCitations(changelog, since, until) {
 	const bare = (tag) => String(tag ?? "").replace(/^v/u, "");
 	const sections = String(changelog).split(/^## /mu).slice(1);
 	const cited = new Set();
@@ -79,7 +79,7 @@ export function changelogCitations(changelog, since, until) {
  * Credited handles for issues closed as completed whose fix is in the range: closed between the two dates, or
  * cited in the range's changelog. Handles sorted alphabetically, case-insensitively.
  */
-export function collectCredits(issues, { from = null, to = null, cited = new Set(), maintainers = new Set() } = {}) {
+function collectCredits(issues, { from = null, to = null, cited = new Set(), maintainers = new Set() } = {}) {
 	const credited = new Map();
 	for (const issue of issues) {
 		const completed = String(issue.stateReason ?? "").toUpperCase() === "COMPLETED";
@@ -100,13 +100,13 @@ export function collectCredits(issues, { from = null, to = null, cited = new Set
 }
 
 /** The release notes' section, or "" when nobody asked to be credited. */
-export function creditsSection(credits) {
+function creditsSection(credits) {
 	if (!credits?.handles?.length) return "";
 	return `\n### Thanks\n\nReported by: ${credits.handles.join(", ")}. Thank you.\n`;
 }
 
 /** CHAMPIONS.md: every handle ever credited, alphabetical, one per line; a removal request wins. */
-export function championsFile(existing, handles, removed = []) {
+function championsFile(existing, handles, removed = []) {
 	const gone = new Set(removed.map((line) => line.trim().replace(/^@/u, "").toLowerCase()).filter(Boolean));
 	const all = new Set();
 	for (const line of String(existing ?? "").split(/\r?\n/u))
@@ -149,7 +149,7 @@ function fetchIssues() {
  * The credits for a range, read-only: `values` takes the command's options (`since`, `until`, `until-rev`, `fixture`,
  * `maintainer`). The release reads them here before qualification (RL-5).
  */
-export function readCredits(values) {
+function readCredits(values) {
 	const raw = values.fixture ? JSON.parse(readFileSync(values.fixture, "utf8")) : fetchIssues();
 	const issues = Array.isArray(raw) ? raw : (raw.issues ?? []);
 	const range =
@@ -176,7 +176,7 @@ export function readCredits(values) {
  * CHAMPIONS.md as these credits leave it, without writing: `changed` is false when the file would stay byte-identical,
  * and when no file exists yet and nobody new is credited.
  */
-export function championsUpdate(credits) {
+function championsUpdate(credits) {
 	const path = join(root, "CHAMPIONS.md");
 	const removedPath = join(root, "champions-removed.txt");
 	const removed = existsSync(removedPath) ? readFileSync(removedPath, "utf8").split(/\r?\n/u) : [];

@@ -27,20 +27,20 @@ import { buildRegistryRow, packLicense, type RegistryRow, rowFileProblems } from
 
 const ROW_FILE = /^hub\/community\/([^/]+)\/([^/]+)\.yaml$/;
 
-export interface ReviewFailure {
+interface ReviewFailure {
 	file: string;
 	row?: string;
 	message: string;
 }
 
-export interface ReviewFinding {
+interface ReviewFinding {
 	file: string;
 	row: string;
 	kind: "envelope-added" | "envelope-removed" | "server-launch" | "body-scan";
 	message: string;
 }
 
-export interface HubReviewResult {
+interface HubReviewResult {
 	ok: boolean;
 	reviewed: string[];
 	failures: ReviewFailure[];
@@ -77,7 +77,7 @@ function exactNodeSpec(spec: string): boolean {
  * Every `uvx` or `npx` launch in a pack's `mcp.json` that does not name an exact
  * version: `pkg==x.y.z`, `--from pkg==x.y.z`, or `pkg@x.y.z`.
  */
-export function unpinnedLaunches(root: string): string[] {
+function unpinnedLaunches(root: string): string[] {
 	const file = path.join(root, "mcp.json");
 	if (!existsSync(file)) return [];
 	let parsed: { mcpServers?: Record<string, { command?: unknown; args?: unknown }> };
@@ -109,7 +109,7 @@ export function unpinnedLaunches(root: string): string[] {
 }
 
 /** The commands or endpoints declared by a pack's `mcp.json`, one entry per server. */
-export function serverLaunches(root: string): string[] {
+function serverLaunches(root: string): string[] {
 	const file = path.join(root, "mcp.json");
 	if (!existsSync(file)) return [];
 	let parsed: { mcpServers?: Record<string, { command?: unknown; args?: unknown; cwd?: unknown; url?: unknown }> };
@@ -169,7 +169,7 @@ function bodyFiles(root: string): string[] {
 }
 
 /** Lines in skill and prompt bodies that look aimed at the host. */
-export function scanBodies(root: string): string[] {
+function scanBodies(root: string): string[] {
 	const hits: string[] = [];
 	for (const file of bodyFiles(root)) {
 		const lines = readFileSync(file, "utf8").split(/\r?\n/);
@@ -349,7 +349,7 @@ export function changedSince(root: string, base: string): ChangedFile[] {
 	});
 }
 
-export function renderReview(result: HubReviewResult): string {
+function renderReview(result: HubReviewResult): string {
 	const lines = [`## PanHub review: ${result.ok ? "pass" : "fail"}`, ""];
 	lines.push(`Reviewed: ${result.reviewed.length ? result.reviewed.join(", ") : "no row files"}`, "");
 	if (result.failures.length) {
