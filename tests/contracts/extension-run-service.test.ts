@@ -329,6 +329,8 @@ const driverSource = `export default (api) => {
 		ctx.progress("starting " + args);
 		const { id } = await ctx.runs.start({ prompt: args, target: "fixture", model: "chat", timeoutSeconds: 60 });
 		const end = await ctx.runs.wait(id);
+		ctx.progress("waited");
+		ctx.progress("finished");
 		return { text: end.outcome + " " + typeof ctx.storeDir, exitCode: end.outcome === "succeeded" ? 0 : 3 };
 	});
 	api.handle("plain", (args, ctx) => ({
@@ -421,12 +423,15 @@ describe("an installed extension's work services", () => {
 			progress.push(text),
 		);
 		assert.deepEqual(output, { text: "succeeded string", exitCode: 0 });
-		assert.deepEqual(progress, ["starting now"]);
+		// The rate limit may fold "waited" into "finished"; the last line still arrives before the answer.
+		assert.equal(progress[0], "starting now");
+		assert.equal(progress.at(-1), "finished");
+		const heard = progress.length;
 		const plain = await operator.invoke(extensionInvocation("driver", "plain"), "", [], signal, (text) =>
 			progress.push(text),
 		);
 		assert.equal(plain.text, "undefined object");
-		assert.equal(progress.length, 1);
+		assert.equal(progress.length, heard);
 	});
 
 	it("a declared verb passes its arguments as given and prints the answer verbatim", async (t) => {

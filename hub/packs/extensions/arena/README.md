@@ -90,8 +90,9 @@ yolo is refused with exit 2 before the match starts, and so is yolo started from
 `PANCODE_YOLO_CONFINEMENT=contained`, so it stays contained even if your settings turn unconfined while the match runs.
 
 While it runs, `pancode arena run` writes one line per step to standard error: the match id, the contender count and
-isolation, and each contender's blind label as it finishes. Ctrl-C stops the contenders, records the match as failed
-(`canceled before every contender finished`), prints it and exits 130; a second Ctrl-C stops at once.
+isolation, and each contender's blind label as it finishes. Lines closer together than a quarter second fold into the
+later one, so two contenders finishing together may show one line. Ctrl-C stops the contenders, records the match as
+failed (`canceled before every contender finished`), prints it and exits 130; a second Ctrl-C stops at once.
 
 ## Vote blind, then reveal
 

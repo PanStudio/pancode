@@ -659,7 +659,8 @@ export interface ExtensionContextV2 {
 	readonly claims?: ExtensionClaims;
 	/**
 	 * Present in a `long` command: one line of what it is doing, shown in place of the previous line (on stderr under
-	 * `pancode <verb>`). At most 200 characters; lines closer together than a quarter second are coalesced.
+	 * `pancode <verb>`). At most 200 characters; lines closer together than a quarter second are coalesced, and the
+	 * last line arrives before the command's answer.
 	 */
 	readonly progress?: (text: string) => void;
 }

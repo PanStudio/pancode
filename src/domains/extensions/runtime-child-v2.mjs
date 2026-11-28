@@ -190,6 +190,8 @@ function claims(parentRequestId) {
 		read: (opts = {}) => run("read", opts),
 	});
 }
+/** A request's progress line still waiting on the rate limit, sent before the request answers. */
+const progressFlushes = new Map();
 /** One line at a time, at most four a second: the latest line wins, so a busy loop never floods the IPC. */
 function progress(requestId) {
 	let last = 0;
@@ -200,6 +202,11 @@ function progress(requestId) {
 		last = Date.now();
 		if (requests.has(requestId)) send({ kind: "progress", id: requestId, text: pending });
 	};
+	progressFlushes.set(requestId, () => {
+		if (timer === undefined) return;
+		clearTimeout(timer);
+		flush();
+	});
 	return (text) => {
 		pending = String(text).replace(/\s+/gu, " ").slice(0, 200);
 		if (timer !== undefined) return;
@@ -384,10 +391,17 @@ async function serve(message) {
 	try {
 		const output = await handler(input, context);
 		// A cancelled request has no authority; its late answer is dropped here and again by the host.
-		if (answers()) send({ kind: "result", id: message.id, output: output ?? null });
+		if (answers()) {
+			progressFlushes.get(message.id)?.();
+			send({ kind: "result", id: message.id, output: output ?? null });
+		}
 	} catch (error) {
-		if (answers()) send({ kind: "error", id: message.id, error: errorText(error) });
+		if (answers()) {
+			progressFlushes.get(message.id)?.();
+			send({ kind: "error", id: message.id, error: errorText(error) });
+		}
 	} finally {
+		progressFlushes.delete(message.id);
 		requests.delete(message.id);
 		interrupted.delete(message.id);
 	}

@@ -1,7 +1,7 @@
 {
 	"source": {
 		"path": "hub/index.yaml",
-		"sha256": "e257b6c1308724f2a490b06f90d1055d1a851c400022721d72ac84f289f04a25",
+		"sha256": "cd4b36c6a3c14248e4c65d297291073868aac7c8edc7a53ca52e6394599f09f9",
 		"rows": 46,
 		"revoked": 0
 	},
@@ -18,7 +18,7 @@
 			"source": {
 				"path": "hub/packs/extensions/arena"
 			},
-			"sha256": "918d65847df2aa1e1aadbfbffa75a761ee13dc2f6a9ff9b78cc0d61e879988e2",
+			"sha256": "fa5b5e3ef30bb6aa820e5048937dc1aa0fc4ebb13d4a52df8ffc4f6b8db02b21",
 			"install": "pancode hub install extension:arena"
 		},
 		{
