@@ -7,7 +7,7 @@ import type { ActionClass } from "../domains/safety/action-classifier.js";
 import { UNATTENDED_DECIDED_BY } from "../domains/safety/unattended.js";
 import type { ToolRegistry } from "../tools/registry-contract.js";
 
-export interface PermissionResolution {
+interface PermissionResolution {
 	action: "grant" | "deny" | "stop" | "expire";
 	payload: PermissionResolvedPayload;
 	reason?: string;

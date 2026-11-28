@@ -8,7 +8,6 @@ import {
 	type BashCommandResult,
 	type BashTimeoutLimit,
 	bashSecretValues,
-	combineBashOutput,
 	combineLiveBashOutput,
 	runBashCommand,
 } from "../core/bash-exec.js";
@@ -19,7 +18,7 @@ import {
 	TOOL_RESULT_NOTES_SEPARATOR,
 	toolResultNote,
 } from "../core/reminder-framing.js";
-import { resolveSafeCwd } from "../core/safe-exec.js";
+import { combineSafeOutput, resolveSafeCwd } from "../core/safe-exec.js";
 import { egressResultNote } from "../core/sandbox/egress/bridge.js";
 import { mainSandboxWriteHint } from "../core/sandbox/main-session.js";
 import { runDeadlineAt } from "../core/termination-phase.js";
@@ -203,7 +202,7 @@ export function bashOutputCapResult(
 	policy: BashOutputPolicy,
 	context?: { sessionId?: string; toolResultMaxBytes?: number },
 ): ToolResult {
-	const raw = combineBashOutput(result);
+	const raw = combineSafeOutput(result);
 	const bytes = byteLength(raw);
 	const cap = Math.min(BASH_DISPLAY_MAX_BYTES, context?.toolResultMaxBytes ?? BASH_DISPLAY_MAX_BYTES);
 	const bodyBudget = Math.max(0, cap - 2048);
@@ -542,7 +541,7 @@ export const bashTool: ToolSpec = {
 			};
 			const { error, aborted, timedOut, outputCapped } = result;
 			const limit: BashTimeoutLimit = captured.timeoutLimit ?? { by: "timeout", ms: requested };
-			const rawOutput = combineBashOutput(result);
+			const rawOutput = combineSafeOutput(result);
 			// The receipt speaks for the command after a leading `cd` into the directory it already ran in (XR-9).
 			const receiptCommand = withoutLeadingCdTo(args.command, cwd);
 			// Command output cannot speak in the host's voice: a `[middleware:` line or a reminder tag in it is made inert,

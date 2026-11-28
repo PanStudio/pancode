@@ -8,7 +8,7 @@
  */
 
 /** Automatic restarts a session may chain before the operator types again. */
-export const MODEL_RESTART_LIMIT = 3;
+const MODEL_RESTART_LIMIT = 3;
 
 type RestartHost = (continuation: string) => void;
 

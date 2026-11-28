@@ -35,7 +35,7 @@ export type CatalogRanker = (request: {
 	readonly candidates: ReadonlyArray<{ readonly id: string; readonly summary: string }>;
 }) => PrecomputedRanking | null;
 
-export interface PrecomputedRanked<T> {
+interface PrecomputedRanked<T> {
 	readonly item: T;
 	/** Null when the pass abstained, which is not the same as a zero. */
 	readonly score: number | null;

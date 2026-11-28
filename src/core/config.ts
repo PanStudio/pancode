@@ -234,7 +234,7 @@ export function applySettingsDelta(saved: unknown, before: unknown, after: unkno
 	const out: Record<string, unknown> = isRecord(saved) ? { ...saved } : {};
 	for (const [key, next] of Object.entries(after)) {
 		// Untouched keys keep whatever the file said, including saying nothing.
-		if (deepEquals(before[key], next)) continue;
+		if (settingsValuesEqual(before[key], next)) continue;
 		out[key] = applySettingsDelta(out[key], before[key], next);
 	}
 	// A key the mutation removed from a map (a deleted worker profile) goes too.
@@ -265,16 +265,17 @@ export function pinSettingsLeaf(saved: unknown, settings: unknown, path: string)
 	return out;
 }
 
-function deepEquals(a: unknown, b: unknown): boolean {
+/** Structural equality over JSON-shaped settings values. */
+export function settingsValuesEqual(a: unknown, b: unknown): boolean {
 	if (a === b) return true;
 	if (Array.isArray(a) || Array.isArray(b)) {
 		if (!Array.isArray(a) || !Array.isArray(b) || a.length !== b.length) return false;
-		return a.every((entry, index) => deepEquals(entry, b[index]));
+		return a.every((entry, index) => settingsValuesEqual(entry, b[index]));
 	}
 	if (!isRecord(a) || !isRecord(b)) return false;
 	const keys = Object.keys(a);
 	if (keys.length !== Object.keys(b).length) return false;
-	return keys.every((key) => key in b && deepEquals(a[key], b[key]));
+	return keys.every((key) => key in b && settingsValuesEqual(a[key], b[key]));
 }
 
 /**
@@ -284,7 +285,7 @@ function deepEquals(a: unknown, b: unknown): boolean {
 // biome-ignore lint/suspicious/noConfusingVoidType: in-place mutators legitimately return nothing, including named functions typed `: void`
 export type SettingsMutator = (settings: PancodeSettings) => PancodeSettings | undefined | void;
 
-export interface SettingsUpdateOptions {
+interface SettingsUpdateOptions {
 	/** Total time to wait for the lock before giving up. Default 10s. */
 	timeoutMs?: number;
 	/** Dotted leaf written even when it equals the inherited value (`config set`). */

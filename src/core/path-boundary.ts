@@ -123,10 +123,3 @@ export function writeRootsCover(roots: PathBoundary, candidate: string): boolean
 			pathBoundaryEntryCovers(root, candidate) || pathBoundaryEntryCovers(asDirectoryPathBoundary(root), candidate),
 	);
 }
-
-/** Whether two boundary declarations share any possible path. */
-export function pathBoundariesOverlap(left: PathBoundary, right: PathBoundary): boolean {
-	return left.some((entry) =>
-		right.some((other) => pathBoundaryEntryCovers(entry, other) || pathBoundaryEntryCovers(other, entry)),
-	);
-}

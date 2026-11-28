@@ -19,7 +19,7 @@
 import type { SemanticRole } from "./theme-roles.js";
 
 /** Glyph names from the shared glyph table; each is one cell wide in Unicode and ASCII mode. */
-export type RunGlyph =
+type RunGlyph =
 	| "error"
 	| "warn"
 	| "phaseBlocked"
@@ -101,7 +101,7 @@ export interface RunFacts {
 	telemetry?: RunTelemetryFacts;
 }
 
-export type RunCellSlot =
+type RunCellSlot =
 	| "state"
 	| "origin"
 	| "helper"
@@ -154,7 +154,7 @@ export interface RunRowLayout {
 }
 
 /** Terminal cell width of plain text; callers pass `visibleWidth`. */
-export type CellMeasure = (text: string) => number;
+type CellMeasure = (text: string) => number;
 
 export interface RunRowOptions {
 	/** Cells the row may paint. */

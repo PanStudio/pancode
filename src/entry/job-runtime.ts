@@ -26,7 +26,7 @@ import type { AutonomyLevel } from "../lib/autonomy/autonomy.js";
 import type { ChatLoop } from "../session-control/chat-loop.js";
 import { attestJobCommand, jobCommandEffect } from "../tools/job-command.js";
 
-export interface JobRuntimeDeps {
+interface JobRuntimeDeps {
 	chat(): ChatLoop | null;
 	isCurrent(owner: JobOwner): boolean;
 	constraints(): TurnConstraints | undefined;

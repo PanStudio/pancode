@@ -24,7 +24,7 @@ import { CODEX_TURN_STATE_HEADER } from "./codex-turn-state.js";
 export type ResponsesWebSocketFlavor = "codex" | "public";
 
 /** What one call's transport did, filled in as it happens. Every call owns its counters, so attribution is exact. */
-export interface ResponsesTransportCall {
+interface ResponsesTransportCall {
 	mode: "websocket" | "sse" | "unknown";
 	request: "full" | "delta" | "unknown";
 	counters: CodexTransportCounters;
@@ -449,7 +449,7 @@ function credentialScope(headers: Headers): string {
 	return sha256Hex(credential).slice(0, 16);
 }
 
-export interface ResponsesWebSocketFetchOptions {
+interface ResponsesWebSocketFetchOptions {
 	flavor: ResponsesWebSocketFlavor;
 	/** The fetch the SSE path would have used, and still uses for a fallback. */
 	base: typeof globalThis.fetch;

@@ -47,7 +47,7 @@ function errorMessageForStopReason(reason: string): string | undefined {
 	return undefined;
 }
 
-export interface AcpEventMapperOptions {
+interface AcpEventMapperOptions {
 	/** The run's workspace, against which a peer's relative tool targets resolve; defaults to this process's cwd. */
 	cwd?: string;
 	/** A peer shim's rewrite of its own tool shape into one the mediator maps, the same one its approvals take. */

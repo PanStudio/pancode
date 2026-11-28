@@ -30,7 +30,7 @@ interface IncompleteInstallation {
 }
 
 /** Test seams: the generated output directory and the build id this process loaded. */
-export interface IncompleteInstallationOptions {
+interface IncompleteInstallationOptions {
 	outputDir?: string;
 	runningId?: string | null;
 }

@@ -148,7 +148,7 @@ const COMMIT_CAUSE: Partial<Record<FoldStageEntry["stage"], NonNullable<ContextF
 	step_checkpoint: "step_checkpoint",
 };
 
-export interface FoldStageInput {
+interface FoldStageInput {
 	agentRuntime: AgentRuntime;
 	/** The checkpoint's decision, which this stage reports its outcome to. */
 	decision: FoldDecision;
@@ -167,7 +167,7 @@ export interface FoldStageInput {
 	classify: ClassifyCall;
 }
 
-export interface EvictionStageInput extends FoldStageInput {
+interface EvictionStageInput extends FoldStageInput {
 	/** Overflow on a known window: the stage plans to fit the request, not to the trigger. */
 	requiredFit: boolean;
 	/** The summary already failed: recover on fit alone rather than declining in favor of a stage that cannot run. */

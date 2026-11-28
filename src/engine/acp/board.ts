@@ -3,7 +3,6 @@
 import type { AcpSessionBoard } from "./types-views.js";
 
 export { ACP_BOARD_META_KEY, ACP_BOARD_METHOD } from "./types.js";
-export type { AcpSessionBoard } from "./types-views.js";
 
 /**
  * `_pancode/session/board`: the read half of the terminal's /tasks and

@@ -30,7 +30,7 @@ const HEADER_BYTES = MAGIC.length + 4;
 const SOURCE_PATH = /^(?:src(?:\/.*)?|packages(?:\/[^/]+(?:\/src(?:\/.*)?)?)?)$/u;
 
 /** Where one member sits, relative to the end of the index. */
-export interface SourcePackEntry {
+interface SourcePackEntry {
 	path: string;
 	offset: number;
 	length: number;

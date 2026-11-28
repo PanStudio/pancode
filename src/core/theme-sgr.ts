@@ -16,7 +16,7 @@ export interface SgrColor {
 	/** Primary text on an unknown background is the terminal's own foreground, the one color certain to read. */
 	readonly terminalForeground?: boolean;
 }
-export interface SgrPair {
+interface SgrPair {
 	readonly fg?: PaletteColor | SgrColor;
 	readonly bg?: PaletteColor | SgrColor;
 }

@@ -23,7 +23,7 @@ import {
 /** Runs older than this are dropped; `/share` picks from the most recent anyway. */
 const MAX_TRACKED_RUNS = 256;
 
-export interface WorkerRunLedger {
+interface WorkerRunLedger {
 	/** Settled and running assignments, oldest first, as the terminal's panel lists them. */
 	list(): ReadonlyArray<WorkerEntryState>;
 	dispose(): void;

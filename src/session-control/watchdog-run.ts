@@ -19,9 +19,9 @@ import { WATCHDOG_TASK, type WatchdogTrigger, watchdogBriefing } from "../domain
 import { watchdogBlockersNotice } from "./watchdog-notice.js";
 
 /** The builtin recipe the watchdog reviews with. */
-export const WATCHDOG_AGENT_ID = "verifier";
+const WATCHDOG_AGENT_ID = "verifier";
 
-export interface WatchdogRunDeps {
+interface WatchdogRunDeps {
 	dispatch: DispatchContract;
 	bus?: TelemetryHub;
 	getAgentRoleFacts?: AgentRoleFactsResolver;

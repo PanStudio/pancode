@@ -37,7 +37,7 @@ export interface AcpReadoutsSession {
 	holdsPrompt: boolean;
 }
 
-export interface AcpReadoutsEmitterOptions {
+interface AcpReadoutsEmitterOptions {
 	now(): number;
 	send(params: AcpReadoutsNotification): void;
 	autonomyPosture?: () => AcpAutonomyPosture;
@@ -45,7 +45,7 @@ export interface AcpReadoutsEmitterOptions {
 	activeSkillSurface?: () => ReadonlyArray<string>;
 }
 
-export interface AcpReadoutsEmitter {
+interface AcpReadoutsEmitter {
 	/** Records one chat event; a trigger sends a frame for `session` when there is one to send to. */
 	chatEvent(event: unknown, session: AcpReadoutsSession | null): void;
 	/** A frame for a session just opened, loaded, resumed or switched to another mode. */

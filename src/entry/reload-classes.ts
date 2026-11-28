@@ -64,7 +64,7 @@ function summary(label: string, before: Inventory, after: Inventory): string[] {
 	];
 }
 
-export interface ReloadClassesDeps {
+interface ReloadClassesDeps {
 	config: ConfigContract | undefined;
 	bus: TelemetryHub;
 	cwd(): string;

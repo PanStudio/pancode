@@ -149,18 +149,6 @@ export function ensureProjectIgnore(cwd: string): void {
 }
 
 /**
- * The main checkout a linked worktree belongs to, or null when `root` is not a
- * linked worktree the main repository vouches for. `git worktree add` writes
- * `<commonDir>/worktrees/<name>/gitdir` naming the worktree's `.git` file; a
- * directory that only forges its own `.git` pointer cannot write there, so it
- * never folds into another checkout's project (#406). `root` must already be
- * canonical (`canonicalizeExistingPath`).
- */
-export function linkedWorktreeMainRoot(root: string): string | null {
-	return checkoutLink(root).main;
-}
-
-/**
  * How a checkout root relates to its repository: `main` (a `.git` directory, or
  * no repository at all), `linked` (a worktree the main repository vouches for),
  * `own` (a `.git` file naming a git dir that is not a linked worktree, such as a

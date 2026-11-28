@@ -36,7 +36,7 @@ export function bindExternalUsage<T extends object>(message: T, observation: Ext
 }
 
 /** One external summary as single facts, before it is recorded as sums with their coverage (#434). */
-export interface ExternalUsageFacts {
+interface ExternalUsageFacts {
 	usage: CallUsage;
 	totalTokens: Fact<number>;
 	apiCalls: Fact<number>;

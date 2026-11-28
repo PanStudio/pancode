@@ -5,7 +5,7 @@ import path from "node:path";
 import { readJsonObjectFile } from "./json-file.js";
 import { PACKAGE_NAME } from "./package-root.js";
 
-export interface PancodeRepoAwareness {
+interface PancodeRepoAwareness {
 	isPancodeRepo: boolean;
 	repoRoot: string | null;
 }

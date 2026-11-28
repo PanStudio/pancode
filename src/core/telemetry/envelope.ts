@@ -13,7 +13,7 @@ import { checkRecordSchema } from "./record-check.js";
 import { UtcSchema } from "./schemas.js";
 
 const closed = { additionalProperties: false };
-export const ClockOriginSchema = Type.Object(
+const ClockOriginSchema = Type.Object(
 	{
 		host: Type.String({ minLength: 1 }),
 		pid: Type.Integer({ minimum: 1 }),
@@ -68,7 +68,7 @@ export const SegmentHeaderSchema = Type.Object(
 );
 export type SegmentHeader = Static<typeof SegmentHeaderSchema>;
 
-export const EnvelopeSchema = Type.Object(
+const EnvelopeSchema = Type.Object(
 	{
 		v: Type.Literal(1),
 		k: Type.String(),

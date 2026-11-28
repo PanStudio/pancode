@@ -34,7 +34,7 @@ export const SURFACE_IDS = [
 export type SurfaceId = (typeof SURFACE_IDS)[number];
 export type MemorySurfaceId = Extract<SurfaceId, `memory.${string}`>;
 
-export interface SideSurface {
+interface SideSurface {
 	id: SurfaceId;
 	/** The journal role its calls are made under. */
 	role: AgentRole;

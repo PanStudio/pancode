@@ -17,7 +17,7 @@ import type { MonitorToolDeps } from "../tools/monitor.js";
 import { collectDetachedBatch } from "../tools/monitor-collect.js";
 import type { ToolInvokeOptions } from "../tools/registry-contract.js";
 
-export interface TurnControlInput {
+interface TurnControlInput {
 	userTurnId: string;
 	signal: AbortSignal;
 }

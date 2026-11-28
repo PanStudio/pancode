@@ -21,7 +21,7 @@ const goalFields = {
 };
 const machineStatus = Type.Union([Type.Literal("mechanized"), Type.Literal("modeled"), Type.Literal("refuted")]);
 
-export const HoareObligationSchema = Type.Object(
+const HoareObligationSchema = Type.Object(
 	{
 		...goalFields,
 		status: Type.Union([

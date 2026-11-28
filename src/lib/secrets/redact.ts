@@ -143,7 +143,7 @@ const SECRET_PROPERTY_NAME = new RegExp(`(?<![A-Za-z0-9_-])(?=[A-Za-z0-9_-]*$)[A
  * A known value shorter than this is too likely to be ordinary text (a word,
  * a port, a short flag) to mask everywhere it appears.
  */
-export const KNOWN_SECRET_MIN_LENGTH = 8;
+const KNOWN_SECRET_MIN_LENGTH = 8;
 
 let knownSecretPattern: { key: string; re: RegExp | null } | null = null;
 

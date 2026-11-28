@@ -296,7 +296,7 @@ function emitResidencyNoticeOnce(key: string, notice: Parameters<typeof emitResi
 }
 
 /** The instance a request should name, and the lease that keeps other PanCode processes from releasing it. */
-export interface LmStudioResidency {
+interface LmStudioResidency {
 	wireModelId: string;
 	/** Ends this process's use of the model. Call it when the stream ends, success or not. */
 	release(): Promise<void>;
@@ -709,7 +709,7 @@ async function ensureLmStudioResidencyUnlocked(
 }
 
 /** The LM Studio server and model key behind one LiteLLM route. */
-export interface GatewayLmStudioDeployment {
+interface GatewayLmStudioDeployment {
 	controlUrl: string;
 	modelKey: string;
 }

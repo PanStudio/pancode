@@ -135,7 +135,7 @@ export function readCiRunCommands(root: string, files: ReadonlyArray<string> = c
 	return commands;
 }
 
-export interface WorkflowTrigger {
+interface WorkflowTrigger {
 	event: string;
 	/** A `push` filtered to tags with no branch filter: it runs on a tag, never on a branch push. */
 	tagsOnly: boolean;
@@ -242,7 +242,7 @@ export function isReleaseOnlyWorkflow(triggers: ReadonlyArray<WorkflowTrigger> |
 	return automatic.length > 0 && automatic.every((entry) => entry.event === "release" || entry.tagsOnly);
 }
 
-export interface CiFileRuns {
+interface CiFileRuns {
 	/** Repository-relative pipeline file. */
 	file: string;
 	/** The file's run commands, in order and without duplicates. */

@@ -3,9 +3,9 @@
 import { randomBytes } from "node:crypto";
 
 declare const telemetryId: unique symbol;
-export type CallId = string & { readonly [telemetryId]: "call" };
-export type AttemptId = string & { readonly [telemetryId]: "attempt" };
-export type RecordId = string & { readonly [telemetryId]: "record" };
+type CallId = string & { readonly [telemetryId]: "call" };
+type AttemptId = string & { readonly [telemetryId]: "attempt" };
+type RecordId = string & { readonly [telemetryId]: "record" };
 
 /** RFC 9562 UUIDv7, independent of the provider SDK and existing session/run ids (#434). */
 function uuidV7(bytes = randomBytes(16), epochMs = Date.now()): string {
