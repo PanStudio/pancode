@@ -9,6 +9,7 @@ import type { ContextActivityPayload } from "../core/telemetry/live-events.js";
 import type { TurnConstraints } from "../core/turn-constraints.js";
 import type { AcpLiveTelemetry } from "./live-telemetry.js";
 import type { AcpServerCommands } from "./server-commands.js";
+import type { AcpServerControl } from "./server-control.js";
 import type { AcpServerGuards } from "./server-guards.js";
 import type { AcpHandoffDraft, AcpHandshake, PancodeAcpServerOptions } from "./server-options.js";
 import type { AcpPermissionBridge } from "./server-permissions.js";
@@ -88,4 +89,5 @@ export interface AcpServerScope {
 	asideRound: AcpSideWork | null;
 	readonly guards: AcpServerGuards;
 	readonly commands: AcpServerCommands;
+	readonly control: AcpServerControl;
 }
