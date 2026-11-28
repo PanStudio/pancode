@@ -65,7 +65,6 @@ import type { NotificationLevel } from "../core/views/notice-words.js";
 import type { BudgetInspection } from "../domains/context/budget/inspection.js";
 import {
 	createLiveBudgetProducer,
-	type LiveBudgetBreakdown,
 	type LiveBudgetHandoffProjection,
 	type LiveBudgetInput,
 	type LiveBudgetOutcomeProjection,
@@ -155,6 +154,18 @@ import {
 	turnAdmissionRemedy,
 } from "./output-reserve.js";
 import { extractTurnText } from "./session-replay-messages.js";
+import {
+	anchorModelKey,
+	capturedBreakdown,
+	carriedTokens,
+	continuationContextUpdate,
+	memoryOrigin,
+	optionalProjection,
+	sameRoute,
+	snapshotWindowSource,
+	TIER_INDEPENDENT_COLD_REASONS,
+	toolResultTail,
+} from "./turn-context/helpers.js";
 import { createTurnContextCompaction } from "./turn-context-compaction.js";
 import { createTurnContextMemory } from "./turn-context-memory.js";
 import { createTurnContextPrompt } from "./turn-context-prompt.js";
@@ -680,8 +691,6 @@ export function createTurnContext(deps: TurnContextDeps): TurnContext {
 		return blocks.length === 0 ? [] : pinnedContextDelta(blocks, hostFramedTexts(agentRuntime.agent.state.messages));
 	};
 	const sessionWorkingContextPaths = new Set<string>();
-	const memoryOrigin = (runtime: AgentRuntime): string =>
-		JSON.stringify([process.cwd(), runtime.targetId, runtime.runtimeId, runtime.wireModelId]);
 	/** The loop guard's call identity and A1 read test, with each extension tool's declared effect. */
 	const classifyCall: ClassifyCall = (name, args) => ({
 		identity: effectiveCallIdentity(name, args),
@@ -876,21 +885,6 @@ export function createTurnContext(deps: TurnContextDeps): TurnContext {
 		shared.cacheCallBaselineLoaded = true;
 		shared.cacheGeneration += 1;
 	};
-	// #423: prefix-byte and reasoning changes can cool every tier. Residency,
-	// dispatch traffic, and compaction retain the local-native disturbance gate.
-	const TIER_INDEPENDENT_COLD_REASONS: ReadonlySet<ExpectedColdReason> = new Set([
-		"working_set_evict",
-		"observation_aging",
-		"thinking_change",
-		"model_changed",
-		"input_changed",
-		"tool_choice_change",
-		"tool_surface_change",
-		"prompt_recompiled",
-		"system_prompt_changed",
-		// The step checkpoint rewrites the history the prefix carried, on every tier.
-		"step_checkpoint",
-	]);
 	const stampsOnTier = (reason: ExpectedColdReason, runtimeId: string | undefined): boolean =>
 		TIER_INDEPENDENT_COLD_REASONS.has(reason) ||
 		(runtimeId !== undefined && deps.providers.getRuntime(runtimeId)?.tier === "local-native");
@@ -1102,22 +1096,6 @@ export function createTurnContext(deps: TurnContextDeps): TurnContext {
 		return resolved.ok ? resolved.target : null;
 	};
 
-	const CONTEXT_WINDOW_SOURCES: ReadonlySet<string> = new Set<ContextWindowSource>([
-		"catalog",
-		"probe",
-		"loaded",
-		"target-override",
-		"model-hint",
-		"descriptor-default",
-		"unknown",
-	]);
-
-	/** The snapshot stores its source as a plain string; only a known label is worth repeating. */
-	const snapshotWindowSource = (snapshot: ContextSnapshot): ContextWindowSource | null =>
-		CONTEXT_WINDOW_SOURCES.has(snapshot.contextWindowSource)
-			? (snapshot.contextWindowSource as ContextWindowSource)
-			: null;
-
 	/**
 	 * Window facts while no runtime exists come only from the current route's
 	 * provider status. A resumed snapshot retains historical accounting, but
@@ -1151,17 +1129,6 @@ export function createTurnContext(deps: TurnContextDeps): TurnContext {
 		if (!target || !model || state.streaming || deps.isTurnActive?.() === true) return false;
 		return targetId !== target || modelId !== model;
 	};
-
-	const anchorModelKey = (agentRuntime: AgentRuntime): string => {
-		const model = agentRuntime.agent.state.model;
-		return JSON.stringify([model?.id, model?.provider, model?.api, model?.baseUrl]);
-	};
-
-	const sameRoute = (agentRuntime: AgentRuntime, route: EvictionAnchor["route"]): boolean =>
-		route.targetId === agentRuntime.targetId &&
-		route.runtimeId === agentRuntime.runtimeId &&
-		route.wireModelId === agentRuntime.wireModelId &&
-		route.modelKey === anchorModelKey(agentRuntime);
 
 	/**
 	 * Seed the live anchor from the eviction record step 1 selects (ContextFold §4 step 3). The record's figure covers
@@ -1839,29 +1806,6 @@ export function createTurnContext(deps: TurnContextDeps): TurnContext {
 	};
 
 	/**
-	 * A captured decomposition, labelled as one. The mapping is the same the
-	 * `/context` overlay already uses, so the two cannot disagree; it is not a
-	 * fresh measurement of the live agent state and is never presented as one.
-	 */
-	const capturedBreakdown = (snapshot: ContextSnapshot, pendingTokens: number): LiveBudgetBreakdown => ({
-		systemPromptTokens: snapshot.categories.system,
-		messageTokens: snapshot.categories.messages + (snapshot.categories.toolResults ?? 0),
-		pendingUserTokens: pendingTokens,
-		toolSchemaTokens: snapshot.categories.tools,
-	});
-
-	const optionalProjection = <T>(read: (() => T | null) | undefined): T | null => {
-		if (!read) return null;
-		try {
-			return read();
-		} catch {
-			// A continuity projection is supplemental. Losing it must not stop the
-			// budget from being published.
-			return null;
-		}
-	};
-
-	/**
 	 * Token facts of the live next request, all from one `liveContextEstimate`
 	 * call: the same one admission budgets against. Old snapshot categories are
 	 * never summed to reconstruct the total, and streaming output is never added
@@ -2058,19 +2002,6 @@ export function createTurnContext(deps: TurnContextDeps): TurnContext {
 			),
 		);
 
-	/**
-	 * A working-set projection removes tokens from messages the attestation
-	 * covered; it does not make the attestation wrong about the rest. Subtract
-	 * what the planner priced out against the same projection and re-anchor on
-	 * the refreshed list, instead of discarding the figure and falling back to
-	 * pure chars/4 exactly when the accounting matters most (issue #227).
-	 * Materialize history before rebuilding the list; otherwise advancing the
-	 * anchor would lose tool results appended since the last measured call.
-	 * Static baselines stay tied to that call until the next reconciliation.
-	 */
-	const carriedTokens = (historyTokens: number, tokensRemoved: number): number =>
-		Math.max(0, historyTokens - Math.max(0, tokensRemoved));
-
 	/** The record's copy of what the carry leaves: the same figure, the anchor's system and tools, and its route. */
 	const evictionAnchor = (
 		agentRuntime: AgentRuntime,
@@ -2226,23 +2157,6 @@ export function createTurnContext(deps: TurnContextDeps): TurnContext {
 
 	const { bindMemoryScope, installMemoryRestoration, memoryTurnMethods, notifyMemoryCommit } =
 		createTurnContextMemory(shared);
-
-	const toolResultTail = (agentRuntime: AgentRuntime): boolean => {
-		const messages = agentRuntime.agent.state.messages.filter(
-			(message) => message.role !== "system" || isHostPolicyMessage(message),
-		);
-		const tail = messages[messages.length - 1] as AgentMessage | undefined;
-		return !!tail && typeof tail === "object" && tail !== null && "role" in tail && tail.role === "toolResult";
-	};
-
-	const continuationContextUpdate = (agentRuntime: AgentRuntime) => ({
-		context: {
-			messages: [...agentRuntime.agent.state.messages],
-			tools: [...agentRuntime.agent.state.tools],
-		},
-		model: agentRuntime.agent.state.model,
-		thinkingLevel: agentRuntime.agent.state.thinkingLevel,
-	});
 
 	const resolveProviderReplay = async (
 		runtime: AgentRuntime,
