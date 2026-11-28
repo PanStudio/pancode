@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import type { TSchema } from "typebox";
-import { Value } from "typebox/value";
 import {
 	MEMORY_PENDING_MAX,
 	type MemoryDecision,
@@ -12,7 +11,7 @@ import {
 	type TrustSurface,
 } from "../../contracts/review.js";
 import type { CliRunner } from "./cli-runner.js";
-import { AppProblem } from "./problem.js";
+import { AppProblem, projected } from "./problem.js";
 import type { WorkspaceService } from "./workspaces.js";
 
 function object(value: unknown): Record<string, unknown> | null {
@@ -37,11 +36,8 @@ function boundedFiles(value: unknown, surface: TrustSurface): unknown {
 		);
 	return value.map(boundedFile);
 }
-function checked<S extends TSchema>(schema: S, raw: unknown, what: string) {
-	const value = Value.Clean(schema, raw);
-	if (!Value.Check(schema, value)) throw new AppProblem("unavailable", `PanCode returned an invalid ${what}.`);
-	return value;
-}
+const checked = <S extends TSchema>(schema: S, raw: unknown, what: string) =>
+	projected(schema, raw, "unavailable", `PanCode returned an invalid ${what}.`);
 const pending = (record: Record<string, unknown>) => record.approved === false && record.rejectedAt === undefined;
 
 /** The operator's two review decisions a terminal makes today: project trust and pending memory lessons. */

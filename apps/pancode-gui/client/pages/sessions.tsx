@@ -6,10 +6,10 @@ import { Link, useNavigate, useOutletContext, useParams } from "react-router";
 import { routes } from "../../contracts/runtime-routes.js";
 import type { SessionSummary } from "../../contracts/sessions.js";
 import type { Client } from "../api/client.js";
-import { ApiProblem, emptyInput } from "../api/client.js";
+import { emptyInput, problemCode } from "../api/client.js";
 import { clock, formatDuration } from "../api/clock.js";
 import type { ConnectionState } from "../api/events.js";
-import { SWITCH_FRESHNESS } from "../api/queries.js";
+import { SWITCH_FRESHNESS, sessionCapabilitiesQuery } from "../api/queries.js";
 import { sessionQuery } from "../api/session-query.js";
 import { advanceSessionReadScope, SESSION_CACHES, sessionBuffer } from "../api/sessions.js";
 import { pendingPermission } from "../chat/approval-gate.js";
@@ -215,8 +215,7 @@ function SessionView({ client, id }: { client: Client; id: string }) {
 	useShortcut("cancelTurn", stopRunningTurn, { enabled: turnRunning });
 	// A saved task this server has not opened answers not_found. Only that answer starts the search for
 	// its project; a task that loads, and a server that cannot be reached, never do.
-	const notOpen =
-		session.data === undefined && session.error instanceof ApiProblem && session.error.problem.code === "not_found";
+	const notOpen = session.data === undefined && problemCode(session.error) === "not_found";
 	const located = useQuery({
 		queryKey: ["session-locate", id],
 		queryFn: ({ signal }) => locateTask(client, id, signal),
@@ -233,8 +232,7 @@ function SessionView({ client, id }: { client: Client; id: string }) {
 	});
 
 	const capabilities = useQuery({
-		queryKey: ["session-capabilities", id],
-		queryFn: () => client.call(routes.sessionCapabilities, input),
+		...sessionCapabilitiesQuery(client, id),
 		enabled: session.data?.state === "open",
 		staleTime: Number.POSITIVE_INFINITY,
 	});

@@ -13,7 +13,7 @@ import { memo, useEffect, useId, useRef, useState, useSyncExternalStore } from "
 import type { Permission, PermissionDecision } from "../../contracts/permissions.js";
 import { routes } from "../../contracts/runtime-routes.js";
 import type { SessionSnapshot, TimelineItem } from "../../contracts/sessions.js";
-import { ApiProblem, type Client } from "../api/client.js";
+import { type Client, problemCode } from "../api/client.js";
 import { formatDuration } from "../api/clock.js";
 import { useSharedSecond } from "../api/second-clock.js";
 import { StatusMark } from "../design/status.js";
@@ -148,9 +148,6 @@ function useApprovalFocus(id: string | null): void {
 export type AnswerApproval = ReturnType<typeof useAnswerApproval>;
 
 const permissionMutationKey = (sessionId: string) => ["permission-answer", sessionId] as const;
-
-const problemCode = (error: unknown): string | undefined =>
-	error instanceof ApiProblem ? error.problem.code : undefined;
 
 /** An answered request stays disabled until the session snapshot removes it, including one the server already settled. */
 function useAnswerSent(sessionId: string, permissionId: string | undefined): boolean {

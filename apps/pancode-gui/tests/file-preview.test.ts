@@ -16,6 +16,8 @@ async function workspace() {
 	await mkdir(join(root, "src", ".terraform"), { recursive: true });
 	await writeFile(join(root, "src", "a.ts"), "one\ntwo\n");
 	await writeFile(join(root, ".env"), "TOKEN=x\n");
+	await mkdir(join(root, ".aws"));
+	await writeFile(join(root, ".aws", "credentials"), "[default]\n");
 	await writeFile(join(root, "src", "server.pem"), "key\n");
 	await writeFile(join(root, "src", ".terraform", "state"), "s\n");
 	await writeFile(join(root, "blob.bin"), Buffer.from([1, 0, 2]));
@@ -40,7 +42,14 @@ test("a preview reads workspace text and refuses traversal, secrets, links out a
 	for (const input of ["../outside.txt", "src/../../outside.txt", "~/x", "/etc/passwd", join(w.base, "outside.txt")])
 		assert.equal((await readFilePreview(w.root, input)).status, "outside", input);
 	assert.equal((await readFilePreview(w.root, "escape.txt")).status, "outside");
-	for (const input of [".env", "src/server.pem", "src/.terraform/state", "innocent.txt", ".git/config"])
+	for (const input of [
+		".env",
+		"src/server.pem",
+		"src/.terraform/state",
+		"innocent.txt",
+		".git/config",
+		".aws/credentials",
+	])
 		assert.equal((await readFilePreview(w.root, input)).status, "withheld", input);
 	assert.equal((await readFilePreview(w.root, "blob.bin")).status, "binary");
 	assert.equal((await readFilePreview(w.root, "src")).status, "not-a-file");

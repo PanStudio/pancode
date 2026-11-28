@@ -108,7 +108,7 @@ export function createOverlayAuthLifecycle(deps: OverlayAuthLifecycleDeps): Over
 		if (!resolved?.target) {
 			deps.notify(
 				"warning",
-				`connect: unknown target ${reference}. Add it with pancode targets add.`,
+				`connect: unknown target ${reference}. Add it with pancode configure.`,
 				`connect:${reference}`,
 			);
 			return;

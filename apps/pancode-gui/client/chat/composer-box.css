@@ -11,7 +11,7 @@
 	   or a sidebar narrows it as surely as a phone does. Containment makes this a stacking context,
 	   so it takes the level its panels used to hold on their own. */
 	container: composer / inline-size;
-	z-index: 6;
+	z-index: var(--layer-composer);
 	display: grid;
 	gap: var(--space-1);
 	margin-top: 0;

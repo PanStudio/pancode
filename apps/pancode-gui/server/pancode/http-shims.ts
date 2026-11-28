@@ -21,6 +21,7 @@ export { resolvePackageRoot } from "../../../../src/core/package-root.js";
 export { relativePathEscapes } from "../../../../src/core/path-containment.js";
 export { processAlive, processBirthToken } from "../../../../src/core/process-identity.js";
 export { pendingInstalledVersion, registerRunningBuild } from "../../../../src/core/running-build.js";
+export { isSecretPath } from "../../../../src/core/sandbox/secret-files.js";
 export {
 	renderCompactCount,
 	renderCount,

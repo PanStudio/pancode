@@ -3,9 +3,8 @@
 import { useQuery } from "@tanstack/react-query";
 import { createPortal } from "react-dom";
 import { Link } from "react-router";
-import { routes } from "../../contracts/runtime-routes.js";
 import type { Workspace } from "../../contracts/sessions.js";
-import { type Client, emptyInput } from "../api/client.js";
+import type { Client } from "../api/client.js";
 import { Icon } from "../design/icons.js";
 import { StatusMark } from "../design/status.js";
 import { useSetupStatus } from "../pages/target-onboarding.js";
@@ -14,6 +13,7 @@ import { useShell } from "./shell-context.js";
 import { isHeld, isUntouched, STATE_LABELS, taskState, taskTitle } from "./shell-model.js";
 import { useSessionOverview } from "./tasks.js";
 import "../chat/pane.css";
+import { workspacesQuery } from "../api/queries.js";
 
 /**
  * The right sidebar before a task is open: the project the next task starts in, the connection it will
@@ -26,8 +26,7 @@ export function HomeAside({ client, workspace }: { client: Client; workspace: Wo
 	const setup = useSetupStatus(client, visible, workspace?.id ?? null);
 	const overview = useSessionOverview(client, visible);
 	const workspaces = useQuery({
-		queryKey: ["workspaces"],
-		queryFn: () => client.call(routes.workspaces, emptyInput),
+		...workspacesQuery(client),
 		enabled: visible,
 	});
 	if (!slot || !expanded) return null;

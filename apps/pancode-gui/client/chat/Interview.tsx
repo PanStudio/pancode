@@ -6,7 +6,7 @@ import { createPortal } from "react-dom";
 import type { AgentCapabilities } from "../../contracts/capabilities.js";
 import type { InterviewRound, InterviewSubmission } from "../../contracts/interviews.js";
 import { routes } from "../../contracts/runtime-routes.js";
-import { ApiProblem, type Client } from "../api/client.js";
+import { type Client, problemCode } from "../api/client.js";
 import { Icon } from "../design/icons.js";
 import { useShortcut, useShortcutLayer } from "../interaction/use-shortcut.js";
 import { MarkdownContent } from "../render/Markdown.js";
@@ -152,7 +152,7 @@ function InterviewDialog({ client, sessionId, round }: { client: Client; session
 			void queries.invalidateQueries({ queryKey: ["session", sessionId] });
 		},
 		onError: (error) => {
-			if (error instanceof ApiProblem && error.problem.code === "conflict")
+			if (problemCode(error) === "conflict")
 				void queries.invalidateQueries({ queryKey: ["session-interview", sessionId] });
 		},
 		onSettled: () => {

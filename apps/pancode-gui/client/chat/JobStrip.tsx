@@ -21,6 +21,7 @@ import {
 	visibleJobs,
 } from "./job-model.js";
 import "./approval.css";
+import { sessionCapabilitiesQuery } from "../api/queries.js";
 
 type Outcome = { tone: "success" | "warn" | "fail"; message: string };
 
@@ -140,9 +141,7 @@ export const LiveJobs = memo(function LiveJobs({
 }) {
 	// The composer's key, so this is the same single request per session.
 	const capabilities = useQuery({
-		queryKey: ["session-capabilities", sessionId],
-		queryFn: () => client.call(routes.sessionCapabilities, { params: { id: sessionId }, query: {}, body: {} }),
-		staleTime: Number.POSITIVE_INFINITY,
+		...sessionCapabilitiesQuery(client, sessionId),
 		retry: false,
 		enabled: sessionOpen,
 	});

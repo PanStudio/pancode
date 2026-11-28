@@ -21,7 +21,7 @@ use system `/tmp` or commit run output under `scripts/`.
 | `pnpm run typecheck` / `pnpm run typecheck:tsc` / `pnpm run typecheck:compare` | Typecheck source, tests and scripts with `tsrs --fast` (falling back to `tsc` with a notice where tsrs cannot run), with TypeScript's own `tsc`, or with both, failing if their diagnostics differ; `pnpm run ci` runs the last. See "Typechecking" in `CONTRIBUTING.md`. |
 | `pnpm run format` / `pnpm run lint` | Format with Biome, or check formatting and Biome rules (any warning fails), source boundaries, license headers, catalog pins, resource paths and configuration consistency. No remote package refresh. |
 | `pnpm run check:lane` | Run the gates a lane branch most often fails, for its diff against the base: environment guards, typecheck, lint (with the PanHub pins), the GUI check, OpenAPI freshness, and the test files the diff adds or imports. |
-| `pnpm run check:gui` | Typecheck and lint the GUI app. |
+| `pnpm run check:gui` | Typecheck and lint the GUI app, then build its client and check the bundle budgets. |
 | `pnpm run test:file -- <files>` | Run focused test files under `tests/harness/tmp-root.ts`, which gives each file its own temporary directory and PanCode home. |
 | `pnpm run test` / `pnpm run test:gui` / `pnpm run test:list` | Run the default root or GUI selection in `ci-tests.mjs`, or list every selection. Root tests need a build. |
 | `pnpm run test:full` / `pnpm run test:gui:full` | Run every root or GUI test file. `test:full` first refuses a `dist/` built from another commit (`check-dist.mjs`). |

@@ -6,6 +6,7 @@ import { open, realpath } from "node:fs/promises";
 import { isAbsolute, join } from "node:path";
 import { type Static, Type } from "typebox";
 import { Value } from "typebox/value";
+import { Token } from "../../contracts/auth.js";
 import { resolvePackageRoot, resolvePancodeDirs } from "../pancode/http-shims.js";
 import { launchdPlist, serviceHost, serviceIdentity, taskSpec } from "./service-model.js";
 
@@ -14,7 +15,7 @@ const BackgroundConfig = Type.Object(
 	{
 		v: Type.Literal(1),
 		port: Type.Integer({ minimum: 1, maximum: 65535 }),
-		token: Type.String({ pattern: "^[A-Za-z0-9_-]{43}$" }),
+		token: Token,
 		roots: Type.Object({ config: path, data: path, state: path, cache: path }, { additionalProperties: false }),
 		packageRoot: path,
 		path: Type.String({ maxLength: 8192 }),

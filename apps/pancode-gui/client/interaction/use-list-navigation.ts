@@ -5,6 +5,7 @@
 // only the aria pointer, which is what the command palette needs.
 
 import { type KeyboardEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { normalise } from "./prefix-score.js";
 
 export type ListMode = "roving" | "activedescendant";
 
@@ -46,10 +47,6 @@ function isEditable(target: EventTarget | null): boolean {
 	if (!(target instanceof HTMLElement)) return false;
 	if (target.isContentEditable) return true;
 	return target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.tagName === "SELECT";
-}
-
-function normalise(text: string): string {
-	return text.toLocaleLowerCase("en-US");
 }
 
 export function useListNavigation<T>({

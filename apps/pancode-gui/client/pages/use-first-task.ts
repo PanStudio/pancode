@@ -4,6 +4,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router";
 import { routes } from "../../contracts/runtime-routes.js";
 import { type Client, emptyInput } from "../api/client.js";
+import { freshMeta } from "../api/queries.js";
 import { sessionBuffer } from "../api/sessions.js";
 import { touchFirst } from "../chat/composer-field.js";
 import { rememberPrompt } from "../chat/composer-history.js";
@@ -40,17 +41,15 @@ export function useFirstTask(client: Client) {
 				if (!workspaceId || (!request && !draft.text.trim()))
 					throw new Error("Choose a workspace and describe the task first.");
 				if (request) {
-					const meta = await client.call(routes.meta, emptyInput);
-					queries.setQueryData(["meta"], meta);
+					const meta = await freshMeta(client, queries);
 					if (request.epoch !== meta.epoch)
 						throw new Error("PanCode restarted. Review the earlier task before starting another request.");
 				} else {
 					// Setup resolves and validates this workspace; neither read needs to wait on the other.
 					const [meta, status] = await Promise.all([
-						client.call(routes.meta, emptyInput),
+						freshMeta(client, queries),
 						client.call(routes.setupStatus, setupStatusInput(workspaceId)),
 					]);
-					queries.setQueryData(["meta"], meta);
 					queries.setQueryData(["setup-status", workspaceId], status);
 					if (status.state !== "ready") throw new Error(status.message || "Connect a model before starting a task.");
 					const owned = ownDrafts();
