@@ -54,7 +54,7 @@ import { whyStopped } from "../domains/telemetry/read-model-why-stopped.js";
 import type { SealVerdict } from "../domains/telemetry/seal.js";
 import { describeSealMismatch, readTelemetryScopeFilesSync, verifyTelemetryScope } from "../domains/telemetry/seal.js";
 import { explainRepoRef, isRepoRef, usageWindow } from "../domains/telemetry/usage-window.js";
-import { formatColumns, printError } from "./shared.js";
+import { formatColumns, printError } from "./argv.js";
 import { resolveSessionSelector, resolveTelemetryTarget } from "./telemetry-target.js";
 
 /**

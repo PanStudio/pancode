@@ -8,9 +8,7 @@ import { GLYPH } from "./glyphs.js";
 /** The quantity formatters live in core so the pane process prints them the same way; the TUI reaches them here. */
 export {
 	formatCount,
-	formatCountdown,
 	formatElapsed,
-	formatLimit,
 	formatWaitClock,
 } from "../../core/format-time.js";
 

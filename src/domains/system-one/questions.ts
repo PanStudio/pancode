@@ -1,14 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
-/**
- * Question builders, validation and the spec hash.
- *
- * A point's wording is part of what any later measurement of it means, so the
- * hash of a question's spec says which wording produced an answer.
- */
+/** Question builders and validation. */
 
-import { canonicalJson } from "../../core/canonical-json.js";
-import { sha256Hex } from "../../core/hash.js";
 import type { SemanticKind } from "./contract.js";
 import type { PointQuestion, Question } from "./types.js";
 
@@ -112,9 +105,4 @@ export function validateQuestion(question: Question): string | null {
 		return null;
 	}
 	return "unknown question type";
-}
-
-/** `q:` plus the sha256 of the question as canonical JSON with sorted keys. */
-export function specHash(question: Question): string {
-	return `q:${sha256Hex(canonicalJson(question))}`;
 }

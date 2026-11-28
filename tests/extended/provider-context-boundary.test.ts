@@ -14,11 +14,11 @@ import {
 } from "../../src/engine/ai.js";
 import { findEngineEnvKeys, getEngineEnvApiKey } from "../../src/engine/env-api-keys.js";
 import type { AgentMessage, EngineModel } from "../../src/engine/types.js";
-import { buildReplayAgentMessagesFromTurns } from "../../src/interactive/chat-renderer.js";
 import {
 	assistantSessionPayload,
 	estimatedUsageForInterruptedTurn,
 } from "../../src/session-control/chat-loop-messages.js";
+import { buildReplayAgentMessagesFromTurns } from "../../src/session-control/session-replay-messages.js";
 
 function bashEntry(
 	id: string,

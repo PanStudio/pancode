@@ -79,8 +79,6 @@ export type {
 	ProtectedArtifactEntry,
 	ProtectedArtifactEntryArtifact,
 	SessionEntry,
-	SessionEntryKind,
-	SessionFileEntry,
 	SessionHeader,
 	SessionInfoEntry,
 	SkillActivationEntry,

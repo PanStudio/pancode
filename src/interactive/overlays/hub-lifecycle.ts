@@ -30,18 +30,6 @@ import {
 	syncHubPackBinaries,
 } from "../../domains/resources/index.js";
 
-export type {
-	HubApplyResult,
-	HubLifecyclePlan,
-	HubLifecycleRequest,
-	HubOperation,
-	HubPackageIdentity,
-	HubPlanStep,
-	HubRefreshHost,
-	HubRefreshResult,
-	HubStepOutcome,
-} from "../../domains/resources/index.js";
-
 /** What the browser needs from the lifecycle domain, and nothing more. */
 export interface HubLifecyclePort {
 	plan(request: HubLifecycleRequest): HubLifecyclePlan;

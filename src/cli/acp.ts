@@ -6,9 +6,9 @@ import { MAX_TIMER_DELAY_MS } from "../core/timers.js";
 import type { SessionToolLimits } from "../core/tool-limit-flags.js";
 import { parseToolLimitList, toolLimitConflict, toolLimitConstraints } from "../core/tool-limit-flags.js";
 import { createStdioServerTransport } from "../engine/acp/transport.js";
+import { printError } from "./argv.js";
 import { restoreStdout, takeOverStdout, writeRawStdout } from "./output-guard.js";
 import { runPancodeCommand } from "./pancode.js";
-import { printError } from "./shared.js";
 
 const HELP = `pancode acp [--cwd PATH] [--permission-timeout MS] [--autonomy LEVEL] [--allow-tools NAMES] [--delegate-tools NAMES] [--deny-tools NAMES] [--read-only]
 pancode acp [--cwd PATH] auth login

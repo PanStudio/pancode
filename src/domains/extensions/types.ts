@@ -166,8 +166,6 @@ export interface ExtensionReloadCommitted {
 	diagnostics: ExtensionSnapshotDiagnostics;
 }
 
-export type ExtensionReloadResult = ExtensionReloadCommitted | ExtensionReloadRejection;
-
 export interface ExtensionListOptions {
 	lifecycle?: import("../../core/hub-receipts.js").LifecycleContext;
 	scope?: ExtensionScope;

@@ -5,7 +5,7 @@ import { readLayeredSettings } from "../core/settings-layers.js";
 import { scaffoldExtension } from "../domains/extensions/authoring/scaffold.js";
 import { testExtensionPackage } from "../domains/extensions/authoring/test-runner.js";
 import { validateExtensionPackage } from "../domains/extensions/authoring/validate.js";
-import { printError } from "./shared.js";
+import { printError } from "./argv.js";
 
 const HELP = `pancode extensions init <id> [--template status|hook|panel|tool|workspace] [--dir <path>]
 pancode extensions validate <path> [--json]

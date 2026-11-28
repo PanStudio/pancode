@@ -58,7 +58,6 @@ export type {
 	PluginExpectedState,
 	PluginInstallOptions,
 	PluginInstallRecord,
-	PluginInstallResult,
 	PluginListOptions,
 	PluginManifest,
 	PluginMutationOptions,

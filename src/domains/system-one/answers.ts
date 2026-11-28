@@ -48,10 +48,3 @@ export function chosen(answer: Answer | undefined, minCertainty?: number): strin
 	if (minCertainty !== undefined && answer.certainty < minCertainty) return null;
 	return answer.choice;
 }
-
-/** The 0-indexed expected level, or null when the answer is not a score or is less certain than `minCertainty`. */
-export function rating(answer: Answer | undefined, minCertainty?: number): number | null {
-	if (answer === undefined || answer.type !== "score" || answer.score === undefined) return null;
-	if (minCertainty !== undefined && answer.certainty < minCertainty) return null;
-	return answer.score;
-}
