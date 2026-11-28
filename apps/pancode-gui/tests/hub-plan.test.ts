@@ -8,18 +8,18 @@ import {
 	copyState,
 	diskSentence,
 	effectSentence,
-	matchesPackage,
+	type HubPack,
+	matchesHubPack,
 	missingScopes,
 	needsRequirements,
 	type Outcome,
 	outcomeHeadline,
-	type Package,
 	type Plan,
 	type PlanStep,
 	stepTitle,
 } from "../client/pages/hub-plan.js";
 
-const pkg = (over: Partial<Package> = {}): Package => ({
+const pkg = (over: Partial<HubPack> = {}): HubPack => ({
 	ref: "plugin:bundle",
 	kind: "plugin",
 	name: "bundle",
@@ -50,15 +50,15 @@ const outcome = (over: Partial<Outcome> = {}): Outcome => ({
 
 test("a catalog search finds the package that provides a recipe, and scopes are offered only where no copy exists", () => {
 	const bundle = pkg({ provides: [{ kind: "skill", name: "paper-cards" }] });
-	assert.equal(matchesPackage(bundle, "  PAPER-cards "), true);
-	assert.equal(matchesPackage(bundle, "plugin:bundle"), true);
-	assert.equal(matchesPackage(bundle, "absent"), false);
+	assert.equal(matchesHubPack(bundle, "  PAPER-cards "), true);
+	assert.equal(matchesHubPack(bundle, "plugin:bundle"), true);
+	assert.equal(matchesHubPack(bundle, "absent"), false);
 	assert.equal(
-		matchesPackage(pkg({ requires: ["skill:base"], sourceUrl: "registry/source/package" }), "skill:base"),
+		matchesHubPack(pkg({ requires: ["skill:base"], sourceUrl: "registry/source/package" }), "skill:base"),
 		true,
 	);
-	assert.equal(matchesPackage(pkg({ sourceUrl: "registry/source/package" }), "source/package"), true);
-	assert.equal(matchesPackage(pkg({ copies: [{ scope: "project", state: "disabled" }] }), "disabled"), true);
+	assert.equal(matchesHubPack(pkg({ sourceUrl: "registry/source/package" }), "source/package"), true);
+	assert.equal(matchesHubPack(pkg({ copies: [{ scope: "project", state: "disabled" }] }), "disabled"), true);
 	assert.deepEqual(missingScopes(bundle), ["user", "project"]);
 	assert.deepEqual(missingScopes(pkg({ copies: [{ scope: "user", state: "loadable" }] })), ["project"]);
 });

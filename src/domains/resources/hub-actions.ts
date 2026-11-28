@@ -50,34 +50,34 @@ import {
 	planHubInstall,
 	planHubUpdate,
 	releaseHubPlan,
-	resolveHubPackage,
+	resolveHubPack,
 	resolveInstalledHubEntry,
 } from "./hub.js";
 import { type HubCopyState, hubCopyState, readHubInventory } from "./hub-inventory.js";
 import {
 	hubNamespace,
-	hubPackageBaseDir,
-	listInstalledHubPackages as listInstalledPlugins,
+	hubPackBaseDir,
+	listInstalledHubPacks as listInstalledPlugins,
 	observeHubCopy,
 	readHubInstallRecord,
 	withHubScopeLock,
-} from "./hub-packages.js";
+} from "./hub-packs.js";
 import { type HubPair, readHubPairs } from "./hub-pairing.js";
 import {
 	type HubComponentKind,
 	type HubEntryKind,
-	type HubPackageEntry,
+	type HubPackEntry,
 	type HubRequirementRef,
 	type HubTier,
 	isHubComponentKind,
 	isHubKind,
 } from "./hub-types.js";
-import { validateHubPackage } from "./hub-validation.js";
+import { validateHubPack } from "./hub-validation.js";
 
 export const HUB_OPERATIONS = ["install", "update", "enable", "disable", "remove"] as const;
 export type HubOperation = (typeof HUB_OPERATIONS)[number];
 
-export interface HubPackageIdentity {
+export interface HubPackIdentity {
 	ref: HubRequirementRef;
 	kind: HubEntryKind;
 	name: string;
@@ -102,7 +102,7 @@ export type HubExpectedCopy = PluginExpectedCopy;
 
 export interface HubPlanStep {
 	operation: HubOperation;
-	identity: HubPackageIdentity;
+	identity: HubPackIdentity;
 	destination: string;
 	/** The installed version and the one this step writes, where either is known. */
 	versions?: { from?: string; to?: string };
@@ -179,7 +179,7 @@ export interface HubStepVerification {
 export interface HubStepOutcome {
 	status: HubStepStatus;
 	operation: HubOperation;
-	identity: HubPackageIdentity;
+	identity: HubPackIdentity;
 	/** The folder the committed step wrote or removed, so the outcome can say where. */
 	destination?: string;
 	/** The step came from an import of another agent's files, not from a catalog install. */
@@ -238,11 +238,11 @@ export interface HubApplyResult {
 
 const staged = new Map<string, Map<string, HubInstallPlan>>();
 
-function stepKey(identity: HubPackageIdentity): string {
+function stepKey(identity: HubPackIdentity): string {
 	return `${identity.scope}:${identity.ref}`;
 }
 
-function retain(planId: string, identity: HubPackageIdentity, plan: HubInstallPlan): void {
+function retain(planId: string, identity: HubPackIdentity, plan: HubInstallPlan): void {
 	const byStep = staged.get(planId) ?? new Map<string, HubInstallPlan>();
 	byStep.set(stepKey(identity), plan);
 	staged.set(planId, byStep);
@@ -263,11 +263,11 @@ function peerOf(scope: PluginScope): PluginScope {
 	return scope === "user" ? "project" : "user";
 }
 
-function identityOf(kind: HubEntryKind, name: string, scope: PluginScope): HubPackageIdentity {
+function identityOf(kind: HubEntryKind, name: string, scope: PluginScope): HubPackIdentity {
 	return { ref: `${kind}:${name}`, kind, name, scope };
 }
 
-function copyOf(entries: ReadonlyArray<InstalledPlugin>, identity: HubPackageIdentity): InstalledPlugin | undefined {
+function copyOf(entries: ReadonlyArray<InstalledPlugin>, identity: HubPackIdentity): InstalledPlugin | undefined {
 	return entries.find(
 		(item) => item.id === identity.name && (item.kind ?? "plugin") === identity.kind && item.scope === identity.scope,
 	);
@@ -278,7 +278,7 @@ function copyOf(entries: ReadonlyArray<InstalledPlugin>, identity: HubPackageIde
  * that serves it share a name and never compete, so
  * the peer, winner and survivor of a step are always read within one namespace.
  */
-function competes(item: Pick<InstalledPlugin, "id" | "kind">, identity: HubPackageIdentity): boolean {
+function competes(item: Pick<InstalledPlugin, "id" | "kind">, identity: HubPackIdentity): boolean {
 	return item.id === identity.name && hubNamespace(item.kind) === hubNamespace(identity.kind);
 }
 
@@ -304,14 +304,14 @@ function observe(
  */
 function expectedFor(
 	cwd: string,
-	identity: HubPackageIdentity,
+	identity: HubPackIdentity,
 	consulted: ReadonlyArray<{ scope: PluginScope; id: string }>,
-	earlier: ReadonlyArray<HubPackageIdentity>,
+	earlier: ReadonlyArray<HubPackIdentity>,
 	diagnostics: string[],
 ): HubExpectedCopy[] {
 	const wanted = new Map<string, { scope: PluginScope; id: string }>();
 	wanted.set(`${identity.scope}:${identity.name}`, { scope: identity.scope, id: identity.name });
-	if (existsSync(hubPackageBaseDir(identity.kind, peerOf(identity.scope), cwd)))
+	if (existsSync(hubPackBaseDir(identity.kind, peerOf(identity.scope), cwd)))
 		wanted.set(`${peerOf(identity.scope)}:${identity.name}`, { scope: peerOf(identity.scope), id: identity.name });
 	for (const item of consulted) wanted.set(`${item.scope}:${item.id}`, item);
 	for (const item of earlier) wanted.delete(`${item.scope}:${item.name}`);
@@ -323,7 +323,7 @@ function expectedFor(
 	return out;
 }
 
-function stateAfterInstall(entries: ReadonlyArray<InstalledPlugin>, identity: HubPackageIdentity) {
+function stateAfterInstall(entries: ReadonlyArray<InstalledPlugin>, identity: HubPackIdentity) {
 	const existing = copyOf(entries, identity);
 	const peer = entries.find(
 		(item) => competes(item, identity) && item.scope === peerOf(identity.scope) && item.valid && item.compatible,
@@ -353,7 +353,7 @@ function stateAfterInstall(entries: ReadonlyArray<InstalledPlugin>, identity: Hu
 }
 
 function contentOf(root: string): NonNullable<HubPlanStep["content"]> {
-	const result = validateHubPackage(root);
+	const result = validateHubPack(root);
 	return {
 		valid: result.valid,
 		resources: result.validation.resources
@@ -370,7 +370,7 @@ function installStep(
 	staged: HubInstallPlan,
 	operation: "install" | "update",
 	entries: ReadonlyArray<InstalledPlugin>,
-	earlier: ReadonlyArray<HubPackageIdentity>,
+	earlier: ReadonlyArray<HubPackIdentity>,
 	dependencies: HubPlanStep["dependencies"],
 	diagnostics: string[],
 ): HubPlanStep {
@@ -414,7 +414,7 @@ function installStep(
 	};
 }
 
-function hubTrustFacts(entry: HubPackageEntry): { publisher: string; tier?: HubTier; license?: string } {
+function hubTrustFacts(entry: HubPackEntry): { publisher: string; tier?: HubTier; license?: string } {
 	return {
 		publisher: hubEntryPublisher(entry),
 		...(entry.tier ? { tier: entry.tier } : {}),
@@ -440,7 +440,7 @@ export function planHubLifecycle(request: HubLifecycleRequest): HubLifecyclePlan
 	try {
 		if (request.operation === "install") {
 			const scope = request.scope ?? "user";
-			const entry = resolveHubPackage(request.ref, {
+			const entry = resolveHubPack(request.ref, {
 				...discoveryOptions,
 				...(request.catalogOnly ? { catalogOnly: true } : {}),
 			});
@@ -463,7 +463,7 @@ export function planHubLifecycle(request: HubLifecycleRequest): HubLifecyclePlan
 				steps.push({
 					operation: "install",
 					identity,
-					destination: path.join(hubPackageBaseDir(entry.kind, scope, cwd), entry.name),
+					destination: path.join(hubPackBaseDir(entry.kind, scope, cwd), entry.name),
 					source: { sourceUrl: entry.sourceUrl, sha256: entry.sha256 ?? "", staged: false, ...hubTrustFacts(entry) },
 					expected: [],
 					dependencies,
@@ -473,7 +473,7 @@ export function planHubLifecycle(request: HubLifecycleRequest): HubLifecyclePlan
 					refusal,
 				});
 			} else {
-				const earlier: HubPackageIdentity[] = [];
+				const earlier: HubPackIdentity[] = [];
 				for (const dependency of status.unsatisfied) {
 					const step = installStep(
 						id,
@@ -535,7 +535,7 @@ export function planHubLifecycle(request: HubLifecycleRequest): HubLifecyclePlan
 				steps.push({
 					operation: "update",
 					identity: target,
-					destination: path.join(hubPackageBaseDir(identity.kind, identity.scope, cwd), identity.name),
+					destination: path.join(hubPackBaseDir(identity.kind, identity.scope, cwd), identity.name),
 					expected: [],
 					dependencies,
 					dependents: { newlyBroken: [], preexisting: [] },
@@ -707,13 +707,13 @@ function reviewSteps(
 
 /** Read back one copy: tree, record, inventory state, actual component admission and the surviving effective copy. */
 function verifyHubStep(
-	identity: HubPackageIdentity,
+	identity: HubPackIdentity,
 	cwd: string,
 	evidence: HubStepVerification["evidence"] = "pre-refresh",
 ): HubStepVerification {
 	const entries = listInstalledPlugins(cwd, { all: true });
 	const copy = copyOf(entries, identity);
-	const root = path.join(hubPackageBaseDir(identity.kind, identity.scope, cwd), identity.name);
+	const root = path.join(hubPackBaseDir(identity.kind, identity.scope, cwd), identity.name);
 	let record: HubStepVerification["record"] = "absent";
 	let recordedDigest: string | undefined;
 	try {
@@ -841,8 +841,7 @@ type InstallBaselines = Partial<Record<"extensions" | "plugins", ProjectInstallB
 function applyStep(plan: HubLifecyclePlan, step: HubPlanStep, baselines: InstallBaselines): HubStepOutcome {
 	const peer = peerOf(step.identity.scope);
 	const holdPeer =
-		step.expected.some((fact) => fact.scope === peer) &&
-		existsSync(hubPackageBaseDir(step.identity.kind, peer, plan.cwd));
+		step.expected.some((fact) => fact.scope === peer) && existsSync(hubPackBaseDir(step.identity.kind, peer, plan.cwd));
 	let result: PluginMutationResult;
 	try {
 		result = holdPeer

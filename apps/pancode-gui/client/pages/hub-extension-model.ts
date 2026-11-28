@@ -4,7 +4,7 @@
 // `packageRef` names only the PACKAGE_KINDS, so a button on any other kind is a guaranteed 400. Extension
 // consent (the capability envelope review) stays in the terminal. Pure, so the commands are testable without a browser.
 
-import { copyOperations, missingScopes, PACKAGE_KINDS, type Package, type Scope, verb } from "./hub-plan.js";
+import { copyOperations, type HubPack, missingScopes, PACKAGE_KINDS, type Scope, verb } from "./hub-plan.js";
 
 export interface TerminalStep {
 	label: string;
@@ -15,13 +15,13 @@ export const TERMINAL_NOTE =
 	"Extensions are reviewed and changed in the terminal, where their capability envelope is shown for approval. Run one of these, or open /hub in PanCode.";
 
 /** True when the plan contract accepts this package's ref, so the catalog may offer Install, Update, Enable, Disable and Remove. */
-export const desktopManaged = (pkg: Pick<Package, "kind">): boolean =>
+export const desktopManaged = (pkg: Pick<HubPack, "kind">): boolean =>
 	(PACKAGE_KINDS as readonly string[]).includes(pkg.kind);
 
 const scopeFlag = (scope: Scope) => `--${scope}`;
 
 /** The terminal command for each action the catalog would have offered on this row, in the order it would have offered them. */
-export function terminalSteps(pkg: Package): TerminalStep[] {
+export function terminalSteps(pkg: HubPack): TerminalStep[] {
 	const steps: TerminalStep[] = [];
 	for (const copy of pkg.copies) {
 		const scope = copy.scope as Scope;
@@ -44,7 +44,7 @@ export function terminalSteps(pkg: Package): TerminalStep[] {
 	return steps;
 }
 
-export function catalogKinds(packages: readonly Package[]): string[] {
+export function catalogKinds(packages: readonly HubPack[]): string[] {
 	return [...new Set([...PACKAGE_KINDS, ...packages.map((pkg) => pkg.kind)])].filter((kind) =>
 		packages.some((pkg) => pkg.kind === kind),
 	);

@@ -6,7 +6,7 @@ import path from "node:path";
 import { pancodeConfigDir } from "../../core/xdg.js";
 import { mcpOriginOf } from "../mcp/index.js";
 import {
-	installHubPackage,
+	installHubPack,
 	listInstalledPlugins,
 	PLUGIN_EXTENSION_KEY,
 	PLUGIN_SCHEMA,
@@ -14,8 +14,8 @@ import {
 	readPluginInstallRecord,
 	readPluginManifest,
 } from "../plugins/index.js";
-import type { ForeignPackageFormat, PluginOrigin } from "../plugins/types.js";
-import { validateHubPackage } from "../resources/hub-validation.js";
+import type { ForeignPackFormat, PluginOrigin } from "../plugins/types.js";
+import { validateHubPack } from "../resources/hub-validation.js";
 import { loadPromptTemplates } from "../resources/prompts/loader.js";
 import { bareSkillIdentity, bareSkillManifest } from "../resources/skills/bare-skill.js";
 import { normalizedSkillHash } from "../resources/skills/content-hash.js";
@@ -59,7 +59,7 @@ export interface InteropAdoptionEntry {
 	omitted?: string[];
 	requirements?: string[];
 	/** Manifest format the package was read as; absent for loose resources. */
-	format?: ForeignPackageFormat;
+	format?: ForeignPackFormat;
 	/** Per-resource conversion results for foreign-format packages. */
 	outcomes?: ForeignResourceOutcome[];
 	/** Host features present in the source that adoption never activates. */
@@ -84,7 +84,7 @@ export interface PreparedAdoption {
 	note: string;
 	omitted: string[];
 	requirements: string[];
-	format?: ForeignPackageFormat;
+	format?: ForeignPackFormat;
 	outcomes?: ForeignResourceOutcome[];
 	unsupported?: string[];
 }
@@ -121,7 +121,7 @@ export function preparePortablePackage(root: string): PreparedAdoption {
 	// The portable skills/ convention needs no PanCode component graph. Enumerate
 	// through the shared readers so implicit components and actual runtime names
 	// get the same checks as explicitly declared components.
-	const validation = validateHubPackage(root);
+	const validation = validateHubPack(root);
 	if (!validation.valid)
 		throw new Error(
 			`Not adoptable: invalid component content (${validation.validation.diagnostics
@@ -851,7 +851,7 @@ export function applyInteropAdoption(
 			const candidate = readPluginManifest(staging);
 			if (!candidate.valid || !candidate.contentDigest)
 				throw new Error(candidate.diagnostics.map((d) => d.message).join("; "));
-			const installed = installHubPackage({
+			const installed = installHubPack({
 				sourcePath: staging,
 				kind: entry.item.kind === "skill" ? "skill" : "plugin",
 				trust: adoptedPackageTrust(entry.item),

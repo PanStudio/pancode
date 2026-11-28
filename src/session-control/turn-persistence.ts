@@ -10,7 +10,7 @@
 import type { BackendCompletionTimings } from "../core/cache-telemetry.js";
 import type { PancodeSettings } from "../core/config.js";
 import { messageUsageForAccounting } from "../core/message-accounting.js";
-import type { PackageIdentity } from "../core/package-identity.js";
+import type { PackIdentity } from "../core/pack-identity.js";
 import type { FactSum } from "../core/telemetry/fact.js";
 import { sumFactSums, sumFacts } from "../core/telemetry/pricing.js";
 import { asRecord } from "../core/type-guards.js";
@@ -56,7 +56,7 @@ import type { AgentRuntime, ChatLoopTarget, TurnPersistenceState } from "./turn-
 interface TurnPersistenceDeps {
 	/** Runs before any turn is written, so a ledger fact can precede the text it describes. */
 	beforeTurnRecorded?: (session: SessionContract) => void;
-	getToolOwner?: (name: string) => PackageIdentity | undefined;
+	getToolOwner?: (name: string) => PackIdentity | undefined;
 	state: TurnPersistenceState;
 	session?: SessionContract | undefined;
 	/** Names the row ids recovery records reserved for the host-authored assistants they hold. */
@@ -147,7 +147,7 @@ export function createTurnPersistence(deps: TurnPersistenceDeps): TurnPersistenc
 	const { state } = deps;
 	const persistedAssistantMessages = new WeakSet<object>();
 	const assistantRowIds = new WeakMap<object, string>();
-	const toolOwners = new Map<string, PackageIdentity>();
+	const toolOwners = new Map<string, PackIdentity>();
 
 	// --- ledger appends -------------------------------------------------------
 	// Every turn this loop writes parents onto `state.lastTurnId`, the loop's own

@@ -2,16 +2,16 @@
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import { randomUUID } from "node:crypto";
 import { writeDiagnostic } from "./diagnostics.js";
-import type { PackageIdentity } from "./package-identity.js";
+import type { PackIdentity } from "./pack-identity.js";
 
 export const EXTENSION_ACTIVITY = "pancode_extension_activity";
 export const PLUGIN_RESOURCE_USE = "pancode_plugin_resource_use";
-export interface PackageActivity {
+export interface PackActivity {
 	eventId: string;
 	at: string;
 	type: typeof EXTENSION_ACTIVITY | typeof PLUGIN_RESOURCE_USE;
 	kind: string;
-	owner: PackageIdentity;
+	owner: PackIdentity;
 	outcome?: string;
 	sessionId?: string;
 	turnId?: string;
@@ -19,18 +19,18 @@ export interface PackageActivity {
 	captureDroppedBefore?: number;
 	details?: Readonly<Record<string, unknown>>;
 }
-type ActivityInput = Omit<PackageActivity, "eventId" | "at" | "type" | "captureDroppedBefore"> & {
-	type?: PackageActivity["type"];
+type ActivityInput = Omit<PackActivity, "eventId" | "at" | "type" | "captureDroppedBefore"> & {
+	type?: PackActivity["type"];
 	at?: string;
 };
 const LIMIT = 200;
-let sink: ((activity: PackageActivity) => boolean) | undefined;
-const pending: PackageActivity[] = [];
-const recent: PackageActivity[] = [];
+let sink: ((activity: PackActivity) => boolean) | undefined;
+const pending: PackActivity[] = [];
+const recent: PackActivity[] = [];
 let dropped = 0;
-export function bindPackageActivitySink(next: (activity: PackageActivity) => boolean): () => void {
+export function bindPackActivitySink(next: (activity: PackActivity) => boolean): () => void {
 	sink = next;
-	flushPackageActivities();
+	flushPackActivities();
 	return () => {
 		if (sink !== next) return;
 		sink = undefined;
@@ -39,7 +39,7 @@ export function bindPackageActivitySink(next: (activity: PackageActivity) => boo
 		recent.length = 0;
 	};
 }
-export function flushPackageActivities(): void {
+export function flushPackActivities(): void {
 	if (!sink) return;
 	while (pending.length > 0) {
 		try {
@@ -56,8 +56,8 @@ export function flushPackageActivities(): void {
 		}
 	}
 }
-export function recordPackageActivity(input: ActivityInput): void {
-	const activity: PackageActivity = {
+export function recordPackActivity(input: ActivityInput): void {
+	const activity: PackActivity = {
 		...input,
 		type: input.type ?? EXTENSION_ACTIVITY,
 		eventId: randomUUID(),
@@ -70,11 +70,11 @@ export function recordPackageActivity(input: ActivityInput): void {
 		pending.shift();
 		dropped += 1;
 	}
-	flushPackageActivities();
+	flushPackActivities();
 }
-export function recentPackageActivity(id: string): ReadonlyArray<PackageActivity> {
+export function recentPackActivity(id: string): ReadonlyArray<PackActivity> {
 	return recent.filter((row) => row.owner.id === id).slice(-8);
 }
-export function packageActivityText(activity: PackageActivity): string {
+export function packageActivityText(activity: PackActivity): string {
 	return `${activity.owner.id}@${activity.owner.version} ${activity.kind}${activity.outcome ? `: ${activity.outcome}` : ""} (${activity.owner.digest.slice(0, 12)})`;
 }

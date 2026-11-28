@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import { readDispatchScopeNotice } from "../../core/dispatch-scope-notice.js";
 import type { DomainBundle, DomainContext, DomainExtension } from "../../core/domain-loader.js";
-import { flushPackageActivities, PLUGIN_RESOURCE_USE, recordPackageActivity } from "../../core/package-activity.js";
+import { flushPackActivities, PLUGIN_RESOURCE_USE, recordPackActivity } from "../../core/pack-activity.js";
 import { sessionTelemetryContext } from "../../core/telemetry/context.js";
 import type {
 	SessionParkReason as ParkReason,
@@ -222,7 +222,7 @@ export function createSessionBundle(context: DomainContext): DomainBundle<Sessio
 			persistSessionMeta(next);
 			state = next;
 			currentTurnId = null;
-			flushPackageActivities();
+			flushPackActivities();
 			if (pendingName !== null) {
 				const name = pendingName;
 				pendingName = null;
@@ -278,7 +278,7 @@ export function createSessionBundle(context: DomainContext): DomainBundle<Sessio
 			state.meta.skillActivations = [...existing, activation];
 			persistSessionMeta(state);
 			if (activation.owner)
-				recordPackageActivity({
+				recordPackActivity({
 					type: PLUGIN_RESOURCE_USE,
 					kind: "skill",
 					owner: activation.owner,

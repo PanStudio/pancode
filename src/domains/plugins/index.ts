@@ -25,7 +25,7 @@ export {
 	auditPluginInstallRecords,
 	disablePlugin,
 	enablePlugin,
-	installHubPackage,
+	installHubPack,
 	installPlugin,
 	listInstalledPlugins,
 	newlyBrokenDependents,

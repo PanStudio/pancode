@@ -17,13 +17,13 @@ import {
 	copyState,
 	diskSentence,
 	effectSentence,
-	matchesPackage,
+	type HubPack,
+	matchesHubPack,
 	missingScopes,
 	needsRequirements,
 	type Operation,
 	originSentence,
 	outcomeHeadline,
-	type Package,
 	type Plan,
 	type Scope,
 	scopeCopy,
@@ -425,7 +425,7 @@ export function HubCatalog({
 	client: Client;
 	/** `null` plans against the installation: user copies only. */
 	workspaceId: string | null;
-	packages: Package[];
+	packages: HubPack[];
 	filter: string;
 	compact?: boolean;
 	onReview?: (() => void) | undefined;
@@ -459,7 +459,7 @@ export function HubCatalog({
 	};
 	const visible = packages.filter(
 		(pkg) =>
-			(kind === "all" || pkg.kind === kind) && (!installedOnly || pkg.copies.length > 0) && matchesPackage(pkg, filter),
+			(kind === "all" || pkg.kind === kind) && (!installedOnly || pkg.copies.length > 0) && matchesHubPack(pkg, filter),
 	);
 	const installed = packages.filter((pkg) => pkg.copies.length > 0).length;
 	const displayed = visible.slice(0, limit),

@@ -26,7 +26,7 @@ import {
 	verifyIndexStatement,
 	verifyKeyCertificate,
 } from "./hub-signature.js";
-import type { HubPackageEntry } from "./hub-types.js";
+import type { HubPackEntry } from "./hub-types.js";
 
 export const HUB_CERTIFICATE_ASSET = "signing.json";
 export const HUB_ENVELOPE_ASSET = "index.envelope.json";
@@ -362,7 +362,7 @@ export type RemoteIndexStatus = "off" | "none" | "expired" | "damaged" | "curren
 export function remoteIndexRows(
 	diagnostics: string[],
 	options: { now?: () => Date; stateDir?: string; packsRoot: string; url?: string },
-): { rows: HubPackageEntry[]; status: RemoteIndexStatus; state?: HubTrustState } {
+): { rows: HubPackEntry[]; status: RemoteIndexStatus; state?: HubTrustState } {
 	if ((options.url ?? configuredHubIndexUrl()) === "") return { rows: [], status: "off" };
 	const stateDir = stateDirOf(options);
 	const state = readHubTrustState(stateDir);

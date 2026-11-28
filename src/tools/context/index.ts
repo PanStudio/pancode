@@ -29,7 +29,7 @@ import {
 	checkSkillDriftBatch,
 	discoverMarketplaceSkills,
 	installedSkillNames,
-	installedSkillPackages,
+	installedSkillPacks,
 	type LoadSkillsInput,
 	loadSkills,
 	type MarketplaceSkill,
@@ -608,7 +608,7 @@ function runSkillsScope(
 		const packages =
 			deps.skillMarketplace === false || deps.getSkillLoaderOptions?.().disableDiscovery === true
 				? []
-				: installedSkillPackages(
+				: installedSkillPacks(
 						list.items,
 						cwdFromDeps(deps),
 						deps.getSkillLoaderOptions?.().trustProjectCompatRoots === true,
@@ -700,7 +700,7 @@ function runSkillsScope(
 		list.items.find((item) => item.name === name && operatorRequestedManualSkill(item, pendingRequest));
 	if (!skill) {
 		if (deps.skillMarketplace !== false && deps.getSkillLoaderOptions?.().disableDiscovery !== true) {
-			const installed = installedSkillPackages(
+			const installed = installedSkillPacks(
 				list.items,
 				cwdFromDeps(deps),
 				deps.getSkillLoaderOptions?.().trustProjectCompatRoots === true,

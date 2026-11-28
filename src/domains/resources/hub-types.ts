@@ -76,7 +76,7 @@ export interface HubRowSource {
 }
 
 /** The same record is used in bundled, user, and project hub indexes. */
-export interface HubPackageEntry {
+export interface HubPackEntry {
 	kind: HubEntryKind;
 	name: string;
 	description: string;

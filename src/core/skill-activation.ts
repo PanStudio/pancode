@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
-import { isPackageIdentity } from "./package-identity.js";
+import { isPackIdentity } from "./pack-identity.js";
 
 type SkillActivationTrigger = "slash-command" | "tool";
 type PendingSkillRequestSource = "slash-command" | "selector" | "marketplace" | "recipe";
@@ -349,7 +349,7 @@ export function agentSkillToolPolicy(
 }
 
 export interface SkillActivation {
-	owner?: import("./package-identity.js").PackageIdentity;
+	owner?: import("./pack-identity.js").PackIdentity;
 	name: string;
 	filePath: string;
 	hash: string;
@@ -371,13 +371,13 @@ export interface SkillActivation {
 }
 
 interface SkillActivationSource {
-	owner?: import("./package-identity.js").PackageIdentity;
+	owner?: import("./pack-identity.js").PackIdentity;
 	name: string;
 	filePath: string;
 	hash: string;
 	source: string;
 	sourceOrigin?: string;
-	sourceInfo?: { source?: string; owner?: import("./package-identity.js").PackageIdentity };
+	sourceInfo?: { source?: string; owner?: import("./pack-identity.js").PackIdentity };
 }
 
 function trimmedString(value: unknown): string | null {
@@ -419,7 +419,7 @@ export function skillActivationFromToolDetails(details: unknown, turnId?: string
 	);
 	if (record.drift === "match" || record.drift === "mismatch") activation.drift = record.drift;
 	const owner = record.owner ?? (record.sourceInfo as SkillActivationSource["sourceInfo"])?.owner;
-	if (isPackageIdentity(owner)) activation.owner = owner;
+	if (isPackIdentity(owner)) activation.owner = owner;
 	if (record.activation === "recipe" || record.activation === "model" || record.activation === "operator") {
 		activation.requestSource = record.activation;
 	}
@@ -435,7 +435,7 @@ export function isSkillActivation(value: unknown): value is SkillActivation {
 		typeof record.hash === "string" &&
 		typeof record.source === "string" &&
 		(record.sourceOrigin === undefined || typeof record.sourceOrigin === "string") &&
-		(record.owner === undefined || isPackageIdentity(record.owner)) &&
+		(record.owner === undefined || isPackIdentity(record.owner)) &&
 		(record.requestSource === undefined ||
 			record.requestSource === "recipe" ||
 			record.requestSource === "model" ||

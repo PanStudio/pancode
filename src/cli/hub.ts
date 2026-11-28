@@ -26,9 +26,9 @@ import {
 	hubWorkspace,
 	pinHubEntry,
 	planHubInstall,
-	registerHubPackage,
+	registerHubPack,
 	releaseHubPlan,
-	resolveHubPackage,
+	resolveHubPack,
 	resolveInstalledHubEntry,
 	syncHub,
 } from "../domains/resources/hub.js";
@@ -55,9 +55,9 @@ import {
 import { HUB_ROOT_PUBLIC_KEYS } from "../domains/resources/hub-keys.js";
 import {
 	installedCopiesNamed,
-	listInstalledHubPackages as listInstalledPlugins,
+	listInstalledHubPacks as listInstalledPlugins,
 	readHubManifest as readPluginManifest,
-} from "../domains/resources/hub-packages.js";
+} from "../domains/resources/hub-packs.js";
 import { describeHubPair } from "../domains/resources/hub-pairing.js";
 import {
 	autoRefreshRemoteIndex,
@@ -74,7 +74,7 @@ import {
 	isHubComponentKind,
 	isHubKind,
 } from "../domains/resources/hub-types.js";
-import { validateHubPackage } from "../domains/resources/hub-validation.js";
+import { validateHubPack } from "../domains/resources/hub-validation.js";
 import { bareSkillRemedy, isBareSkillDirectory, packageBareSkill } from "../domains/resources/skills/bare-skill.js";
 import { knownSkillNames } from "../domains/resources/skills/marketplace.js";
 import { createProcessJournal } from "../domains/telemetry/process-journal.js";
@@ -916,7 +916,7 @@ async function executeHubCommand(
 		if (!ref || parsed.positional.length !== 1)
 			throw new Error(`hub ${parsed.command} requires one path or pack reference`);
 		if (parsed.command === "register") {
-			const entry = registerHubPackage(ref, { ...options, force: parsed.force });
+			const entry = registerHubPack(ref, { ...options, force: parsed.force });
 			if (parsed.json) emit({ ok: true, entry });
 			else
 				printOk(
@@ -952,7 +952,7 @@ async function executeHubCommand(
 				return code;
 			}
 			const packageRoot = existsSync(local) && statSync(local).isFile() ? path.dirname(local) : local;
-			const result = validateHubPackage(packageRoot, {
+			const result = validateHubPack(packageRoot, {
 				cwd: options.cwd,
 				authoring: { knownSkills: knownSkillNames(options.cwd) },
 			});
@@ -1004,7 +1004,7 @@ async function executeHubCommand(
 				else printInspection(installedInspectView(installed, inspection));
 				return installed.valid ? 0 : 1;
 			}
-			const entry = resolveHubPackage(ref, options);
+			const entry = resolveHubPack(ref, options);
 			const record = readHubInventory({
 				cwd: options.cwd,
 				...(options.catalog ? { catalog: options.catalog } : {}),

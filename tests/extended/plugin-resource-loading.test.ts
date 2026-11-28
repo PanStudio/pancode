@@ -5,8 +5,8 @@ import { deepStrictEqual, ok, strictEqual, throws } from "node:assert/strict";
 import { mkdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { it } from "node:test";
-import type { PackageActivity } from "../../src/core/package-activity.js";
-import { bindPackageActivitySink, PLUGIN_RESOURCE_USE } from "../../src/core/package-activity.js";
+import type { PackActivity } from "../../src/core/pack-activity.js";
+import { bindPackActivitySink, PLUGIN_RESOURCE_USE } from "../../src/core/pack-activity.js";
 import { skillActivationFromToolDetails } from "../../src/core/skill-activation.js";
 import { createTelemetryHub } from "../../src/core/telemetry/hub.js";
 import type { PluginsReloadedPayload } from "../../src/core/telemetry/live-events.js";
@@ -20,7 +20,7 @@ import {
 	reloadPluginResources,
 } from "../../src/domains/plugins/index.js";
 import type { ResourcesContract } from "../../src/domains/resources/contract.js";
-import { resolvePackageReferences } from "../../src/domains/resources/package-references.js";
+import { resolvePackReferences } from "../../src/domains/resources/pack-references.js";
 import { expandPromptTemplateInput, loadPromptTemplates } from "../../src/domains/resources/prompts/loader.js";
 import { loadSkills } from "../../src/domains/resources/skills/loader.js";
 import { expandSubmitText } from "../../src/domains/resources/submit-expansion.js";
@@ -128,8 +128,8 @@ function promptPlugin(root: string, namespace: string, body: string): void {
 
 it("plugin resources retain their owner", async () => {
 	const env = await isolatePancodeEnv("pancode-plugin-owner-");
-	const activity: PackageActivity[] = [];
-	const unbind = bindPackageActivitySink((row) => {
+	const activity: PackActivity[] = [];
+	const unbind = bindPackActivitySink((row) => {
 		activity.push(row);
 		return true;
 	});
@@ -258,15 +258,15 @@ it("rejects missing and escaping package references without changing non-package
 		const root = join(env.dir, "source");
 		fixture(root);
 		const context = { rootPath: root, plugin: true };
-		throws(() => resolvePackageReferences("${pluginRoot}/../outside", context), /escaping/);
-		throws(() => resolvePackageReferences("${pluginRoot}/assets/missing", context), /unresolved/);
-		throws(() => resolvePackageReferences("${component:resource:absent}", context), /unresolved component/);
+		throws(() => resolvePackReferences("${pluginRoot}/../outside", context), /escaping/);
+		throws(() => resolvePackReferences("${pluginRoot}/assets/missing", context), /unresolved/);
+		throws(() => resolvePackReferences("${component:resource:absent}", context), /unresolved component/);
 		write(env.dir, "outside", "private");
 		symlinkSync(join(env.dir, "outside"), join(root, "assets/escape"));
-		throws(() => resolvePackageReferences("${pluginRoot}/assets/escape", context), /escaping/);
-		strictEqual(resolvePackageReferences("${pluginRoot}/assets/reference.txt", {}), "${pluginRoot}/assets/reference.txt");
+		throws(() => resolvePackReferences("${pluginRoot}/assets/escape", context), /escaping/);
+		strictEqual(resolvePackReferences("${pluginRoot}/assets/reference.txt", {}), "${pluginRoot}/assets/reference.txt");
 		strictEqual(
-			resolvePackageReferences("${pluginRoot}/assets/reference.txt", { rootPath: root }),
+			resolvePackReferences("${pluginRoot}/assets/reference.txt", { rootPath: root }),
 			"${pluginRoot}/assets/reference.txt",
 			"a root without the plugin flag interprets no package reference",
 		);

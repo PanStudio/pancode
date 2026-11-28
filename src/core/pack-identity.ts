@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
-export interface PackageIdentity {
+export interface PackIdentity {
 	kind: string;
 	id: string;
 	version: string;
@@ -9,7 +9,7 @@ export interface PackageIdentity {
 	envelopeDigest?: string;
 }
 
-export function isPackageIdentity(value: unknown): value is PackageIdentity {
+export function isPackIdentity(value: unknown): value is PackIdentity {
 	if (!value || typeof value !== "object") return false;
 	const item = value as Record<string, unknown>;
 	return (

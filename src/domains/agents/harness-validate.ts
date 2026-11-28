@@ -20,7 +20,7 @@ import { captureProjectSurface } from "../../core/workspace-trust.js";
 import { pancodeConfigDir } from "../../core/xdg.js";
 import { isWorkerSurfaceExcludedTool } from "../../tools/policy.js";
 import { mcpSkillReferenceServer } from "../mcp/skills.js";
-import { resolvePackageReferences } from "../resources/package-references.js";
+import { resolvePackReferences } from "../resources/pack-references.js";
 import { loadSkills, type Skill, type SkillList } from "../resources/skills/loader.js";
 import { parseFrontmatter } from "./frontmatter.js";
 import type { AgentRecipe } from "./recipe.js";
@@ -275,7 +275,7 @@ function recipeIssues(file: HarnessRecipeFile, input: HarnessInput): HarnessIssu
 		return issues;
 	}
 	try {
-		body = resolvePackageReferences(body, { plugin: false });
+		body = resolvePackReferences(body, { plugin: false });
 	} catch (error) {
 		push("body", error instanceof Error ? error.message : String(error));
 	}

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import { enabledPluginResourceRoots } from "../plugins/index.js";
-import { resolvePackagePathReference, resolvePackageReferences } from "../resources/package-references.js";
+import { resolvePackPathReference, resolvePackReferences } from "../resources/pack-references.js";
 /**
  * Repo-owned playbooks (Symphony P5: work policy lives in the repo, versioned
  * and strictly validated). A playbook is what the fleet runs.
@@ -1063,14 +1063,14 @@ export function resolvePlaybookReferences(
 	// Authored text is resolved after schema parsing; paths cannot inject YAML keys.
 	return {
 		...playbook,
-		body: resolvePackageReferences(playbook.body, context),
+		body: resolvePackReferences(playbook.body, context),
 		steps: playbook.steps.map((step) => {
 			if (step.kind === "code" && step.args)
-				return { ...step, args: step.args.map((arg) => resolvePackagePathReference(arg, context)) };
+				return { ...step, args: step.args.map((arg) => resolvePackPathReference(arg, context)) };
 			if (step.kind === "loop" && step.check.kind === "code" && step.check.args)
 				return {
 					...step,
-					check: { ...step.check, args: step.check.args.map((arg) => resolvePackagePathReference(arg, context)) },
+					check: { ...step.check, args: step.check.args.map((arg) => resolvePackPathReference(arg, context)) },
 				};
 			return step;
 		}),

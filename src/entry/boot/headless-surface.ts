@@ -4,7 +4,7 @@ import { segmentUsageFromView } from "../../cli/modes/json-stream.js";
 import { runHeadlessMainAgent } from "../../cli/modes/print.js";
 import { startRunOutput, writeLocalAnswer, writeRunDiagnostic } from "../../cli/run-failure.js";
 import { HEADLESS_PERMISSION_DENIED_REASON } from "../../core/headless-permission.js";
-import { recordPackageActivity } from "../../core/package-activity.js";
+import { recordPackActivity } from "../../core/pack-activity.js";
 import { narrowTurnConstraints, templateTurnConstraints } from "../../core/turn-constraints.js";
 import { pancodeStateDir } from "../../core/xdg.js";
 import { runUsageFromCallRecords } from "../../domains/dispatch/index.js";
@@ -145,7 +145,7 @@ export async function runHeadlessSurface(
 		};
 		const promptExpansion = resources?.expandPromptTemplate(parsedSkillRequest.text, process.cwd());
 		if (promptExpansion?.expanded && promptExpansion.template.sourceInfo.owner)
-			recordPackageActivity({
+			recordPackActivity({
 				type: "pancode_plugin_resource_use",
 				kind: "prompt",
 				owner: promptExpansion.template.sourceInfo.owner,

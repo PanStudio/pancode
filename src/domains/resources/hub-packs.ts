@@ -56,10 +56,10 @@ export function readHubManifest(root: string): PluginCandidate {
 	};
 }
 /** An installed package as the hub lists it; an extension copy also names the plugin it serves. */
-export type HubInstalledPackage = InstalledPlugin & { plugin?: string };
+export type HubInstalledPack = InstalledPlugin & { plugin?: string };
 
 /** The hub lists installed packages; a dev package is a session overlay and never one of them. */
-export function extensionHubCopy(entry: InstalledExtension): HubInstalledPackage {
+export function extensionHubCopy(entry: InstalledExtension): HubInstalledPack {
 	if (entry.scope === "dev") throw new Error(`dev extension ${entry.id} is not a hub pack`);
 	const { provenance, overriddenBy, ...rest } = entry;
 	return {
@@ -73,7 +73,7 @@ export function extensionHubCopy(entry: InstalledExtension): HubInstalledPackage
 		trust: "trusted",
 	};
 }
-export function listInstalledHubPackages(cwd = process.cwd(), options: PluginListOptions = {}): HubInstalledPackage[] {
+export function listInstalledHubPacks(cwd = process.cwd(), options: PluginListOptions = {}): HubInstalledPack[] {
 	return [
 		...listInstalledPlugins(cwd, options),
 		...listInstalledExtensions(cwd, options)
@@ -97,7 +97,7 @@ export function hubCopySourceId(copy: { kind?: HubEntryKind | undefined; scope: 
  * A bare name that both a plugin-format package and an extension carry is
  * refused with both refs, as install refuses an ambiguous catalog name.
  */
-export function installedCopiesNamed<T extends Pick<HubInstalledPackage, "id" | "kind" | "scope">>(
+export function installedCopiesNamed<T extends Pick<HubInstalledPack, "id" | "kind" | "scope">>(
 	copies: ReadonlyArray<T>,
 	ref: string,
 ): T[] {
@@ -109,7 +109,7 @@ export function installedCopiesNamed<T extends Pick<HubInstalledPackage, "id" | 
 	}
 	return named.sort((a, b) => Number(b.scope === "project") - Number(a.scope === "project"));
 }
-export function hubPackageBaseDir(kind: HubEntryKind, scope: PluginScope, cwd: string): string {
+export function hubPackBaseDir(kind: HubEntryKind, scope: PluginScope, cwd: string): string {
 	return kind === "extension" ? extensionBaseDir(scope, cwd) : pluginBaseDir(scope, cwd);
 }
 export function readHubInstallRecord(

@@ -12,9 +12,9 @@ import { loadManifestFromRoot } from "../extensions/index.js";
 import { loadPluginMcpFile } from "../mcp/config.js";
 import { pluginResourcePath } from "../plugins/discovery.js";
 import type { PluginCandidate, PluginManifest } from "../plugins/types.js";
-import { readHubManifest } from "./hub-packages.js";
+import { readHubManifest } from "./hub-packs.js";
 import { isHubComponentKind } from "./hub-types.js";
-import { resolvePackageReferences } from "./package-references.js";
+import { resolvePackReferences } from "./pack-references.js";
 import { loadPromptTemplates, type PromptTemplateRoot } from "./prompts/loader.js";
 import { skillAuthoringDiagnostics } from "./skills/authoring-check.js";
 import { loadSkills, type Skill, type SkillRoot, skillCatalogValidity } from "./skills/loader.js";
@@ -48,16 +48,16 @@ export interface HubValidationPrerequisite {
 	sourcePath?: string | undefined;
 }
 
-export interface HubPackageValidation {
+export interface HubPackValidation {
 	contentValid: boolean;
 	resources: HubComponentValidationRecord[];
 	diagnostics: HubValidationDiagnostic[];
 	prerequisites: HubValidationPrerequisite[];
 }
 
-export interface HubPackageValidationResult extends PluginCandidate {
+export interface HubPackValidationResult extends PluginCandidate {
 	manifestValid: boolean;
-	validation: HubPackageValidation;
+	validation: HubPackValidation;
 }
 
 function normalizePathRel(root: string, targetPath: string): string {
@@ -95,10 +95,7 @@ function validatePackServers(root: string, manifest: PluginManifest): HubValidat
 		}));
 }
 
-export function validateHubPackage(
-	packageRoot: string,
-	options: HubValidationOptions = {},
-): HubPackageValidationResult {
+export function validateHubPack(packageRoot: string, options: HubValidationOptions = {}): HubPackValidationResult {
 	const resolved = path.resolve(packageRoot);
 	const candidate = readHubManifest(resolved);
 
@@ -337,7 +334,7 @@ export function validateHubPackage(
 					recipeName = id;
 					const raw = readFileSync(filepath, "utf8");
 					const { frontmatter, body: rawBody } = parseFrontmatter(raw, filepath);
-					const body = resolvePackageReferences(rawBody, { rootPath: resolved, plugin: true });
+					const body = resolvePackReferences(rawBody, { rootPath: resolved, plugin: true });
 					const recipe = parseAgentRecipeSchema({ id, source: "plugin", filepath, body, frontmatter });
 					recipeDescription = recipe.description;
 

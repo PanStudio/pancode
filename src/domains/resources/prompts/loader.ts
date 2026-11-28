@@ -20,7 +20,7 @@ import {
 	splitYamlFrontmatter,
 	stringField,
 } from "../common-loader.js";
-import { resolvePackageReferences } from "../package-references.js";
+import { resolvePackReferences } from "../pack-references.js";
 import { importedToolSurface, projectCompatTrusted, templateToolSurface } from "../skills/loader.js";
 import { type TemplateTurnBounds, templateTurnBounds } from "./turn-bounds.js";
 
@@ -76,7 +76,7 @@ export interface PromptTemplate {
 }
 
 export interface PromptTemplateRoot {
-	owner?: import("../../../core/package-identity.js").PackageIdentity;
+	owner?: import("../../../core/pack-identity.js").PackIdentity;
 	plugin?: boolean;
 	path: string;
 	/** Present only for an installed plugin resource root. */
@@ -239,7 +239,7 @@ type BodyResolution = { body: string } | { reason: string };
 function resolvePackageRootReferences(body: string, root: PromptTemplateRoot): BodyResolution {
 	if (!root.plugin) return { body };
 	try {
-		return { body: resolvePackageReferences(body, root) };
+		return { body: resolvePackReferences(body, root) };
 	} catch (error) {
 		return { reason: `prompt template: ${error instanceof Error ? error.message : String(error)}` };
 	}

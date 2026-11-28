@@ -10,7 +10,7 @@ import {
 } from "../../../core/workspace-trust.js";
 import { pancodeConfigDir } from "../../../core/xdg.js";
 import { pluginResourcePath, readPluginManifest } from "../../plugins/index.js";
-import { discoverHub, installHubPlan, planHubInstall, resolveHubPackage } from "../hub.js";
+import { discoverHub, installHubPlan, planHubInstall, resolveHubPack } from "../hub.js";
 import { PROJECT_SKILL_TRUST_REMEDY } from "./availability.js";
 import { loadSkills, type Skill } from "./loader.js";
 
@@ -346,7 +346,7 @@ export function installSkill(input: InstallSkillInput): InstallSkillResult {
 	const source = input.source.trim();
 	const cwd = input.cwd ?? process.cwd();
 	const scope = input.scope ?? "user";
-	const entry = resolveHubPackage(source, input.cwd ? { cwd: input.cwd } : {});
+	const entry = resolveHubPack(source, input.cwd ? { cwd: input.cwd } : {});
 	if (entry.kind !== "skill") throw new Error(`expected a skill package, found ${entry.kind}:${entry.name}`);
 	if (input.name && input.name !== entry.name) throw new Error("package identities cannot be renamed at install");
 	const plan = planHubInstall(entry, {

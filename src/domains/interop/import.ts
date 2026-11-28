@@ -11,9 +11,9 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fetchPluginSource, parsePluginGithubSource, pluginLocalPath } from "../plugins/catalog.js";
-import { installHubPackage, listInstalledPlugins, pluginBaseDir, readPluginManifest } from "../plugins/index.js";
-import type { ForeignPackageFormat, PluginOrigin } from "../plugins/types.js";
-import { type HubPackageValidationResult, validateHubPackage } from "../resources/hub-validation.js";
+import { installHubPack, listInstalledPlugins, pluginBaseDir, readPluginManifest } from "../plugins/index.js";
+import type { ForeignPackFormat, PluginOrigin } from "../plugins/types.js";
+import { type HubPackValidationResult, validateHubPack } from "../resources/hub-validation.js";
 import {
 	type PreparedAdoption,
 	prepareBareSkillPackage,
@@ -38,7 +38,7 @@ export interface HubImportSource {
 export interface HubImportPlan {
 	source: HubImportSource;
 	detection: ForeignPluginDetection;
-	format?: ForeignPackageFormat;
+	format?: ForeignPackFormat;
 	action: "install" | "blocked";
 	/** Why the plan is blocked, or review notes for an installable plan. */
 	reasons: string[];
@@ -70,7 +70,7 @@ export interface HubImportApplyResult {
 	installed?: string;
 	destination?: string;
 	/** Native validation of the installed component files; absent when nothing was published. */
-	validation?: HubPackageValidationResult;
+	validation?: HubPackValidationResult;
 	/**
 	 * Trust admission is a separate fact from publication and validity. This is
 	 * only the gate setting the caller supplied; actual component availability is
@@ -227,7 +227,7 @@ export function applyHubImport(
 		const candidate = readPluginManifest(staging);
 		if (!candidate.valid || !candidate.contentDigest)
 			throw new Error(candidate.diagnostics.map((d) => d.message).join("; "));
-		const installed = installHubPackage({
+		const installed = installHubPack({
 			lifecycle: { operation: "import", source: plan.source.input },
 			sourcePath: staging,
 			kind: candidate.manifest?.pancode.kind ?? "plugin",
@@ -243,7 +243,7 @@ export function applyHubImport(
 			result.published = true;
 			result.installed = installed.plugin.id;
 			result.destination = installed.plugin.rootPath;
-			result.validation = validateHubPackage(installed.plugin.rootPath, { cwd: plan.cwd });
+			result.validation = validateHubPack(installed.plugin.rootPath, { cwd: plan.cwd });
 		}
 		return result;
 	} catch (error) {

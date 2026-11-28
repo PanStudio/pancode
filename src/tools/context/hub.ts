@@ -9,7 +9,7 @@ import type {
 	HubInventory,
 	HubInventoryOptions,
 	HubOrigin,
-	HubPackageRecord,
+	HubPackRecord,
 } from "../../domains/resources/hub-inventory.js";
 import { finalizeObservation, type ObservationReservation } from "../observation.js";
 import type { ToolInvokeOptions } from "../registry-contract.js";
@@ -188,7 +188,7 @@ function projectHint(
 	kind: string,
 	name: string,
 	description: string | undefined,
-	owner: HubPackageRecord,
+	owner: HubPackRecord,
 	copiesCapped: boolean,
 ): Record<string, unknown> {
 	const installed = owner.copies.map(projectInstalledCopy);
@@ -205,7 +205,7 @@ function projectHint(
 	};
 }
 
-function projectInstalledCopy(copy: HubPackageRecord["copies"][number]): Record<string, unknown> {
+function projectInstalledCopy(copy: HubPackRecord["copies"][number]): Record<string, unknown> {
 	return {
 		scope: copy.scope,
 		state: copy.state,
@@ -222,7 +222,7 @@ function projectInstalledCopy(copy: HubPackageRecord["copies"][number]): Record<
  * proves the package is usable, and never triggers a fetch. A row with no hints
  * says so honestly instead of claiming empty contents.
  */
-function projectPackage(record: HubPackageRecord, copiesCapped: boolean): Record<string, unknown> {
+function projectPackage(record: HubPackRecord, copiesCapped: boolean): Record<string, unknown> {
 	const provides = record.provides ?? [];
 	const shownProvides = provides.slice(0, MAX_PROVIDES);
 	const installed = record.copies.map(projectInstalledCopy);

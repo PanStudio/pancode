@@ -6,7 +6,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSyn
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { it } from "node:test";
-import { resolvePackagePathReference } from "../../src/domains/resources/package-references.js";
+import { resolvePackPathReference } from "../../src/domains/resources/pack-references.js";
 
 it("validates complete package argument paths instead of a prefix before spaces or Unicode", () => {
 	const scratch = mkdtempSync(join(tmpdir(), "pancode-package-path-"));
@@ -17,11 +17,11 @@ it("validates complete package argument paths instead of a prefix before spaces 
 		writeFileSync(join(scratch, "outside.txt"), "outside package");
 		const context = { rootPath: root, plugin: true };
 		for (const directory of ["safe dir", "safeα", "safe[part]"])
-			throws(() => resolvePackagePathReference(`\${pluginRoot}/${directory}/../../outside.txt`, context), /escaping/);
+			throws(() => resolvePackPathReference(`\${pluginRoot}/${directory}/../../outside.txt`, context), /escaping/);
 		const file = join(root, "safe dir", "α 'quoted'.txt");
 		writeFileSync(file, "contained evidence");
 		strictEqual(
-			readFileSync(resolvePackagePathReference("${pluginRoot}/safe dir/α 'quoted'.txt", context), "utf8"),
+			readFileSync(resolvePackPathReference("${pluginRoot}/safe dir/α 'quoted'.txt", context), "utf8"),
 			"contained evidence",
 		);
 		writeFileSync(
@@ -38,20 +38,20 @@ it("validates complete package argument paths instead of a prefix before spaces 
 				},
 			}),
 		);
-		strictEqual(resolvePackagePathReference("${component:resource:evidence}", context), file);
+		strictEqual(resolvePackPathReference("${component:resource:evidence}", context), file);
 		strictEqual(
-			resolvePackagePathReference("${pluginRoot}/safe dir/α 'quoted'.txt", { rootPath: root }),
+			resolvePackPathReference("${pluginRoot}/safe dir/α 'quoted'.txt", { rootPath: root }),
 			"${pluginRoot}/safe dir/α 'quoted'.txt",
 			"a root without the plugin flag interprets no package reference",
 		);
 		for (const value of ["--file=${pluginRoot}/safe", "${pluginRoot}suffix", "${pluginRoot}/safe/${pluginRoot}"])
-			throws(() => resolvePackagePathReference(value, context), /complete argument/);
+			throws(() => resolvePackPathReference(value, context), /complete argument/);
 		for (const value of ["${pluginRoot}/safe\\..\\outside.txt", "${pluginRoot}/safe\0.txt", "${pluginRoot}/safe\n.txt"])
-			throws(() => resolvePackagePathReference(value, context), /unsupported/);
+			throws(() => resolvePackPathReference(value, context), /unsupported/);
 		symlinkSync(join(scratch, "outside.txt"), join(root, "safe", "linked file"));
-		throws(() => resolvePackagePathReference("${pluginRoot}/safe/linked file", context), /escaping/);
-		strictEqual(resolvePackagePathReference("ordinary data", context), "ordinary data");
-		strictEqual(resolvePackagePathReference("${pluginRoot}/safe", {}), "${pluginRoot}/safe");
+		throws(() => resolvePackPathReference("${pluginRoot}/safe/linked file", context), /escaping/);
+		strictEqual(resolvePackPathReference("ordinary data", context), "ordinary data");
+		strictEqual(resolvePackPathReference("${pluginRoot}/safe", {}), "${pluginRoot}/safe");
 	} finally {
 		rmSync(scratch, { recursive: true, force: true });
 	}

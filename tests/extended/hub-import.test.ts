@@ -38,7 +38,7 @@ import {
 	clearPluginSnapshots,
 	disablePlugin,
 	enablePlugin,
-	installHubPackage,
+	installHubPack,
 	installPlugin,
 	listInstalledPlugins,
 	PLUGIN_SCHEMA,
@@ -765,7 +765,7 @@ describe("hub import of foreign plugin packages", () => {
 			}),
 		);
 		writeFileSync(path.join(vendor, "native-helper", "skills", "h", "SKILL.md"), skill("h"));
-		const native = installHubPackage({
+		const native = installHubPack({
 			kind: "plugin",
 			sourcePath: path.join(vendor, "native-helper"),
 			scope: "user",
@@ -966,7 +966,7 @@ describe("hub import of foreign plugin packages", () => {
 			}),
 		);
 		writeFileSync(path.join(vendor, "replacement", "skills", "x", "SKILL.md"), skill("x"));
-		const replaced = installHubPackage({
+		const replaced = installHubPack({
 			kind: "plugin",
 			sourcePath: path.join(vendor, "replacement"),
 			scope: "user",

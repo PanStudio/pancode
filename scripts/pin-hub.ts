@@ -4,7 +4,7 @@ import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { parse, stringify } from "yaml";
-import { validateHubPackage } from "../src/domains/resources/hub-validation.js";
+import { validateHubPack } from "../src/domains/resources/hub-validation.js";
 import { buildPluginServers } from "./build-plugin-servers.js";
 import { generateClaudeMcpFiles, generateHubMarketplace, REMOTE_SOURCE_URL } from "./generate-hub-marketplace.js";
 import {
@@ -128,7 +128,7 @@ for (const target of packages) {
 // ships, so the second can hold a routing clause to names that actually exist.
 const knownSkills = new Set(
 	packages.flatMap((target) =>
-		validateHubPackage(target.directory)
+		validateHubPack(target.directory)
 			.validation.resources.filter((resource) => resource.kind === "skill")
 			.map((resource) => resource.name),
 	),
@@ -136,10 +136,10 @@ const knownSkills = new Set(
 const validatedPackages: {
 	directory: string;
 	expectedKind: string;
-	result: ReturnType<typeof validateHubPackage>;
+	result: ReturnType<typeof validateHubPack>;
 }[] = [];
 // Warnings speak to whoever is pinning; the check runs inside every lint and stays quiet.
-function reportAuthoringWarnings(result: ReturnType<typeof validateHubPackage>): void {
+function reportAuthoringWarnings(result: ReturnType<typeof validateHubPack>): void {
 	if (checkMode) return;
 	for (const resource of result.validation.resources)
 		for (const diag of resource.diagnostics)
@@ -147,7 +147,7 @@ function reportAuthoringWarnings(result: ReturnType<typeof validateHubPackage>):
 				process.stderr.write(`hub warning: ${path.relative(root, diag.path ?? resource.path)}: ${diag.message}\n`);
 }
 for (const target of packages) {
-	const result = validateHubPackage(target.directory, { authoring: { knownSkills } });
+	const result = validateHubPack(target.directory, { authoring: { knownSkills } });
 	reportAuthoringWarnings(result);
 	if (!result.valid) {
 		const msgs = [
@@ -162,7 +162,7 @@ for (const target of packages) {
 
 // Validate authoring templates
 for (const templatePath of templateTargets) {
-	const result = validateHubPackage(templatePath, { authoring: { knownSkills } });
+	const result = validateHubPack(templatePath, { authoring: { knownSkills } });
 	reportAuthoringWarnings(result);
 	if (!result.valid) {
 		const msgs = [

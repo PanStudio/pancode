@@ -33,7 +33,7 @@ import {
 import type { ResourceDiagnostic, ResourceScope, ResourceSourceInfo } from "../collision.js";
 import { readRootEntries, splitToolList, splitYamlFrontmatter, stringField } from "../common-loader.js";
 import type { HubAuditState } from "../hub-types.js";
-import { resolvePackageReferences } from "../package-references.js";
+import { resolvePackReferences } from "../pack-references.js";
 import { installedSkillNames } from "./availability.js";
 import { normalizedSkillHash } from "./content-hash.js";
 import { cachedFrontmatterParser, withFrontmatterCache } from "./frontmatter-cache.js";
@@ -169,7 +169,7 @@ export interface Skill {
 }
 
 export interface SkillRoot {
-	owner?: import("../../../core/package-identity.js").PackageIdentity;
+	owner?: import("../../../core/pack-identity.js").PackIdentity;
 	rootPath?: string;
 	plugin?: boolean;
 	path: string;
@@ -917,7 +917,7 @@ function loadSkillFile(
 	const disallowedTools = declaredToolSurface(parsed.frontmatter, "disallowed-tools", filePath, diagnostics);
 	let content: string;
 	try {
-		content = resolvePackageReferences(parsed.body.trim(), root);
+		content = resolvePackReferences(parsed.body.trim(), root);
 	} catch (error) {
 		diagnostics.push({ type: "warning", message: String(error), path: filePath });
 		return { candidate: null, diagnostics };

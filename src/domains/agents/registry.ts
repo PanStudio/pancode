@@ -11,7 +11,7 @@ import { pancodeProjectRoot } from "../../core/project-root.js";
 import { pancodeConfigDir } from "../../core/xdg.js";
 import { mcpSkillReferenceServer } from "../mcp/skills.js";
 import { enabledPluginResourceRoots, withPluginDiscoveryPass } from "../plugins/index.js";
-import { resolvePackageReferences } from "../resources/package-references.js";
+import { resolvePackReferences } from "../resources/pack-references.js";
 import { cachedFrontmatterParser, withFrontmatterCache } from "../resources/skills/frontmatter-cache.js";
 import { type LoadSkillsInput, loadSkills, type SkillList } from "../resources/skills/loader.js";
 import { parseFrontmatter } from "./frontmatter.js";
@@ -169,7 +169,7 @@ export function loadRecipesFromDir(
 				filepath,
 				cachedFrontmatterParser(filepath, { mtimeMs, size }),
 			);
-			const body = resolvePackageReferences(rawBody, {
+			const body = resolvePackReferences(rawBody, {
 				...(source.rootPath ? { rootPath: source.rootPath } : {}),
 				plugin: source.source === "plugin",
 			});

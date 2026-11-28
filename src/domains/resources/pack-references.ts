@@ -5,7 +5,7 @@ import path from "node:path";
 import { isSameOrDescendant, relativePathEscapes } from "../../core/path-containment.js";
 import { parsePluginManifest, readPluginManifest } from "../plugins/index.js";
 
-export interface PackageReferenceContext {
+export interface PackReferenceContext {
 	rootPath?: string;
 	/** Only plugin-owned content interprets package references. */
 	plugin?: boolean;
@@ -16,7 +16,7 @@ const REFERENCE_PATTERN = /\$\{(pluginRoot|component:([^}]+))\}(\/[A-Za-z0-9._~%
 /** The same reference occupying an entire argv/data value, spaces and Unicode included. */
 const COMPLETE_REFERENCE = /^\$\{(pluginRoot|component:([^}]+))\}(\/[\s\S]*)?$/u;
 
-function referenceResolver(context: PackageReferenceContext & { rootPath: string }) {
+function referenceResolver(context: PackReferenceContext & { rootPath: string }) {
 	const root = realpathSync(context.rootPath);
 	let components: Map<string, string> | undefined;
 	return (reference: string, _token: string, ref: string | undefined, suffix: string | undefined): string => {
@@ -51,13 +51,13 @@ function referenceResolver(context: PackageReferenceContext & { rootPath: string
  * Expand prose markers with portable, space-free slash suffixes. Surrounding
  * prose is not a filesystem path; data arguments use the complete-path parser.
  */
-export function resolvePackageReferences(body: string, context: PackageReferenceContext): string {
+export function resolvePackReferences(body: string, context: PackReferenceContext): string {
 	if (!context.rootPath || !context.plugin || !body.includes("${")) return body;
 	return body.replace(REFERENCE_PATTERN, referenceResolver({ ...context, rootPath: context.rootPath }));
 }
 
 /** Resolve an entire argv/data path, including spaces and Unicode, before use. */
-export function resolvePackagePathReference(value: string, context: PackageReferenceContext): string {
+export function resolvePackPathReference(value: string, context: PackReferenceContext): string {
 	if (!context.rootPath || !context.plugin || !/\$\{(?:pluginRoot|component:)/u.test(value)) return value;
 	const match = COMPLETE_REFERENCE.exec(value);
 	if (!match || match[3]?.includes("${"))

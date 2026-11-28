@@ -12,12 +12,8 @@ import { stripVTControlCharacters } from "node:util";
 import type { View } from "@pancode/sdk/extension";
 import type { ExtensionRuntimeDeclarationV2 } from "@pancode/sdk/pack";
 import { capabilityEnvelope } from "@pancode/sdk/pack";
-import type { PackageActivity } from "../../src/core/package-activity.js";
-import {
-	bindPackageActivitySink,
-	flushPackageActivities,
-	recordPackageActivity,
-} from "../../src/core/package-activity.js";
+import type { PackActivity } from "../../src/core/pack-activity.js";
+import { bindPackActivitySink, flushPackActivities, recordPackActivity } from "../../src/core/pack-activity.js";
 import { sandboxAvailability } from "../../src/core/sandbox/availability.js";
 import type { SandboxAvailability } from "../../src/core/sandbox/types.js";
 import type { DynamicToolName } from "../../src/core/tool-names.js";
@@ -109,9 +105,9 @@ test("runtime activity retains admitted extension identity", async (t) => {
 		context: () => ({ workspace: cwd, sessionId: "identity-session", mode: "interactive" }),
 		isIdle: () => true,
 	});
-	const activity: PackageActivity[] = [];
+	const activity: PackActivity[] = [];
 	let sessionReady = false;
-	const unbind = bindPackageActivitySink((row) => {
+	const unbind = bindPackActivitySink((row) => {
 		if (!sessionReady) return false;
 		activity.push(row);
 		return true;
@@ -124,7 +120,7 @@ test("runtime activity retains admitted extension identity", async (t) => {
 	equal((await runtime.reload("startup")).status, "committed");
 	equal(activity.length, 0, "startup waits for a session");
 	sessionReady = true;
-	flushPackageActivities();
+	flushPackActivities();
 	ok(activity.some((row) => row.kind === "runtime_start" && row.owner.id === entry.id));
 	const bridge = createExtensionRuntimeHookBridge();
 	bridge.bind({ hook: (...args) => runtime.hook(...args), tool: (...args) => runtime.tool(...args), notify: () => {} });
@@ -143,24 +139,24 @@ test("runtime activity retains admitted extension identity", async (t) => {
 });
 test("bounded package activity carries dropped counts until delivery is acknowledged", (t) => {
 	const owner = { kind: "extension", id: "capture-probe", version: "1.0.0", digest: "capture-probe" };
-	const captured: PackageActivity[] = [];
+	const captured: PackActivity[] = [];
 	let ready = false;
 	let failing = false;
-	let unbind = bindPackageActivitySink((row) => {
+	let unbind = bindPackActivitySink((row) => {
 		if (!ready) return false;
 		if (failing) throw new Error("sink unavailable");
 		captured.push(row);
 		return true;
 	});
 	t.after(() => unbind());
-	for (let index = 0; index < 250; index += 1) recordPackageActivity({ owner, kind: "startup", details: { index } });
+	for (let index = 0; index < 250; index += 1) recordPackActivity({ owner, kind: "startup", details: { index } });
 	equal(captured.length, 0);
 	ready = true;
 	failing = true;
-	flushPackageActivities();
+	flushPackActivities();
 	equal(captured.length, 0);
 	failing = false;
-	flushPackageActivities();
+	flushPackActivities();
 	equal(captured.length, 200);
 	equal(captured[0]?.details?.index, 50);
 	equal(captured[0]?.captureDroppedBefore, 50);
@@ -168,16 +164,16 @@ test("bounded package activity carries dropped counts until delivery is acknowle
 		captured.slice(1).some((row) => row.captureDroppedBefore !== undefined),
 		false,
 	);
-	flushPackageActivities();
+	flushPackActivities();
 	equal(captured.length, 200);
 	ready = false;
-	for (let index = 0; index < 3; index += 1) recordPackageActivity({ owner, kind: "unacknowledged" });
+	for (let index = 0; index < 3; index += 1) recordPackActivity({ owner, kind: "unacknowledged" });
 	unbind();
-	unbind = bindPackageActivitySink((row) => {
+	unbind = bindPackActivitySink((row) => {
 		captured.push(row);
 		return true;
 	});
-	recordPackageActivity({ owner, kind: "after-rebind" });
+	recordPackActivity({ owner, kind: "after-rebind" });
 	equal(captured.length, 201);
 	equal(captured.at(-1)?.captureDroppedBefore, 3);
 });

@@ -20,8 +20,8 @@ import { pancodeConfigPath } from "../../src/core/xdg.js";
 import { parseHubIndexRows } from "../../src/domains/plugins/catalog.js";
 import { applyHubLifecycle, type HubOperation, planHubLifecycle } from "../../src/domains/resources/hub-actions.js";
 import type { DefaultPackOutput } from "../../src/domains/resources/hub-defaults.js";
-import { listInstalledHubPackages } from "../../src/domains/resources/hub-packages.js";
-import { validateHubPackage } from "../../src/domains/resources/hub-validation.js";
+import { listInstalledHubPacks } from "../../src/domains/resources/hub-packs.js";
+import { validateHubPack } from "../../src/domains/resources/hub-validation.js";
 import { type IsolatedPancodeEnv, isolatePancodeEnv } from "../harness/scratch-env.js";
 
 const REF = "extension:demo";
@@ -57,7 +57,7 @@ function publish(version: string, options: { net?: boolean; row?: Partial<Regist
 		path.join(pack, "extension.mjs"),
 		'export default (api) => { api.handle("status", () => ({ text: "ok" })); };\n',
 	);
-	const result = validateHubPackage(pack);
+	const result = validateHubPack(pack);
 	ok(result.valid, JSON.stringify(result.validation.diagnostics));
 	const row = buildRegistryRow(pack, result, { sourceUrl: "packs/extensions/demo" }, "extensions");
 	writeFileSync(
@@ -94,7 +94,7 @@ function given(): string[] | null {
 }
 
 function copy(): { version: string; enabled: boolean } | undefined {
-	const found = listInstalledHubPackages(scratch.dir, { scope: "user", all: true }).find((item) => item.id === "demo");
+	const found = listInstalledHubPacks(scratch.dir, { scope: "user", all: true }).find((item) => item.id === "demo");
 	return found && { version: found.version, enabled: found.enabled };
 }
 

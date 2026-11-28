@@ -25,7 +25,7 @@ import {
 import { readBlobHistory } from "@pancode/store";
 import { Value } from "typebox/value";
 import { sha256Hex } from "../../src/core/hash.js";
-import { recentPackageActivity } from "../../src/core/package-activity.js";
+import { recentPackActivity } from "../../src/core/pack-activity.js";
 import { ExtensionBinaryRanSchema } from "../../src/core/telemetry/host-schemas.js";
 import { createTelemetryHub, telemetryHub } from "../../src/core/telemetry/hub.js";
 import type { CallSettled } from "../../src/core/telemetry/schemas.js";
@@ -963,7 +963,7 @@ describe("extension binaries service", () => {
 		strictEqual(await servePackPane("fixture", [pinned], "open", open, caller("action"), serve), "visible");
 		strictEqual(served, 1);
 		deepStrictEqual(
-			recentPackageActivity("fixture")
+			recentPackActivity("fixture")
 				.filter((entry) => entry.kind === "binary:pane")
 				.map((entry) => [entry.outcome, entry.details?.parent]),
 			[
@@ -972,7 +972,7 @@ describe("extension binaries service", () => {
 				["ok", "action"],
 			],
 		);
-		const runs = recentPackageActivity("fixture").filter((entry) => entry.kind === "binary:run");
+		const runs = recentPackActivity("fixture").filter((entry) => entry.kind === "binary:run");
 		deepStrictEqual(
 			runs.slice(-3).map((entry) => [entry.outcome, entry.details?.parent, entry.details?.args]),
 			[

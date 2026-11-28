@@ -8,7 +8,7 @@ import { readSettings, updateSettings } from "../../src/core/config.js";
 import {
 	disablePlugin,
 	enablePlugin,
-	installHubPackage,
+	installHubPack,
 	installPlugin,
 	listInstalledPlugins,
 	pluginContentDigest,
@@ -63,7 +63,7 @@ for (const kind of HUB_PLUGIN_BACKED_KINDS)
 			fixture(source, kind);
 			const digest = pluginContentDigest(source);
 			for (const scope of ["user", "project"] as const) {
-				const result = installHubPackage({
+				const result = installHubPack({
 					kind,
 					sourcePath: source,
 					scope,
@@ -116,7 +116,7 @@ for (const kind of ["skill", "prompt"] as const)
 			const packKind = kind === "skill" ? "skill" : "plugin";
 			fixture(source, packKind, "1.0.0", kind);
 			const origin = { kind: "interop" as const, host: "claude-code", source };
-			const installed = installHubPackage({
+			const installed = installHubPack({
 				kind: packKind,
 				sourcePath: source,
 				scope: "user",
@@ -186,7 +186,7 @@ test("manifest kind and explicit version cannot be substituted or changed with f
 		const source = join(env.dir, "source");
 		fixture(source, "skill");
 		ok(
-			installHubPackage({
+			installHubPack({
 				kind: "plugin",
 				sourcePath: source,
 				scope: "user",

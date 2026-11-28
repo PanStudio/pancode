@@ -31,7 +31,7 @@ export {
 	type HubInventory,
 	type HubInventoryOptions,
 	type HubOrigin,
-	type HubPackageRecord,
+	type HubPackRecord,
 	inactiveCopyRemedy,
 	inactiveHubCopies,
 	inspectHubCopy,
@@ -59,7 +59,7 @@ export {
 	skillAuthoringDiagnostics,
 	skillVerification,
 } from "./skills/authoring-check.js";
-export { installedSkillNames, installedSkillPackages } from "./skills/availability.js";
+export { installedSkillNames, installedSkillPacks } from "./skills/availability.js";
 export {
 	buildSkillCatalogView,
 	type SkillCatalogRowKind,

@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
-import { bindPackageActivitySink } from "../core/package-activity.js";
+import { bindPackActivitySink } from "../core/pack-activity.js";
 import type { SessionContract } from "../domains/session/index.js";
 
-export function bindSessionPackageActivity(session: SessionContract): () => void {
-	return bindPackageActivitySink((activity) => {
+export function bindSessionPackActivity(session: SessionContract): () => void {
+	return bindPackActivitySink((activity) => {
 		const current = session.current();
 		if (!current) return false;
 		const attributed = { ...activity, sessionId: activity.sessionId ?? current.id };

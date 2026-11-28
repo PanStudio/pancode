@@ -31,7 +31,7 @@
 import { realpathSync } from "node:fs";
 import path from "node:path";
 import { sha256Hex } from "../core/hash.js";
-import { recordPackageActivity } from "../core/package-activity.js";
+import { recordPackActivity } from "../core/pack-activity.js";
 import { telemetryContext, withToolTelemetryContext } from "../core/telemetry/context.js";
 import { type TelemetryHub, telemetryHub } from "../core/telemetry/hub.js";
 import { unboundTelemetrySession } from "../core/telemetry/producer.js";
@@ -231,7 +231,7 @@ export function extensionHookReceiptSink(sessionId: () => string | undefined): H
 		const session = receipt.sessionId ?? sessionId();
 		recordHookRan(receipt, session);
 		if (receipt.extension)
-			recordPackageActivity({
+			recordPackActivity({
 				kind: `hook:${receipt.hook}`,
 				at: new Date(receipt.at).toISOString(),
 				owner: {

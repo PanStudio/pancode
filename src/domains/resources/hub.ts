@@ -43,19 +43,19 @@ import {
 import { hubEnvelopeDigest, hubMcpDigest } from "./hub-digests.js";
 import {
 	extensionHubCopy,
-	hubPackageBaseDir,
+	hubPackBaseDir,
 	installedCopiesNamed,
-	listInstalledHubPackages as listInstalledPlugins,
+	listInstalledHubPacks as listInstalledPlugins,
 	readHubInstallRecord,
-} from "./hub-packages.js";
+} from "./hub-packs.js";
 import { remoteIndexRows } from "./hub-trust.js";
-import type { HubPackageEntry, HubRequirementRef } from "./hub-types.js";
-import { type HubPackageValidationResult, validateHubPackage } from "./hub-validation.js";
+import type { HubPackEntry, HubRequirementRef } from "./hub-types.js";
+import { type HubPackValidationResult, validateHubPack } from "./hub-validation.js";
 import { bareSkillRemedy, isBareSkillDirectory } from "./skills/bare-skill.js";
 
-export type HubEntry = HubPackageEntry;
+export type HubEntry = HubPackEntry;
 
-function validationReasons(candidate: HubPackageValidationResult): string {
+function validationReasons(candidate: HubPackValidationResult): string {
 	return [
 		...new Set([
 			...candidate.diagnostics.map((item) => item.message),
@@ -265,11 +265,11 @@ export function resolveInstalledHubEntry(
 }
 
 /** Register verified bytes in one scoped index without installing or enabling them. */
-export function registerHubPackage(source: string, options: HubScopeOptions & { force?: boolean } = {}): HubEntry {
+export function registerHubPack(source: string, options: HubScopeOptions & { force?: boolean } = {}): HubEntry {
 	const local = pluginLocalPath(source, options.cwd);
 	if (!existsSync(local)) throw new Error(`no pack directory at ${local}`);
 	if (isBareSkillDirectory(local)) throw new Error(bareSkillRemedy(local));
-	const candidate = validateHubPackage(local);
+	const candidate = validateHubPack(local);
 	if (!candidate.valid || !candidate.manifest || !candidate.contentDigest) throw new Error(validationReasons(candidate));
 	const manifest = candidate.manifest;
 	const receiptEnvelopeDigest =
@@ -348,7 +348,7 @@ export function hubInstallPath(entry: Pick<HubEntry, "kind" | "name">, options: 
 	if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(entry.name)) throw new Error(`invalid hub entry name: ${entry.name}`);
 	return (
 		installedPlugin(entry, options)?.rootPath ??
-		path.join(hubPackageBaseDir(entry.kind, options.scope ?? "user", options.cwd ?? process.cwd()), entry.name)
+		path.join(hubPackBaseDir(entry.kind, options.scope ?? "user", options.cwd ?? process.cwd()), entry.name)
 	);
 }
 
@@ -432,7 +432,7 @@ export function planHubInstall(
 		? fetchPluginCommit(entry.source, entry.sha256)
 		: fetchPluginSource(entry.sourceUrl, options.cwd);
 	try {
-		const candidate = validateHubPackage(fetched.root);
+		const candidate = validateHubPack(fetched.root);
 		if (!candidate.valid || !candidate.manifest) throw new Error(`invalid plugin: ${validationReasons(candidate)}`);
 		if ((candidate.manifest.pancode.kind ?? "plugin") !== entry.kind)
 			throw new Error(`pack kind mismatch: expected ${entry.kind}`);
@@ -466,7 +466,7 @@ export function planHubInstall(
 		}
 		return {
 			entry: { ...entry, ...(candidate.manifest.version ? { version: candidate.manifest.version } : {}) },
-			path: path.join(hubPackageBaseDir(entry.kind, options.scope ?? "user", options.cwd ?? process.cwd()), entry.name),
+			path: path.join(hubPackBaseDir(entry.kind, options.scope ?? "user", options.cwd ?? process.cwd()), entry.name),
 			sha256,
 			sourceRoot: fetched.root,
 			cleanup: fetched.cleanup,
@@ -585,14 +585,14 @@ export function installHubPlan(plan: HubInstallPlan): HubInstallResult {
 }
 
 /** Existing paths beat catalog IDs, including a directory named like a curated plugin. */
-export function resolveHubPackage(
+export function resolveHubPack(
 	source: string,
 	options: { cwd?: string; catalog?: string; catalogOnly?: boolean } = {},
 ): PluginCatalogEntry {
 	const local = pluginLocalPath(source, options.cwd);
 	if (!options.catalogOnly && existsSync(local)) {
 		if (isBareSkillDirectory(local)) throw new Error(bareSkillRemedy(local));
-		const candidate = validateHubPackage(local);
+		const candidate = validateHubPack(local);
 		if (!candidate.valid || !candidate.manifest) throw new Error(`invalid plugin: ${validationReasons(candidate)}`);
 		const serves =
 			candidate.manifest.pancode.kind === "extension" ? loadManifestFromRoot(local).manifest?.plugin : undefined;
@@ -648,7 +648,7 @@ export function planHubUpdate(
 			`plugin catalog source unavailable: ${id}; restore its pinned catalog entry or explicitly install a new source`,
 		);
 	}
-	const entry = catalog ?? (pin ? resolveHubPackage(pin.sourceUrl, options) : undefined);
+	const entry = catalog ?? (pin ? resolveHubPack(pin.sourceUrl, options) : undefined);
 	if (!entry) throw new Error(`plugin has no update source: ${id}`);
 	if (entry.name !== identity.name || entry.kind !== identity.kind)
 		throw new Error(`pack identity mismatch: expected ${id}, found ${hubEntryRef(entry)}`);

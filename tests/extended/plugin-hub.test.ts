@@ -16,7 +16,7 @@ import {
 	readPluginCatalog,
 } from "../../src/domains/plugins/catalog.js";
 import {
-	installHubPackage,
+	installHubPack,
 	listInstalledPlugins,
 	pluginContentDigest,
 	removePlugin,
@@ -34,9 +34,9 @@ import {
 	pinHubEntry,
 	planHubInstall,
 	planHubUpdate,
-	registerHubPackage,
+	registerHubPack,
 	releaseHubPlan,
-	resolveHubPackage,
+	resolveHubPack,
 	resolveHubRequirements,
 } from "../../src/domains/resources/hub.js";
 import { applyHubLifecycle, planHubLifecycle, releaseHubLifecycle } from "../../src/domains/resources/hub-actions.js";
@@ -137,8 +137,8 @@ describe("plugin hub lifecycle", () => {
 				version: "1.0.0",
 			}),
 		);
-		equal(resolveHubPackage("fixture").name, "local-choice");
-		equal(resolveHubPackage("plugin:fixture").name, "fixture");
+		equal(resolveHubPack("fixture").name, "local-choice");
+		equal(resolveHubPack("plugin:fixture").name, "fixture");
 	});
 
 	it("keeps plugin entries out of the skill marketplace", () => {
@@ -183,7 +183,7 @@ describe("plugin hub lifecycle", () => {
 
 	it("updates a local origin to a new version and refuses destination changes after review", () => {
 		const source = bundle();
-		installHubPlan(planHubInstall(resolveHubPackage(source)));
+		installHubPlan(planHubInstall(resolveHubPack(source)));
 		bundle("fixture", "2.0.0");
 		const plan = planHubUpdate("fixture");
 		installHubPlan(plan);
@@ -198,7 +198,7 @@ describe("plugin hub lifecycle", () => {
 	it("updates from the latest catalog pin and refuses a changed upstream even with force", () => {
 		const source = bundle();
 		catalog([entry(source)]);
-		installHubPlan(planHubInstall(resolveHubPackage("fixture")));
+		installHubPlan(planHubInstall(resolveHubPack("fixture")));
 		bundle("fixture", "2.0.0");
 		catalog([entry(source)]);
 		installHubPlan(planHubUpdate("fixture"));
@@ -255,7 +255,7 @@ describe("plugin hub lifecycle", () => {
 		equal(diagnostics.length, 2);
 		ok(parsePluginGithubSource(item.sourceUrl));
 		equal(parsePluginGithubSource("https://github.com/example/repo/tree/main/../../outside"), undefined);
-		throws(() => resolveHubPackage(item.sourceUrl), /requires a catalog entry/);
+		throws(() => resolveHubPack(item.sourceUrl), /requires a catalog entry/);
 	});
 
 	it("previews with dry-run and commits an explicit install", async () => {
@@ -456,9 +456,9 @@ describe("plugin hub lifecycle", () => {
 
 	it("registers scoped pins and preserves all copies after index removal", async () => {
 		const source = bundle();
-		const registered = registerHubPackage(source, { scope: "project" });
+		const registered = registerHubPack(source, { scope: "project" });
 		equal(registered.sha256, pluginContentDigest(source));
-		throws(() => registerHubPackage(source, { scope: "project" }), /already registered/);
+		throws(() => registerHubPack(source, { scope: "project" }), /already registered/);
 		equal((await captureCli(["install", "plugin:fixture", "--project"])).code, 0);
 		equal((await captureCli(["install", source, "--user"])).code, 0);
 		rmSync(path.join(root, ".pancode/hub.yaml"));
@@ -470,7 +470,7 @@ describe("plugin hub lifecycle", () => {
 	});
 	it("refuses hub update and forced install of an adopted host tree without re-adoption", async () => {
 		const source = bundle();
-		const result = installHubPackage({
+		const result = installHubPack({
 			kind: "plugin",
 			sourcePath: source,
 			scope: "user",
@@ -507,7 +507,7 @@ describe("plugin hub lifecycle", () => {
 		const diagnostics: string[] = [];
 		deepStrictEqual(readPluginCatalog(file, diagnostics), []);
 		match(diagnostics.join("; "), /entries list/);
-		throws(() => registerHubPackage(source, { force: true }), /entries list/);
+		throws(() => registerHubPack(source, { force: true }), /entries list/);
 		equal(readFileSync(file, "utf8"), before);
 	});
 
@@ -609,7 +609,7 @@ describe("plugin hub lifecycle", () => {
 		// 1. Catalog-origin migration: install old indexed source, remove old source
 		const oldSource = bundle("migrated-pkg", "1.0.0");
 		catalog([entry(oldSource)]);
-		const initialPlan = planHubInstall(resolveHubPackage("migrated-pkg"));
+		const initialPlan = planHubInstall(resolveHubPack("migrated-pkg"));
 		installHubPlan(initialPlan);
 		equal(listInstalledPlugins(root)[0]?.version, "1.0.0");
 
@@ -640,7 +640,7 @@ describe("plugin hub lifecycle", () => {
 		writeFileSync(overrideCatalog, stringify({ entries: [entry(newSource)] }));
 
 		// Configured catalog override takes precedence over default catalog
-		const resolved = resolveHubPackage("migrated-pkg", { catalog: overrideCatalog });
+		const resolved = resolveHubPack("migrated-pkg", { catalog: overrideCatalog });
 		equal(resolved.version, "2.0.0");
 		equal(resolved.sourceUrl, newSource);
 
@@ -650,7 +650,7 @@ describe("plugin hub lifecycle", () => {
 
 		// 3. Explicit direct-source case: refuses dead direct source instead of redirecting to catalog
 		const directSource = bundle("direct-pkg", "1.0.0");
-		installHubPlan(planHubInstall(resolveHubPackage(directSource)));
+		installHubPlan(planHubInstall(resolveHubPack(directSource)));
 		equal(listInstalledPlugins(root).find((p) => p.name === "direct-pkg")?.version, "1.0.0");
 
 		rmSync(directSource, { recursive: true, force: true });

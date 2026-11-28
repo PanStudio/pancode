@@ -22,7 +22,7 @@ import {
 	refreshCommunityRow,
 	rowFileProblems,
 } from "../../scripts/pin-hub-remote.js";
-import { validateHubPackage } from "../../src/domains/resources/hub-validation.js";
+import { validateHubPack } from "../../src/domains/resources/hub-validation.js";
 
 let root: string;
 
@@ -61,7 +61,7 @@ function rowFor(location: string, overrides: Partial<RegistryRow> = {}): Registr
 		version: "1.0.0",
 		description: "demo plugin fixture",
 		source: { repo: "https://github.com/octo/demo", commit: COMMIT, subdir: "plugin" },
-		sha256: validateHubPackage(location).contentDigest as string,
+		sha256: validateHubPack(location).contentDigest as string,
 		license: "MIT",
 		tier: "listed",
 		...overrides,
@@ -74,7 +74,7 @@ function deps(location: string, calls: string[] = []): CommunityFetchDeps {
 			calls.push(`${source.commit}:${expected ?? ""}`);
 			return { root: location, cleanup: () => calls.push("cleanup"), commit: source.commit };
 		},
-		validateHubPackage,
+		validateHubPack,
 	};
 }
 
@@ -166,7 +166,7 @@ describe("pin run", () => {
 				fetchPluginCommit: () => {
 					throw new Error("network unreachable");
 				},
-				validateHubPackage,
+				validateHubPack,
 			},
 		});
 		equal(merged.fetched, 0);
@@ -185,7 +185,7 @@ describe("pin run", () => {
 				fetchPluginCommit: () => {
 					throw new Error("plugin_pin_mismatch");
 				},
-				validateHubPackage,
+				validateHubPack,
 			},
 		});
 		deepStrictEqual(merged.entries, []);
@@ -199,7 +199,7 @@ describe("pin run", () => {
 			fetchPluginCommit: () => {
 				throw new Error("check mode fetched");
 			},
-			validateHubPackage,
+			validateHubPack,
 		};
 		const held = mergeCommunityRows([file(row)], {
 			committedRows: new Map([["plugin:demo", { ...row, provides: [] }]]),

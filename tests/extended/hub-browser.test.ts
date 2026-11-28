@@ -14,7 +14,7 @@ import type {
 	HubCopy,
 	HubCopyInspection,
 	HubInventory,
-	HubPackageRecord,
+	HubPackRecord,
 	HubRefreshResult,
 } from "../../src/domains/resources/index.js";
 import { type OverlayHandle, type TUI, visibleWidth } from "../../src/engine/tui.js";
@@ -37,7 +37,7 @@ import {
 import type { ListOverlayItem } from "../../src/interactive/overlays/list-overlay-model.js";
 import { hubApplyFixture, hubPlanFixture } from "../harness/hub-plan-fixture.js";
 
-function record(overrides: Partial<HubPackageRecord> = {}): HubPackageRecord {
+function record(overrides: Partial<HubPackRecord> = {}): HubPackRecord {
 	return {
 		ref: "plugin:demo-pack",
 		kind: "plugin",
