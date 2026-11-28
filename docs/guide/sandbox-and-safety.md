@@ -261,9 +261,10 @@ On Linux a sandboxed command has no network interface of its own. It reaches
 the network only through PanCode's egress proxy, which reads the host and
 port of every connection: `HTTP_PROXY`, `HTTPS_PROXY` and `ALL_PROXY` point
 at it, so curl, npm, pip, git over HTTPS and most language runtimes use it
-without setup. The proxy resolves names itself and refuses loopback, private,
-link-local and cloud-metadata addresses unless you granted that exact
-host and port.
+without setup. The proxy resolves names itself and refuses a name that
+resolves to a loopback, private, link-local or cloud-metadata address, even a
+granted one; such an address is reachable only by granting the address
+itself, such as `10.0.0.5:8080`.
 
 `safety.egress.main.mode` sets the session's commands; `safety.egress.workers.mode`
 sets dispatched workers' commands:

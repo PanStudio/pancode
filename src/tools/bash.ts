@@ -429,7 +429,7 @@ function bashSteerAbortStatus(elapsedMs: number): string {
 export const bashTool: ToolSpec = {
 	name: ToolNames.Bash,
 	description:
-		"Run bash in a fresh child at the workspace root (or cwd); shell state does not persist. Not for what verify, grep, find, git, run_script or data cover. Output has a 16 MiB hard cap that stops the child; run_script streams unbounded output. Default timeout 300s; use panes for long-lived processes or an explicit timeout_ms. Disabling web_fetch does not isolate bash networking. At autonomy default it runs unasked in an OS sandbox when available (workspace and scratch roots writable, secrets hidden, network as safety.egress.main allows: by default only through PanCode's egress proxy to hosts the operator granted or approves, a refusal named in the result, and a server the command starts unreachable from outside); otherwise read-only inspection runs and other commands are reviewed.",
+		"Run bash in a fresh child at the workspace root (or cwd); shell state does not persist. Not for what verify, grep, find, git, run_script or data cover. Output has a 16 MiB hard cap that stops the child; run_script streams unbounded output. Default timeout 300s; use panes for long-lived processes or an explicit timeout_ms. Networking follows the host and OS isolation; disabling web_fetch does not isolate bash networking. At autonomy default it runs unasked in an OS sandbox when available (workspace and scratch roots writable, secrets hidden); otherwise read-only inspection runs and other commands are reviewed.",
 	parameters: Type.Object({
 		command: Type.String({ description: "Bash command to execute." }),
 		cwd: Type.Optional(
