@@ -18,6 +18,7 @@ export type * from "../../../../src/acp/types-views.js";
 export { runningBuildId } from "../../../../src/core/build-info.js";
 export { ACP_CONTEXT_STATUS_METHOD } from "../../../../src/core/context-operation.js";
 export { parseDuration } from "../../../../src/core/duration.js";
+export { makeDirectory } from "../../../../src/core/make-directory.js";
 export { resolvePackageRoot } from "../../../../src/core/package-root.js";
 export { relativePathEscapes } from "../../../../src/core/path-containment.js";
 export {

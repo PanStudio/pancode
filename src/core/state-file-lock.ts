@@ -3,7 +3,6 @@
 import {
 	closeSync,
 	type Dirent,
-	mkdirSync,
 	openSync,
 	readdirSync,
 	readFileSync,
@@ -16,6 +15,7 @@ import { hostname } from "node:os";
 import { dirname, join } from "node:path";
 import { performance } from "node:perf_hooks";
 import { setTimeout as sleep } from "node:timers/promises";
+import { makeDirectorySync } from "./make-directory.js";
 import { ownerIdentity, ownerIsThisProcess, ownerState } from "./process-identity.js";
 
 /**
@@ -306,7 +306,7 @@ export function withStateFileLockSync<T>(targetPath: string, fn: () => T, option
 	let held = false;
 	try {
 		options.signal?.throwIfAborted();
-		mkdirSync(dirname(lockPath), { recursive: true });
+		makeDirectorySync(dirname(lockPath));
 		const deadlineMs = performance.now() + timeoutMs;
 		for (let attempt = 1; !tryAcquire(lockPath); attempt += 1) {
 			options.signal?.throwIfAborted();
@@ -338,7 +338,7 @@ export function tryWithStateFileLockSync<T>(
 	fn: () => T,
 ): { held: true; value: T } | { held: false } {
 	const lockPath = `${targetPath}.lock`;
-	mkdirSync(dirname(lockPath), { recursive: true });
+	makeDirectorySync(dirname(lockPath));
 	if (!tryAcquire(lockPath)) return { held: false };
 	try {
 		return { held: true, value: fn() };
@@ -361,7 +361,7 @@ async function acquireAsync<T>(
 	let held = false;
 	try {
 		options.signal?.throwIfAborted();
-		mkdirSync(dirname(lockPath), { recursive: true });
+		makeDirectorySync(dirname(lockPath));
 		const deadlineMs = performance.now() + timeoutMs;
 		let reported: number | null | undefined;
 		for (let attempt = 1; !tryAcquire(lockPath, options.note, options.foreignExpiresMs); attempt += 1) {

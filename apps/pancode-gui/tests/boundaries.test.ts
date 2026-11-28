@@ -49,6 +49,8 @@ const httpModules = new Map([
 	],
 	// The background setup's publish lock is the engine's one advisory file lock.
 	["src/core/state-file-lock.ts", new Set(["StateFileLockTimeoutError", "withStateFileLock"])],
+	// App state directories are made with the engine's bounded mkdir, so a removed home cannot hold shutdown.
+	["src/core/make-directory.ts", new Set(["makeDirectory"])],
 	["src/domains/install/install-method.ts", new Set(["readInstallerRecord"])],
 	["src/domains/install/version.ts", new Set(["getVersionInfo"])],
 	// The approval card reads the scope out of the session option the engine names with this prefix.
