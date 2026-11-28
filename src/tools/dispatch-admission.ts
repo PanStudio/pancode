@@ -51,6 +51,13 @@ import {
 	stringArg,
 	timeoutMsArg,
 } from "./dispatch-arguments.js";
+import {
+	admitDependencyPlan,
+	type DependencyPlanAdmission,
+	deepFreeze,
+	dependencyTaskRefs,
+	sealDependencyPlan,
+} from "./dispatch-dependency-plan.js";
 import { derivedGrantsNarrow, dispatchInputChangesOnlyIntent, dispatchRewriteNarrows } from "./dispatch-narrowing.js";
 import { normalizeDispatchAdmission } from "./dispatch-normalize.js";
 import {
@@ -291,12 +298,6 @@ function competeSettingsFromArgs(args: Record<string, unknown>):
 
 function worktreeDestination(root: string | null): { worktreeDestination?: string } {
 	return root === null ? {} : { worktreeDestination: root };
-}
-
-function deepFreeze<T>(value: T): T {
-	if (typeof value !== "object" || value === null || Object.isFrozen(value)) return value;
-	for (const child of Object.values(value)) deepFreeze(child);
-	return Object.freeze(value);
 }
 
 /** Raw intent objects already announced, so the plan preview and the run parse one call but warn once. */
@@ -724,6 +725,16 @@ export function createDispatchAdmissionController(deps: DispatchToolDeps): Dispa
 		}
 	};
 
+	const dependencyPlans: DependencyPlanAdmission = {
+		deps,
+		state,
+		resolveTask,
+		costCeilingUsd: resolvedCostCeiling,
+		markReservedPlan,
+		trustExecution,
+		dispatchExecutionSnapshot,
+		fail: preparationFailure,
+	};
 	const prepareAdmissionArguments = (rawArgs: Record<string, unknown>): Record<string, unknown> => {
 		const args = stripUntrustedPlanFields(rawArgs);
 		const input = deepFreeze(structuredClone(args));
@@ -760,24 +771,7 @@ export function createDispatchAdmissionController(deps: DispatchToolDeps): Dispa
 					planAgentSelection: deps.dispatch.planAgentSelection,
 					costCeilingUsd: resolvedCostCeiling(),
 				});
-				for (const [index, task] of prepared.artifact.tasks.entries()) {
-					const resolution = prepared.resolutions[index];
-					if (resolution === undefined) throw new Error("dispatch: Scout route resolution is incomplete");
-					state.taskResolutions.set(task, resolution);
-				}
-				const marked = markReservedPlan(args, prepared.artifact);
-				trustExecution(
-					marked,
-					dispatchExecutionSnapshot(marked, {
-						requests: prepared.requests,
-						mode: "parallel",
-						review: undefined,
-						compete: undefined,
-						council: undefined,
-					}),
-				);
-				state.trustedExecutionPlans.set(marked, deepFreeze(structuredClone(prepared.executionPlan)));
-				return marked;
+				return sealDependencyPlan(dependencyPlans, args, prepared);
 			} catch (error) {
 				return preparationFailure(args, error);
 			}
@@ -838,6 +832,9 @@ export function createDispatchAdmissionController(deps: DispatchToolDeps): Dispa
 		} catch (error) {
 			return preparationFailure(args, error);
 		}
+		const dependency = dependencyTaskRefs(args);
+		if (!dependency.ok) return shapeRejection(args, dependency.message);
+		if (dependency.refs !== null) return admitDependencyPlan(dependencyPlans, args, parsed, dependency.refs);
 		if (
 			args.mode !== undefined &&
 			!["parallel", "sequential", "pipeline", "compete", "council"].includes(String(args.mode))

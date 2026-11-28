@@ -860,13 +860,17 @@ function isValidPlan(value: unknown): value is RunPlanProvenance {
 	if (value.source !== null) {
 		if (
 			!isRecord(value.source) ||
-			value.source.kind !== "scout-transition" ||
-			typeof value.source.runId !== "string" ||
-			value.source.runId.length === 0 ||
-			typeof value.source.runDigest !== "string" ||
-			!/^[0-9a-f]{64}$/u.test(value.source.runDigest) ||
 			typeof value.source.executionPlanHash !== "string" ||
 			!/^[0-9a-f]{64}$/u.test(value.source.executionPlanHash)
+		)
+			return false;
+		if (
+			value.source.kind !== "dependency-plan" &&
+			(value.source.kind !== "scout-transition" ||
+				typeof value.source.runId !== "string" ||
+				value.source.runId.length === 0 ||
+				typeof value.source.runDigest !== "string" ||
+				!/^[0-9a-f]{64}$/u.test(value.source.runDigest))
 		)
 			return false;
 	}

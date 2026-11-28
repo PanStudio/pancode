@@ -391,6 +391,17 @@ export function buildDispatchParameters(composition: DispatchSchemaComposition =
 					// tokens advertising them twice).
 					Type.Object({
 						task: Type.String({ description: "The assignment, with expected output and constraints." }),
+						id: Type.Optional(
+							Type.String({
+								description:
+									"Step id. Ids make the batch one approval-gated dependency plan; every task then names one, and mode, review and detach stay off.",
+							}),
+						),
+						depends_on: Type.Optional(
+							Type.Array(Type.String(), {
+								description: "Ids whose results this task needs; it starts after they succeed and receives their handoffs.",
+							}),
+						),
 						record: Type.Optional(Type.Boolean({ description: "Override the shared recording choice for this task." })),
 						context: Type.Optional(WorkerContextSchema),
 						briefing: Type.Optional(

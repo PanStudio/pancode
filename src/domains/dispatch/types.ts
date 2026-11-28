@@ -283,12 +283,15 @@ export interface RunPlanProvenance {
 	taskCount: number;
 	/** `read-only`: an all read-only plan admitted at default autonomy without the plan stop. */
 	approval: "operator" | "yolo" | "read-only";
-	source: null | {
-		kind: "scout-transition";
-		runId: string;
-		runDigest: string;
-		executionPlanHash: string;
-	};
+	source:
+		| null
+		| {
+				kind: "scout-transition";
+				runId: string;
+				runDigest: string;
+				executionPlanHash: string;
+		  }
+		| { kind: "dependency-plan"; executionPlanHash: string };
 	/** Registry-issued identity of the one-shot operator approval, when applicable. */
 	approvalRequestId?: string;
 	approvalRequestedBy?: string;

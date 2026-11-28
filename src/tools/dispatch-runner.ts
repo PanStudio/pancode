@@ -39,7 +39,7 @@ import {
 import { describeDispatchPlan, RESOLVED_DISPATCH_PLAN_ARGUMENT, withResolvedPlanTaskPin } from "./dispatch-plan.js";
 import { REVIEW_SINGLE_TASK_MESSAGE, reviewGateResult, runReviewGated } from "./dispatch-review.js";
 import { createDispatchRunEventRegistry } from "./dispatch-run-events.js";
-import { runScoutContinuationPlan, scoutPlanAuthorityGranted } from "./dispatch-scout.js";
+import { dependencyPlanAuthorityGranted, runDependencyPlan } from "./dispatch-scout.js";
 import type { DispatchToolDeps } from "./dispatch-types.js";
 import type { ToolInvokeOptions } from "./registry-contract.js";
 import type { ToolResult } from "./tool-spec.js";
@@ -244,7 +244,7 @@ export async function runDispatchTool(
 	// A plan admission sealed as all read-only on this machine ran without the plan stop (`isReadOnlyPlan`); the
 	// judgement is the sealed snapshot's, never the call's arguments, and holds only with the sealed plan present.
 	const readOnlyPlan = planView.readOnlyPlan === true && resolvedPlan !== null;
-	// An operator-approved, Scout-sealed or read-only-exempt plan fixes the route it shows (failover none), so the
+	// An operator-approved, dependency-plan-sealed or read-only-exempt plan fixes the route it shows (failover none), so the
 	// parser's route freedom ends here.
 	if (authenticatedApproval !== undefined || (resolvedPlan?.source ?? null) !== null || readOnlyPlan)
 		requests = requests.map(({ routeFree: _free, ...request }) => request);
@@ -303,15 +303,7 @@ export async function runDispatchTool(
 			topology: planView.topology,
 			taskCount: planView.taskCount,
 			approval: authenticatedApproval !== undefined ? "operator" : autonomy === "yolo" ? "yolo" : "read-only",
-			source:
-				resolvedPlan?.source === null || resolvedPlan?.source === undefined
-					? null
-					: {
-							kind: "scout-transition",
-							runId: resolvedPlan.source.runId,
-							runDigest: resolvedPlan.source.runDigest,
-							executionPlanHash: resolvedPlan.source.executionPlanHash,
-						},
+			source: resolvedPlan?.source == null ? null : { ...resolvedPlan.source },
 			...(authenticatedApproval !== undefined
 				? {
 						approvalRequestId: authenticatedApproval.requestId,
@@ -334,7 +326,7 @@ export async function runDispatchTool(
 	}
 	const backgroundRefusal =
 		resolvedPlan?.topology === "fleet"
-			? "a Scout dependency plan drives its stages from this turn"
+			? "a dependency plan drives its stages from this turn"
 			: mode === "compete"
 				? "compete holds its judge gate in this turn"
 				: mode === "council"
@@ -418,13 +410,13 @@ export async function runDispatchTool(
 		if (resolvedPlan?.topology === "fleet") {
 			const executionPlan = admissionState.trustedExecutionPlans.get(args);
 			if (executionPlan === undefined || resolvedPlan.source === null || reservationOwnerId === undefined) {
-				return { kind: "error", message: "dispatch: trusted Scout dependency plan is unavailable" };
+				return { kind: "error", message: "dispatch: trusted dependency plan is unavailable" };
 			}
 			if (executionPlan.hash !== resolvedPlan.source.executionPlanHash) {
-				return { kind: "error", message: "dispatch: Scout dependency plan hash drifted after admission" };
+				return { kind: "error", message: "dispatch: dependency plan hash drifted after admission" };
 			}
-			if (!scoutPlanAuthorityGranted(resolvedPlan, authenticatedApproval !== undefined, autonomy === "yolo")) {
-				return { kind: "error", message: "dispatch: Scout dependency plan lacks authenticated authority grants" };
+			if (!dependencyPlanAuthorityGranted(resolvedPlan, authenticatedApproval !== undefined, autonomy === "yolo")) {
+				return { kind: "error", message: "dispatch: dependency plan lacks authenticated authority grants" };
 			}
 			const executable = compileExecutionPlan({
 				topology: executionPlan.topology,
@@ -438,7 +430,7 @@ export async function runDispatchTool(
 				})),
 			});
 			try {
-				const outcome = await runScoutContinuationPlan({
+				const outcome = await runDependencyPlan({
 					dispatch: deps.dispatch,
 					plan: executable,
 					artifact: resolvedPlan,
@@ -470,7 +462,7 @@ export async function runDispatchTool(
 			} catch (error) {
 				return {
 					kind: "error",
-					message: `dispatch: Scout dependency plan failed: ${error instanceof Error ? error.message : String(error)}`,
+					message: `dispatch: dependency plan failed: ${error instanceof Error ? error.message : String(error)}`,
 				};
 			}
 		}

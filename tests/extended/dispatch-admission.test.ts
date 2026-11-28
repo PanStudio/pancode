@@ -523,6 +523,100 @@ describe("dispatch admission boundary", () => {
 		}
 	});
 
+	it("seals a batch whose tasks name id and depends_on as one dependency plan, and refuses a shape it cannot run", async () => {
+		const context = dispatchStubContext();
+		const bundle = makeDispatchBundle(context);
+		await bundle.extension.start();
+		try {
+			const admission = createDispatchAdmissionController({
+				dispatch: bundle.contract,
+				getAgentSpecs: () => context.getContract("agents")?.listSpecs() ?? [],
+				getAutonomy: () => "default",
+			} as DispatchToolDeps);
+			const tasks = [
+				{ id: "map", task: "Map the parser module." },
+				{ id: "tests", task: "Read the parser tests.", depends_on: ["map"] },
+				{ id: "docs", task: "Read the parser docs.", depends_on: ["map"] },
+			];
+			const prepared = admission.prepareAdmissionArguments({ agent: "scout", tasks });
+			strictEqual(prepared[DISPATCH_PLAN_PREPARATION_ERROR_ARGUMENT], undefined, JSON.stringify(prepared));
+			deepStrictEqual(admission.state.trustedExecutionPlans.get(prepared)?.waves, [["map"], ["tests", "docs"]]);
+			const plan = describeDispatchPlan(prepared, true);
+			strictEqual(plan.topology, "fleet");
+			strictEqual(plan.taskCount, 3);
+			// A dependency plan always parks for the operator outside yolo, read-only steps included.
+			strictEqual(plan.planScale, true);
+			strictEqual(plan.readOnlyPlan, undefined);
+			match(plan.text, /^source: dependency-plan execution-plan=[0-9a-f]{64} /mu);
+			admission.disposeAdmissionArguments(prepared);
+			const refusal = (extra: Record<string, unknown>, planTasks: unknown[] = tasks) => {
+				const refused = admission.prepareAdmissionArguments({ agent: "scout", tasks: planTasks, ...extra });
+				admission.disposeAdmissionArguments(refused);
+				return String(refused[DISPATCH_PLAN_PREPARATION_ERROR_ARGUMENT]);
+			};
+			match(
+				refusal({}, [
+					{ id: "a", task: "Read a.", depends_on: ["b"] },
+					{ id: "b", task: "Read b.", depends_on: ["a"] },
+				]),
+				/depends_on forms a cycle \(a -> b -> a\)/u,
+			);
+			match(refusal({}, [{ id: "a", task: "Read a.", depends_on: ["ghost"] }]), /depends on 'ghost', which no task/u);
+			match(refusal({ mode: "sequential" }), /drop mode=sequential/u);
+			match(refusal({ detach: true }), /runs attached.*drop detach/u);
+		} finally {
+			await bundle.extension.stop?.();
+		}
+	});
+
+	it("runs a dependency plan's first step before the steps that depend on it", async () => {
+		const started: string[] = [];
+		const context = dispatchStubContext();
+		const bundle = makeDispatchBundle(context, {
+			journalRunEvents: false,
+			spawnWorker: (spec) => {
+				started.push(spec.task.split(" ")[0] ?? "");
+				return {
+					pid: null,
+					heartbeatAt: { current: Date.now(), monotonic: performance.now() },
+					abort() {},
+					promise: Promise.resolve({ exitCode: 0, signal: null }),
+					events: (async function* () {
+						const finding = { claim: "the package names itself", path: "package.json", line: 1 };
+						const content = JSON.stringify({ findings: [finding], needsSplit: false, proposedSubtasks: [] });
+						yield { type: "pancode_tool_finish", payload: { tool: "read", outcome: "ok" } };
+						yield { type: "message_end", message: { role: "assistant", stopReason: "stop", content } };
+						yield { type: "agent_end" };
+					})(),
+				};
+			},
+		});
+		await bundle.extension.start();
+		try {
+			const tool = createDispatchTool({
+				dispatch: bundle.contract,
+				getAutonomy: () => "yolo",
+				getAgentSpecs: () => context.getContract("agents")?.listSpecs() ?? [],
+			});
+			const prepared = tool.prepareAdmissionArguments?.({
+				agent: "scout",
+				tasks: [
+					{ id: "map", task: "map the parser module." },
+					{ id: "tests", task: "tests: read the parser tests.", depends_on: ["map"] },
+					{ id: "docs", task: "docs: read the parser docs.", depends_on: ["map"] },
+				],
+			});
+			ok(prepared);
+			strictEqual(prepared[DISPATCH_PLAN_PREPARATION_ERROR_ARGUMENT], undefined, JSON.stringify(prepared));
+			const result = await tool.run(prepared);
+			strictEqual(result.kind, "ok", JSON.stringify(result));
+			strictEqual(started[0], "map");
+			deepStrictEqual(started.slice(1).sort(), ["docs:", "tests:"]);
+		} finally {
+			await bundle.extension.stop?.();
+		}
+	});
+
 	it("preserves declared intent through admission when briefing quotes an absolute workspace", async () => {
 		const context = dispatchStubContext();
 		const agents = context.getContract("agents");
