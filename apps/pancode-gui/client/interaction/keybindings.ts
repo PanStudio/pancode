@@ -95,7 +95,7 @@ export const KEYBINDINGS = {
 		key: "r",
 		modifiers: ["alt"],
 		scope: "global",
-		action: "Reject pending approval",
+		action: "Deny pending approval",
 		where: "Approval waiting · no dialog open",
 	},
 	rejectAndStop: {
@@ -103,7 +103,7 @@ export const KEYBINDINGS = {
 		key: "x",
 		modifiers: ["alt"],
 		scope: "global",
-		action: "Reject pending approval and stop the turn",
+		action: "Deny pending approval and cancel the turn",
 		where: "Approval waiting · when the agent offers it",
 	},
 	modelPicker: {

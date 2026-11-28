@@ -119,7 +119,7 @@ export function summarizeActivity(items: readonly TimelineItem[], decisions?: Ca
 	} else {
 		const endings = (
 			[
-				[rejected, "rejected"],
+				[rejected, "denied"],
 				[declined - rejected, "refused"],
 				[canceled, "stopped"],
 			] as const
@@ -162,7 +162,7 @@ const TOOL_STATUS_LABELS: Readonly<Record<string, string>> = {
 	unknown: "outcome not reported",
 	escalated: "waiting",
 	allowed: "allowed",
-	rejected: "rejected",
+	rejected: "denied",
 	expired: "expired",
 };
 
@@ -222,7 +222,7 @@ const DIGEST_PHRASES: Readonly<Record<string, Phrase>> = {
 	dispatch: counted("delegated", "task"),
 	finish: (count) => (count === 1 ? "declared completion" : `declared completion ${count} times`),
 	"change:done": counted("changed", "file"),
-	"change:rejected": (count) => `${plural(count, "change")} rejected`,
+	"change:rejected": (count) => `${plural(count, "change")} denied`,
 	"change:refused": (count) => `${plural(count, "change")} refused`,
 	"change:failed": (count) => `${plural(count, "change")} failed`,
 	"change:stopped": (count) => `${plural(count, "change")} stopped`,

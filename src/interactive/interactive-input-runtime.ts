@@ -307,7 +307,7 @@ export function createInteractiveInputRuntime(deps: InteractiveInputRuntimeDeps)
 				...builtins,
 				{ key: "x", label: "Stop turn", run: deps.overlay.stopTurnFromPermission },
 				...(deps.overlay.canConfirmPermissionForSession?.() === true
-					? [{ key: "p", label: "Approve for this session", run: () => deps.overlay.confirmPermissionForSession?.() }]
+					? [{ key: "p", label: "Allow for this session", run: () => deps.overlay.confirmPermissionForSession?.() }]
 					: []),
 				{
 					key: "t",

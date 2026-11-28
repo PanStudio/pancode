@@ -17,9 +17,9 @@ export function approvalQueue(permissions: readonly Permission[]) {
  */
 export const RESOLUTION_SUMMARY: Readonly<Record<string, string>> = {
 	allowed: "Allowed once by the operator.",
-	rejected: "Rejected by the operator. PanCode was told no.",
+	rejected: "Denied by the operator. PanCode was told no.",
 	cancelled: "Withdrawn when the turn ended. PanCode was not told no.",
-	expired: "Nobody answered. The turn was stopped; PanCode was not told no.",
+	expired: "Nobody answered. The turn was canceled; PanCode was not told no.",
 };
 
 export const resolutionSummary = (status: string): string =>

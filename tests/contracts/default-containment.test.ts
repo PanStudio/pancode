@@ -1455,7 +1455,7 @@ test("a sandbox escape approved for this session covers reruns of the same uncha
 	strictEqual(refused.kind, "blocked");
 	ok(
 		refused.kind === "blocked" &&
-			refused.reason.includes(`Approve for this session: script ${join(cwd, "other", "c.sh")} (sha256:`),
+			refused.reason.includes(`Allow for this session: script ${join(cwd, "other", "c.sh")} (sha256:`),
 	);
 	const ask = (question: string) =>
 		yolo.registry.invoke({
@@ -1466,7 +1466,7 @@ test("a sandbox escape approved for this session covers reruns of the same uncha
 				questions: [
 					{
 						question,
-						options: [{ label: "Yes, run it once" }, { label: "Approve for this session: everything" }, { label: "No" }],
+						options: [{ label: "Yes, run it once" }, { label: "Allow for this session: everything" }, { label: "No" }],
 					},
 				],
 			},
@@ -1476,8 +1476,8 @@ test("a sandbox escape approved for this session covers reruns of the same uncha
 	await ask("Run other/c.sh outside the sandbox, again?");
 	strictEqual(entries.length, 1);
 	for (const labels of shown) {
-		strictEqual(labels.includes("Approve for this session: everything"), false);
-		ok(labels.at(-1)?.startsWith(`Approve for this session: script ${join(cwd, "other", "c.sh")} (sha256:`));
+		strictEqual(labels.includes("Allow for this session: everything"), false);
+		ok(labels.at(-1)?.startsWith(`Allow for this session: script ${join(cwd, "other", "c.sh")} (sha256:`));
 	}
 	strictEqual((await yolo.registry.invoke(unsandboxed("bash other/c.sh"))).kind, "ok");
 });
@@ -1566,7 +1566,7 @@ test("a contained-yolo escape is refused unjudged with one retry account: the sc
 	const unscoped = await yolo.registry.invoke(bash(`bash ${outside}/far.sh`, why), turn);
 	ok(unscoped.kind === "blocked" && unscoped.denial !== undefined);
 	strictEqual(
-		/rerun the call after they choose it|Approve for this session/u.test(unscoped.reason),
+		/rerun the call after they choose it|Allow for this session/u.test(unscoped.reason),
 		false,
 		unscoped.reason,
 	);

@@ -367,7 +367,7 @@ export function stoppedRun(
  * Spec 04's words for a call settled at its gate: "Rejected" when the operator pressed Reject, "Refused"
  * when the engine declined it without asking. Only the session's permissions can tell the two apart.
  */
-const declinedLabel = (decision: string | undefined): string => (decision === "rejected" ? "Rejected" : "Refused");
+const declinedLabel = (decision: string | undefined): string => (decision === "rejected" ? "Denied" : "Refused");
 
 interface DispatchTask {
 	readonly agent: string;

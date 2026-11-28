@@ -296,8 +296,8 @@ test("a shell-egress ask describes a session network grant rather than a one-tim
 	assert.deepEqual(
 		actions.map((action) => [action.decision, action.label]),
 		[
-			["reject", "Reject"],
-			["reject-and-stop", "Reject and stop the turn"],
+			["reject", "Deny"],
+			["reject-and-stop", "Deny and stop"],
 			["allow-once", "Allow for this session"],
 		],
 	);
@@ -927,7 +927,7 @@ test("a sandbox escape's session option is drawn with its scope and answers with
 	const scope = "script /repo/check.sh (sha256:0123456789ab) · cwd /repo · no env assignments";
 	const options = [
 		...CHOICES,
-		{ optionId: "allow-session-scope", kind: "allow_always", name: `Approve for this session: ${scope}` },
+		{ optionId: "allow-session-scope", kind: "allow_always", name: `Allow for this session: ${scope}` },
 	];
 	const response = permissions.request("s-1", "turn-1", { sessionId: "s-1", toolCall: {}, options }, ROW);
 	const card = published[0]?.[1];
