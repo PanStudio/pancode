@@ -151,7 +151,7 @@ export const KEYBINDINGS = {
 		key: "w",
 		modifiers: ["alt"],
 		scope: "global",
-		action: "Show or hide the live agents",
+		action: "Show or hide fleet workers",
 		where: "Conversation · no dialog open",
 	},
 	escape: {
@@ -279,7 +279,7 @@ export const KEYBINDINGS = {
 		key: "a",
 		modifiers: ["primary", "alt"],
 		scope: "global",
-		action: "Show live agents",
+		action: "Show fleet workers",
 		where: "Conversation · no dialog open",
 	},
 	cancelTurn: {

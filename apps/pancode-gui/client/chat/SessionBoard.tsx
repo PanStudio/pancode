@@ -412,7 +412,7 @@ export const SessionBoardPanel = memo(function SessionBoardPanel({
 					</section>
 					<section className="drill__section" aria-labelledby={`${titleId}-bank`}>
 						<h3 id={`${titleId}-bank`} data-board-section="memory" tabIndex={-1}>
-							{view.bank.length > 0 ? "What PanCode learned this session" : "Memory"}
+							{view.bank.length > 0 ? "Memory from this session" : "Memory"}
 						</h3>
 						<p className="drill__note">{view.memory}</p>
 						{view.bank.length > 0 ? (

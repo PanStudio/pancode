@@ -374,7 +374,7 @@ const terminalOnly = (name: string): SlashAliasSpec => ({
 export const SLASH_ALIASES: readonly SlashAliasSpec[] = [
 	{
 		names: ["compact"],
-		summary: "Compact this conversation's context. Words after the name guide the summary",
+		summary: "Compact this session's context. Words after the name guide the summary",
 		hint: "[instructions]",
 		target: { kind: "command", command: "context", subcommand: "compact", passRest: true },
 		available: (facts) => hasSubcommand(facts, "context", "compact"),
@@ -387,7 +387,7 @@ export const SLASH_ALIASES: readonly SlashAliasSpec[] = [
 	},
 	{
 		names: ["model", "thinking"],
-		summary: "Choose the model and thinking level for this conversation",
+		summary: "Choose the model and thinking level for this session",
 		target: { kind: "control", control: "model" },
 	},
 	{
@@ -397,7 +397,7 @@ export const SLASH_ALIASES: readonly SlashAliasSpec[] = [
 	},
 	{
 		names: ["status", "cost", "usage"],
-		summary: "Open usage and cost beside the conversation",
+		summary: "Open usage and cost beside the session",
 		target: { kind: "pane", view: "usage" },
 		available: (facts) => !!facts.capabilities?.telemetry && facts.paneAvailable,
 	},
@@ -410,29 +410,29 @@ export const SLASH_ALIASES: readonly SlashAliasSpec[] = [
 	},
 	{
 		names: ["tree"],
-		summary: "Continue from an earlier turn or fork from it",
+		summary: "Open session tree to continue from an earlier turn or fork from it",
 		target: { kind: "action", action: "tree" },
 		available: (facts) => !!facts.capabilities?.branches,
 	},
 	{
 		names: ["fork"],
-		summary: "Start a new conversation from a turn",
+		summary: "Fork from an earlier turn into a new session",
 		target: { kind: "action", action: "fork" },
 		available: (facts) => !!facts.capabilities?.branches?.fork,
 	},
 	{
 		names: ["resume"],
-		summary: "Open Sessions to continue another session",
+		summary: "Open Sessions to resume another session",
 		target: { kind: "navigate", path: "/sessions" },
 	},
 	{ names: ["hub"], summary: "Open the hub", target: { kind: "navigate", path: "/hub" } },
-	{ names: ["research"], summary: "Open Research", target: { kind: "navigate", path: "/research" } },
 	{
 		names: ["quit", "exit"],
-		summary: "Close this session from the session menu",
+		summary: "Exit PanCode in the terminal; close a session from the session menu on desktop",
 		target: {
 			kind: "notice",
-			message: "Close this session from the session menu, or close the window. PanCode keeps running.",
+			message:
+				"In the terminal, /quit exits PanCode. On the desktop, close this session from the session menu or close the window.",
 		},
 	},
 	{
@@ -458,20 +458,20 @@ export const SLASH_ALIASES: readonly SlashAliasSpec[] = [
 	},
 	{
 		names: ["draft"],
-		summary: "Draft a request several ways and compare them",
+		summary: "Draft answers in parallel and compare them",
 		hint: "[request]",
 		target: { kind: "action", action: "draft" },
 		available: (facts) => !!facts.capabilities?.aside?.draft,
 	},
 	{
 		names: ["reload"],
-		summary: "Reload this session's extension runtimes",
+		summary: "Open Extensions to reload this session's extension runtimes",
 		target: { kind: "action", action: "extensions" },
 		available: (facts) => !!facts.capabilities?.extensions,
 	},
 	{
 		names: ["view"],
-		summary: "Open this session's artifacts beside the conversation",
+		summary: "Open this session's artifacts beside the session",
 		target: { kind: "pane", view: "artifacts" },
 		available: (facts) => facts.paneAvailable,
 	},

@@ -256,9 +256,9 @@ export function appCommands(situation: CommandSituation, handlers: CommandHandle
 		] as const)
 			commands.push({
 				id: `session.download.${format}`,
-				title: `Download transcript as ${name}`,
+				title: `Export transcript as ${name}`,
 				group: "Session",
-				keywords: ["export", "save", "transcript", format],
+				keywords: ["download", "export", "save", "transcript", format],
 				available: sessionOpen,
 				run: () => handlers.navigate(`/sessions/${sessionId}?download=${format}`),
 			});

@@ -329,7 +329,7 @@ function NodeDetail({
 				) : null}
 				{projectRoot !== null && (
 					<button type="button" className="machines-primary" disabled={busy} onClick={() => setConfirm("check")}>
-						<Icon name="play" /> Check readiness
+						<Icon name="play" /> Test readiness
 					</button>
 				)}
 				<button type="button" disabled={busy} onClick={() => setConfirm("remove")}>

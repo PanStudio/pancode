@@ -477,7 +477,7 @@ test("appCommands opens the task's session dialogs by name, only those its agent
 	});
 	assert.deepEqual(
 		full.map((command) => command.title),
-		["Branches…", "Hand off to a new conversation…", "Side question…", "Drafts…", "Extensions…", "Run a playbook…"],
+		["Session tree…", "Hand off to a new session…", "Side question…", "Drafts…", "Extensions…", "Run a playbook…"],
 	);
 	assert.ok(full.find((command) => command.title === "Side question…")?.keywords?.includes("btw"));
 	full.find((command) => command.title === "Drafts…")?.run();

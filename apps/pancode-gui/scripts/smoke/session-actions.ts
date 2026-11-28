@@ -130,7 +130,7 @@ export async function sessionActionSteps(run: SmokeRun) {
 		await board.getByText(/^Proposed memory-k1-global\. Review it/).waitFor();
 		await check("session-board-writes");
 		if (width === 1600 || width === 390) {
-			await board.locator("h3", { hasText: "What PanCode learned this session" }).scrollIntoViewIfNeeded();
+			await board.locator("h3", { hasText: "Memory from this session" }).scrollIntoViewIfNeeded();
 			await page.screenshot({ path: join(output, `session-board-writes-${width}.png`) });
 		}
 		await check("session-board-hand");
@@ -414,7 +414,7 @@ export async function sessionActionSteps(run: SmokeRun) {
 	});
 	await step("extensions", async () => {
 		// Extensions: what this conversation loaded, and a reload that says which generation is live.
-		const extensionsDialog = await slashAction("extensions", "Extensions", "Tools and add-ons");
+		const extensionsDialog = await slashAction("extensions", "Extensions", "Extensions");
 		const extensionsPanel = extensionsDialog.locator(".extensions-panel");
 		await extensionsPanel.getByText("survey-tools 1.2.0 · project scope", { exact: true }).waitFor();
 		// Reload sits under the panel's Apply installed changes disclosure.
@@ -533,7 +533,7 @@ export async function sessionActionSteps(run: SmokeRun) {
 	await step("branches", async () => {
 		// Branches: continuing from an earlier reply replays only that branch; forking moves the
 		// conversation to a new session and says the project's files were left alone.
-		const branchesDialog = await slashAction("tree", "Branches", "Conversation history");
+		const branchesDialog = await slashAction("tree", "Session tree", "Session tree");
 		const branches = branchesDialog.locator(".branch-panel");
 		await branches.getByText("The next request continues here", { exact: false }).waitFor();
 		await check("branches");

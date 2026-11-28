@@ -534,14 +534,14 @@ function SessionView({ client, id }: { client: Client; id: string }) {
 									Restore files…
 								</MenuItem>
 								<MenuItem icon="arrowDown" disabled={snapshot.state !== "open"} onClick={() => void navigate("?download=html")}>
-									Download transcript as HTML
+									Export transcript as HTML
 								</MenuItem>
 								<MenuItem
 									icon="arrowDown"
 									disabled={snapshot.state !== "open"}
 									onClick={() => void navigate("?download=markdown")}
 								>
-									Download transcript as Markdown
+									Export transcript as Markdown
 								</MenuItem>
 								<MenuItem
 									icon="close"

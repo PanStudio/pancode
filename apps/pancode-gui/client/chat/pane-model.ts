@@ -16,10 +16,10 @@ export const PANE_VIEWS = [
 	{ id: "board", label: "Tasks and decisions", icon: "listChecks" },
 	{ id: "artifacts", label: "Artifacts", icon: "artifacts" },
 	{ id: "changes", label: "Changes", icon: "fileDiff" },
-	{ id: "branches", label: "Branches", icon: "branch" },
-	{ id: "agents", label: "Agents", icon: "fleet" },
-	{ id: "handoff", label: "Continue in a new session", icon: "branch" },
-	{ id: "extensions", label: "Tools and add-ons", icon: "toolchain" },
+	{ id: "branches", label: "Session tree", icon: "branch" },
+	{ id: "agents", label: "Fleet workers", icon: "fleet" },
+	{ id: "handoff", label: "Hand off to a new session", icon: "branch" },
+	{ id: "extensions", label: "Extensions", icon: "toolchain" },
 ] as const;
 
 export type PaneView = (typeof PANE_VIEWS)[number]["id"];

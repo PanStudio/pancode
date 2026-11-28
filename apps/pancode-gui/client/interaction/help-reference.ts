@@ -180,7 +180,7 @@ export const HELP_SECTIONS: readonly HelpSection[] = [
 			{ term: "Turn", meaning: "One request and everything PanCode does in response." },
 			{
 				term: "Evidence",
-				meaning: "Tool activity, approvals, results and the records of what happened.",
+				meaning: "Sealed work records verified by PanCode, including tool activity, approvals and results.",
 			},
 			{
 				term: "Run record",

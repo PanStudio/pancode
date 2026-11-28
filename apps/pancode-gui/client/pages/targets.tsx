@@ -232,7 +232,7 @@ export function TargetsPage({ client, view }: { client: Client; view: "targets" 
 							<div className="routing-guide">
 								<strong>Agent → profile → connection & model</strong>
 								<p>
-									Profiles select a model. Agent bindings choose a profile. Inspect each step below or{" "}
+									Profiles select a model. Agent routes choose a profile. Inspect each step below or{" "}
 									<Link to={`/settings/advanced?${new URLSearchParams({ ...(id ? { workspace: id } : {}), q: "fleet" })}`}>
 										edit fleet settings
 									</Link>
@@ -242,7 +242,7 @@ export function TargetsPage({ client, view }: { client: Client; view: "targets" 
 							<nav ref={routingBar} className="settings-tabs" aria-label="Routing inventory">
 								{[
 									{ id: "profiles", label: "Profiles", count: routing.data.profiles.length },
-									{ id: "bindings", label: "Agent bindings", count: routing.data.bindings.length },
+									{ id: "bindings", label: "Agent routes", count: routing.data.bindings.length },
 									{ id: "models", label: "Cached models", count: routing.data.models.length },
 								].map((tab) => (
 									<button
@@ -323,7 +323,7 @@ export function TargetsPage({ client, view }: { client: Client; view: "targets" 
 								</dl>
 							</section>
 							<section hidden={routingView !== "bindings"}>
-								<h2>Agent bindings · {routing.data.bindings.length}</h2>
+								<h2>Agent routes · {routing.data.bindings.length}</h2>
 								{!routing.data.bindings.length && <PanelEmpty>{emptyState.emptyStore("agent binding")}</PanelEmpty>}
 								<dl className="settings-list">
 									{routing.data.bindings.map((row) => (

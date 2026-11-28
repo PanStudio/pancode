@@ -316,11 +316,11 @@ export async function workspaceSteps(run: SmokeRun) {
 		// The routing inventory shows one of profiles, agent bindings and cached models at a time.
 		await page
 			.getByRole("navigation", { name: "Routing inventory", exact: true })
-			.getByRole("button", { name: /^Agent bindings ·/ })
+			.getByRole("button", { name: /^Agent routes ·/ })
 			.click();
 		await page
 			.locator("main")
-			.getByRole("heading", { name: /^Agent bindings ·/ })
+			.getByRole("heading", { name: /^Agent routes ·/ })
 			.waitFor();
 		await check("routing");
 		if (width === 1600 || width === 390)

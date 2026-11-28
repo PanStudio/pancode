@@ -90,7 +90,7 @@ test("a name this task cannot serve says so instead of reaching the agent", () =
 	assert.equal(notice("/usage", { paneAvailable: false }), "/usage is not available in this session.");
 	assert.equal(
 		notice("/quit", {}),
-		"Close this session from the session menu, or close the window. PanCode keeps running.",
+		"In the terminal, /quit exits PanCode. On the desktop, close this session from the session menu or close the window.",
 	);
 	assert.equal(notice("/panes", {}), "/panes is a terminal command and has no equivalent in PanCode on the desktop.");
 });
