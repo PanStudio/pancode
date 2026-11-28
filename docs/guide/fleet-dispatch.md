@@ -61,7 +61,7 @@ SSH aborts escalate against the attested remote process group.
 Scout routing is advisory. After nine or more read-only exploration calls in
 one model round with no successful Scout dispatch in the user turn, middleware
 adds one model-only reminder at the end of the turn, at most once per user turn
-([dispatch-nudge.ts](../../src/domains/middleware/dispatch-nudge.ts)). The reminder costs no extra model round and the operator
+([dispatch-nudge.ts](../../src/domains/dispatch/nudges/dispatch-nudge.ts)). The reminder costs no extra model round and the operator
 does not see it. Direct reads remain allowed, and PanCode does not rewrite a broad
 request into a Scout run. A second rail adds one advisory transcript line when a
 final reply claims a worker or Scout result and no dispatch ran in the turn.

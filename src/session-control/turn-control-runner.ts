@@ -3,8 +3,8 @@
 import type { PancodeSettings } from "../core/config.js";
 import type { TurnConstraints } from "../core/turn-constraints.js";
 import type { DispatchContract } from "../domains/dispatch/contract.js";
+import { batchesCollectedElsewhere, collectedElsewhereLine } from "../domains/dispatch/nudges/dispatch-nudge.js";
 import { dispatchOwnerOf, dispatchOwnership } from "../domains/dispatch/ownership.js";
-import { batchesCollectedElsewhere, collectedElsewhereLine } from "../domains/middleware/index.js";
 import type { TurnControlRecord, TurnFacts } from "../lib/turn-control/index.js";
 import {
 	decide,

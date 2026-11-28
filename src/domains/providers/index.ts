@@ -34,6 +34,7 @@ export {
 	gatewayEndpointKey,
 	modelEndpointKey,
 	modelStreamUsage,
+	registerBackgroundStream,
 	registerForegroundStream,
 	resolveEndpointCapacities,
 } from "./endpoint-capacity.js";

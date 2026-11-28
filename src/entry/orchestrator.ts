@@ -77,6 +77,14 @@ import { createDispatchDedupRegistration } from "../domains/dispatch/dedup.js";
 import { agentRoleFactsResolver } from "../domains/dispatch/execution-role.js";
 import { createWorktreeBootRecovery } from "../domains/dispatch/index.js";
 import { createDispatchDomainModule } from "../domains/dispatch/module.js";
+import {
+	createDetachedDispatchNudgeRegistration,
+	createUnbackedWorkerClaimRegistration,
+	finishedDetachedBatchIds,
+	openDetachedBatchViews,
+} from "../domains/dispatch/nudges/dispatch-nudge.js";
+import { createPlanCloseRegistration } from "../domains/dispatch/nudges/plan-close.js";
+import { createExplorationNudgeRegistrations } from "../domains/dispatch/nudges/scout-nudge.js";
 import { configureRunEventJournal } from "../domains/dispatch/run-event-journal.js";
 import { createExtensionRuntimeHookBridge, isLoadableExtension } from "../domains/extensions/index.js";
 import { ExtensionsDomainModule } from "../domains/extensions/module.js";
@@ -125,16 +133,9 @@ import {
 } from "../domains/memory/task-bank-store.js";
 import { createHistoryReviewActivity } from "../domains/memory/task-memory-status.js";
 import { type CapabilityMatch, capabilityCorpus, createCapabilityGate } from "../domains/middleware/capability-gate.js";
-import {
-	createDetachedDispatchNudgeRegistration,
-	createUnbackedWorkerClaimRegistration,
-	finishedDetachedBatchIds,
-	openDetachedBatchViews,
-} from "../domains/middleware/dispatch-nudge.js";
 import { createGuidanceRegistration } from "../domains/middleware/guidance.js";
 import {
 	type CompletionFact,
-	createExplorationNudgeRegistrations,
 	createMarketplaceOfferRegistration,
 	createMiddlewareToolChoiceControl,
 	createSkillsReminderRegistration,
@@ -144,7 +145,6 @@ import {
 } from "../domains/middleware/index.js";
 import { createLocalClockReminderRegistration } from "../domains/middleware/local-clock-reminder.js";
 import { createMiddlewareDomain } from "../domains/middleware/module.js";
-import { createPlanCloseRegistration } from "../domains/middleware/plan-close.js";
 import { createStaleBuildReminderRegistration } from "../domains/middleware/stale-build-reminder.js";
 import { createTaskBoardReminderRegistration } from "../domains/middleware/task-board-reminder.js";
 import { createTaskNudgeRegistration } from "../domains/middleware/task-nudge.js";
