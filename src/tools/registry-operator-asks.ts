@@ -13,7 +13,6 @@ import type { PermissionRequiredMeta, RegistryDeps, RegistryVerdict, ToolInvokeO
 import { withRegistryScope } from "./registry-nested-calls.js";
 import { PARK_ABORT_REASON } from "./registry-verdicts.js";
 
-const WITHDRAWN_REASON = "the command ended before anyone answered its network access ask";
 const DENY_HINT = "Denying is remembered for this session.";
 
 /** A call parked on the approval queue for an ask only the operator answers. */
@@ -72,7 +71,7 @@ export function createShellEgress(
 ) {
 	const sessions = new Map<string, { granted: Set<string>; denied: Set<string> }>();
 	/** One live ask per origin per session, shared by every launch waiting on it. */
-	const asks = new Map<string, { settled: Promise<boolean>; waiters: number; withdraw(): void }>();
+	const asks = new Map<string, Promise<boolean>>();
 	const sessionKey = (options: ToolInvokeOptions | undefined) => options?.sessionId ?? deps.currentSessionId?.() ?? "";
 	const session = (options: ToolInvokeOptions | undefined) => {
 		const key = sessionKey(options);
@@ -84,12 +83,7 @@ export function createShellEgress(
 		return state;
 	};
 
-	/** Settles true on approval, false on a denial or an unanswered card, null once withdrawn. */
-	const park = (
-		origin: EgressOrigin,
-		key: string,
-		options: ToolInvokeOptions | undefined,
-	): { answer: Promise<boolean | null>; withdraw(): void } => {
+	const park = (origin: EgressOrigin, key: string, options: ToolInvokeOptions | undefined): Promise<boolean> => {
 		const url =
 			origin.port === 443
 				? `https://${origin.host}/`
@@ -108,7 +102,7 @@ export function createShellEgress(
 		});
 		if (admission.kind !== "ask") {
 			if (admission.kind === "deny") queue.record(call, admission.decision, "blocked");
-			return { answer: Promise.resolve(false), withdraw: () => {} };
+			return Promise.resolve(false);
 		}
 		const decision: SafetyDecision = {
 			...admission.decision,
@@ -125,8 +119,7 @@ export function createShellEgress(
 			...(options?.toolCallId !== undefined ? { toolCallId: options.toolCallId } : {}),
 		};
 		const reasonCode = `confirmation:${SHELL_EGRESS_RULE_ID}`;
-		let withdrawn = false;
-		const answer = new Promise<boolean | null>((resolve) => {
+		return new Promise<boolean>((resolve) => {
 			const entry: OperatorAskEntry = {
 				call,
 				decision,
@@ -134,7 +127,7 @@ export function createShellEgress(
 				closePark: () => {},
 				...(options !== undefined ? { options } : {}),
 				resolve(verdict) {
-					resolve(withdrawn ? null : verdict.kind === "ok" && verdict.result.kind === "ok");
+					resolve(verdict.kind === "ok" && verdict.result.kind === "ok");
 				},
 				approve(requestedBy) {
 					queue.record(call, decision, "allowed", { requestId: meta.requestId, reasonCode });
@@ -143,13 +136,6 @@ export function createShellEgress(
 			};
 			enqueueOperatorAsk(queue, entry, reasonCode);
 		});
-		return {
-			answer,
-			withdraw() {
-				withdrawn = true;
-				queue.cancel(meta.requestId, WITHDRAWN_REASON);
-			},
-		};
 	};
 
 	/**
@@ -158,16 +144,11 @@ export function createShellEgress(
 	 * surface already renders. Approving grants that exact origin to the
 	 * session's contained commands until the session ends; a denial, the
 	 * card's unattended window or a cancelled call is remembered as a denial
-	 * for the session. Once every launch waiting on the ask has ended, the card
-	 * is withdrawn and nothing is remembered, so the next command asks again.
-	 * Workers, headless runs and contained yolo, which nobody answers, are
-	 * refused at once.
+	 * for the session. The card outlives a command that gives up waiting, and
+	 * its answer still holds for the session's next command. Workers,
+	 * headless runs and contained yolo, which nobody answers, are refused at once.
 	 */
-	const requestApproval = async (
-		origin: EgressOrigin,
-		launchEnded: AbortSignal,
-		options: ToolInvokeOptions | undefined,
-	): Promise<boolean> => {
+	const requestApproval = async (origin: EgressOrigin, options: ToolInvokeOptions | undefined): Promise<boolean> => {
 		const key = originKey(origin);
 		const state = session(options);
 		if (state.granted.has(key)) return true;
@@ -175,39 +156,23 @@ export function createShellEgress(
 		if (
 			(deps.principal ?? "main") !== "main" ||
 			options?.signal?.aborted === true ||
-			launchEnded.aborted ||
 			!queue.cardsRendered() ||
 			deps.operatorAttends?.() !== true ||
 			deps.unattendedAsks?.() === true
 		)
 			return false;
 		const askKey = `${sessionKey(options)}\u0000${key}`;
-		let pending = asks.get(askKey);
-		if (pending === undefined) {
-			const parkedAsk = withRegistryScope(options, () => park(origin, key, options));
-			const settled = parkedAsk.answer.then((answer) => {
-				asks.delete(askKey);
-				if (answer !== null) (answer ? state.granted : state.denied).add(key);
-				return answer === true;
-			});
-			pending = { settled, waiters: 0, withdraw: parkedAsk.withdraw };
-			asks.set(askKey, pending);
-		}
-		const ask = pending;
-		ask.waiters += 1;
-		let ended = (): void => {};
-		const launchGone = new Promise<false>((resolve) => {
-			ended = () => {
-				ask.waiters -= 1;
-				if (ask.waiters === 0) ask.withdraw();
-				resolve(false);
-			};
-			launchEnded.addEventListener("abort", ended, { once: true });
+		const pending = asks.get(askKey);
+		if (pending !== undefined) return await pending;
+		const asked = withRegistryScope(options, () => park(origin, key, options)).then((allowed) => {
+			(allowed ? state.granted : state.denied).add(key);
+			return allowed;
 		});
+		asks.set(askKey, asked);
 		try {
-			return await Promise.race([ask.settled, launchGone]);
+			return await asked;
 		} finally {
-			launchEnded.removeEventListener("abort", ended);
+			asks.delete(askKey);
 		}
 	};
 
@@ -226,7 +191,7 @@ export function createShellEgress(
 				...policy,
 				egress: {
 					grants: egressGrants(settings.main.allow, settings.main.presets, session(options).granted),
-					ask: (origin, launchEnded) => requestApproval(origin, launchEnded, options),
+					ask: (origin) => requestApproval(origin, options),
 					denyHint:
 						"the operator can allow it when asked, or grant it for good in safety.egress.main.allow or safety.egress.main.presets",
 					...(settings.upstreamProxy !== null ? { upstreamProxy: settings.upstreamProxy } : {}),

@@ -26,11 +26,8 @@ export interface EgressReceipt {
 	count: number;
 }
 
-/**
- * Asks the operator about one origin outside the grants; resolves true to admit it.
- * `launchEnded` aborts when the proxy closes, so an unanswered ask can be withdrawn.
- */
-export type EgressAsk = (origin: EgressOrigin, launchEnded: AbortSignal) => Promise<boolean>;
+/** Asks the operator about one origin outside the grants; resolves true to admit it. */
+export type EgressAsk = (origin: EgressOrigin) => Promise<boolean>;
 
 export interface EgressProxyOptions {
 	grants: EgressGrants;
@@ -191,7 +188,6 @@ export function createEgressProxy(options: EgressProxyOptions): EgressProxy {
 	const listeners = new Set<net.Server>();
 	/** Origins the operator admitted or refused during this launch, so concurrent connections share one ask. */
 	const decided = new Map<string, Promise<boolean>>();
-	const lifetime = new AbortController();
 	let closed = false;
 
 	const track = (socket: net.Socket): net.Socket => {
@@ -222,7 +218,7 @@ export function createEgressProxy(options: EgressProxyOptions): EgressProxy {
 		const key = originKey(origin);
 		let pending = decided.get(key);
 		if (pending === undefined) {
-			pending = ask(origin, lifetime.signal).catch(() => false);
+			pending = ask(origin).catch(() => false);
 			decided.set(key, pending);
 		}
 		return await pending;
@@ -533,7 +529,6 @@ export function createEgressProxy(options: EgressProxyOptions): EgressProxy {
 		close() {
 			if (closed) return;
 			closed = true;
-			lifetime.abort();
 			for (const listener of listeners) listener.close();
 			listeners.clear();
 			for (const socket of sockets) socket.destroy();
