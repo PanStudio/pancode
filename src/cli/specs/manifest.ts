@@ -19,11 +19,6 @@ export const NESTED_LEAVES: ReadonlyArray<readonly [string, string, string]> = [
 	["auth login", "", "auth login [target-or-runtime] [--api-key <value>] [--method browser|device]"],
 	["auth logout", "", "auth logout [target-or-runtime]"],
 	["auth status", "", "auth status [target-or-runtime] [--json]"],
-	[
-		"campaign run",
-		"",
-		"campaign run --fixture <dir> --roster <roster.yaml> --answers <answers.yaml> --prompt <text> --out <dir> [--repeat <N>] [--timeout <seconds>] [--probe <extension>:<command>] [--autonomy default|yolo] [--json] [--exit-code]",
-	],
 	["claims compact", "", "claims compact [--prune-superseded-before <iso-date>] [--dry-run] [--json]"],
 	["claims export", "", "claims export [--check <id>] [--out <file>]"],
 	["claims import", "", "claims import <file> [--json]"],
