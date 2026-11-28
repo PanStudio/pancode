@@ -45,10 +45,10 @@ test("built CLI operator invocation isolates stdout, disposes code and keeps ord
 		);
 		equal(run(["extensions", "discover", source, "--json"]).status, 0);
 		equal(run(["extensions", "install", source, "--project", "--json"]).status, 0);
-		// With no model target saved the run refuses before boot, so the extension's code never loads.
+		// With no model connection saved the run refuses before boot, so the extension's code never loads.
 		const ordinary = run(["run", "/ext:pancode-fixture:inspect"]);
 		equal(ordinary.status, 2, ordinary.stderr);
-		match(ordinary.stderr, /not configured: no model target is saved/);
+		match(ordinary.stderr, /not configured: no model connection is saved/);
 		equal(`${ordinary.stdout}${ordinary.stderr}`.includes("untrusted startup stdout"), false);
 		equal(existsSync(path.join(cwd, ".out", "pancode-disposed.txt")), false);
 		const unclaimed = run(["run", "/ext:nope:inspect"]);

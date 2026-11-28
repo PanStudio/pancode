@@ -137,7 +137,7 @@ test("actual final failure after tool use retains a failed outcome while success
 				payload: { stopReason, errorMessage: "Request ended", content: [{ type: "text", text: "Final response" }], usage },
 			},
 		]);
-		assert.match(output, stopReason === "error" ? /Failed/ : stopReason === "aborted" ? /Stopped/ : /Done/);
+		assert.match(output, stopReason === "error" ? /Failed/ : stopReason === "aborted" ? /Canceled/ : /Done/);
 		if (stopReason !== "stop") assert.doesNotMatch(output, /\bDone\b/);
 	}
 });
