@@ -817,7 +817,7 @@ const FUNCTION_LINE_EXEMPTIONS: ReadonlyMap<string, number> = new Map([
 	["src/engine/loop-guard.ts#createLoopGuardRegistration", 1422],
 	["src/entry/orchestrator.ts#bootOrchestrator", 953],
 	["src/interactive/editor-submit.ts#createEditorSubmitController", 668],
-	["src/interactive/interactive-application.ts#createInteractiveApplication", 2192],
+	["src/interactive/interactive-application.ts#createInteractiveApplication", 2035],
 	["src/interactive/interactive-presentation.ts#createInteractivePresentation", 1072],
 	["src/interactive/interactive-slash-runtime.ts#createInteractiveSlashRuntime", 793],
 	["src/interactive/overlay-general-openers.ts#createOverlayGeneralOpeners", 730],
