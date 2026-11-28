@@ -38,6 +38,8 @@ const httpModules = new Map([
 	["src/acp/errors.ts", new Set(["AcpProcessError", "AcpTimeoutError", "AcpRequestError", "AcpProtocolError"])],
 	...acpWireTypes.map((path) => [path, new Set(["*"])] as const),
 	["src/core/xdg.ts", new Set(["pancodeStateDir", "pancodeDataDir", "pancodeConfigDir", "resolvePancodeDirs"])],
+	["src/core/duration.ts", new Set(["parseDuration"])],
+	["src/core/timers.ts", new Set(["MAX_TIMER_DELAY_MS"])],
 	["src/core/package-root.ts", new Set(["resolvePackageRoot"])],
 	["src/core/path-containment.ts", new Set(["relativePathEscapes"])],
 	["src/core/context-operation.ts", new Set(["ACP_CONTEXT_STATUS_METHOD"])],

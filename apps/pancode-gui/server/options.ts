@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import { parseArgs } from "node:util";
-import { parseDuration } from "../../../src/core/duration.js";
-import { MAX_TIMER_DELAY_MS } from "../../../src/core/timers.js";
+import { MAX_TIMER_DELAY_MS, parseDuration } from "./pancode/http-shims.js";
 
 export type OpenMode = "always" | "never" | "auto";
 export type ReuseMode = "required" | "preferred" | "never";
