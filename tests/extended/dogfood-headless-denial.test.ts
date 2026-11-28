@@ -206,8 +206,13 @@ describe("headless no-op contract through the built binary", () => {
 	};
 	// bash is a direct tool, so the gateway's call op refuses it; only a chain step may name it.
 	// At default a contained command runs in the sandbox, so the denied write
-	// asks to leave it, which keeps the hidden-content ask on every host.
-	const deniedArgs = { command: inline, unsandboxed: true };
+	// asks to leave it, which keeps the hidden-content ask on every host. The escape states its reason (D9);
+	// one without it is refused before any ask.
+	const deniedArgs = {
+		command: inline,
+		unsandboxed: true,
+		unsandboxed_reason: "the sandbox hides the file the command edits",
+	};
 	const deniedInline: OpenAICompatToolCallScript = {
 		id: "call-inline",
 		name: "bash",

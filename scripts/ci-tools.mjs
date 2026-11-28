@@ -29,7 +29,7 @@ import {
 import { delimiter, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-export const SEARCH_TOOL_PINS = {
+const SEARCH_TOOL_PINS = {
 	rg: {
 		version: "14.1.1",
 		url: (target) => `https://github.com/BurntSushi/ripgrep/releases/download/14.1.1/ripgrep-14.1.1-${target}.tar.gz`,
