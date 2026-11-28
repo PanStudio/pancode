@@ -30,10 +30,10 @@ import {
 	parseMcpSkillEntry,
 } from "./skills.js";
 
-export const MCP_SKILL_CATALOG_VERSION = 1;
+const MCP_SKILL_CATALOG_VERSION = 1;
 
 /** Public decode limits; a file past any of them is a miss, never a partial read. */
-export const MCP_SKILL_CATALOG_CAPS = Object.freeze({
+const MCP_SKILL_CATALOG_CAPS = Object.freeze({
 	fileBytes: 8 * 1024 * 1024,
 	entries: MCP_SKILL_LIST_CAP,
 	reasonBytes: 1024,

@@ -31,10 +31,10 @@ import type { HubPackageEntry } from "./hub-types.js";
 export const HUB_CERTIFICATE_ASSET = "signing.json";
 export const HUB_ENVELOPE_ASSET = "index.envelope.json";
 export const HUB_INDEX_ASSET = "index.yaml";
-export const HUB_ASSET_MAX_BYTES = 4 * 1024 * 1024;
-export const HUB_ASSET_TIMEOUT_MS = 20_000;
+const HUB_ASSET_MAX_BYTES = 4 * 1024 * 1024;
+const HUB_ASSET_TIMEOUT_MS = 20_000;
 /** `hub install`, `update` and `list` refresh first when the kept index is older than this. */
-export const HUB_INDEX_REFRESH_AGE_MS = 6 * 60 * 60 * 1000;
+const HUB_INDEX_REFRESH_AGE_MS = 6 * 60 * 60 * 1000;
 
 export type HubTrustRefusalReason = HubRefusalReason | "sequence-reused" | "unreachable" | "bad-url" | "off";
 
@@ -136,7 +136,7 @@ async function readCapped(body: ReadableStream<Uint8Array> | null, maxBytes: num
 }
 
 /** The default reader: a capped HTTPS (or loopback HTTP) GET, or a capped local file read. */
-export const defaultHubAssetFetch: HubAssetFetch = async (url, limits) => {
+const defaultHubAssetFetch: HubAssetFetch = async (url, limits) => {
 	if (url.protocol === "file:") {
 		const file = fileURLToPath(url);
 		if (statSync(file).size > limits.maxBytes) throw new Error(`${url.href} is larger than ${limits.maxBytes} bytes`);

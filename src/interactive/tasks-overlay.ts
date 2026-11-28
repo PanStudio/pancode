@@ -37,7 +37,7 @@ import { fitUnits, GLYPH, pancodeTheme, positionRow } from "./theme/index.js";
 const DEFAULT_CONTENT_WIDTH = 84;
 const REFRESH_MS = 1000;
 
-export const TASKS_OVERLAY_WIDTH = DEFAULT_CONTENT_WIDTH + 4;
+const TASKS_OVERLAY_WIDTH = DEFAULT_CONTENT_WIDTH + 4;
 
 const STATUS_PRESENTATION: Record<TaskBoardTask["status"], { glyph: string; token: PancodeToken; label: string }> = {
 	pending: { glyph: GLYPH.queued, token: "annotation", label: "pending" },

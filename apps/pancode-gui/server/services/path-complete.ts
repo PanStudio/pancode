@@ -19,7 +19,7 @@ export interface PathHost {
 	wsl: { distro: string | null; mountRoot: string } | null;
 }
 
-export const PATH_MATCH_LIMIT = 50;
+const PATH_MATCH_LIMIT = 50;
 
 export function detectPathHost(
 	env: NodeJS.ProcessEnv = process.env,
@@ -93,7 +93,7 @@ export function toServerPath(text: string, host: PathHost): string | null {
 }
 
 /** Splits the input into its parent directory and the partial last segment. Pure. */
-export function parsePathInput(rawInput: string, host: PathHost): ParsedPathInput {
+function parsePathInput(rawInput: string, host: PathHost): ParsedPathInput {
 	let input = rawInput;
 	const windowsHost = host.platform === "win32";
 	const windowsSpelling = windowsHost || (host.wsl !== null && (DRIVE.test(input) || WSL_UNC.test(input)));
@@ -119,7 +119,7 @@ export function parsePathInput(rawInput: string, host: PathHost): ParsedPathInpu
 }
 
 /** Longest shared prefix, compared case-insensitively when the file system is, taking the first name's case. */
-export function commonNamePrefix(names: string[], caseInsensitive: boolean) {
+function commonNamePrefix(names: string[], caseInsensitive: boolean) {
 	const first = names[0];
 	if (first === undefined) return "";
 	const fold = (value: string) => (caseInsensitive ? value.toLowerCase() : value);

@@ -12,7 +12,7 @@
 import type { ErrorSlug } from "./slugs.js";
 import { formatDiagnostic, formatUsageError, USAGE_SLUGS } from "./usage-error.js";
 
-export const JSON_DOCUMENT_VERSION = 1;
+const JSON_DOCUMENT_VERSION = 1;
 
 export interface JsonFailureDocument {
 	readonly version: typeof JSON_DOCUMENT_VERSION;

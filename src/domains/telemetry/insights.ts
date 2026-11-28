@@ -31,7 +31,7 @@ export const INSIGHT_CATEGORIES = [
 ] as const;
 export type InsightCategory = (typeof INSIGHT_CATEGORIES)[number];
 
-export const AUTONOMY_LEVELS = [1, 2, 3, 4, 5] as const;
+const AUTONOMY_LEVELS = [1, 2, 3, 4, 5] as const;
 export type AutonomyLevelScore = (typeof AUTONOMY_LEVELS)[number];
 
 export const INSIGHTS_HEURISTIC_NOTE =

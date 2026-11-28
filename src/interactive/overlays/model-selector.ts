@@ -25,7 +25,7 @@ import type { ModelItemsResult, ModelOverlaySummary, ModelRefreshScope, ModelRow
 import { buildModelItems, filterModelRows } from "./model-selector-model.js";
 import { modelTableLines } from "./model-selector-table.js";
 
-export const MODEL_OVERLAY_WIDTH = 82;
+const MODEL_OVERLAY_WIDTH = 82;
 const MODEL_OVERLAY_MAX_WIDTH = 120;
 const MODEL_OVERLAY_TERMINAL_PADDING = 8;
 const VISIBLE_ROWS = 10;

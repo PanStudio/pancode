@@ -52,7 +52,7 @@ import { createWorkerProgressFold, type WorkerProgressFold } from "./worker-prog
 /** Settled run summaries retained, in addition to all active runs. */
 export const MAX_PROJECTION_RUNS = 50;
 /** Debounce for coalescing listener notifications, in milliseconds. */
-export const PROJECTION_FLUSH_DEBOUNCE_MS = 16;
+const PROJECTION_FLUSH_DEBOUNCE_MS = 16;
 
 /**
  * What the projection reads beside the bus: the dispatch and run-result readers. Session spend, tokens and timing are

@@ -51,10 +51,10 @@ import { containedCwd, createMcpStdioTransport, type McpStdioServerSpec } from "
 import type { McpToolCallResult, McpToolDescriptor } from "./tool-results.js";
 import type { McpTeardownOutcome, McpTransport, McpTransportEvents } from "./transport.js";
 
-export const DEFAULT_STDERR_TAIL_BYTES = 16 * 1024;
+const DEFAULT_STDERR_TAIL_BYTES = 16 * 1024;
 export const DEFAULT_KILL_GRACE_MS = 3_000;
 /** Bytes accepted for the server's stdin but not yet flushed before the client fails with `overload`. */
-export const DEFAULT_MAX_OUTBOUND_BYTES = 4 * 1024 * 1024;
+const DEFAULT_MAX_OUTBOUND_BYTES = 4 * 1024 * 1024;
 /** Smallest outbound cap a caller may configure; initialize alone needs a few hundred bytes. */
 const MIN_OUTBOUND_BYTES = 4096;
 /** How long a teardown waits for a SIGKILLed group to disappear before it gives up and says so. */

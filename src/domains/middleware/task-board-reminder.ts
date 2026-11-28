@@ -19,7 +19,7 @@ import { type MiddlewareEffect, metadataNumber, metadataString, turnCanCallTool 
  * open the board first. Reminder text only: no tool policy changes.
  */
 
-export const TASK_BOARD_REMINDER_REGISTRATION_ID = "observer.task-board-reminder";
+const TASK_BOARD_REMINDER_REGISTRATION_ID = "observer.task-board-reminder";
 
 export function taskBoardReminderMessage(steps: number, placement: "direct" | "gateway" = "direct"): string {
 	// A gateway-only tasks has no attached schema, and a model told to call

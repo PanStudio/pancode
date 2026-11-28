@@ -15,7 +15,7 @@ import { Type } from "typebox";
 // `_pancode/session/tree`, `switch_turn` and `fork`: the terminal's /tree and /fork.
 // The agent bounds the tree at 400 nodes, a preview at 240 bytes and a label at 256; these schemas restate that.
 const closed = { additionalProperties: false };
-export const TurnId = Type.String({ minLength: 1, maxLength: 128 });
+const TurnId = Type.String({ minLength: 1, maxLength: 128 });
 
 export const TreeNodeKind = Type.Union([
 	Type.Literal("user"),

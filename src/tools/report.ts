@@ -43,7 +43,7 @@ const REPORT_NOT_YOURS = "You cannot send it; do not run gh or pancode for this.
 const REPORT_SHARE_NOTE =
 	"The operator may also share a diagnostic bundle, encrypted to the maintainers and deletable with forget; never pass --share or --send yourself, but you may tell them the command in docs/guide/troubleshooting.md#share-with-the-maintainers.";
 /** Unsent agent drafts an install keeps before the tool stops writing new ones. */
-export const AGENT_DRAFT_LIMIT = 3;
+const AGENT_DRAFT_LIMIT = 3;
 
 const OFFER_QUESTION =
 	"This looks like a problem in PanCode itself. Should I draft a report? You read every word before anything is sent.";

@@ -152,7 +152,7 @@ export const IN_RUN_CONTINUATION_ENTRY = "inRunContinuation";
  */
 export const HOST_INSERT_CUSTOM_TYPE = "pancode.host-insert";
 
-export const HOST_INSERT_SOURCES = [
+const HOST_INSERT_SOURCES = [
 	"reminder",
 	"continuation",
 	"required-tool",
@@ -754,7 +754,7 @@ export const EVICTION_REASONS = [
 ] as const;
 export type EvictionReason = (typeof EVICTION_REASONS)[number];
 
-export const EVICTION_TRIGGERS = ["pressure", "operator", "superseded"] as const;
+const EVICTION_TRIGGERS = ["pressure", "operator", "superseded"] as const;
 export type EvictionTrigger = (typeof EVICTION_TRIGGERS)[number];
 
 /**
@@ -763,7 +763,7 @@ export type EvictionTrigger = (typeof EVICTION_TRIGGERS)[number];
  * an evicted read of the same path: the body goes back through the read
  * result and this record is the exact provenance.
  */
-export const RECALL_TRIGGERS = ["tool", "operator", "reread"] as const;
+const RECALL_TRIGGERS = ["tool", "operator", "reread"] as const;
 export type RecallTrigger = (typeof RECALL_TRIGGERS)[number];
 
 /**

@@ -19,7 +19,7 @@ import type {
 
 export const JOB_HISTORY_LIMIT = 10;
 export const JOB_SESSION_LIMIT = 32;
-export const JOB_SUMMARY_BYTES = 2048;
+const JOB_SUMMARY_BYTES = 2048;
 export const JOB_JSON_BYTES = 16_384;
 /** Further conditions a command job may wait on besides its own until, so a poll stays one bounded occurrence. */
 export const JOB_CONDITION_LIMIT = 7;

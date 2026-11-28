@@ -220,7 +220,7 @@ async function appAnswer(
 }
 
 /** The background app's own report, or null when nothing ready answers as this app with this token. */
-export async function localServerMeta(port: number, token: string): Promise<LocalServerMeta | null> {
+async function localServerMeta(port: number, token: string): Promise<LocalServerMeta | null> {
 	const value = await readMeta(port, token);
 	return value && value.apiVersion === 1 && value.pwa === true
 		? {

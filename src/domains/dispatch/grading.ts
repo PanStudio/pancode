@@ -557,7 +557,7 @@ const RULES: ReadonlyArray<GradeRule> = [
 	},
 ];
 
-export const WORKER_FINAL_OUTPUT_MISSING_DETAIL = "worker loop ended without a sealed final assistant output";
+const WORKER_FINAL_OUTPUT_MISSING_DETAIL = "worker loop ended without a sealed final assistant output";
 
 /** Grade one run. Pure: the same contract and facts always give the same verdict. */
 export function grade(contract: GradeContract, facts: GradeFacts): GradeVerdict {

@@ -52,7 +52,7 @@ export const BUDGET_SECONDS = 600;
 export const SAFETY_POSTURE = "Nothing runs until you answer. PanCode never answers for you.";
 /** The "one use" is load-bearing: there is deliberately no allow-always on the wire. */
 export const CARD_EYEBROW = "Approval needed · one use";
-export const KEYBOARD_HINT = "Alt + A allows once · Alt + R rejects";
+const KEYBOARD_HINT = "Alt + A allows once · Alt + R rejects";
 
 function isShellEgress(decision: PermissionDecisionFacts | undefined): boolean {
 	return decision?.axis?.kind === "safety-net" && decision.axis.ruleId === SHELL_EGRESS_RULE_ID;
@@ -167,7 +167,7 @@ export interface CallLocation {
 }
 
 /** ACP line numbers are zero-based, so a reported line is shown one higher. */
-export const formatLocation = (location: CallLocation): string =>
+const formatLocation = (location: CallLocation): string =>
 	typeof location.line === "number" && Number.isInteger(location.line)
 		? `${location.path}:${location.line + 1}`
 		: location.path;

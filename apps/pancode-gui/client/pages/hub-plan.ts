@@ -31,7 +31,7 @@ const DONE: Record<Operation, string> = {
 	remove: "Removed",
 };
 export const verb = (operation: Operation) => VERB[operation];
-export const scopeHub = (scope: Scope) => (scope === "user" ? "your user packs" : "this project's packs");
+const scopeHub = (scope: Scope) => (scope === "user" ? "your user packs" : "this project's packs");
 export const scopeCopy = (scope: Scope) => (scope === "user" ? "User copy" : "Project copy");
 
 const COPY_TONES: Readonly<Record<string, StatusTone>> = {

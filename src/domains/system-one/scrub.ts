@@ -10,12 +10,7 @@
 
 import { homedir } from "node:os";
 import type { RedactionTally } from "../../lib/secrets/redact.js";
-import {
-	createRedactionTally,
-	headForRedaction,
-	redactSecretsDeep,
-	redactSecretsText,
-} from "../../lib/secrets/redact.js";
+import { headForRedaction, redactSecretsDeep, redactSecretsText } from "../../lib/secrets/redact.js";
 import { cutHeadGuard, dropCutHead, isSecretArgKey, redactSecretString } from "../../lib/secrets/redaction.js";
 
 const MAX_DEPTH = 12;
@@ -90,12 +85,6 @@ function scrubNode(value: unknown, tally: RedactionTally, depth: number, keys: b
  */
 export function scrub<T>(value: T, tally: RedactionTally, keys = true): T {
 	return scrubNode(redactSecretsDeep(value, tally), tally, 0, keys) as T;
-}
-
-export function scrubbed<T>(value: T): { value: T; redactions: number } {
-	const tally = createRedactionTally();
-	const out = scrub(value, tally);
-	return { value: out, redactions: tally.count };
 }
 
 /** Each end kept of a longer string in a point's object, well past the 6000 code points any point reads from one end. */

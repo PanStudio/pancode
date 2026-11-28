@@ -16,11 +16,11 @@ export interface SshEndpoint {
 	readonly pancodeEntry?: string | null;
 }
 
-export const DEFAULT_SSH_CONNECT_TIMEOUT_SEC = 10;
+const DEFAULT_SSH_CONNECT_TIMEOUT_SEC = 10;
 /** The node's GUI stops itself after this long without a request or open stream. */
 export const REMOTE_GUI_IDLE_MS = 10 * 60 * 1000;
 /** Consecutive failed connections before the attachment stays failed until the operator opens it again. */
-export const RECONNECT_ATTEMPTS = 5;
+const RECONNECT_ATTEMPTS = 5;
 
 function port(value: number, name: string): string {
 	if (!Number.isInteger(value) || value < 1 || value > 65535)

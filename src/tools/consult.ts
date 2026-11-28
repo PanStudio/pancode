@@ -57,7 +57,7 @@ import type { ToolInvokeOptions } from "./registry-contract.js";
 import { isSessionOffloadPath } from "./result-shaping.js";
 import type { ToolResult, ToolSpec } from "./tool-spec.js";
 
-export const CONSULT_LIMITS = {
+const CONSULT_LIMITS = {
 	callsPerTurn: 3,
 	questionsPerCall: 4,
 	/** Bytes of `state` serialized as JSON. */
@@ -129,7 +129,7 @@ type ConsultKind = (typeof KINDS)[number];
 
 const ID_PATTERN = /^[A-Za-z][A-Za-z0-9_-]{0,39}$/;
 
-export const consultParameters: TSchema = Type.Object({
+const consultParameters: TSchema = Type.Object({
 	filter: Type.Optional(
 		Type.Object({
 			criterion: Type.String({

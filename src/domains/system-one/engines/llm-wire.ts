@@ -123,7 +123,7 @@ export interface BatchReply {
 	readonly answered: AnsweredIdentity | null;
 }
 
-export class ChatHttpError extends Error {
+class ChatHttpError extends Error {
 	constructor(
 		message: string,
 		readonly status: number | undefined,

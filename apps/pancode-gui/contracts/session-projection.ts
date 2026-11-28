@@ -72,7 +72,7 @@ const jobRank = (job: AcpJob): number => job.revision ?? -1;
  * cap by dropping the oldest finished job first. A job that is still live is never the one dropped for
  * history, because the strip would then stop showing work that is running.
  */
-export function mergeJob(jobs: readonly AcpJob[], incoming: AcpJob): readonly AcpJob[] {
+function mergeJob(jobs: readonly AcpJob[], incoming: AcpJob): readonly AcpJob[] {
 	const index = jobs.findIndex((job) => job.jobId === incoming.jobId);
 	if (index >= 0) {
 		const held = jobs[index];
@@ -89,7 +89,7 @@ export function mergeJob(jobs: readonly AcpJob[], incoming: AcpJob): readonly Ac
  * that raced the list may carry a job the list was drawn before, and the revision rule already keeps
  * whichever copy is newer.
  */
-export function mergeJobList(held: readonly AcpJob[], listed: readonly AcpJob[]): readonly AcpJob[] {
+function mergeJobList(held: readonly AcpJob[], listed: readonly AcpJob[]): readonly AcpJob[] {
 	return listed.reduce(mergeJob, held);
 }
 

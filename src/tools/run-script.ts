@@ -101,7 +101,7 @@ export const RUN_SCRIPT_CAPS = Object.freeze({
  * Python's streams unbuffered so the live tail and the logs reflect progress
  * as it happens rather than at exit.
  */
-export const RUN_SCRIPT_DEFAULT_INTERPRETER_ARGS: Readonly<Record<RunScriptInterpreter, ReadonlyArray<string>>> = {
+const RUN_SCRIPT_DEFAULT_INTERPRETER_ARGS: Readonly<Record<RunScriptInterpreter, ReadonlyArray<string>>> = {
 	python3: ["-u"],
 	python: ["-u"],
 	node: [],

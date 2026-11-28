@@ -3,8 +3,8 @@
 import { buildProjectTrustCard, type ProjectTrustCardModel, trustProjectCard } from "../cli/project-trust-card.js";
 import { GLYPH } from "../core/glyphs.js";
 
-export const PROJECT_CONFIG_INACTIVE = `Project configuration not active ${GLYPH.sep} /trust`;
-export const PROJECT_CONFIG_PENDING_RESTART = `Project configuration trusted ${GLYPH.sep} restart PanCode to apply it`;
+const PROJECT_CONFIG_INACTIVE = `Project configuration not active ${GLYPH.sep} /trust`;
+const PROJECT_CONFIG_PENDING_RESTART = `Project configuration trusted ${GLYPH.sep} restart PanCode to apply it`;
 
 export interface ProjectTrustSessionDeps {
 	cwd: () => string;

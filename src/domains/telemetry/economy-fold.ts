@@ -35,7 +35,7 @@ import {
  */
 
 /** Stamped on every projection; bump when a rule changes what a total means. */
-export const ECONOMY_FOLD_VERSION = 1;
+const ECONOMY_FOLD_VERSION = 1;
 
 /** What a contribution stands for: one attempt, a run's aggregate, or an unreadable journal's unknown share. */
 export type EconomyRef =

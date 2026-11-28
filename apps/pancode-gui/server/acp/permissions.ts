@@ -17,7 +17,7 @@ import { AppProblem } from "../services/problem.js";
 import { record } from "./client.js";
 
 export type PermissionTimers = { escalateMs: number; budgetMs: number };
-export const PERMISSION_TIMERS: PermissionTimers = { escalateMs: 45000, budgetMs: 600000 };
+const PERMISSION_TIMERS: PermissionTimers = { escalateMs: 45000, budgetMs: 600000 };
 type Pending = {
 	value: Permission;
 	allow: string;

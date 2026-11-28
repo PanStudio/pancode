@@ -17,7 +17,7 @@ export interface UnattendedTimers {
 	clearTimeout(handle: unknown): void;
 }
 
-export const SYSTEM_UNATTENDED_TIMERS: UnattendedTimers = {
+const SYSTEM_UNATTENDED_TIMERS: UnattendedTimers = {
 	now: () => performance.now(),
 	setTimeout: (callback, ms) => {
 		const handle = setTimeout(callback, ms);

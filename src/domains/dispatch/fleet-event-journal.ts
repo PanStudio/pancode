@@ -51,7 +51,7 @@ import { sha256Hex } from "../../core/hash.js";
 import { pancodeStateDir } from "../../core/xdg.js";
 import { deferAppend, drainDeferredWritesSync, dropDeferredWrite, flushDeferredWrite } from "./deferred-writes.js";
 
-export const FLEET_EVENT_JOURNAL_VERSION = 1;
+const FLEET_EVENT_JOURNAL_VERSION = 1;
 
 export type FleetEventBody =
 	| {

@@ -47,7 +47,7 @@ export const SettingsReport = Type.Object(
 	},
 	closed,
 );
-export const ConfigCategory = Type.Union([
+const ConfigCategory = Type.Union([
 	Type.Literal("settings"),
 	Type.Literal("pancode-md"),
 	Type.Literal("rule"),
@@ -61,7 +61,7 @@ export const ConfigCategory = Type.Union([
 	Type.Literal("safety"),
 	Type.Literal("memory"),
 ]);
-export const ConfigEntry = Type.Object(
+const ConfigEntry = Type.Object(
 	{
 		category: ConfigCategory,
 		id: Type.String(),

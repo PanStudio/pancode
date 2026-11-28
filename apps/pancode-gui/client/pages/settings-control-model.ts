@@ -10,7 +10,7 @@ export const TIMING_SENTENCE: Record<SettingControl["timing"], string> = {
 	nextTurn: "Used by the next relevant request, dispatch, or explicit open.",
 	restartRequired: "Takes effect in the next session.",
 };
-export const TIMING_LABEL: Record<SettingControl["timing"], string> = {
+const TIMING_LABEL: Record<SettingControl["timing"], string> = {
 	hotReload: "Applies now",
 	nextTurn: "Next request",
 	restartRequired: "Next session",
@@ -161,7 +161,7 @@ const CALM: Readonly<Record<Exclude<SettingsScopeId, "advanced">, (control: Sett
 };
 
 /** Whether a control belongs on a page. Advanced is everything the calm pages leave out. */
-export function inScope(scope: SettingsScopeId, control: SettingControl): boolean {
+function inScope(scope: SettingsScopeId, control: SettingControl): boolean {
 	if (scope !== "advanced") return CALM[scope](control);
 	return !Object.values(CALM).some((claims) => claims(control));
 }

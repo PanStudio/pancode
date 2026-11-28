@@ -11,7 +11,7 @@ import type { Event } from "../../contracts/events.js";
 /** Hard ceiling on events held for one frame; a burst past it delivers at once. */
 export const MAX_FRAME_EVENT_BATCH = 128;
 /** A hidden tab gets no animation frames, so deliveries fall back to this interval. */
-export const HIDDEN_FLUSH_INTERVAL_MS = 250;
+const HIDDEN_FLUSH_INTERVAL_MS = 250;
 
 export interface FrameClock {
 	request(callback: () => void): number;

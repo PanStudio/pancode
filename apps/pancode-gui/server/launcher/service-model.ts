@@ -141,7 +141,7 @@ export function parseTaskSpec(text: string): TaskSpec {
 }
 
 /** The launchd domain target of this user's login session and its one job. */
-export const launchdDomain = (uid: number) => `gui/${uid}`;
+const launchdDomain = (uid: number) => `gui/${uid}`;
 export const launchdJob = (uid: number, label: string) => `${launchdDomain(uid)}/${label}`;
 
 /**

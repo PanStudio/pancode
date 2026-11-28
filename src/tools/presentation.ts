@@ -64,7 +64,7 @@ const FOLDED_WITH_DIFF: ToolPresentationPolicy = {
  * keep their diff under the folded row. Everything unlisted, including dynamic
  * tools, folds the same way.
  */
-export const TOOL_PRESENTATION: Readonly<Record<string, ToolPresentationPolicy>> = {
+const TOOL_PRESENTATION: Readonly<Record<string, ToolPresentationPolicy>> = {
 	[ToolNames.Evidence]: FOLDED,
 	[ToolNames.Read]: FOLDED,
 	[ToolNames.Grep]: FOLDED,
@@ -420,7 +420,7 @@ const url = (args: ToolRowArgs) => {
  * The builtin table. Every builtin has exactly one row here; the class
  * decides its mark and the facts its row may state.
  */
-export const TOOL_ROWS: Readonly<Record<string, ToolRowSpec>> = {
+const TOOL_ROWS: Readonly<Record<string, ToolRowSpec>> = {
 	[ToolNames.Read]: {
 		class: "observe",
 		verbs: CLASS_VERBS.observe,

@@ -12,7 +12,7 @@ import type { RuntimeDescriptor } from "../domains/providers/types/runtime-descr
 import type { TargetDescriptor } from "../domains/providers/types/target-descriptor.js";
 import { redactSecretString } from "../lib/secrets/redaction.js";
 
-export const CHAT_TEST_TIMEOUT_MS = 15_000;
+const CHAT_TEST_TIMEOUT_MS = 15_000;
 
 export interface ChatTestRequest {
 	runtime: RuntimeDescriptor;

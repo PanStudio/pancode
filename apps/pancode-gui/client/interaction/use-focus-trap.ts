@@ -9,7 +9,7 @@ import { type RefObject, useEffect, useRef } from "react";
 export const FOCUSABLE_SELECTOR =
 	'button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), a[href], [tabindex]:not([tabindex="-1"])';
 
-export function focusableWithin(container: HTMLElement): HTMLElement[] {
+function focusableWithin(container: HTMLElement): HTMLElement[] {
 	return [...container.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR)].filter(
 		(element) => !element.hidden && element.getAttribute("aria-hidden") !== "true",
 	);
@@ -19,7 +19,7 @@ export function focusableWithin(container: HTMLElement): HTMLElement[] {
  * Keep Tab inside `container`. An empty container swallows Tab and focuses itself, which is why the
  * container must carry `tabIndex={-1}`.
  */
-export function containTabKey(event: KeyboardEvent, container: HTMLElement): void {
+function containTabKey(event: KeyboardEvent, container: HTMLElement): void {
 	if (event.key !== "Tab") return;
 	const focusable = focusableWithin(container);
 	if (focusable.length === 0) {

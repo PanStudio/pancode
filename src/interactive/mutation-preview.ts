@@ -40,7 +40,7 @@ export const MUTATION_PREVIEW_VISIBLE_ROWS = 16;
  * own byte backstop; this bounds the write path, whose payload is a whole file.
  * Reaching it prints an explicit line naming what was withheld.
  */
-export const MUTATION_PREVIEW_MAX_CHARS = 262_144;
+const MUTATION_PREVIEW_MAX_CHARS = 262_144;
 
 export interface MutationPreview {
 	facts: MutationFacts;

@@ -347,7 +347,7 @@ export interface ComposerSituation {
 }
 
 /** Why a viewing window's composer takes nothing: the server refuses every message from a window without control. */
-export const viewingReason = (controller: string) =>
+const viewingReason = (controller: string) =>
 	`${controller} controls this task. Take control to send from this window.`;
 
 export interface ShellLine {
@@ -357,7 +357,7 @@ export interface ShellLine {
 }
 
 /** The terminal's rule: a draft that opens with `!` is a shell line, and `!!` keeps its output from PanCode. */
-export function shellLine(text: string): ShellLine | null {
+function shellLine(text: string): ShellLine | null {
 	const trimmed = text.trim();
 	if (!trimmed.startsWith("!")) return null;
 	const excludeFromContext = trimmed.startsWith("!!");
@@ -430,7 +430,7 @@ function blocked(reason: string): SubmitIntent {
 }
 
 /** Characters for the route schema, bytes for the engine's own steer bound. */
-export function textSize(text: string): { readonly characters: number; readonly bytes: number } {
+function textSize(text: string): { readonly characters: number; readonly bytes: number } {
 	return { characters: text.length, bytes: new TextEncoder().encode(text).length };
 }
 
@@ -1207,7 +1207,7 @@ function controlMessage(stage: "sending" | "unresolved"): string {
 }
 
 /** The estimate's rule of thumb: English prose and code run near four characters a token. */
-export const ESTIMATE_CHARACTERS_PER_TOKEN = 4;
+const ESTIMATE_CHARACTERS_PER_TOKEN = 4;
 
 export interface DraftEstimate {
 	/** `~312 tokens`, `~4.2k tokens`. */

@@ -15,7 +15,7 @@ import type { SystemOneUse } from "../../core/defaults.js";
 import { getRuntimeRegistry } from "../providers/registry.js";
 import { BUILTIN_RUNTIME_BOOT_MANIFEST, findBuiltinRuntimeBootMetadata } from "../providers/runtimes/boot-manifest.js";
 
-export const SYSTEM_ONE_OFF = "off";
+const SYSTEM_ONE_OFF = "off";
 
 type EngineSettings = PancodeSettings["systemOne"]["engines"][string];
 

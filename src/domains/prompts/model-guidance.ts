@@ -15,7 +15,7 @@
  */
 const CLAUDE_GENERATION = /claude-(?:opus|sonnet|haiku)-(\d+)(?:[-.](\d{1,2}))?(?!\d)/u;
 
-export const ANTHROPIC_5_5_FRAGMENT_ID = "model.anthropic-5-5";
+const ANTHROPIC_5_5_FRAGMENT_ID = "model.anthropic-5-5";
 
 /** The model fragment id for a wire model id, or null when none applies. */
 export function modelGuidanceFragmentId(modelId: string | null | undefined): string | null {

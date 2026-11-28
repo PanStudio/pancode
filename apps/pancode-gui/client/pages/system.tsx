@@ -11,7 +11,7 @@ import { humanizeKey } from "../design/facts-model.js";
 import { PanelEmpty, PanelHeading } from "../design/panel.js";
 import { emptyState, PANELS } from "../design/panel-model.js";
 import { StatusMark } from "../design/status.js";
-import { liveSearchWith, useSearchDraft } from "../shell/use-search-draft.js";
+import { liveSearchWith, searchWith, useSearchDraft } from "../shell/use-search-draft.js";
 import {
 	adapterText,
 	decisionOffer,
@@ -84,15 +84,7 @@ export function SystemPage({
 		attentionOnly = compact ? sidebarAttention : search.get("attention") === "true";
 	const searchBox = useSearchDraft(filter, (value) => setSearch(liveSearchWith("q", value), { replace: true }));
 	const discover = (key: string, value: string | null, replace = false) =>
-		setSearch(
-			(current) => {
-				const next = new URLSearchParams(current);
-				if (value) next.set(key, value);
-				else next.delete(key);
-				return next;
-			},
-			{ replace },
-		);
+		setSearch((current) => searchWith(current, key, value), { replace });
 	const groups = healthGroups(report.data?.findings ?? [], filter, attentionOnly);
 	const overview = healthOverview(report.data?.findings ?? []);
 	const attention = overview.errors + overview.warnings;
@@ -346,15 +338,7 @@ export function InteropPage({ client }: { client: Client }) {
 	const query = search.get("q") ?? "";
 	const searchBox = useSearchDraft(query, (value) => setSearch(liveSearchWith("q", value), { replace: true }));
 	const discover = (key: string, value: string) =>
-		setSearch(
-			(current) => {
-				const next = new URLSearchParams(current);
-				if (value) next.set(key, value);
-				else next.delete(key);
-				return next;
-			},
-			{ replace: true },
-		);
+		setSearch((current) => searchWith(current, key, value), { replace: true });
 	// Opening the page never runs a foreign executable. Only the button asks for the version probe,
 	// and the flag is spent by the read it started so a background refetch goes back to files only.
 	const probe = useRef(false);

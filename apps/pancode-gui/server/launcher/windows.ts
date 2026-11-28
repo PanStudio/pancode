@@ -101,7 +101,7 @@ export function windowsArgument(value: string) {
  * The launcher an installer-managed install keeps on PATH. It resolves the current version on every
  * launch, where the server entry names one version and goes stale in a pinned copy at the next upgrade.
  */
-export async function stableLauncher(entry: string): Promise<string | null> {
+async function stableLauncher(entry: string): Promise<string | null> {
 	const root = /^(.+)\/versions\/[^/]+\/lib\/node_modules\/pancode\/dist\/gui\/server\.js$/.exec(entry)?.[1];
 	if (!root) return null;
 	try {
@@ -169,7 +169,7 @@ export function visibleWslArguments(scriptPath: string) {
 }
 
 /** A PNG wrapped as a Windows icon; the format has carried PNG frames since Vista. */
-export function icoFromPng(png: Buffer) {
+function icoFromPng(png: Buffer) {
 	if (png.length < 24 || png.toString("latin1", 1, 4) !== "PNG") throw new Error("The app icon is not a PNG.");
 	const width = png.readUInt32BE(16),
 		height = png.readUInt32BE(20);

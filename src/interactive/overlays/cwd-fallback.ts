@@ -16,7 +16,7 @@ import type { OverlayHandle, TUI } from "../../engine/tui.js";
 import { buildResponsiveHint, createChoiceList, FocusBox, showPancodeOverlayFrame } from "../overlay-frame.js";
 import { collapseHomePath, factRows, pancodeTheme, statusChip } from "../theme/index.js";
 
-export const CWD_FALLBACK_OVERLAY_WIDTH = 88;
+const CWD_FALLBACK_OVERLAY_WIDTH = 88;
 /** Reasons surfaced by resolveSessionCwd. Overlay maps each to a description line. */
 export type CwdFallbackReason = "no-cwd" | "missing" | "not-a-directory";
 

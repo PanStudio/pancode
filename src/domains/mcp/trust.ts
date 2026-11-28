@@ -46,7 +46,7 @@ import {
 import type { McpSurface } from "./surface.js";
 
 export const MCP_TRUST_FILENAME = "mcp-trust.json";
-export const MCP_TRUST_VERSION = 1;
+const MCP_TRUST_VERSION = 1;
 
 /**
  * Bounds on the trust file, read on every resolve; a file past either is unusable until repaired. The record

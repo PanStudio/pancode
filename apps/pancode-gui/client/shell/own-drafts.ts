@@ -4,17 +4,13 @@
 // narrowest identity that survives reload without sharing writes between normal new tabs or windows
 // opened through openAppWindow (noopener). Browser duplication or opener-based creation can clone it.
 
+import { sessionStringList } from "../chat/draft-registry.js";
 import { withOwnDraft } from "./shell-model.js";
 
 const OWN_DRAFTS_KEY = "pancode-own-drafts";
 
 export function ownDrafts(): string[] {
-	try {
-		const value: unknown = JSON.parse(sessionStorage.getItem(OWN_DRAFTS_KEY) ?? "[]");
-		return Array.isArray(value) ? value.filter((entry): entry is string => typeof entry === "string") : [];
-	} catch {
-		return [];
-	}
+	return sessionStringList(OWN_DRAFTS_KEY);
 }
 
 export function rememberOwnDraft(id: string): void {

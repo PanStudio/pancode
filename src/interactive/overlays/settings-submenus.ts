@@ -11,7 +11,7 @@ import {
 	wrapTextWithAnsi,
 } from "../../engine/tui.js";
 import { localKey } from "../keyboard-owner.js";
-import type { HintEntry, RowBudgetedBody } from "../overlay-frame.js";
+import { type HintEntry, isRowBudgeted, type RowBudgetedBody } from "../overlay-frame.js";
 import { errorState, GLYPH, pancodeTheme, positionRow, selectionRow, titleRow } from "../theme/index.js";
 
 /**
@@ -38,10 +38,6 @@ export interface ChoiceListOptions {
 	rows?: number;
 	/** `all` keeps every description on screen while they fit; `focused` shows only the focused row's. */
 	descriptions?: "all" | "focused";
-}
-
-function isRowBudgeted(child: Component): child is Component & RowBudgetedBody {
-	return typeof (child as Partial<RowBudgetedBody>).setBodyRows === "function";
 }
 
 /**

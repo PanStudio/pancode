@@ -51,7 +51,7 @@ const NO_TRAILING_NEWLINE_NOTE = "no longer ends with a newline";
  * turn cancelled while the approval waited, and an abort, so it proves that the
  * call was not approved and nothing about who declined it.
  */
-export const NOT_APPROVED_NOTE = "was not approved";
+const NOT_APPROVED_NOTE = "was not approved";
 /**
  * src/domains/safety/denial.ts `denialLines` opens the account of a refused call with
  * `Refused by <layer>`: what a live run reads when the operator rejects the card or the

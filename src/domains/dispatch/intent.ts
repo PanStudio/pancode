@@ -7,7 +7,7 @@ import { admissionDiagnostic } from "./admission-diagnostic.js";
 import { type DispatchPathProvenanceEntry, declaredIntentPathProvenance } from "./path-scope.js";
 
 export const DISPATCH_INTENT_PATH_LIST_CAP = PATH_BOUNDARY_MAX_ENTRIES;
-export const DISPATCH_INTENT_PATH_ENTRY_BYTES_CAP = 512;
+const DISPATCH_INTENT_PATH_ENTRY_BYTES_CAP = 512;
 export const DISPATCH_INTENT_VERIFICATION_CAP = 8;
 export const DISPATCH_INTENT_TIMEOUT_MIN_MS = 1_000;
 
