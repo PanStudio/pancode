@@ -184,7 +184,8 @@ test("an approved git-control-file write refreshes the baseline, and the exit su
 	});
 	for (let spin = 0; spin < 50 && s.parks.length === 0; spin += 1) await new Promise((r) => setImmediate(r));
 	const park = s.parks[0];
-	strictEqual(park?.decision.policy?.ruleId, "git-control-file");
+	// .husky is a protected startup path, which parks for the operator before the git-control-file rule (sandbox P1).
+	strictEqual(park?.decision.policy?.ruleId, "startup-path-confirm");
 	await s.registry.resumeParkedCalls({
 		requestId: park.requestId,
 		actionClass: park.decision.classification.actionClass,
