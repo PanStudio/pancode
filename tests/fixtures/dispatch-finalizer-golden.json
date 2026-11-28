@@ -435,7 +435,17 @@
 					"writableRoots": [],
 					"gitWritablePaths": [],
 					"network": false,
-					"egress": "off"
+					"egress": "off",
+					"observed": {
+						"launches": 0,
+						"refused": 0,
+						"launchFailed": 0,
+						"allowed": 0,
+						"denied": 0,
+						"failed": 0,
+						"dropped": 0,
+						"unobserved": 0
+					}
 				}
 			},
 			"reproducibility": {

@@ -400,7 +400,7 @@ function installUnansweredWorkerAskNotice(input: {
 	});
 }
 
-interface AcpPermissionBridge {
+export interface AcpPermissionBridge {
 	unregister(): void;
 	/** Settles the outstanding permission request, if any, as cancellation. */
 	cancelPending(reason: string): void;

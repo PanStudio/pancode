@@ -3,6 +3,7 @@
 import { type QueryClient, queryOptions, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { Operation } from "../../contracts/operations.js";
 import { routes } from "../../contracts/runtime-routes.js";
+import type { CliTargets, TargetOperationResult } from "../../contracts/targets-cli.js";
 import { type Client, emptyInput } from "./client.js";
 
 export function useOperation(client: Client, id: string | null) {
@@ -129,4 +130,16 @@ export function targetsQuery(client: Client, workspaceId: string | null) {
 				? client.call(routes.targetsList, sessionInput(workspaceId))
 				: client.call(routes.userTargetsList, emptyInput),
 	});
+}
+
+function isTargetOperationResult(
+	result: Extract<Operation, { status: "succeeded" }>["result"],
+): result is TargetOperationResult {
+	return "kind" in result && result.kind === "targets";
+}
+
+/** Extracts the refreshed target list from a settled target operation, if it carried one. */
+export function targetsOperationResult(operation: Operation | undefined): CliTargets | null {
+	if (operation?.status !== "succeeded") return null;
+	return isTargetOperationResult(operation.result) ? operation.result.targets : null;
 }
