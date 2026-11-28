@@ -807,7 +807,7 @@ const FUNCTION_LINE_EXEMPTIONS: ReadonlyMap<string, number> = new Map([
 	["src/domains/telemetry/telemetry-live.ts#createLiveTelemetryModel", 607],
 	["src/domains/workspace-snapshots/store.ts#createWorkspaceSnapshots", 628],
 	["src/acp/adapter.ts#startAcpDelegationRun", 721],
-	["src/acp/server.ts#servePancodeAcpAgent", 3780],
+	["src/acp/server.ts#servePancodeAcpAgent", 3777],
 	["src/engine/loop-guard.ts#createLoopGuardRegistration", 1490],
 	["src/engine/worker-runtime.ts#startWorkerRun", 2346],
 	["src/entry/orchestrator.ts#bootOrchestrator", 2618],

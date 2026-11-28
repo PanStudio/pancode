@@ -7,9 +7,9 @@ import type { ContextLedger } from "../../contracts/context-ledger.js";
 import { routes } from "../../contracts/runtime-routes.js";
 import type { SessionSnapshot } from "../../contracts/sessions.js";
 import type { Client } from "../api/client.js";
+import { sessionCapabilitiesQuery } from "../api/queries.js";
 import { heldSessionQuery } from "../api/session-query.js";
 import { sessionReadScope } from "../api/sessions.js";
-
 import { type Spend, tokensText, usageReadable } from "./session-usage-model.js";
 
 type Turns = SessionSnapshot["turns"];
@@ -43,8 +43,7 @@ function useSettledKey(client: Client, sessionId: string): string {
 
 export function useSessionCapabilities(client: Client, sessionId: string, open: boolean) {
 	return useQuery({
-		queryKey: ["session-capabilities", sessionId],
-		queryFn: () => client.call(routes.sessionCapabilities, { params: { id: sessionId }, query: {}, body: {} }),
+		...sessionCapabilitiesQuery(client, sessionId),
 		enabled: open,
 		staleTime: Number.POSITIVE_INFINITY,
 		retry: false,
@@ -118,8 +117,7 @@ export function useSessionUsage(client: Client, sessionId: string, _settled: num
 	const settled = useSettledKey(client, sessionId);
 	const readable =
 		useQuery({
-			queryKey: ["session-capabilities", sessionId],
-			queryFn: () => client.call(routes.sessionCapabilities, { params: { id: sessionId }, query: {}, body: {} }),
+			...sessionCapabilitiesQuery(client, sessionId),
 			enabled: false,
 			select: usageReadable,
 		}).data ?? false;

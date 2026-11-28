@@ -11,7 +11,7 @@ import type {
 	ElicitationValue,
 } from "../../contracts/elicitation.js";
 import { routes } from "../../contracts/runtime-routes.js";
-import { ApiProblem, type Client } from "../api/client.js";
+import { type Client, problemCode } from "../api/client.js";
 import { Icon } from "../design/icons.js";
 import { useShortcutLayer } from "../interaction/use-shortcut.js";
 import {
@@ -205,7 +205,7 @@ function ElicitationDialog({
 			void queries.invalidateQueries({ queryKey: ["session-elicitation", sessionId] });
 		},
 		onError: (error) => {
-			if (error instanceof ApiProblem && error.problem.code === "conflict")
+			if (problemCode(error) === "conflict")
 				void queries.invalidateQueries({ queryKey: ["session-elicitation", sessionId] });
 		},
 		onSettled: () => {

@@ -51,7 +51,7 @@
 	flex: none;
 	width: 34px;
 	height: 34px;
-	padding: 8px;
+	padding: var(--space-2);
 }
 .interview-dialog__header > button:hover {
 	color: var(--ink);
@@ -74,14 +74,14 @@
 	color: var(--ink-muted);
 	font-size: var(--text-exact);
 	font-family: var(--font-mono);
-	margin: 0 0 20px;
+	margin: 0 0 var(--space-5);
 }
 .interview-dialog__steps ol {
 	margin: 0;
 	padding: 0;
 	list-style: none;
 	display: grid;
-	gap: 8px;
+	gap: var(--space-2);
 }
 .interview-dialog__steps li > button {
 	display: flex;
@@ -124,8 +124,8 @@
 	display: flex;
 	align-items: center;
 	justify-content: center;
-	gap: 8px;
-	margin: 24px 0 0;
+	gap: var(--space-2);
+	margin: var(--space-6) 0 0;
 	width: 100%;
 	font-size: var(--text-exact);
 	min-height: 44px;
@@ -143,13 +143,13 @@
 }
 .interview-dialog__question > .eyebrow,
 .interview-dialog__review > .eyebrow {
-	margin: 0 0 12px;
+	margin: 0 0 var(--space-3);
 	color: var(--ink-muted);
 	font-size: var(--text-instrument);
 }
 .interview-dialog__body h3 {
 	font: 500 20px / 1.35 var(--font-ui);
-	margin: 0 0 20px;
+	margin: 0 0 var(--space-5);
 	color: var(--ink-strong);
 }
 .interview-dialog__question > .markdown {
@@ -157,13 +157,13 @@
 }
 .interview-dialog__choices {
 	padding: 0;
-	margin: 24px 0 20px;
+	margin: var(--space-6) 0 var(--space-5);
 	border: 0;
 	display: grid;
 	gap: 10px;
 }
 .interview-dialog__choices legend {
-	margin-bottom: 12px;
+	margin-bottom: var(--space-3);
 	font-size: var(--text-exact);
 	color: var(--ink-muted);
 }
@@ -192,7 +192,7 @@
 	background: var(--accent-soft);
 }
 .interview-dialog__choices input {
-	margin: 4px 0 0;
+	margin: var(--space-1) 0 0;
 	accent-color: var(--accent);
 	width: 16px;
 	height: 16px;
@@ -231,7 +231,7 @@
 	line-height: var(--leading-body);
 }
 .interview-dialog__clear {
-	margin-top: 12px;
+	margin-top: var(--space-3);
 	background: transparent;
 	padding: 6px 0;
 	border: 0;
@@ -241,20 +241,20 @@
 }
 .interview-dialog__review article {
 	border-top: 1px solid var(--line);
-	padding: 20px 0;
+	padding: var(--space-5) 0;
 }
 .interview-dialog__review :where(article) > div {
 	display: flex;
 	align-items: center;
 	justify-content: space-between;
-	gap: 12px;
+	gap: var(--space-3);
 }
 .interview-dialog__review article h4 {
 	margin: 0;
 	font-size: var(--text-body);
 }
 .interview-dialog__review article > .markdown {
-	margin: 8px 0;
+	margin: var(--space-2) 0;
 	color: var(--ink-muted);
 	font-size: var(--text-meta);
 }
@@ -264,7 +264,7 @@
 }
 .interview-dialog__chosen {
 	display: inline-block;
-	margin: 0 8px 8px 0;
+	margin: 0 var(--space-2) var(--space-2) 0;
 	padding: 6px 10px;
 	border: 1px solid var(--accent);
 	border-radius: var(--radius-sm);
@@ -272,8 +272,8 @@
 	font-size: var(--text-meta);
 }
 .interview-dialog__review blockquote {
-	margin: 8px 0 0;
-	padding: 12px 16px;
+	margin: var(--space-2) 0 0;
+	padding: var(--space-3) var(--space-4);
 	border-left: 2px solid var(--accent);
 	background: var(--well);
 	white-space: pre-wrap;
@@ -284,7 +284,7 @@
 	color: var(--status-warn-fg);
 	width: 30px;
 	height: 30px;
-	margin-bottom: 16px;
+	margin-bottom: var(--space-4);
 }
 .interview-dialog__cancel p {
 	color: var(--ink-muted);
@@ -292,15 +292,15 @@
 }
 .interview-dialog__cancel > div {
 	display: flex;
-	gap: 12px;
+	gap: var(--space-3);
 	flex-wrap: wrap;
-	margin-top: 24px;
+	margin-top: var(--space-6);
 }
 .interview-dialog__footer {
 	display: flex;
 	align-items: center;
 	justify-content: space-between;
-	gap: 16px;
+	gap: var(--space-4);
 	flex-wrap: wrap;
 	padding: var(--space-4) var(--space-5);
 	border-top: 1px solid var(--line);
@@ -335,7 +335,7 @@
 		max-height: calc(100dvh - 16px);
 	}
 	.interview-dialog__header {
-		padding: 20px;
+		padding: var(--space-5);
 	}
 	.interview-dialog__header h2 {
 		font-size: var(--text-reading);
@@ -345,18 +345,18 @@
 		flex-direction: column;
 	}
 	.interview-dialog__steps {
-		padding: 12px 16px;
+		padding: var(--space-3) var(--space-4);
 		border-right: 0;
 		border-bottom: 1px solid var(--line);
 		flex: none;
 	}
 	.interview-dialog__steps > p {
-		margin: 0 0 8px;
+		margin: 0 0 var(--space-2);
 	}
 	.interview-dialog__steps ol {
 		display: flex;
 		overflow-x: auto;
-		gap: 4px;
+		gap: var(--space-1);
 	}
 	.interview-dialog__steps li {
 		flex: none;
@@ -369,14 +369,14 @@
 		display: none;
 	}
 	.interview-dialog__body {
-		padding: 20px;
+		padding: var(--space-5);
 	}
 	.interview-dialog__body h3 {
 		font-size: var(--text-h3);
 	}
 	.interview-dialog__footer {
-		padding: 16px 20px;
-		gap: 12px;
+		padding: var(--space-4) var(--space-5);
+		gap: var(--space-3);
 	}
 	.interview-dialog__footer > div {
 		margin-left: auto;

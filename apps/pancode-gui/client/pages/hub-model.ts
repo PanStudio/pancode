@@ -7,7 +7,9 @@
 
 import type { Static } from "typebox";
 import type { HubAgents, HubComponent } from "../../contracts/hub.js";
+import { finite } from "../api/narrow.js";
 import { humanizeKey } from "../design/facts-model.js";
+import { inspectionTabIndex } from "../design/run-inspection-model.js";
 
 export type Agent = Static<typeof HubAgents>["agents"][number];
 export type Resource = Static<typeof HubComponent>;
@@ -20,7 +22,6 @@ export interface CardFact {
 
 const record = (value: unknown): Record<string, unknown> =>
 	value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
-const number = (value: unknown): number | null => (typeof value === "number" && Number.isFinite(value) ? value : null);
 const word = (value: unknown): string | null => (typeof value === "string" && value ? value : null);
 const fact = (label: string, value: string | null): CardFact =>
 	value === null ? { label, value: "Not declared", absent: true } : { label, value };
@@ -54,7 +55,7 @@ export function agentCard(agent: Agent): AgentCard {
 		facts: [
 			fact("Capability", capability === null ? null : humanizeKey(capability)),
 			fact("Project context", tier === null ? null : humanizeKey(tier)),
-			fact("Tool-call budget", budgetRange(number(budget.toolCalls), number(maximum.toolCalls))),
+			fact("Tool-call budget", budgetRange(finite(budget.toolCalls), finite(maximum.toolCalls))),
 		],
 		skills: agent.skills,
 		tools: agent.tools,
@@ -138,13 +139,8 @@ export const matchesQuery = (value: unknown, query: string): boolean => {
  */
 export function tabAfterKey<T>(tabs: readonly T[], current: T, key: string): T | null {
 	const index = tabs.indexOf(current);
-	if (index < 0 || !tabs.length) return null;
-	const at = (position: number) => tabs[(position + tabs.length) % tabs.length] ?? null;
-	if (key === "ArrowRight") return at(index + 1);
-	if (key === "ArrowLeft") return at(index - 1);
-	if (key === "Home") return at(0);
-	if (key === "End") return at(tabs.length - 1);
-	return null;
+	if (index < 0) return null;
+	return tabs[inspectionTabIndex(key, index, tabs.length)] ?? null;
 }
 
 /**
@@ -269,7 +265,7 @@ export function resourceDetails(
 				fact("Authority", word(row.authority)),
 				fact("Working directory", row.runsAtRepositoryRoot ? "Repository root" : "Defined by the check"),
 				fact("Arguments", row.argvFixed ? "Fixed by the check" : "May be supplied at runtime"),
-				fact("Time limit", number(row.timeoutMs) === null ? null : `${Number(row.timeoutMs) / 1000} seconds`),
+				fact("Time limit", finite(row.timeoutMs) === null ? null : `${Number(row.timeoutMs) / 1000} seconds`),
 			],
 			notes: [],
 		};

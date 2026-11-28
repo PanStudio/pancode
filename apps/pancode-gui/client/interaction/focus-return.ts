@@ -4,9 +4,9 @@
 // focus that has nowhere to be (`<body>`, or the page region the route change parks it on); focus the
 // operator has already put somewhere else is left alone.
 
+import { FOCUSABLE_SELECTOR } from "./use-focus-trap.js";
+
 const COMPOSER = ".composer__field:not(:disabled)";
-const FOCUSABLE =
-	'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
 
 function parked(element: Element | null): boolean {
 	return element === null || element === document.body || element.id === "main";
@@ -44,7 +44,7 @@ export function returnFocusNear(element: Element | null): void {
 		requestAnimationFrame(() => {
 			if (!parked(document.activeElement) && document.activeElement?.isConnected) return;
 			const host = ancestors.find((node) => node.isConnected);
-			const target = host?.matches(FOCUSABLE) ? host : host?.querySelector<HTMLElement>(FOCUSABLE);
+			const target = host?.matches(FOCUSABLE_SELECTOR) ? host : host?.querySelector<HTMLElement>(FOCUSABLE_SELECTOR);
 			if (target instanceof HTMLElement) target.focus();
 			else if (tries > 0) settle(tries - 1);
 		});

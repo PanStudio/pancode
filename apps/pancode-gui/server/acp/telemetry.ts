@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import type { Static, TSchema } from "typebox";
-import { Value } from "typebox/value";
 import { WireContextLedger } from "../../contracts/context-ledger.js";
 import type { SessionTelemetry } from "../../contracts/session-telemetry.js";
 import {
@@ -22,16 +21,13 @@ import {
 	ACP_WORKSPACE_META_KEY,
 } from "../../contracts/wire.js";
 import { withLedgerDisplay } from "../services/context-display.js";
-import { AppProblem } from "../services/problem.js";
+import { AppProblem, projected } from "../services/problem.js";
 
 const record = (value: unknown): Record<string, unknown> =>
 	value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
 
 export function projectTelemetryValue<S extends TSchema>(schema: S, value: unknown): Static<S> {
-	const projected = Value.Clean(schema, structuredClone(value));
-	if (!Value.Check(schema, projected))
-		throw new AppProblem("upstream_acp", "PanCode returned invalid session telemetry.");
-	return projected as Static<S>;
+	return projected(schema, value, "upstream_acp", "PanCode returned invalid session telemetry.", { clone: true });
 }
 
 export function sessionResultTelemetry(result: unknown): SessionTelemetry {

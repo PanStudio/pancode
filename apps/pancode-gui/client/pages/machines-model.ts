@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import type { Machine, MachineAdd, MachineMutation } from "../../contracts/machines.js";
+import { matchesText } from "./run-inspection-model.js";
 
 export type MachineRequest = {
 	readonly key: string;
@@ -123,12 +124,10 @@ export function filterMachines(
 	filter: (typeof MACHINE_FILTERS)[number],
 	now: number,
 ) {
-	const words = query.toLocaleLowerCase().trim().split(/\s+/u).filter(Boolean);
 	return machines
 		.filter((machine) => {
 			if (filter !== "all" && machineStatus(machine, now).group !== filter) return false;
-			const text = [machine.id, machine.host, machine.user, ...machine.labels].join(" ").toLocaleLowerCase();
-			return words.every((word) => text.includes(word));
+			return matchesText(query, [machine.id, machine.host, machine.user, ...machine.labels]);
 		})
 		.sort((a, b) => a.id.localeCompare(b.id));
 }

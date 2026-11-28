@@ -7,8 +7,43 @@ import { test } from "node:test";
 import { setTimeout } from "node:timers/promises";
 import { Workspace } from "../contracts/sessions.js";
 import { ConfigGraph, SettingsReport } from "../contracts/settings.js";
+import { projectSettingsRows } from "./harness/adapter.js";
 import { harness, json } from "./harness/app.js";
 import { seedSettings } from "./harness/hub-fixture.js";
+
+test("settings projection: redacts secret-suffix keys and scrubs credential shapes without hiding counts", () => {
+	const rows = new Map(
+		projectSettingsRows(
+			{
+				custom: {
+					githubToken: "ghp_secret_value_1",
+					clientSecret: "client-secret-2",
+					awsSecretKey: "aws-secret-key-3",
+					sshPassphrase: "passphrase-value-4",
+					maxTokens: 4096,
+					apiKeyEnvVar: "OPENAI_API_KEY",
+					endpoint: "https://alice:hunter2@proxy.example.com/v1?api_key=leak",
+					note: "use https://bob:topsecret@db.internal/app and TOKEN=plainsecretvalue123",
+				},
+			},
+			{},
+		).map((row) => [row.key, row]),
+	);
+	for (const key of ["custom.githubToken", "custom.clientSecret", "custom.awsSecretKey", "custom.sshPassphrase"]) {
+		assert.equal(rows.get(key)?.redacted, true, key);
+		assert.equal(rows.get(key)?.value, "[redacted]", key);
+	}
+	assert.equal(rows.get("custom.maxTokens")?.redacted, false);
+	assert.equal(rows.get("custom.maxTokens")?.value, 4096);
+	assert.equal(rows.get("custom.apiKeyEnvVar")?.redacted, false);
+	assert.equal(rows.get("custom.apiKeyEnvVar")?.value, "OPENAI_API_KEY");
+	assert.equal(rows.get("custom.endpoint")?.redacted, true);
+	assert.equal(rows.get("custom.endpoint")?.value, "https://proxy.example.com/v1");
+	assert.equal(rows.get("custom.note")?.redacted, true);
+	const note = String(rows.get("custom.note")?.value ?? "");
+	assert.doesNotMatch(note, /topsecret|plainsecretvalue123/);
+	assert.match(note, /https:\/\/bob:\[redacted\]@db\.internal\/app/);
+});
 
 test("settings: canonical layer origins, complete leaves, real credential store and environment redaction", async () => {
 	const h = await harness({}, { env: { OPENAI_API_KEY: "fixture-process-environment-e3d26" } });

@@ -3,7 +3,7 @@
 .artifacts {
 	display: grid;
 	align-content: start;
-	gap: 16px;
+	gap: var(--space-4);
 	min-width: 0;
 }
 .artifacts__controls,
@@ -11,7 +11,7 @@
 	display: flex;
 	align-items: center;
 	justify-content: space-between;
-	gap: 8px;
+	gap: var(--space-2);
 }
 .artifacts__controls label {
 	display: grid;
@@ -27,11 +27,11 @@
 .artifacts__back {
 	display: flex;
 	align-items: center;
-	gap: 8px;
+	gap: var(--space-2);
 	justify-self: start;
 	border: 0;
 	background: transparent;
-	padding: 4px 0;
+	padding: var(--space-1) 0;
 	color: var(--muted);
 }
 .artifacts__title {
@@ -51,7 +51,7 @@
 	display: flex;
 	align-items: center;
 	gap: 10px;
-	padding: 12px 4px;
+	padding: var(--space-3) var(--space-1);
 	text-align: left;
 	border: 0;
 	border-radius: var(--radius-sm);
@@ -64,7 +64,7 @@
 	flex: 1;
 	min-width: 0;
 	display: grid;
-	gap: 4px;
+	gap: var(--space-1);
 	overflow-wrap: anywhere;
 }
 .artifacts__list strong {
@@ -95,7 +95,7 @@
 }
 .artifacts__refusal {
 	margin: 0;
-	padding: 12px;
+	padding: var(--space-3);
 	background: var(--wb-faint);
 	border: 1px solid var(--line);
 	border-radius: var(--radius-md);
@@ -105,7 +105,7 @@
 	margin: 4px var(--chat-gutter) 8px;
 	max-height: 35vh;
 	overflow: auto;
-	padding: 12px 16px;
+	padding: var(--space-3) var(--space-4);
 	background: var(--raised);
 	border: 1px solid var(--line-float);
 	border-radius: var(--radius-md);
@@ -121,14 +121,14 @@
 }
 .project-trust ul {
 	display: grid;
-	gap: 12px;
+	gap: var(--space-3);
 	list-style: none;
 	padding: 0;
 	margin: 0;
 }
 .project-trust li {
 	display: grid;
-	gap: 4px;
+	gap: var(--space-1);
 	min-width: 0;
 	overflow-wrap: anywhere;
 }
@@ -158,20 +158,20 @@
 	grid-row: 1 / span 2;
 }
 .trust-review__verdict {
-	margin: 0 0 12px;
+	margin: 0 0 var(--space-3);
 	font-weight: 500;
 }
 .trust-review__files,
 .trust-review__packages {
 	display: grid;
-	gap: 12px;
+	gap: var(--space-3);
 	list-style: none;
 	padding: 0;
-	margin: 0 0 12px;
+	margin: 0 0 var(--space-3);
 }
 .trust-review__file {
 	display: grid;
-	gap: 4px;
+	gap: var(--space-1);
 	min-width: 0;
 }
 .trust-review__path {
@@ -195,13 +195,13 @@
 	font-size: var(--text-caption);
 }
 .trust-review__heading {
-	margin: 12px 0 8px;
+	margin: var(--space-3) 0 var(--space-2);
 	font-size: var(--text-instrument);
 }
 .trust-review__unreadable,
 .trust-review__note,
 .trust-review__technical {
-	margin: 0 0 8px;
+	margin: 0 0 var(--space-2);
 	color: var(--muted);
 	font-size: var(--text-caption);
 }
@@ -215,14 +215,14 @@
 .trust-review__actions {
 	display: flex;
 	flex-wrap: wrap;
-	gap: 8px;
-	margin-top: 12px;
+	gap: var(--space-2);
+	margin-top: var(--space-3);
 }
 .worker-run-result {
 	display: flex;
 	flex-wrap: wrap;
-	gap: 4px 12px;
-	margin: 8px 0;
+	gap: var(--space-1) var(--space-3);
+	margin: var(--space-2) 0;
 	color: var(--muted);
 	font-size: var(--text-caption);
 	line-height: 1.6;

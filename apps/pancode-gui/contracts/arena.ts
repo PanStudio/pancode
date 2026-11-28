@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import { type Static, Type } from "typebox";
-import { Id } from "./common.js";
+import { Id, ModelRef } from "./common.js";
 
 const closed = { additionalProperties: false };
 const Nullable = <T extends Parameters<typeof Type.Union>[0][number]>(schema: T) => Type.Union([schema, Type.Null()]);
@@ -10,13 +10,11 @@ const Nullable = <T extends Parameters<typeof Type.Union>[0][number]>(schema: T)
 export const ArenaMatchId = Type.String({ pattern: "^[0-9]{8}-[0-9]{6}-[0-9a-f]{4}$" });
 const ArenaLabel = Type.Union([Type.Literal("A"), Type.Literal("B"), Type.Literal("C"), Type.Literal("D")]);
 export const ArenaChoice = Type.Union([ArenaLabel, Type.Literal("tie"), Type.Literal("both-bad")]);
-/** A model id as targets name them: `claude-haiku-5.5`, `mini/qwen3.8-27b-iq4r-v4`, `org/model:tag`. */
-const ArenaModel = Type.String({ pattern: "^[A-Za-z0-9][A-Za-z0-9._:/@+-]{0,255}$" });
 export const ArenaNote = Type.String({ minLength: 1, maxLength: 500, pattern: "^[^\\r\\n]*$" });
 const ArenaPrompt = Type.String({ minLength: 1, maxLength: 8000 });
 const ArenaTimeoutSeconds = Type.Integer({ minimum: 30, maximum: 3600 });
 
-const ArenaContenderRequest = Type.Object({ target: Id, model: ArenaModel }, closed);
+const ArenaContenderRequest = Type.Object({ target: Id, model: ModelRef }, closed);
 export const ArenaStartRequest = Type.Object(
 	{
 		prompt: ArenaPrompt,

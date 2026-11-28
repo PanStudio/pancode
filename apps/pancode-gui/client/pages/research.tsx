@@ -6,7 +6,7 @@ import { useSearchParams } from "react-router";
 import type { ResearchCampaign, ResearchCampaignSummary, ResearchStartRequest } from "../../contracts/research.js";
 import { routes } from "../../contracts/runtime-routes.js";
 import { ApiProblem, type Client } from "../api/client.js";
-import { useOperation } from "../api/queries.js";
+import { targetsQuery, useOperation } from "../api/queries.js";
 import { Boundary, PanelEmpty, PanelHeading } from "../design/panel.js";
 import { emptyState } from "../design/panel-model.js";
 import { InspectionError } from "../design/run-inspection.js";
@@ -440,9 +440,7 @@ function NewCampaign({
 	});
 	const targets = useQuery({
 		meta: { errorSurface: "inline" },
-		queryKey: ["targets", workspaceId],
-		queryFn: ({ signal }) =>
-			client.call(routes.targetsList, { params: { id: workspaceId }, query: {}, body: {} }, undefined, signal),
+		...targetsQuery(client, workspaceId),
 	});
 	const start = useMutation(researchStartMutation(client, onStarted));
 	const running = start.isPending || operationUnsettled(operationId, operation.data?.status);

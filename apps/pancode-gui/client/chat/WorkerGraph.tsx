@@ -3,7 +3,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { type CSSProperties, memo, useEffect, useId, useMemo, useRef, useState } from "react";
 import { Link } from "react-router";
-import { routes } from "../../contracts/runtime-routes.js";
 import type { SessionSnapshot } from "../../contracts/sessions.js";
 import type { Client } from "../api/client.js";
 import { Icon } from "../design/icons.js";
@@ -34,6 +33,7 @@ import {
 	workerGraph,
 } from "./worker-graph-model.js";
 import "./agents.css";
+import { sessionCapabilitiesQuery } from "../api/queries.js";
 
 /** Indentation stops here so a deep chain never squeezes the task text out of a narrow pane. */
 const MAX_DEPTH = 4;
@@ -215,10 +215,8 @@ export const WorkerGraph = memo(function WorkerGraph({
 	const [liveOnly, setLiveOnly] = useState(false);
 	const noticesId = useId();
 	const capabilities = useQuery({
-		queryKey: ["session-capabilities", session.id],
-		queryFn: () => client.call(routes.sessionCapabilities, { params: { id: session.id }, query: {}, body: {} }),
+		...sessionCapabilitiesQuery(client, session.id),
 		enabled: session.state === "open",
-		staleTime: Number.POSITIVE_INFINITY,
 	});
 	const agents = useMemo(() => new Map(graph.nodes.map((node) => [node.run.runId, node.run.agentId])), [graph.nodes]);
 	const shown = liveOnly ? graph.nodes.filter((node) => isLiveRun(node.run)) : graph.nodes;

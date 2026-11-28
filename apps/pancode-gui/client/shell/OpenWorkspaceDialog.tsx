@@ -2,8 +2,8 @@
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import { useQuery } from "@tanstack/react-query";
 import { useId, useRef, useState } from "react";
-import { routes } from "../../contracts/runtime-routes.js";
-import { type Client, emptyInput } from "../api/client.js";
+import type { Client } from "../api/client.js";
+import { workspacesQuery } from "../api/queries.js";
 import { Dialog } from "../interaction/Dialog.js";
 import type { ProjectLaunch } from "../pages/project-open.js";
 import { PancodePulse, PULSE_SIZE } from "./PancodeMark.js";
@@ -22,7 +22,7 @@ export function OpenWorkspaceDialog({
 	const [path, setPath] = useState("");
 	const field = useRef<HTMLInputElement>(null);
 	const pathId = useId();
-	const recents = useQuery({ queryKey: ["workspaces"], queryFn: () => client.call(routes.workspaces, emptyInput) });
+	const recents = useQuery(workspacesQuery(client));
 	const open = (target: string) => {
 		if (target.trim()) launch.open(target.trim(), false);
 	};
