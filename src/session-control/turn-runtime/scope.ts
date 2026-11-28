@@ -11,6 +11,7 @@
  */
 
 import type { CacheRequestStructure } from "../../core/cache-telemetry.js";
+import type { trackCallFetch } from "../../core/call-failure.js";
 import type { ModelRouteRefusal } from "../../core/response-model-id.js";
 import type { FailureCause } from "../../core/telemetry/enums.js";
 import type { TelemetryCall } from "../../core/telemetry/producer.js";
@@ -136,6 +137,12 @@ export interface AgentBuildScope {
 	toolsInFlight: number;
 	stallSuspendDepth: number;
 	stallTimer: ReturnType<typeof setTimeout> | null;
+	callTracking: ReturnType<typeof trackCallFetch> | null;
+	admittedCursor: RequestCursor | null;
+	// The input admission passed on after an overflow fold; the provider-bound copy pins it.
+	pinnedInputTokens: number | null;
+	// The last request carried the local placeholder key, so an endpoint that refuses it was sent no credential at all.
+	placeholderKeySent: boolean;
 	readonly requestStructure: RequestStructures;
 	readonly currentRun: () => boolean;
 	readonly localRuntime: AgentRuntime;

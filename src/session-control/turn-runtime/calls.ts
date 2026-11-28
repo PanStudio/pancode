@@ -7,7 +7,9 @@
  */
 
 import type { BackendCompletionTimings } from "../../core/cache-telemetry.js";
+import { classifyCallFailure } from "../../core/call-failure.js";
 import { rememberMessageCalls } from "../../core/message-accounting.js";
+import { projectTargetOrigin } from "../../core/project-target-urls.js";
 import { requestedThinking } from "../../core/telemetry/call-effort.js";
 import { mainAgent } from "../../core/telemetry/context.js";
 import type { FailureCause } from "../../core/telemetry/enums.js";
@@ -27,9 +29,24 @@ import {
 import type { TelemetrySessionLease } from "../../domains/telemetry/session-journals.js";
 import type { AgentMessage } from "../../engine/types.js";
 import { type AttemptReceipt, carriedCheckpoints } from "../attempt-receipt.js";
-import { backendCacheVerdict } from "../chat-loop-messages.js";
+import { backendCacheVerdict, extractText, type TerminalAssistantFailure } from "../chat-loop-messages.js";
 import type { ExpectedColdReason } from "../turn-context.js";
 import type { AgentBuildScope } from "./scope.js";
+
+/** The reason a reply cut off by shutdown carries in place of the transport's abort text (bt-26). */
+const SHUTDOWN_STOP_REASON = "[PanCode] stopped the request because PanCode shut down before it finished.";
+
+/**
+ * What can give a target with no credential one: nothing for a runtime that reads no key, else the project file its
+ * entry came from when configure (user settings) cannot reach it.
+ */
+function noCredentialRemedy(target: object, runtimeAuth: string): { keyless?: true; projectFile?: string } {
+	if (runtimeAuth !== "api-key") return { keyless: true };
+	const file = projectTargetOrigin(target)?.file;
+	return file !== undefined ? { projectFile: file } : {};
+}
+
+export type CallTelemetry = ReturnType<typeof createCallTelemetry>;
 
 export function createCallTelemetry(scope: AgentBuildScope) {
 	const { deps, state, context, middlewareToolChoice } = scope.rt;
@@ -323,11 +340,88 @@ export function createCallTelemetry(scope: AgentBuildScope) {
 		scope.modelCall.stage("transform", "start");
 	};
 
+	// The failure record of a reply that ended in error or abort: how the call failed, who stopped it, and the route
+	// its remedy names when the route is to blame.
+	const stampCallFailure = (
+		message: AgentMessage,
+		terminal: TerminalAssistantFailure,
+		responseObserved: boolean,
+	): void => {
+		const tracked = scope.callTracking?.failure(
+			terminal.errorMessage,
+			terminal.stopReason === "aborted",
+			responseObserved,
+		);
+		const status =
+			(message as unknown as { anthropicResponse?: { status?: number } }).anthropicResponse?.status ??
+			scope.localRuntime.lastProviderStatus;
+		const failure = classifyCallFailure(state.streamStallReason ?? terminal.errorMessage, {
+			invoked: responseObserved || (tracked?.invoked ?? scope.apiCallStartedAt !== null),
+			httpStatus: status !== undefined && status >= 400 ? status : (tracked?.httpStatus ?? null),
+			retryAttempts: tracked?.retryAttempts ?? 0,
+			aborted: terminal.stopReason === "aborted" && state.streamStallReason === null,
+			transportFailed: tracked?.stage === "transport",
+		});
+		// A harness stop is no transport failure: the record keeps its shape and names the harness's cause (bt-26 N2a).
+		const harnessCause =
+			terminal.stopReason === "aborted" && state.streamStallReason === null
+				? harnessAbortCause()
+				: terminal.stopReason === "error"
+					? (scope.guardStopCause ?? undefined)
+					: undefined;
+		scope.guardStopCause = null;
+		Object.assign(message, {
+			failure:
+				!failure.invoked && scope.preInvocationStage === "budget admission"
+					? { ...failure, stage: "budget", errorClass: "budget_wait" }
+					: harnessCause !== undefined
+						? { ...failure, stage: "harness", errorClass: harnessCause }
+						: failure,
+		});
+		Object.assign(message, { callInvoked: failure.invoked });
+		// The harness, not the route, stopped this reply: it carries the harness's reason and names no route.
+		// A shutdown (a `run --timeout` deadline, a signal, quitting) aborts the stream through dispose.
+		const harnessStop =
+			terminal.stopReason === "aborted" && state.activeInterruptReason === null
+				? (state.repetitionAbortReason ?? state.toolProseAbortReason ?? (scope.rt.disposed ? SHUTDOWN_STOP_REASON : null))
+				: null;
+		if (harnessStop !== null)
+			Object.assign(message, {
+				errorMessage: harnessStop,
+				harnessStopped: true,
+				// The repetition guard stopped the generation; the operator did not cancel it (f-repeat).
+				...(state.repetitionAbortReason !== null ? { pancodeAbortReason: "repetition" } : {}),
+			});
+		// An interrupt (the operator's cancel, triage, autonomy) is no route failure either, so it names no route.
+		else if (harnessCause === undefined || harnessCause === "route_moved")
+			Object.assign(message, {
+				failureRoute: {
+					targetId: scope.localRuntime.targetId,
+					...(scope.localRuntime.runtimeResolution.target.url !== undefined
+						? { url: scope.localRuntime.runtimeResolution.target.url }
+						: {}),
+					// What the failure was and what reached the screen decide the remedy, and a replay has only this record.
+					stage: failure.stage,
+					errorClass: failure.errorClass,
+					partialReply: extractText(message).length > 0,
+					...(failure.stage === "auth" && scope.placeholderKeySent ? { noCredential: true } : {}),
+					...(failure.stage === "auth" && scope.placeholderKeySent
+						? noCredentialRemedy(
+								scope.localRuntime.runtimeResolution.target,
+								scope.localRuntime.runtimeResolution.runtime.auth,
+							)
+						: {}),
+				},
+			});
+		const retryAfterMs = scope.callTracking?.retryAfterMs();
+		if (retryAfterMs !== null && retryAfterMs !== undefined) Object.assign(message, { retryAfterMs });
+	};
+
 	return {
+		stampCallFailure,
 		withCachePhysics,
 		carryRelabelledReasons,
 		recordSettledCall,
-		harnessAbortCause,
 		settleModelCall,
 		abandonModelCall,
 		openModelCall,

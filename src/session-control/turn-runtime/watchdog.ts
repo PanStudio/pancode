@@ -12,6 +12,8 @@ import type { RunningCallWait } from "../turn-runtime-types.js";
 import { stallAbortReason } from "../turn-runtime-wait.js";
 import type { AgentBuildScope } from "./scope.js";
 
+export type StallWatchdog = ReturnType<typeof createStallWatchdog>;
+
 // Stall watchdog. `agent_start` arms a timer for `retry.streamStallMs`;
 // every later engine event counts as progress and pushes the deadline
 // out. When the deadline passes with nothing from the stream, the

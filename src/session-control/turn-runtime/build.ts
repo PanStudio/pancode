@@ -10,25 +10,19 @@ import { performance } from "node:perf_hooks";
 import { replySegment } from "../../core/answer-segments.js";
 import { outputLimitCutOffToolCallIds } from "../../core/assistant-output.js";
 import type { BackendCompletionTimings } from "../../core/cache-telemetry.js";
-import { classifyCallFailure, trackCallFetch } from "../../core/call-failure.js";
 import { gatewayRoutingObservationFromRecord, gatewayRoutingObservationLabel } from "../../core/gateway-routing.js";
 import { isHostAuthored } from "../../core/message-accounting.js";
-import { applyModelAdmission, type ModelAdmissionEvent } from "../../core/model-admission.js";
-import { projectTargetOrigin } from "../../core/project-target-urls.js";
+import { applyModelAdmission } from "../../core/model-admission.js";
 import { modelRouteGuarded, modelRouteRefusalMessage } from "../../core/response-model-id.js";
-import { telemetryHub } from "../../core/telemetry/hub.js";
 import { factKnownValue } from "../../core/telemetry/known.js";
 import type { BudgetAlertPayload } from "../../core/telemetry/live-events.js";
 import { pricesCalls } from "../../core/telemetry/pricing.js";
-import { telemetryCaptures } from "../../core/telemetry/producer.js";
 import { normalizeTokenUsage } from "../../core/token-split.js";
 import { ToolNames } from "../../core/tool-names.js";
 import { effectiveToolCall, gatewayChainReceipts } from "../../core/tool-surface.js";
 import { runCapStopCode } from "../../core/turn-constraints.js";
 import { requestFits } from "../../domains/context/budget/request-fit.js";
 import { observationTracing, traceObservation } from "../../domains/memory/observation-events.js";
-import type { MiddlewareToolChoiceControl } from "../../domains/middleware/index.js";
-import { resolveEffectivePricing } from "../../domains/providers/catalog.js";
 import {
 	applyModelCapabilityPatch,
 	canonicalEndpointKey,
@@ -43,25 +37,16 @@ import {
 } from "../../domains/scheduling/budget.js";
 import type { HostInsertSource } from "../../domains/session/entries.js";
 import { missingOutputRefusal } from "../../domains/session/output-obligations.js";
-import { callSettlementFromMessage, reportedModelFromMessage } from "../../domains/telemetry/call-facts.js";
-import { type createEngineAgent, enginePinnedPrefix, providerFallbackOf } from "../../engine/agent.js";
-import { engineMainStreamSimple } from "../../engine/api-registry.js";
+import type { createEngineAgent } from "../../engine/agent.js";
 import { readDiffusionFrame } from "../../engine/apis/diffusion-frames.js";
 import { setGlobalDefaultMaxOutputTokens } from "../../engine/apis/index.js";
-import { anchorContextAtInputTokens, estimateInputTokensFromContext } from "../../engine/apis/output-budget.js";
+import { estimateInputTokensFromContext } from "../../engine/apis/output-budget.js";
 import { resolvedRequestContext } from "../../engine/context.js";
 import { hasAssistantGenerationDelta } from "../../engine/generation-delta.js";
-import { sanitizeLockedSynthesisMessage, withLockedSynthesisDirective } from "../../engine/loop-guard-synthesis.js";
-import { MODEL_ADMISSION } from "../../engine/model-admission.js";
-import {
-	applyToolRounds,
-	type ControlledRequest,
-	firstToolRoundAttempt,
-	streamToolRound,
-	type ToolRound,
-} from "../../engine/provider-payload.js";
+import { sanitizeLockedSynthesisMessage } from "../../engine/loop-guard-synthesis.js";
+import { applyToolRounds, firstToolRoundAttempt } from "../../engine/provider-payload.js";
 import { createRequestStructures } from "../../engine/request-structure.js";
-import type { AgentEvent, AgentMessage, CodexConfiguration, EngineModel, Usage } from "../../engine/types.js";
+import type { AgentEvent, AgentMessage, EngineModel, Usage } from "../../engine/types.js";
 import type { resolveAgentTools } from "../../tools/agent-tools.js";
 import { closeAskUserInterviewOnAssistantTurn } from "../../tools/ask-user.js";
 import {
@@ -73,7 +58,6 @@ import {
 	finishSiblingRefusal,
 	withoutReplyResult,
 } from "../../tools/finish.js";
-import type { RequestCursor } from "../attempt-receipt.js";
 import {
 	type AssistantCallTiming,
 	type BackendCacheVerdict,
@@ -101,7 +85,6 @@ import {
 import { selfCompactSiblingRefusal } from "../continuity-controller.js";
 import { withSettledHistory } from "../message-list-digest.js";
 import { resolveFitOutputReserve, turnAdmissionRemedy } from "../output-reserve.js";
-import { prefixBlocksOf } from "../prefix-blocks.js";
 import {
 	assessDraftLoop,
 	assessRepetition,
@@ -115,43 +98,16 @@ import type { ModelRequestFacts } from "../status-types.js";
 import { assessToolProseLoop, runtimeNarratesToolCalls, shouldAssessToolProse } from "../tool-prose-loop.js";
 import { OVERSIZED_RESULT_STOP } from "../turn-context.js";
 import { stalledRequestEnd } from "../turn-recovery.js";
-import { MODEL_SLOTS_SAMPLE_MS, modelRequestSlots } from "../turn-runtime-wait.js";
 import type { AgentRuntime, ChatLoopTarget } from "../turn-state.js";
 import { createCallTelemetry } from "./calls.js";
 import { TurnAdmissionError } from "./errors.js";
 import type { AgentBuildScope, TurnRuntimeScope } from "./scope.js";
+import { attemptToolRounds, createTranscriptStream, finalizeAttempt } from "./stream.js";
 import { createStallWatchdog } from "./watchdog.js";
 
 const LOCAL_API_KEY_FALLBACK = "pancode-local-target";
-/** The reason a reply cut off by shutdown carries in place of the transport's abort text (bt-26). */
-const SHUTDOWN_STOP_REASON = "[PanCode] stopped the request because PanCode shut down before it finished.";
 type StreamAdmission = NonNullable<NonNullable<Parameters<typeof createEngineAgent>[0]>["beforeStreamRequest"]>;
 type AdmissionHold = { waitedOn?: "budget"; inputTokens?: number; anchored?: boolean; outputReserveTokens?: number };
-type MiddlewareChoice = ReturnType<MiddlewareToolChoiceControl["current"]>;
-
-/** An attempt's tool rounds. A locked round has no named tool to require; it is text-only. */
-function attemptToolRounds(synthesisLock: boolean, choice: MiddlewareChoice): (ToolRound | undefined)[] {
-	return [
-		synthesisLock || choice.kind === "none" ? { kind: "text-only" } : undefined,
-		choice.kind === "required" && !synthesisLock ? { kind: "required", toolName: choice.toolName } : undefined,
-	];
-}
-
-/**
- * `finalize` (SPEC §2.1): the request tail of one invocation, the context it sends. Admission prices it and the send
- * path sends it, so the two cannot disagree (F15). The directive rides the tail, so the prompt prefix never changes. A
- * middleware text lock sent as "none" needs no words and keeps its tail too: a note there would cost the next turn the
- * cached copy of the last tool batch on a block-cached route. Only the "auto" form of that lock carries it.
- */
-function finalizeAttempt(
-	request: ControlledRequest,
-	synthesisLock: boolean,
-	choice: MiddlewareChoice,
-): ControlledRequest["context"] {
-	return synthesisLock || (choice.kind === "none" && request.options?.toolChoice === "auto")
-		? withLockedSynthesisDirective(request.context)
-		: request.context;
-}
 
 function isCollectedBatchResult(toolName: string, result: unknown): boolean {
 	const details = (result as { details?: unknown } | undefined)?.details as
@@ -165,16 +121,6 @@ function isCollectedBatchResult(toolName: string, result: unknown): boolean {
 		details.complete === true &&
 		details.collected === true
 	);
-}
-
-/**
- * What can give a target with no credential one: nothing for a runtime that reads no key, else the project file its
- * entry came from when configure (user settings) cannot reach it.
- */
-function noCredentialRemedy(target: object, runtimeAuth: string): { keyless?: true; projectFile?: string } {
-	if (runtimeAuth !== "api-key") return { keyless: true };
-	const file = projectTargetOrigin(target)?.file;
-	return file !== undefined ? { projectFile: file } : {};
 }
 
 export function ensureRuntime(rt: TurnRuntimeScope, options?: { silent?: boolean }): AgentRuntime | null {
@@ -318,6 +264,10 @@ function buildAgentRuntime(rt: TurnRuntimeScope, inputs: AgentBuildInputs): Agen
 		toolsInFlight: 0,
 		stallSuspendDepth: 0,
 		stallTimer: null,
+		callTracking: null,
+		admittedCursor: null,
+		pinnedInputTokens: null,
+		placeholderKeySent: false,
 		get requestStructure() {
 			return requestStructure;
 		},
@@ -328,22 +278,11 @@ function buildAgentRuntime(rt: TurnRuntimeScope, inputs: AgentBuildInputs): Agen
 			return localRuntime;
 		},
 	};
-	let callTracking: ReturnType<typeof trackCallFetch> | null = null;
 	const requestStructure = createRequestStructures();
-	let admittedCursor: RequestCursor | null = null;
-	// The input admission passed on after an overflow fold; the provider-bound copy pins it.
-	let pinnedInputTokens: number | null = null;
-	const {
-		withCachePhysics,
-		carryRelabelledReasons,
-		recordSettledCall,
-		harnessAbortCause,
-		settleModelCall,
-		abandonModelCall,
-		openModelCall,
-	} = createCallTelemetry(scope);
-	// The last request carried the local placeholder key, so an endpoint that refuses it was sent no credential at all.
-	let placeholderKeySent = false;
+	const calls = createCallTelemetry(scope);
+	const { stampCallFailure, settleModelCall, abandonModelCall, openModelCall } = calls;
+	const watchdog = createStallWatchdog(scope);
+	const { clearStallTimer, firstTokenLimitMs, armStallTimer, callWait, noteFirstOutput, firstOutputMs } = watchdog;
 	let unsettledSpendUsd = 0;
 	let admittedMessages: readonly AgentMessage[] = [];
 	let admittedSystemPrompt = "";
@@ -381,173 +320,7 @@ function buildAgentRuntime(rt: TurnRuntimeScope, inputs: AgentBuildInputs): Agen
 	const handle = deps.createAgent({
 		// Row 384 backstop: a provider that accepts the id and serves another model is refused at its first response.
 		refuseServedModelMismatch: () => modelRouteGuarded(localRuntime.runtimeResolution.runtime),
-		transcriptStreamFn: (currentModel, currentContext, options) => {
-			const middlewareChoice = middlewareToolChoice.current();
-			const controlled = applyToolRounds(
-				currentModel,
-				currentContext,
-				options,
-				attemptToolRounds(state.synthesisToolLock, middlewareChoice),
-				localRuntime.targetId,
-			);
-			delete localRuntime.lastProviderStatus;
-			const tracking = trackCallFetch(controlled.options?.fetch);
-			callTracking = tracking;
-			tracking.start(currentModel.api, controlled.options?.transport);
-			let invokedAttempt = false;
-			const pinnedPrefix = enginePinnedPrefix(localRuntime.agent);
-			// The payload layer's own decision, read before it acts on it: a compliance-first round is held until done.
-			scope.outputHeld = firstToolRoundAttempt(currentModel, controlled, localRuntime.targetId) !== controlled;
-			if (scope.outputHeld && scope.stallTimer !== null) {
-				const stallMs = deps.retrySettings().streamStallMs;
-				clearStallTimer();
-				if (stallMs > 0) armStallTimer(stallMs);
-			}
-			return streamToolRound(
-				currentModel,
-				controlled,
-				(request) => {
-					const serial = ++scope.requestSerial;
-					const retry = invokedAttempt;
-					if (retry && scope.modelCall)
-						scope.modelCall =
-							scope.modelCall.nextAttempt({ toolChoice: request.options?.toolChoice === "none" ? "none" : "auto" }) ??
-							scope.modelCall;
-					invokedAttempt = true;
-					const attempt = scope.modelCall;
-					// The first attempt's send opened at onStreamInvocation; a #426 retry opens its own here.
-					attempt?.stage("send", "start");
-					deps.onModelRequestSent?.(
-						attempt && scope.journalLease
-							? {
-									callId: attempt.callId,
-									attemptId: attempt.attemptId,
-									attempt: attempt.attempt,
-									context: scope.journalLease.context,
-								}
-							: null,
-					);
-					const facts: ModelRequestFacts = {
-						sentAt: Date.now(),
-						modelId: currentModel.id,
-						firstByteAt: null,
-						bytesObservable: tracking.observesResponses(),
-					};
-					if (rt.coldAtProbe?.modelId === currentModel.id && rt.coldAtProbe.targetId === localRuntime.targetId) {
-						facts.probedResidency = rt.coldAtProbe.state;
-					}
-					state.modelRequest = facts;
-					let slotsReadAt = 0;
-					state.refreshModelRequest = () => {
-						if (state.modelRequest !== facts || facts.firstByteAt !== null || facts.admission) return;
-						if (Date.now() - slotsReadAt < MODEL_SLOTS_SAMPLE_MS) return;
-						slotsReadAt = Date.now();
-						facts.slots = modelRequestSlots(localRuntime.runtimeResolution, deps.providers);
-					};
-					// #423: fingerprint the control this attempt sends, including a #426 recovery retry.
-					context.noteCacheRequestToolChoice?.(JSON.stringify(request.options?.toolChoice ?? "auto"), retry);
-					context.noteCacheRequestSystemPrompt?.(retry);
-					delete localRuntime.lastProviderStatus;
-					const requestOptions = {
-						...request.options,
-						fetch: tracking.fetch,
-						...(pinnedPrefix ? { pancodePinnedPrefix: pinnedPrefix } : {}),
-						// A load is this request's own wait, so its report lands on these facts and no other's.
-						[MODEL_ADMISSION]: (event: ModelAdmissionEvent) => applyModelAdmission(facts, event, Date.now()),
-						onResponse: async (...args: Parameters<NonNullable<NonNullable<typeof request.options>["onResponse"]>>) => {
-							// A request the first-token watchdog retired answers no one: its late status and first byte would
-							// otherwise land on the retry's classification and facts (MD11).
-							if (serial <= scope.retiredThrough) return;
-							// Pi can discard HTTP 401 when rendering the body's friendly message (#427).
-							localRuntime.lastProviderStatus = args[0].status;
-							// Pi retries a retryable status inside one attempt; the first byte is the response that
-							// opens the stream. Transports that never report a response leave it unobserved (#434).
-							if (args[0].status >= 200 && args[0].status < 300) {
-								attempt?.mark("firstByte");
-								if (state.modelRequest === facts) facts.firstByteAt ??= Date.now();
-								rt.coldAtProbe = null;
-							}
-							await request.options?.onResponse?.(...args);
-						},
-					};
-					const sent = finalizeAttempt(request, state.synthesisToolLock, middlewareChoice);
-					if (attempt) {
-						const fallback = providerFallbackOf(request.options);
-						const codex = (request.options as { codexConfiguration?: CodexConfiguration } | undefined)?.codexConfiguration;
-						scope.attemptRequest = {
-							// A portable fallback wrote its record after admission; the request renders through it.
-							cursor: fallback !== undefined ? (deps.requestCursor?.() ?? admittedCursor) : admittedCursor,
-							receipt: {
-								toolChoice: JSON.stringify(request.options?.toolChoice ?? "auto"),
-								tail: sent === request.context ? "none" : "synthesis_directive",
-								...(fallback !== undefined ? { fallback } : {}),
-								...(codex ? { codex: { initialEffort: codex.initialEffort, updates: [...codex.updates] } } : {}),
-							},
-							model: currentModel,
-							context: sent,
-							compiled: context.compiledSessionPrompt?.() ?? null,
-							coldReasons: [...new Set([...rt.carriedColdReasons, ...(context.takeCallColdReasons?.() ?? [])])],
-						};
-						rt.carriedColdReasons = [];
-						// Research capture: the prefix exactly as this attempt sends it, hashed (#423, #434).
-						attempt.withContext(() => {
-							if (!telemetryCaptures("prompt.prefix_captured")) return;
-							const blocks = prefixBlocksOf(context.compiledSessionPrompt?.() ?? null, sent);
-							if (blocks) telemetryHub().emit("prompt.prefix_captured", blocks);
-						});
-					}
-					// This attempt carries the host inserts that render on its session's branch; none needs re-issuing after a later cut.
-					deps.hostInserts?.dispatched();
-					// The provider stream runs inside the attempt's context, so the engine seam and every observer below it
-					// find this call; the seam's marks agree with the ones taken here because each keeps its first (#434).
-					// Only the provider-bound copy carries the pin; telemetry and the keepalive replay keep the request as built.
-					const pin = pinnedInputTokens;
-					const providerContext = pin === null ? sent : anchorContextAtInputTokens(sent, pin);
-					const providerOptions = pin === null ? requestOptions : { ...requestOptions, pancodeInputTokens: pin };
-					const stream = attempt
-						? attempt.withContext(() => engineMainStreamSimple(currentModel, providerContext, providerOptions))
-						: engineMainStreamSimple(currentModel, providerContext, providerOptions);
-					// send.end is the handoff to Pi's provider, which owns serialization and the socket under
-					// transport option B. The journal's TTFT is firstToken minus this mark (#434).
-					attempt?.stage("send", "end");
-					// #423: a cache keepalive replays exactly this request, without this turn's call tracker or status hook.
-					const { fetch: _tracked, onResponse: _status, [MODEL_ADMISSION]: _admission, ...replayed } = requestOptions;
-					deps.noteMainRequest?.(
-						localRuntime,
-						{
-							model: currentModel,
-							context: sent,
-							options: {
-								...replayed,
-								...(request.options?.fetch ? { fetch: request.options.fetch } : {}),
-								...(request.options?.onResponse ? { onResponse: request.options.onResponse } : {}),
-							},
-						},
-						stream,
-					);
-					return stream;
-				},
-				localRuntime.targetId,
-				(message) => {
-					if (!scope.modelCall) return;
-					const terminal = terminalFailureFromAssistantMessage(message);
-					const reported = normalizeTokenUsage((message.usage ?? {}) as unknown as Record<string, unknown>).observed;
-					const failure = terminal
-						? tracking.failure(terminal.errorMessage, terminal.stopReason === "aborted", reported)
-						: undefined;
-					const resolution = localRuntime.runtimeResolution;
-					const { rates } = resolveEffectivePricing(resolution.target, resolution.runtime, resolution.wireModelId);
-					const settlement = withCachePhysics(
-						callSettlementFromMessage({ ...message, ...(failure ? { failure } : {}) }, { ...resolution, rates }),
-						message,
-						scope.modelCall.attemptId,
-					);
-					const facts = scope.modelCall.settle(settlement, reportedModelFromMessage(message));
-					carryRelabelledReasons(settlement, facts);
-					recordSettledCall(facts, scope.journalLease?.context);
-				},
-			);
-		},
+		transcriptStreamFn: createTranscriptStream(scope, calls, watchdog),
 		initialState: {
 			systemPrompt: fallbackIdentityPrompt(),
 			model,
@@ -611,7 +384,7 @@ function buildAgentRuntime(rt: TurnRuntimeScope, inputs: AgentBuildInputs): Agen
 		},
 		beforeStreamRequest: stageAdmission(async ({ model, context: request, options: streamOptions }, hold) => {
 			setGlobalDefaultMaxOutputTokens(deps.getSettings().chat.maxOutputTokens);
-			callTracking = null;
+			scope.callTracking = null;
 			delete localRuntime.lastProviderStatus;
 			if (!currentRun() || state.activeInterruptReason !== null || state.runtime !== localRuntime) {
 				return { block: true, reason: "Request ownership changed before invocation." };
@@ -644,7 +417,7 @@ function buildAgentRuntime(rt: TurnRuntimeScope, inputs: AgentBuildInputs): Agen
 			const { view, resolved, actual, anchored } = withSettledHistory(() => {
 				const view = context.refreshLiveBudget();
 				const resolved = resolvedRequestContext(request);
-				admittedCursor = deps.requestCursor?.() ?? null;
+				scope.admittedCursor = deps.requestCursor?.() ?? null;
 				// The first invocation as the send path builds it; a #426 retry after a rejection is not re-admitted.
 				const middlewareChoice = middlewareToolChoice.current();
 				const controlled = applyToolRounds(
@@ -673,7 +446,7 @@ function buildAgentRuntime(rt: TurnRuntimeScope, inputs: AgentBuildInputs): Agen
 				anchored === null
 					? Math.max(counted, view.inputTokens ?? 0)
 					: anchored + Math.max(0, counted - estimateInputTokensFromContext(request));
-			pinnedInputTokens = input;
+			scope.pinnedInputTokens = input;
 			hold.inputTokens = input;
 			hold.anchored = anchored !== null;
 			const output = resolveFitOutputReserve(localRuntime, input);
@@ -812,11 +585,11 @@ function buildAgentRuntime(rt: TurnRuntimeScope, inputs: AgentBuildInputs): Agen
 			// Pi converts the conversation between turn_start and this call; that is the transform stage (#434).
 			const call = scope.modelCall;
 			call?.stage("transform", "end");
-			placeholderKeySent = !targetRequiresAuth(
+			scope.placeholderKeySent = !targetRequiresAuth(
 				localRuntime.runtimeResolution.target,
 				localRuntime.runtimeResolution.runtime,
 			);
-			if (placeholderKeySent) return LOCAL_API_KEY_FALLBACK;
+			if (scope.placeholderKeySent) return LOCAL_API_KEY_FALLBACK;
 			scope.preInvocationStage = "auth";
 			call?.stage("auth", "start");
 			let refreshed: boolean | undefined;
@@ -876,8 +649,6 @@ function buildAgentRuntime(rt: TurnRuntimeScope, inputs: AgentBuildInputs): Agen
 
 	// The stall watchdog measures idle from here.
 	scope.lastActivityAt = performance.now();
-	const { clearStallTimer, firstTokenLimitMs, armStallTimer, callWait, noteFirstOutput, firstOutputMs } =
-		createStallWatchdog(scope);
 	rt.clearCurrentWatchdog = clearStallTimer;
 	rt.callWait = callWait;
 
@@ -1259,67 +1030,7 @@ function buildAgentRuntime(rt: TurnRuntimeScope, inputs: AgentBuildInputs): Agen
 			const responseObserved = observed || (typeof responseId === "string" && responseId.length > 0);
 			const terminal = terminalFailureFromAssistantMessage(message);
 			if (terminal) {
-				const tracked = callTracking?.failure(terminal.errorMessage, terminal.stopReason === "aborted", responseObserved);
-				const status =
-					(message as unknown as { anthropicResponse?: { status?: number } }).anthropicResponse?.status ??
-					localRuntime.lastProviderStatus;
-				const failure = classifyCallFailure(state.streamStallReason ?? terminal.errorMessage, {
-					invoked: responseObserved || (tracked?.invoked ?? scope.apiCallStartedAt !== null),
-					httpStatus: status !== undefined && status >= 400 ? status : (tracked?.httpStatus ?? null),
-					retryAttempts: tracked?.retryAttempts ?? 0,
-					aborted: terminal.stopReason === "aborted" && state.streamStallReason === null,
-					transportFailed: tracked?.stage === "transport",
-				});
-				// A harness stop is no transport failure: the record keeps its shape and names the harness's cause (bt-26 N2a).
-				const harnessCause =
-					terminal.stopReason === "aborted" && state.streamStallReason === null
-						? harnessAbortCause()
-						: terminal.stopReason === "error"
-							? (scope.guardStopCause ?? undefined)
-							: undefined;
-				scope.guardStopCause = null;
-				Object.assign(message, {
-					failure:
-						!failure.invoked && scope.preInvocationStage === "budget admission"
-							? { ...failure, stage: "budget", errorClass: "budget_wait" }
-							: harnessCause !== undefined
-								? { ...failure, stage: "harness", errorClass: harnessCause }
-								: failure,
-				});
-				Object.assign(message, { callInvoked: failure.invoked });
-				// The harness, not the route, stopped this reply: it carries the harness's reason and names no route.
-				// A shutdown (a `run --timeout` deadline, a signal, quitting) aborts the stream through dispose.
-				const harnessStop =
-					terminal.stopReason === "aborted" && state.activeInterruptReason === null
-						? (state.repetitionAbortReason ?? state.toolProseAbortReason ?? (rt.disposed ? SHUTDOWN_STOP_REASON : null))
-						: null;
-				if (harnessStop !== null)
-					Object.assign(message, {
-						errorMessage: harnessStop,
-						harnessStopped: true,
-						// The repetition guard stopped the generation; the operator did not cancel it (f-repeat).
-						...(state.repetitionAbortReason !== null ? { pancodeAbortReason: "repetition" } : {}),
-					});
-				// An interrupt (the operator's cancel, triage, autonomy) is no route failure either, so it names no route.
-				else if (harnessCause === undefined || harnessCause === "route_moved")
-					Object.assign(message, {
-						failureRoute: {
-							targetId: localRuntime.targetId,
-							...(localRuntime.runtimeResolution.target.url !== undefined
-								? { url: localRuntime.runtimeResolution.target.url }
-								: {}),
-							// What the failure was and what reached the screen decide the remedy, and a replay has only this record.
-							stage: failure.stage,
-							errorClass: failure.errorClass,
-							partialReply: extractText(message).length > 0,
-							...(failure.stage === "auth" && placeholderKeySent ? { noCredential: true } : {}),
-							...(failure.stage === "auth" && placeholderKeySent
-								? noCredentialRemedy(localRuntime.runtimeResolution.target, localRuntime.runtimeResolution.runtime.auth)
-								: {}),
-						},
-					});
-				const retryAfterMs = callTracking?.retryAfterMs();
-				if (retryAfterMs !== null && retryAfterMs !== undefined) Object.assign(message, { retryAfterMs });
+				stampCallFailure(message, terminal, responseObserved);
 			} else {
 				Object.assign(message, { callInvoked: scope.apiCallStartedAt !== null || responseObserved });
 			}
@@ -1376,7 +1087,7 @@ function buildAgentRuntime(rt: TurnRuntimeScope, inputs: AgentBuildInputs): Agen
 			scope.apiCallStartedAt = null;
 			scope.apiCallFirstDeltaAt = null;
 			scope.preInvocationStage = "transform";
-			placeholderKeySent = false;
+			scope.placeholderKeySent = false;
 			runFirstCallVerdict = null;
 			pendingTerminalToolResult = null;
 			clearStallTimer();
