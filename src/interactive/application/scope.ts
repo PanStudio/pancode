@@ -8,18 +8,25 @@
  */
 
 import type { PanesWatchController } from "../../domains/mux/operations.js";
+import type { ChatLoopEvent } from "../../session-control/chat-loop.js";
 import type { WorkerEntryState } from "../../session-control/worker-stream.js";
+import type { ApplicationController } from "../application-controller.js";
+import type { ArcadeSession } from "../arcade-overlay.js";
+import type { createDetachedBatchWake } from "../detached-batch-wake.js";
 import type { EditorSubmitController } from "../editor-submit.js";
+import type { createExitSummaryCollector } from "../exit-summary-collector.js";
 import type { InteractiveDeps } from "../interactive-deps.js";
 import type { InteractivePresentation } from "../interactive-presentation.js";
 import type { createProcessInteractiveShell } from "../interactive-shell.js";
 import type { InteractiveSlashRuntime } from "../interactive-slash-runtime.js";
 import type { OverlayLifecycleController } from "../overlay-lifecycle.js";
+import type { createSessionFileRecorder } from "../session-file.js";
 import type { SessionTranscript } from "../session-transcript.js";
 import type { TerminalLease } from "../terminal-lease.js";
 import type { WorkspaceFacts } from "../workspace-facts.js";
 import type { createAppExtensions } from "./extensions.js";
 import type { createAppPresentation } from "./presentation.js";
+import type { createAppProjection } from "./projection.js";
 
 type ApplicationShell = ReturnType<typeof createProcessInteractiveShell>;
 
@@ -36,6 +43,10 @@ export interface ApplicationScope {
 	readonly workspaceFacts: WorkspaceFacts;
 	readonly sessionTranscript: SessionTranscript;
 	readonly readStructuredEntries: SessionTranscript["readStructuredEntries"];
+	readonly recordChatEventIngress: (event: ChatLoopEvent) => void;
+	readonly exitSummary: ReturnType<typeof createExitSummaryCollector>;
+	readonly sessionFile: ReturnType<typeof createSessionFileRecorder> | null;
+	readonly refreshLiveWorkspaceGit: WorkspaceFacts["refreshLiveWorkspaceGit"];
 	refreshPresentationFooter: () => void;
 
 	/**
@@ -60,6 +71,9 @@ export interface ApplicationScope {
 	// The worker fold is built with the subscriptions below; a replay before then has no live run to adopt.
 	adoptLiveWorker: (runId: string) => WorkerEntryState | undefined;
 	watchPaneRef: PanesWatchController | null;
+	// The arcade egg owns every key while it is open; closing it hands the TUI back as it was. An approval or an
+	// ask_user card puts it away with the board kept, and the trigger phrase brings it back where it stopped.
+	arcade: ArcadeSession | null;
 
 	readonly overlayLifecycle: OverlayLifecycleController;
 	readonly keybindings: InteractivePresentation["keybindings"];
@@ -76,4 +90,7 @@ export interface ApplicationScope {
 
 	readonly appExtensions: ReturnType<typeof createAppExtensions>;
 	readonly appPresentation: ReturnType<typeof createAppPresentation>;
+	readonly applicationController: ApplicationController;
+	readonly detachedBatchWake: ReturnType<typeof createDetachedBatchWake>;
+	readonly appProjection: ReturnType<typeof createAppProjection>;
 }
