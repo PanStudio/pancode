@@ -185,6 +185,6 @@ export const LAYER_EXEMPTIONS: {
 		["session -> scheduling", 1],
 		["session -> telemetry", 16],
 		["telemetry -> context", 2],
-		["telemetry -> dispatch", 6],
+		["telemetry -> dispatch", 5],
 	]),
 };

@@ -10,7 +10,7 @@ import {
 	readRunInspection,
 	runHistoryCouncils,
 	runHistoryGates,
-} from "../../../../../src/domains/telemetry/index.js";
+} from "../../../../../src/domains/dispatch/index.js";
 import {
 	Councils,
 	DispatchRun,
