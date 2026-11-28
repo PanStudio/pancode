@@ -682,6 +682,9 @@ export type ChatLoopPreparationState = TurnStateView<
 	"turnPreparation" | "turnPreparationSince" | "turnPreparationStage"
 >;
 
+/** chat-loop/notices: reads the turn a notice belongs to and arms the skill surface. */
+export type ChatLoopNoticesState = TurnStateView<"activeSkillSurface" | "lastTurnId", "activeSkillSurface">;
+
 /**
  * The thinking level argument is ignored: the agent state owns the level and
  * turn state keeps no copy. The parameter stays optional because existing test
