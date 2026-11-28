@@ -46,6 +46,7 @@ import { fitPathLabel } from "../theme/labels.js";
 import { skinEpoch } from "../theme/tokens.js";
 import { type ContextOccupancyFacts, contextRailUnit, thinkingRailUnit } from "./context-rail.js";
 import type { FooterDashboardRenderState } from "./dashboard.js";
+import { extensionFactLine, extensionFactsKey } from "./extension-facts.js";
 import { footerKeyHint } from "./key-hints.js";
 import { phaseElapsedMs } from "./live-work.js";
 import { type Notification, notificationGlyph, notificationToken, topNotification } from "./notifications.js";
@@ -1073,18 +1074,23 @@ function renderKeyWhisperRow(
 	if (!rightPrefix && !bandOwnsLoop && loops.length > 0 && rightPrefixRoom >= ROW2_RIGHT_MIN_COLS) {
 		rightPrefix = loopSegment(loops, rightPrefixRoom, state.now) ?? "";
 	}
+	// A live extension fact outranks the onboarding whisper, so a pack's status and a long command's
+	// progress reach an operator who has not learned the whispers yet.
+	if (!rightPrefix && rightPrefixRoom >= 10) {
+		for (const fact of state.extensionFacts ?? []) {
+			if (!fact.text.trim()) continue;
+			const line = extensionFactLine(theme, fact, rightPrefixRoom);
+			if (rightPrefix === "") {
+				rightPrefix = line;
+				continue;
+			}
+			const candidate = `${rightPrefix}${sep}${line}`;
+			if (visibleWidth(candidate) > rightPrefixRoom) break;
+			rightPrefix = candidate;
+		}
+	}
 	if (!rightPrefix && !draftContext && state.whisper && rightPrefixRoom >= 14) {
 		rightPrefix = truncateToWidth(theme.fg("annotation", clean(state.whisper)), rightPrefixRoom, GLYPH.ellipsis, false);
-	}
-	if (!rightPrefix && (state.extensionFacts?.length ?? 0) > 0 && rightPrefixRoom >= 10) {
-		let ext = "";
-		for (const fact of state.extensionFacts ?? []) {
-			if (!fact.trim()) continue;
-			const candidate = ext === "" ? fact : `${ext}${sep}${fact}`;
-			if (visibleWidth(candidate) > rightPrefixRoom) break;
-			ext = candidate;
-		}
-		if (ext) rightPrefix = ext;
 	}
 
 	return composeAnchored(left, rightPrefix);
@@ -1285,7 +1291,7 @@ export function renderStatusLineParts(
 					state.whisper ?? "",
 					state.contextualMoment ?? "",
 					state.workspaceLine ?? "",
-					state.extensionFacts?.join("\x1f") ?? "",
+					extensionFactsKey(state.extensionFacts),
 				].join("|")
 			: null;
 	const memoKey = baseKey !== null ? `${baseKey}|${timeKey}` : null;

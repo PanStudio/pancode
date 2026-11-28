@@ -439,18 +439,25 @@ test("Alt+U boxed island deck matches geometry, detailed default/welcome auto-fo
 	const busyDeckText = renderDeckDrawer(busyLoopState, 96, 40).map(stripTerminalSequences).join("\n");
 	doesNotMatch(busyDeckText, /\bLoop\b/u);
 
-	// Item 16: extensionFacts render in detailed Route row 3 and standard Row 2 right slot; workspaceLine slots into slimmed anchor bar with 0 extra rows
+	// Item 16: extensionFacts render in the deck's Extensions island under their pack id and in the standard Row 2
+	// right slot, ahead of the onboarding whisper; workspaceLine slots into slimmed anchor bar with 0 extra rows
 	const extState = footerState();
 	extState.outputStyle = "detailed";
-	extState.extensionFacts = ["ext: ready"];
+	extState.extensionFacts = [{ id: "music", owner: "Music", text: "music (hidden)", tone: "neutral" }];
 	const detailedExtDeck = renderDeckDrawer(extState, 96, 40).map(stripTerminalSequences).join("\n");
-	match(detailedExtDeck, /ext: ready/u);
-
+	match(detailedExtDeck, /Extensions[\s\S]*music {2}music \(hidden\)/u);
 	extState.outputStyle = "standard";
+	match(renderDeckDrawer(extState, 96, 40).map(stripTerminalSequences).join("\n"), /music {2}music \(hidden\)/u);
+
+	extState.whisper = "Try /run to dispatch parallel workers";
 	const stdExtRows = renderCompactDashboard(extState, 96).map(stripTerminalSequences);
 	strictEqual(stdExtRows.length, 2);
-	match(stdExtRows[1] ?? "", /ext: ready/u);
-	doesNotMatch(stdExtRows[0] ?? "", /ext: ready/u);
+	match(stdExtRows[1] ?? "", /music: \(hidden\)/u);
+	doesNotMatch(stdExtRows[1] ?? "", /Try \/run/u);
+	doesNotMatch(stdExtRows[0] ?? "", /hidden/u);
+	const whisperOnly = { ...extState, extensionFacts: [] };
+	match(renderCompactDashboard(whisperOnly, 96).map(stripTerminalSequences)[1] ?? "", /Try \/run/u);
+	extState.whisper = null;
 
 	extState.deckOpen = true;
 	extState.workspaceLine = "ws: Ctrl+G L leave";
@@ -609,7 +616,7 @@ test("Alt+U boxed island deck matches geometry, detailed default/welcome auto-fo
 	match(p3Lines[2] ?? "", /Tools {2}bash 1/u);
 	doesNotMatch(p3Lines[2] ?? "", /Tools 1 call/u);
 
-	// P5: extension status lines fold into detailed Route row 3 (zero unboxed `Extensions:` row),
+	// P5: extension facts get the boxed Extensions island (zero unboxed `Extensions:` row),
 	// and compact status bar slots workspaceLine inline without exceeding 1-2 rows.
 	const prevTierP5 = presentationTier();
 	setPresentationTier("detailed");
@@ -618,13 +625,13 @@ test("Alt+U boxed island deck matches geometry, detailed default/welcome auto-fo
 		resolveCurrentBranch: async () => null,
 		getTerminalColumns: () => 96,
 		getTerminalRows: () => 40,
-		getExtensionStatus: () => ["lsp ready"],
+		getExtensionFacts: () => [{ id: "lsp", owner: "LSP", text: "ready", tone: "positive" }],
 	});
 	try {
 		const extLines = extFooter.view.render(96).map(stripTerminalSequences);
-		strictEqual(extLines.length, 6, "5-row detailed deck + 1 anchor bar, no unboxed Extensions row");
+		strictEqual(extLines.length, 9, "5-row detailed deck + 3-row Extensions island + 1 anchor bar");
 		doesNotMatch(extLines.join("\n"), /^Extensions:/mu);
-		match(extLines.join("\n"), /lsp ready/u);
+		match(extLines.join("\n"), /lsp {2}ready/u);
 	} finally {
 		extFooter.dispose();
 		setPresentationTier(prevTierP5);

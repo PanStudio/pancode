@@ -41,6 +41,7 @@ import {
 	thinkingRailUnit,
 } from "./context-rail.js";
 import type { FooterDashboardRenderState } from "./dashboard.js";
+import { extensionFactsKey, renderExtensionsIsland } from "./extension-facts.js";
 import {
 	activeTaskBrief,
 	contextOccupancyFrom,
@@ -285,9 +286,6 @@ function renderRouteIsland(
 			}
 			const mcpCount = state.connections?.mcp.length ?? 0;
 			if (mcpCount > 0) parts.push(theme.fg("annotation", `mcp ${mcpCount}`));
-			for (const fact of state.extensionFacts ?? []) {
-				if (fact.trim().length > 0) parts.push(fact);
-			}
 			row3 = joinParts(theme, parts, contentWidth);
 		}
 		lines.push(row3);
@@ -656,8 +654,8 @@ interface DeckMemo {
 let lastDeckMemo: DeckMemo | null = null;
 
 /**
- * Render the Hybrid B->A boxed island deck drawer.
- * Returns `[]` when auto-folded (W1 < 44 cols, H1 < 20 rows, or modal overlay owns dock).
+ * Render the Hybrid B->A boxed island deck drawer, with the Extensions island under the islands
+ * while any extension has a live status. Returns `[]` when auto-folded (W1 < 44 cols, H1 < 20 rows, or modal overlay owns dock).
  */
 export function renderDeckDrawer(
 	state: FooterDashboardRenderState,
@@ -691,7 +689,7 @@ export function renderDeckDrawer(
 					skinEpoch(),
 					state.factsRevision,
 					options.capabilityMapKey ?? capLines.length,
-					state.extensionFacts?.join("\x1f") ?? "",
+					extensionFactsKey(state.extensionFacts),
 					timeKey,
 				].join("|")
 			: null;
@@ -729,7 +727,7 @@ export function renderDeckDrawer(
 		islandRows = renderStackedCompactDeck(theme, state, w);
 	}
 
-	const lines = capLines.length > 0 ? [...islandRows, ...capLines] : islandRows;
+	const lines = [...islandRows, ...renderExtensionsIsland(theme, state.extensionFacts, w), ...capLines];
 	if (memoKey !== null) lastDeckMemo = { key: memoKey, lines };
 	return lines;
 }

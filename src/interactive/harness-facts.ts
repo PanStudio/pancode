@@ -181,7 +181,6 @@ export interface HarnessNoticeFacts {
 }
 
 export interface HarnessExtensionData {
-	readonly statusLines: ReadonlyArray<string>;
 	readonly lifecycleHint: string | null;
 }
 
@@ -285,7 +284,6 @@ export interface HarnessFactsProducers {
 	getLastShell?: () => ShellSettlement | null;
 	getLastCompactionStop?: () => "cancelled" | "failed" | null;
 	getExtensionStats?: () => { active: number; installed: number };
-	getExtensionStatus?: () => ReadonlyArray<string>;
 	getLifecycleHint?: () => string | null;
 	getConnections?: () => { mcp: string[]; plugins: string[] };
 	getTaskMemoryStatus?: () => TaskMemoryOperatorStatus;
@@ -552,7 +550,6 @@ function sameSnapshotData(prev: HarnessFactsSnapshot, next: Omit<HarnessFactsSna
 		prev.notices.leaderArmed === next.notices.leaderArmed &&
 		prev.notices.shutdownArmed === next.notices.shutdownArmed &&
 		prev.notices.dismissKeyLabel === next.notices.dismissKeyLabel &&
-		sameArray(prev.extensions.statusLines, next.extensions.statusLines) &&
 		prev.extensions.lifecycleHint === next.extensions.lifecycleHint &&
 		prev.learned.revision === next.learned.revision &&
 		prev.learned.hydrated === next.learned.hydrated &&
@@ -845,7 +842,6 @@ export function createHarnessFactsSource(producers: HarnessFactsProducers): Harn
 				dismissKeyLabel: producers.getDismissKeyLabel?.(),
 			},
 			extensions: {
-				statusLines: producers.getExtensionStatus?.() ?? [],
 				lifecycleHint: producers.getLifecycleHint?.() ?? null,
 			},
 			learned: producers.getLearnedFeatures?.() ?? defaultLearnedFeatures(),

@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
-import type { ExtensionSkin, ExtensionStatus, View } from "@pancode/sdk/extension";
+import type { ExtensionSkin, View } from "@pancode/sdk/extension";
 import { extensionOwnerLabel } from "../../domains/extensions/owner-label.js";
 import type { ActiveExtensionWorkspace, ExtensionSurfaceModel } from "../../domains/extensions/surface-model.js";
 import type { Component, TUI } from "../../engine/tui.js";
 import { truncateToWidth, visibleWidth } from "../../engine/tui.js";
+import type { ExtensionFact } from "../footer/extension-facts.js";
 import { GLYPH } from "../theme/glyphs.js";
 import { applySkin, frame, pancodeTheme } from "../theme/index.js";
-import type { SemanticRole } from "../theme/tokens.js";
 import { skinEpoch } from "../theme/tokens.js";
 import { renderView } from "./view-renderer.js";
 
@@ -21,27 +21,6 @@ const ISLAND_MIN_ROWS = 18;
 const ISLAND_ROW_SHARE = 0.4;
 const HEADER_ROWS = 12;
 const BOARD_ROWS = 14;
-
-const STATUS_ROLES = {
-	neutral: "counter",
-	positive: "success",
-	warning: "warning",
-	error: "error",
-} as const satisfies Record<NonNullable<ExtensionStatus["tone"]>, SemanticRole>;
-
-/**
- * An extension status as `Owner: words`. A status that already opens with its
- * owner's name ("Local status ready") gives the name to the label instead of
- * saying it twice, so the footer reads "Local status: ready".
- */
-function ownedStatus(owner: string, text: string): { owner: string; text: string } {
-	const trimmed = text.trim();
-	if (trimmed.toLowerCase().startsWith(owner.toLowerCase())) {
-		const rest = trimmed.slice(owner.length).replace(/^[\s:·-]+/u, "");
-		if (rest.length > 0) return { owner: trimmed.slice(0, owner.length), text: rest };
-	}
-	return { owner, text: trimmed };
-}
 
 export interface WorkspaceSurfaceDeps {
 	model: ExtensionSurfaceModel;
@@ -85,8 +64,8 @@ export interface WorkspaceSurfaces {
 	rail(width: number): string | null;
 	/** One footer line naming the workspace, its footer region and how to leave. */
 	footerLine(width: number): string | null;
-	/** Owner-labelled status facts for the compact footer's second line. */
-	statusFacts(width: number): string[];
+	/** Status facts of the extensions that draw no band, for footer row 2 and the Alt+U deck. */
+	statusFacts(): ReadonlyArray<ExtensionFact>;
 	/** The active workspace's leader entries: its declared keys, then how to leave. */
 	leaderTargets(): Array<{ key: string; label: string; run: () => void }>;
 	dispose(): void;
@@ -124,6 +103,7 @@ function pressable(view: View | undefined): boolean {
 
 export function createWorkspaceSurfaces(deps: WorkspaceSurfaceDeps): WorkspaceSurfaces {
 	const cache = new Map<string, { key: string; lines: string[] }>();
+	let factsMemo: { version: number; facts: ReadonlyArray<ExtensionFact> } | undefined;
 	const memo = (slot: string, extra: string, build: () => string[]): string[] => {
 		const active = deps.model.activeWorkspace;
 		const key = `${deps.model.version}:${skinEpoch()}:${active?.extensionId ?? ""}:${active?.workspaceId ?? ""}:${extra}`;
@@ -364,26 +344,18 @@ export function createWorkspaceSurfaces(deps: WorkspaceSurfaceDeps): WorkspaceSu
 				})[0] ?? null
 			);
 		},
-		statusFacts(width) {
-			return memo("status", `${width}`, () => {
-				const theme = pancodeTheme();
-				// The footer gives its facts up to half the row when wide; one status may use all of it.
-				const room = Math.max(12, Math.floor(width * (width >= 100 ? 0.5 : 0.4)));
-				const statuses = [
-					// An extension with a band already says its piece above the composer on every frame;
-					// repeating it here only crowds out the extensions that have no band.
-					...deps.model.ids().flatMap((id) => {
-						const entry = deps.model.entry(id);
-						return entry?.status && !entry.band ? [{ id, status: entry.status }] : [];
-					}),
-				];
-				return statuses.flatMap(({ id, status }) => {
-					const { owner, text } = ownedStatus(extensionOwnerLabel(id), status.text);
-					const label = `${owner}: `;
-					const body = truncateToWidth(text, Math.max(4, room - visibleWidth(label)), GLYPH.ellipsis, false);
-					return [`${theme.fg("annotation", label)}${theme.fg(STATUS_ROLES[status.tone ?? "neutral"], body)}`];
-				});
+		statusFacts() {
+			if (factsMemo?.version === deps.model.version) return factsMemo.facts;
+			// An extension with a band already says its piece above the composer on every frame;
+			// repeating it here only crowds out the extensions that have no band.
+			const facts = deps.model.ids().flatMap((id) => {
+				const entry = deps.model.entry(id);
+				return entry?.status && !entry.band
+					? [{ id, owner: extensionOwnerLabel(id), text: entry.status.text, tone: entry.status.tone ?? "neutral" }]
+					: [];
 			});
+			factsMemo = { version: deps.model.version, facts };
+			return facts;
 		},
 		leaderTargets() {
 			const bands = bandPresses().map((press) => ({
