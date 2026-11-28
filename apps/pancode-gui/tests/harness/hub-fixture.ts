@@ -12,13 +12,41 @@ import { promisify } from "node:util";
  * cold worst case and 12x the warm one.
  */
 const CLI_HANG_GUARD_MS = 30_000;
-export async function seedHub(cwd: string, env: NodeJS.ProcessEnv) {
-	await promisify(execFile)(
-		process.execPath,
-		["--import", import.meta.resolve("tsx"), fileURLToPath(new URL("../fixtures/hub-seed.ts", import.meta.url)), cwd],
-		{ env, timeout: CLI_HANG_GUARD_MS, maxBuffer: 1024 * 1024 },
-	);
+/** Runs `fixtures/<name>-seed.ts` from source with `args` and returns what it prints. */
+async function runSeed(name: string, args: string[], env: NodeJS.ProcessEnv): Promise<string> {
+	const seed = fileURLToPath(new URL(`../fixtures/${name}-seed.ts`, import.meta.url));
+	const result = await promisify(execFile)(process.execPath, ["--import", import.meta.resolve("tsx"), seed, ...args], {
+		env,
+		timeout: CLI_HANG_GUARD_MS,
+		maxBuffer: 1024 * 1024,
+	});
+	return result.stdout;
 }
+
+export async function seedHub(cwd: string, env: NodeJS.ProcessEnv): Promise<void> {
+	await runSeed("hub", [cwd], env);
+}
+
+export async function seedReports(cwd: string, env: NodeJS.ProcessEnv): Promise<void> {
+	await runSeed("reports", [cwd], env);
+}
+
+export async function seedEvidence(cwd: string, env: NodeJS.ProcessEnv) {
+	return JSON.parse(await runSeed("evidence", [cwd], env)) as { count: number; runId: string };
+}
+
+export async function seedFleet(cwd: string, env: NodeJS.ProcessEnv) {
+	return JSON.parse(await runSeed("fleet", [cwd], env)) as { count: number; gateId: string };
+}
+
+export async function seedSettings(cwd: string, env: NodeJS.ProcessEnv, targetId = "fixture-target") {
+	return JSON.parse(await runSeed("settings", [cwd, targetId], env)) as {
+		settingsKeys: string[];
+		controlPaths: string[];
+		categories: string[];
+	};
+}
+
 /**
  * The CLI both sides of a PanHub comparison run: the server through `PANCODE_WEB_CLI`, the oracle directly.
  * It is the checkout's source, so a missing or stale `dist/` cannot make the server answer with a problem or

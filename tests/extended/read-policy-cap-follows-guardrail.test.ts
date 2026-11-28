@@ -4,7 +4,7 @@ import { ok, strictEqual } from "node:assert/strict";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, it } from "node:test";
-import { configureGuardrails } from "../../src/core/guardrails.js";
+import { configureGuardrails, GUARDRAIL_DEFAULTS, resolveGuardrail } from "../../src/core/guardrails.js";
 import { createWorkerSafety } from "../../src/engine/worker-tools.js";
 import { builtin } from "../../src/tools/builtin-tool-catalog.js";
 import { OBSERVATION_POLICY_SLACK_BYTES } from "../../src/tools/observation.js";
@@ -60,5 +60,15 @@ describe("the read tool's policy cap follows the installed read guardrail", () =
 		} finally {
 			scratch.restore();
 		}
+	});
+
+	it("resolves guardrails from the configured settings projection and restores defaults on clear", () => {
+		try {
+			configureGuardrails({ maxDispatchRuns: 42 });
+			strictEqual(resolveGuardrail("maxDispatchRuns"), 42);
+		} finally {
+			configureGuardrails(undefined);
+		}
+		strictEqual(resolveGuardrail("maxDispatchRuns"), GUARDRAIL_DEFAULTS.maxDispatchRuns);
 	});
 });
