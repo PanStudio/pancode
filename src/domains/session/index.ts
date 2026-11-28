@@ -4,11 +4,6 @@ export {
 	parseSessionEntries,
 	readSessionEntriesForId,
 } from "./archive-readers.js";
-// Durable continuity (CONTRACTS §§2-8). Only the consumer-facing half surfaces
-// here: the record and fold contracts, the reader-side projection, the operator
-// control carrier and the persistence binding. The pure fold, its validators
-// and the group persister stay reachable through their own modules, because the
-// packets that use them are inside this domain or hold an explicit grant.
 export type {
 	SessionContract,
 	SessionEntryInput,
@@ -46,7 +41,4 @@ export {
 export { renderTranscriptMarkdown } from "./transcript-export.js";
 export { filterEntriesToActivePath } from "./tree/active-path.js";
 export { readTreeBundle } from "./tree/manager.js";
-// The tree/ module is a domain-internal building block. Only the
-// overlay-facing types surface here; callers that need deeper helpers import
-// from the concrete submodules directly (session domain only).
 export type { SessionUsageDefaults } from "./usage.js";

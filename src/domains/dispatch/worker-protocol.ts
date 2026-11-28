@@ -6,7 +6,7 @@
  *
  * The wire schema itself lives in src/worker/protocol.ts because the worker
  * process may not value-import this domain. This module owns the half only the
- * orchestrator needs: the fingerprints it computes from approved settings, the
+ * orchestrator needs: the approved identity it derives from a worker spec, the
  * comparison that admits or refuses an attested worker, the queue that bounds
  * how much bulk output may accumulate, and the typed channel failure a control
  * write reports when it cannot reach the worker.
