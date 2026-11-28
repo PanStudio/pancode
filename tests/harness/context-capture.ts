@@ -47,7 +47,7 @@ import { syntheticCompactionSummary } from "./compaction-summary.js";
 import { dispatchStubContext } from "./dispatch-stub-context.js";
 import { closeServer, readRequestBody } from "./openai-compat-fixture.js";
 
-export type WireFamily = "openai-completions" | "openai-responses" | "anthropic-messages";
+type WireFamily = "openai-completions" | "openai-responses" | "anthropic-messages";
 
 export interface CapturedRequest {
 	family: WireFamily;
@@ -55,7 +55,7 @@ export interface CapturedRequest {
 	body: Record<string, unknown>;
 }
 
-export interface ScriptedCall {
+interface ScriptedCall {
 	id: string;
 	name: string;
 	arguments: Record<string, unknown>;
@@ -436,7 +436,7 @@ const BUILTIN: Partial<Record<Api, () => ReturnType<typeof openAICompletionsApi>
 	"anthropic-messages": anthropicMessagesApi,
 };
 
-export interface EngineTap {
+interface EngineTap {
 	/** The finalized context of every request, in send order, deep-copied at dispatch. */
 	contexts: Context[];
 	restore(): void;
@@ -476,10 +476,10 @@ export interface RouteFacts {
 	image?: boolean;
 }
 
-export const CAPTURE_MODEL = "capture-model";
+const CAPTURE_MODEL = "capture-model";
 const DEFAULT_WINDOW = 131_072;
 
-export interface ChatHarnessOptions {
+interface ChatHarnessOptions {
 	server: CaptureServer;
 	route?: RouteFacts;
 	/** Extra tools; a `read` that echoes `read <path>` is always registered. */
@@ -620,5 +620,5 @@ export function chatHarness(options: ChatHarnessOptions) {
 	return { settings, context, session, loop, events, counter, submit, reopen, close };
 }
 
-export const CAPTURE_TARGET_A = "capture-a";
+const CAPTURE_TARGET_A = "capture-a";
 export const CAPTURE_TARGET_B = "capture-b";

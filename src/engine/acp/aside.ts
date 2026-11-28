@@ -6,7 +6,6 @@ import { redactFinalUrlCredentials, redactUrlCredentials } from "../../lib/secre
 import type { AcpAsideAnswer, AcpDraftOutcome } from "./types-views.js";
 
 export { ACP_ASIDE_ASK_METHOD, ACP_ASIDE_CANCEL_METHOD, ACP_ASIDE_DRAFT_METHOD, ACP_ASIDE_META_KEY } from "./types.js";
-export type { AcpAsideAnswer, AcpDraftOutcome } from "./types-views.js";
 /**
  * `_pancode/aside/*`: the terminal's `/btw` and `/draft` for an ACP client.
  *

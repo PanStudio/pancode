@@ -18,19 +18,19 @@ import {
 import { chmod, copyFile, mkdir, open, rename, rm, stat } from "node:fs/promises";
 import path from "node:path";
 
-export interface SafeResourceBackupOptions {
+interface SafeResourceBackupOptions {
 	path?: string;
 	suffix?: string;
 }
 
-export interface SafeResourceWriteRenameContext {
+interface SafeResourceWriteRenameContext {
 	targetPath: string;
 	tempPath: string;
 	bytes: number;
 	backupPath?: string;
 }
 
-export interface SafeResourceWriteOptions {
+interface SafeResourceWriteOptions {
 	backup?: boolean | SafeResourceBackupOptions;
 	encoding?: BufferEncoding;
 	mode?: number;
@@ -170,7 +170,7 @@ export function safeResourceWrite(
 	}
 }
 
-export interface SafeResourceWriteAsyncOptions extends SafeResourceWriteOptions {
+interface SafeResourceWriteAsyncOptions extends SafeResourceWriteOptions {
 	/** A short commit section may check a snapshot and rename under its lock (#428). */
 	withRename?: (commit: () => void) => void | Promise<void>;
 }

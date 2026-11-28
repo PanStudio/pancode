@@ -77,9 +77,9 @@ export function carriedCheckpoints(context: Pick<Context, "messages">): string[]
 	return [...digests];
 }
 
-export type ReceiptStatus = "verified" | "not-verifiable" | "external" | "mismatch";
+type ReceiptStatus = "verified" | "not-verifiable" | "external" | "mismatch";
 
-export interface AttemptVerdict {
+interface AttemptVerdict {
 	callId: string;
 	attemptId: string;
 	attempt: number;
@@ -88,7 +88,7 @@ export interface AttemptVerdict {
 	reason?: string;
 }
 
-export interface DecisionReconciliation {
+interface DecisionReconciliation {
 	/** Fold records on the ledger that no committed `context.fold` stage names. */
 	missing: string[];
 	/** Fold records more than one committed stage names. */
@@ -97,7 +97,7 @@ export interface DecisionReconciliation {
 	orphan: string[];
 }
 
-export interface ReceiptVerification {
+interface ReceiptVerification {
 	attempts: AttemptVerdict[];
 	decisions: DecisionReconciliation;
 }

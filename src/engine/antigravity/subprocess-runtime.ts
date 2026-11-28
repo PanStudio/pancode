@@ -5,6 +5,7 @@ import { spawn } from "node:child_process";
 import type { Readable, Writable } from "node:stream";
 import { boundedExternalDiagnostic } from "../../core/external-diagnostic.js";
 import { buildSafeToolEnv, resolveSafeCwd } from "../../core/safe-exec.js";
+import { asRecord } from "../../core/type-guards.js";
 import { assertToolProfileEnforceable } from "../../tools/profiles.js";
 import { bindExternalUsage } from "../external-call-telemetry.js";
 import {
@@ -20,8 +21,8 @@ import type { WorkerEventEmit, WorkerRunHandle, WorkerRunInput, WorkerRunResult 
 const ANTIGRAVITY_BINARY = "agy";
 export const ANTIGRAVITY_MAX_STREAM_LINE_BYTES = 1024 * 1024;
 export const ANTIGRAVITY_MAX_STREAM_BYTES = 8 * 1024 * 1024;
-export const ANTIGRAVITY_MAX_RESPONSE_BYTES = 4 * 1024 * 1024;
-export const ANTIGRAVITY_MAX_PROMPT_BYTES = 4 * 1024 * 1024;
+const ANTIGRAVITY_MAX_RESPONSE_BYTES = 4 * 1024 * 1024;
+const ANTIGRAVITY_MAX_PROMPT_BYTES = 4 * 1024 * 1024;
 const MAX_PROTOCOL_DIAGNOSTICS = 32;
 const MAX_CONVERSATION_ID_BYTES = 4096;
 
@@ -43,18 +44,18 @@ type AntigravityResult = {
 	usage?: unknown;
 };
 
-export type AntigravityStreamEvent =
+type AntigravityStreamEvent =
 	| { event: "init"; conversationId: string | null; model: string | null }
 	| { event: "text"; conversationId: string | null; delta: string }
 	| { event: "result"; result: AntigravityResult }
 	| { event: "other" };
 
-export interface AntigravitySubprocessConfig {
+interface AntigravitySubprocessConfig {
 	extraArgs: string[];
 	externalMode: "plan+sandbox" | "accept-edits";
 }
 
-export interface AntigravityRuntimeDependencies {
+interface AntigravityRuntimeDependencies {
 	binary?: string;
 	workspaceRoot?: string;
 	environment?: NodeJS.ProcessEnv;
@@ -114,12 +115,6 @@ export function buildAgyArgs(input: WorkerRunInput): string[] {
 	return args;
 }
 
-function record(value: unknown): Record<string, unknown> | null {
-	return typeof value === "object" && value !== null && !Array.isArray(value)
-		? (value as Record<string, unknown>)
-		: null;
-}
-
 /** Parse one event from agy's newline-delimited `stream-json` output. */
 export function parseAntigravityStreamLine(line: string): AntigravityStreamEvent | null {
 	let decoded: unknown;
@@ -128,7 +123,7 @@ export function parseAntigravityStreamLine(line: string): AntigravityStreamEvent
 	} catch {
 		return null;
 	}
-	const envelope = record(decoded);
+	const envelope = asRecord(decoded);
 	if (!envelope || typeof envelope.event !== "string") return null;
 	if (envelope.event === "init") {
 		return {
@@ -138,7 +133,7 @@ export function parseAntigravityStreamLine(line: string): AntigravityStreamEvent
 		};
 	}
 	if (envelope.event === "step_update") {
-		const update = record(envelope.step_update);
+		const update = asRecord(envelope.step_update);
 		if (!update) return null;
 		if (update.step_type !== "agent_response" || typeof update.text_delta !== "string") {
 			return { event: "other" };
@@ -150,7 +145,7 @@ export function parseAntigravityStreamLine(line: string): AntigravityStreamEvent
 		};
 	}
 	if (envelope.event === "result") {
-		const result = record(envelope.result);
+		const result = asRecord(envelope.result);
 		return result ? { event: "result", result } : null;
 	}
 	return { event: "other" };
@@ -161,7 +156,7 @@ function finite(value: unknown): number {
 }
 
 function normalizeUsage(raw: unknown): Usage {
-	const source = (record(raw) ?? {}) as AntigravityUsage;
+	const source = (asRecord(raw) ?? {}) as AntigravityUsage;
 	const prompt = finite(source.input_tokens);
 	const reportedOutput = finite(source.output_tokens);
 	const cacheRead = Math.min(prompt, finite(source.cache_read_tokens));
@@ -192,7 +187,7 @@ function normalizeUsage(raw: unknown): Usage {
  */
 function externalUsage(raw: unknown, conversationId: string | null): Usage {
 	const usage = normalizeUsage(raw) as Usage & { pancodeExternal?: Record<string, unknown> };
-	const source = record(raw);
+	const source = asRecord(raw);
 	usage.pancodeExternal = {
 		tokenUsage: [source?.input_tokens, source?.output_tokens].some(
 			(value) => typeof value === "number" && Number.isFinite(value),
@@ -386,7 +381,7 @@ function buildAssistantMessage(input: {
 	// Opaque provider observation only; callers must explicitly request resume.
 	if (input.conversationId) message.responseId = input.conversationId;
 	if (input.diagnostic) message.errorMessage = boundedExternalDiagnostic(input.diagnostic);
-	const raw = record(input.result?.usage);
+	const raw = asRecord(input.result?.usage);
 	const count = (value: unknown): value is number =>
 		typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
 	const prompt = raw?.input_tokens;

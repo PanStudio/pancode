@@ -3,7 +3,7 @@
 import { PANCODE_MIN_MAX_OUTPUT_TOKENS } from "./context-floor.js";
 
 /** The two model facts an output bound reads; a non-positive value means unknown. */
-export interface OutputBoundModel {
+interface OutputBoundModel {
 	contextWindow: number;
 	maxTokens: number;
 }

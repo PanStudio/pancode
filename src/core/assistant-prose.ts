@@ -13,7 +13,7 @@ const EMOJI = /\p{Emoji_Presentation}|\p{Extended_Pictographic}|[0-9#*]\uFE0F?\u
 // ordinary text presentation: dropping one left `all ✔)` reading `all )`.
 const TEXT_SYMBOL = /^[©®™\u2190-\u21FF\u2714\u2716]\uFE0E?$/u;
 
-export interface AssistantProseFilter {
+interface AssistantProseFilter {
 	push(chunk: string): string;
 	flush(): string;
 	peek(): string;

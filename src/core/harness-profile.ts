@@ -22,7 +22,7 @@ export interface HarnessProfileLesson {
 	lastShownAt: string;
 }
 
-export interface HarnessFeatureTiming {
+interface HarnessFeatureTiming {
 	firstUsedAt: string;
 	lastUsedAt: string;
 }

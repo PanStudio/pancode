@@ -16,7 +16,7 @@ import { isTerminalRunEnvelope, type RunEnvelope } from "../domains/dispatch/typ
 import { summarizeTrustStatus, trustStateWord } from "../domains/evidence/trust-projection.js";
 import { inspectRunTrustStatus } from "../domains/evidence/trust-status.js";
 import { readRunRecord } from "../domains/telemetry/index.js";
-import type { DispatchRunEventRegistry } from "./dispatch.js";
+import type { DispatchRunEventRegistry } from "./dispatch-run-events.js";
 import { grantRequestLines, pendingRequestsFor, requestsAwaitingMain } from "./grant-request-text.js";
 import type { JobOperations } from "./job-types.js";
 import { collectDetachedBatch, collectRuns, durableRunEvidence } from "./monitor-collect.js";

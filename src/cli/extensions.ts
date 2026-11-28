@@ -35,7 +35,7 @@ import {
 import type { ExtensionWorkOptions } from "../domains/extensions/services/work.js";
 import { bundledPluginCatalog } from "../domains/plugins/catalog.js";
 import type { ProvidersContract } from "../domains/providers/contract.js";
-import { formatColumns, printError, printOk } from "./shared.js";
+import { formatColumns, printError, printOk } from "./argv.js";
 import { installStopSignals } from "./stop-signals.js";
 
 const HELP = `pancode extensions <command>

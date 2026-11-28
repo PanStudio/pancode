@@ -12,7 +12,8 @@ import {
 	RUNTIME_KINDS,
 } from "../core/runtime-vocabulary.js";
 import { originKey, parseEgressAllowEntry, upstreamProxyProblem } from "../core/sandbox/egress/policy.js";
-import { WORKER_SANDBOX_SPEC_VERSION, type WorkerSandboxSpec } from "../core/sandbox/types.js";
+import { homeReadRootProblem } from "../core/sandbox/home-read-roots.js";
+import { HOME_READ_TOOLCHAINS, WORKER_SANDBOX_SPEC_VERSION, type WorkerSandboxSpec } from "../core/sandbox/types.js";
 import type { SharedStoreGrant } from "../core/store-shared-grant.js";
 import type { WorkerTelemetryContext } from "../core/telemetry/context.js";
 import { isWorkerTelemetryContext } from "../core/telemetry/context.js";
@@ -71,7 +72,7 @@ export const WORKER_SPEC_VERSION = 12;
 export const WORKER_SPEC_HOOKLESS_VERSION = 11;
 /** Every spec version this worker reads, lowest first. */
 export const WORKER_SPEC_VERSIONS: ReadonlyArray<number> = [WORKER_SPEC_HOOKLESS_VERSION, WORKER_SPEC_VERSION];
-export type WorkerSpecVersion = typeof WORKER_SPEC_HOOKLESS_VERSION | typeof WORKER_SPEC_VERSION;
+type WorkerSpecVersion = typeof WORKER_SPEC_HOOKLESS_VERSION | typeof WORKER_SPEC_VERSION;
 
 /** The lowest version that carries everything the spec holds. */
 export function workerSpecVersionFor(spec: { extensionHooks?: ReadonlyArray<unknown> }): WorkerSpecVersion {
@@ -85,7 +86,7 @@ export function workerSpecVersionFor(spec: { extensionHooks?: ReadonlyArray<unkn
  * run different builds, so another node may serve the same spec.
  */
 export const WORKER_SPEC_VERSION_SKEW = /workerspec version \S+ is (?:unsupported|not one this worker reads)\b/;
-export const WORKER_RUNTIME_DESCRIPTOR_VERSION = 2;
+const WORKER_RUNTIME_DESCRIPTOR_VERSION = 2;
 export const WORKER_PROTECTED_ARTIFACT_STATE_VERSION = 1;
 
 /**
@@ -115,7 +116,7 @@ export const WORKER_REFUSAL_LIMIT_PREFIX = "permission refusal limit reached:";
  */
 export const WORKER_PROVIDER_HTTP_STATUS_MARKER = "[worker] provider answered http ";
 
-export interface SerializedWorkerRuntimeDescriptor {
+interface SerializedWorkerRuntimeDescriptor {
 	version: typeof WORKER_RUNTIME_DESCRIPTOR_VERSION;
 	id: string;
 	kind: RuntimeKind;
@@ -283,7 +284,7 @@ interface WorkerSpecFields {
 }
 
 /** The host's task worktree identity, the same facts its ownership claim records. */
-export interface WorkerTaskWorktree {
+interface WorkerTaskWorktree {
 	root: string;
 	runId: string;
 	path: string;
@@ -294,7 +295,7 @@ export interface WorkerTaskWorktree {
 }
 
 /** Current wire shape. Every document carries its concrete admitted budget and its sealed run limits. */
-export type CurrentWorkerSpec = WorkerSpecFields & {
+type CurrentWorkerSpec = WorkerSpecFields & {
 	specVersion: WorkerSpecVersion;
 	budget: WorkerBudget;
 };
@@ -1188,6 +1189,7 @@ const WORKER_SANDBOX_KEYS = new Set([
 	"probedBackend",
 	"egress",
 	"unconfined",
+	"homeReads",
 ]);
 
 function readAbsolutePaths(value: unknown, source: string): void {
@@ -1229,6 +1231,20 @@ function validateWorkerSandbox(value: unknown): void {
 	}
 	if (sandbox.unconfined !== undefined && (sandbox.unconfined !== true || sandbox.mode === "required"))
 		throw new Error("WorkerSpec.sandbox.unconfined must be true when present and only under mode auto");
+	if (sandbox.homeReads !== undefined) validateWorkerHomeReads(sandbox.homeReads);
+}
+
+/** Roots are checked as spelled; the worker expands `~/` in its own host's home. */
+function validateWorkerHomeReads(value: unknown): void {
+	const source = "WorkerSpec.sandbox.homeReads";
+	const homeReads = readRecord(value, source);
+	exactKeys(homeReads, ["roots", "toolchains"], source);
+	for (const [index, root] of readStringArray(homeReads.roots, `${source}.roots`).entries()) {
+		const problem = homeReadRootProblem(root);
+		if (problem !== null) throw new Error(`${source}.roots[${index}] ${problem}`);
+	}
+	for (const [index, name] of readStringArray(homeReads.toolchains, `${source}.toolchains`).entries())
+		readEnum(name, `${source}.toolchains[${index}]`, HOME_READ_TOOLCHAINS);
 }
 
 /** A host probe's working backend: only beside `backendExpected`, at an absolute binary. */

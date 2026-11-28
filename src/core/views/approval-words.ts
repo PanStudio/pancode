@@ -51,7 +51,7 @@ export function actionClassWords(actionClass: string, workers = 1): string {
 }
 
 /** A dispatch plan as its headline reads it: the shape, who runs, and the one task they share, if any. */
-export interface DispatchPlanHeadlineFacts {
+interface DispatchPlanHeadlineFacts {
 	topology: string;
 	/** `label` is the council label or role the plan gives a worker, when it has one. */
 	members: ReadonlyArray<{ label: string | null; agent: string }>;
@@ -148,7 +148,7 @@ export function workerAuthorityWords(
  * (`safety.unattendedAfterSeconds`); the GUI's own budget stops the turn (`PERMISSION_TIMERS` in its ACP server); a
  * worker ask applies the worker's fallback on either surface.
  */
-export type UnansweredOutcome = "deny-continue" | "stop-turn" | "worker-deny" | "worker-fail";
+type UnansweredOutcome = "deny-continue" | "stop-turn" | "worker-deny" | "worker-fail";
 
 const UNANSWERED_WORDS: Readonly<Record<UnansweredOutcome, string>> = {
 	"deny-continue": "denies this call and PanCode continues without it",

@@ -16,14 +16,18 @@ import type { AutonomyLevel, YoloConfinement } from "../lib/autonomy/autonomy.js
 import type { FundingDefinitions } from "./funding-config.js";
 import { GUARDRAIL_DEFAULTS } from "./guardrails.js";
 import type { ModelTier } from "./model-tier.js";
-import type { EgressMode, EgressPresetName, SandboxMode, UnixSocketMode } from "./sandbox/types.js";
+import type {
+	EgressMode,
+	EgressPresetName,
+	HomeReadMode,
+	HomeReadToolchain,
+	SandboxMode,
+	UnixSocketMode,
+} from "./sandbox/types.js";
 import type { TelemetrySettings } from "./telemetry/capture.js";
 import { ROUTING_POSTURES, type RoutingPosture } from "./telemetry/run-vocabulary.js";
 import { RUN_ROLES, type RunRole } from "./views/run-roles.js";
 import type { ThinkingLevel } from "./views/thinking-levels.js";
-
-export type { TargetDescriptor } from "../domains/providers/types/target-descriptor.js";
-export type { AutonomyLevel } from "../lib/autonomy/autonomy.js";
 
 export { THINKING_LEVELS, type ThinkingLevel } from "./views/thinking-levels.js";
 
@@ -591,7 +595,7 @@ export interface FleetSettings extends FleetRouteSettings {
 	defaultNode: string | null;
 	/** Experimental worker prewarm. After a turn reading predicts a dispatch, the `workerPrepare` site is asked which recipe it would name first, and only a measured build's answer starts a worker; off by default. */
 	nodes: FleetNodeSettings[];
-	adaptiveRouting: AdaptiveRoutingSettings;
+	adaptiveRouting: RoutingActivationSettings;
 	permissions: FleetPermissionsSettings;
 	concurrency: "auto" | number;
 	/** On by default: a parallel batch's native workers that share a prompt prefix start after the first one streams; handles return at once. */
@@ -619,15 +623,12 @@ export interface ActiveAgentRole {
 	executionRole: RunRole;
 }
 
-interface AdaptiveRoutingSettings {
+export interface RoutingActivationSettings {
 	roles: ActiveRoutingRole[];
 	postures: ActiveRoutingPosture[];
 	/** Exact pairs only; independent agent and role lists would authorize their cross-product. */
 	agentRoles: ActiveAgentRole[];
 }
-
-/** Compatibility type name for the dispatch planner; its fields are the canonical v2 fields. */
-export type RoutingActivationSettings = AdaptiveRoutingSettings;
 
 /**
  * Experimental. Triage reads the queued steering messages with a side model
@@ -849,6 +850,12 @@ export interface SafetySettings {
 	 */
 	sandboxCacheMaxGiB: number;
 	/**
+	 * What sandboxed commands may read under the operator's home, per caller.
+	 * `roots` and `toolchains` are read only from the operator's own settings
+	 * file; a project layer may only move a mode to `listed`.
+	 */
+	homeReads: HomeReadsSettings;
+	/**
 	 * Workspace snapshots before the main agent mutates a Git work tree: auto
 	 * snapshots before each turn's first mutating call and before every
 	 * destructive one, and `/rewind` restores files from them; off takes none.
@@ -903,6 +910,17 @@ export interface SafetySettings {
 	 * operator's own settings file.
 	 */
 	judge: SafetyJudgeSettings;
+}
+
+/** `safety.homeReads`: `listed` hides the home and WSL's Windows drives and shows back only named roots. */
+export interface HomeReadsSettings {
+	/** The main session's contained commands, host verification included. */
+	main: HomeReadMode;
+	/** Dispatched workers' sandboxed commands, on whichever host they run. */
+	workers: HomeReadMode;
+	/** Absolute paths, or `~/` paths in the running host's home, shown back read-only under `listed`. */
+	roots: string[];
+	toolchains: HomeReadToolchain[];
 }
 
 /** One caller's shell egress: its mode and, for `proxied`, the exact origins it may reach. */
@@ -1021,7 +1039,7 @@ export const DEFAULT_SETTINGS = {
 			roles: [] as ActiveRoutingRole[],
 			postures: [] as ActiveRoutingPosture[],
 			agentRoles: [] as ActiveAgentRole[],
-		} as AdaptiveRoutingSettings,
+		} as RoutingActivationSettings,
 		permissions: {
 			mode: "judge" as WorkerPermissionMode,
 			escalation: { timeoutMs: 120000, fallback: "deny" } as WorkerEscalationSettings,
@@ -1110,6 +1128,12 @@ export const DEFAULT_SETTINGS = {
 		sandboxUnixSockets: "block" as UnixSocketMode,
 		sandboxUnconfinedLocalWorkers: false,
 		sandboxCacheMaxGiB: 4,
+		homeReads: {
+			main: "open",
+			workers: "open",
+			roots: [] as string[],
+			toolchains: [] as HomeReadToolchain[],
+		} as HomeReadsSettings,
 		snapshots: "auto" as WorkspaceSnapshotMode,
 		validationWrappers: [] as string[],
 		unattendedAfterSeconds: 300,

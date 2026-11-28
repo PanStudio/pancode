@@ -27,7 +27,7 @@ import {
 import { CONTENT_SUBJECTS, readTelemetryObjectSync } from "../domains/telemetry/objects.js";
 import { telemetrySessionDirectory } from "../domains/telemetry/paths.js";
 import { expandChainMessages } from "../tools/surface.js";
-import { printError } from "./shared.js";
+import { printError } from "./argv.js";
 
 export const INSIGHTS_HELP = `pancode telemetry insights [--project [<dir>]] [--json]
 

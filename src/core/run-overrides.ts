@@ -19,7 +19,7 @@ import type { PancodeSettings } from "./config.js";
 
 export const RUN_OVERRIDES_ENV = "PANCODE_RUN_OVERRIDES";
 
-export interface RunOverrides {
+interface RunOverrides {
 	/** One-run planning ceiling; cannot enlarge the server's context window. */
 	maxContextTokens?: number;
 	/**

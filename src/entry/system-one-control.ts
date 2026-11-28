@@ -10,7 +10,7 @@ import { credentialAvailable } from "../domains/providers/credentials.js";
 import type { RuntimeLookup } from "../domains/system-one/status.js";
 import { describeStatus, formatStatus } from "../domains/system-one/status.js";
 
-export interface SystemOneControl {
+interface SystemOneControl {
 	/** The lines to show. Never throws. */
 	run(): string[];
 }

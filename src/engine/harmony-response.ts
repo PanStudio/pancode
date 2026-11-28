@@ -69,7 +69,7 @@ export { type HarmonyReasoningEffort, harmonyReasoningEffort, isHarmonyThinkingF
  * vLLM returns when a stray `commentary to=assistant` header reaches its
  * tool-call parser (vllm#58825); it is never executed or reported as unknown.
  */
-export type HarmonyToolName = { name: string } | { artifact: string };
+type HarmonyToolName = { name: string } | { artifact: string };
 
 export function normalizeHarmonyToolName(raw: string): HarmonyToolName {
 	const name = raw.startsWith(FUNCTIONS_PREFIX) ? raw.slice(FUNCTIONS_PREFIX.length) : raw;

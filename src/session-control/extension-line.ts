@@ -13,7 +13,7 @@ import { extensionOwnerLabel } from "../domains/extensions/owner-label.js";
  * question, so `/ext:<id>:<cmd>` and a `replaces: prompt` takeover answer the
  * same way on every surface (WTF-P F04).
  */
-export type ExtensionLine =
+type ExtensionLine =
 	| { kind: "run"; token: string; args: string; extensionId: string; takeover: boolean }
 	| { kind: "refuse"; message: string; settling: boolean };
 

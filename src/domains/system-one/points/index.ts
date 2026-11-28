@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 /** Every decision point. Adding one is a module here, one export below and one `ask` at a place that already waits. */
 
-export { boundedHead, boundedTail, probability, round2 } from "./bounds.js";
+export { boundedHead, boundedTail, probability } from "./bounds.js";
 export type {
 	ConsultFilterMatch,
 	ConsultFilterObject,

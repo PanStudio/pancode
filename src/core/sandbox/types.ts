@@ -25,6 +25,28 @@ export const UNIX_SOCKET_MODES = ["block", "owned", "allow"] as const;
 export type UnixSocketMode = (typeof UNIX_SOCKET_MODES)[number];
 
 /**
+ * `safety.homeReads` modes, per caller. `open` reads the whole filesystem as
+ * before; `listed` hides the operator's home and, on WSL2, the Windows drive
+ * mounts, and shows back only the roots the sandbox admits, PanCode's own
+ * paths and what `safety.homeReads.roots` and `toolchains` name.
+ */
+export const HOME_READ_MODES = ["open", "listed"] as const;
+export type HomeReadMode = (typeof HOME_READ_MODES)[number];
+
+/** Named toolchain installs under the home a `listed` sandbox can show back, each a fixed set of home paths. */
+export const HOME_READ_TOOLCHAINS = ["nvm", "pyenv", "rustup", "cargo", "go", "uv"] as const;
+export type HomeReadToolchain = (typeof HOME_READ_TOOLCHAINS)[number];
+
+/**
+ * What a `listed` sandbox shows back beyond the roots it admits on its own, from the operator's own settings file.
+ * A root is absolute or starts with `~/`, which means the home of the host the command runs on.
+ */
+export interface HomeReadList {
+	roots: ReadonlyArray<string>;
+	toolchains: ReadonlyArray<HomeReadToolchain>;
+}
+
+/**
  * How a sandboxed shell reaches the network (`safety.egress.<caller>.mode`).
  * `off` isolates it with no network; `proxied` isolates it and gives it only
  * PanCode's proxy, which admits the caller's granted origins; `open` leaves it
@@ -102,6 +124,11 @@ export interface WorkerSandboxSpec {
 	 * worker with no backend refuses its commands. Never set under `required`.
 	 */
 	unconfined?: true;
+	/**
+	 * `safety.homeReads.workers` is `listed`: the worker hides its own host's home and Windows drive mounts from its
+	 * commands, showing back its roots and these. Absent reads the whole filesystem.
+	 */
+	homeReads?: HomeReadList;
 }
 
 /**
@@ -171,6 +198,24 @@ export interface SandboxInvocationSpec {
 	seccompFilter?: string;
 	/** Seatbelt: deny connecting to and binding Unix-domain sockets. Bubblewrap takes `seccompFilter` instead. */
 	denyUnixSockets?: boolean;
+	/** Directories hidden from reads, with what shows back inside them (home-reads.ts). Absent hides nothing. */
+	readRestriction?: SandboxReadRestriction;
+}
+
+/**
+ * Directories the command cannot read, and the paths under them it can. All
+ * paths are physical. Writable, readable and Git roots under a hidden
+ * directory show back as the builders bind them; a read-only path or a mask
+ * under a hidden directory and outside every root that shows back is left out,
+ * since there is nothing there to protect or hide.
+ */
+export interface SandboxReadRestriction {
+	/** Each covered by an empty tmpfs under bubblewrap, remounted read-only once the roots inside are bound. */
+	hidden: ReadonlyArray<string>;
+	/** Directories and files under a hidden directory bound back read-only, at their own path. */
+	exposed: ReadonlyArray<string>;
+	/** Symbolic links recreated under a hidden directory: `path` names a root the operator listed, `target` its physical path. */
+	links: ReadonlyArray<{ path: string; target: string }>;
 }
 
 export interface SandboxInvocation {

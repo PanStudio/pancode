@@ -78,11 +78,10 @@ import { validateHubPackage } from "../domains/resources/hub-validation.js";
 import { bareSkillRemedy, isBareSkillDirectory, packageBareSkill } from "../domains/resources/skills/bare-skill.js";
 import { knownSkillNames } from "../domains/resources/skills/marketplace.js";
 import { createProcessJournal } from "../domains/telemetry/process-journal.js";
-import { formatColumns } from "./argv.js";
+import { formatColumns, printError, printOk } from "./argv.js";
 import { didYouMean } from "./kit/did-you-mean.js";
 import { helpRequested } from "./kit/help.js";
 import { jsonDocument, writeCliFailure } from "./kit/json-out.js";
-import { printError, printOk } from "./shared.js";
 import { leaves as hubLeaves } from "./specs/hub.js";
 import { terminalColumns, truncate, wrapPlain } from "./text-layout.js";
 

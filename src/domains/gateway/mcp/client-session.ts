@@ -137,7 +137,7 @@ export function serverIdentity(value: unknown): McpServerInfo["serverInfo"] {
  * names in `data.requiredCapabilities`: `sampling`, `roots`, `elicitation`, or
  * `extension <id>` for each extension. Empty when the server named none.
  */
-export function mcpRequiredCapabilities(data: unknown): string[] {
+function mcpRequiredCapabilities(data: unknown): string[] {
 	const required = isRecord(data) && isRecord(data.requiredCapabilities) ? data.requiredCapabilities : null;
 	if (required === null) return [];
 	const names: string[] = [];

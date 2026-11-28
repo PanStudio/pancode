@@ -7,7 +7,7 @@ import path from "node:path";
 export const POSIX_BASH = "/bin/bash";
 
 /** What the resolver reads from the host, injectable so the Windows ladder runs on any platform. */
-export interface BashShellHost {
+interface BashShellHost {
 	platform: NodeJS.Platform;
 	env: NodeJS.ProcessEnv;
 	isFile(file: string): boolean;

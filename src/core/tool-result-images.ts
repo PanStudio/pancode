@@ -25,7 +25,7 @@ const DISPLAY_IMAGE_MIME_BY_EXTENSION: Readonly<Record<string, string>> = {
 const DISPLAY_IMAGE_MIME_TYPES: ReadonlySet<string> = new Set(Object.values(DISPLAY_IMAGE_MIME_BY_EXTENSION));
 const BASE64 = /^[A-Za-z0-9+/]+={0,2}$/u;
 /** No surface draws more screenshots than this for one call. */
-export const MAX_DISPLAY_SHOTS = 8;
+const MAX_DISPLAY_SHOTS = 8;
 /** Display copies one result carries in `details.displayImages`, and their base64 characters together. */
 export const MAX_DISPLAY_IMAGES = 4;
 export const DISPLAY_IMAGES_MAX_CHARS = 192 * 1024;

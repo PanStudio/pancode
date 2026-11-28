@@ -51,7 +51,7 @@ export const YOLO_CONFINEMENTS = ["contained", "unconfined"] as const;
 
 export type YoloConfinement = (typeof YOLO_CONFINEMENTS)[number];
 
-export const DEFAULT_YOLO_CONFINEMENT: YoloConfinement = "contained";
+const DEFAULT_YOLO_CONFINEMENT: YoloConfinement = "contained";
 
 /**
  * Pins a run, and every pancode its commands start, to contained yolo.
@@ -110,7 +110,7 @@ export function autonomyFromUserInput(value: string): AutonomyLevel | null {
 	return isAutonomyLevel(value) ? value : null;
 }
 
-export type AutonomyDisposition = "allow" | "ask" | "deny";
+type AutonomyDisposition = "allow" | "ask" | "deny";
 
 /**
  * Exposure tier of a call, orthogonal to its action class. `local` is the

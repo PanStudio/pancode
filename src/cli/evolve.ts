@@ -10,7 +10,7 @@ import {
 	summarizeChangeManifest,
 	validateChangeManifest,
 } from "../domains/evolution/index.js";
-import { printError, printOk } from "./shared.js";
+import { printError, printOk } from "./argv.js";
 
 const HELP = `pancode dev evolve manifest init
 pancode dev evolve manifest validate <path>

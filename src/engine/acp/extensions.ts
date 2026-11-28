@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
+
+import { boundedText } from "./server-bounds.js";
 import type { AcpExtensionReloadOutcome, AcpInstalledExtension } from "./types-views.js";
 
 export {
@@ -41,27 +43,15 @@ export interface AcpExtensionsControl {
 /** Plugin resources reloaded, as the PluginsReloaded event reports them. Throws when the reload fails. */
 export type AcpHubReload = () => { generation: number; previousGeneration: number; changed: boolean };
 
-function bounded(text: string): string {
-	let safe = "";
-	for (const character of text) {
-		const code = character.codePointAt(0) ?? 0;
-		safe += code <= 0x1f || code === 0x7f ? " " : character;
-	}
-	if (Buffer.byteLength(safe, "utf8") <= MAX_TEXT_BYTES) return safe;
-	let cut = safe.slice(0, MAX_TEXT_BYTES);
-	while (Buffer.byteLength(cut, "utf8") > MAX_TEXT_BYTES - 3) cut = cut.slice(0, -1);
-	return `${cut}…`;
-}
-
 export function projectExtensions(list: ReadonlyArray<AcpInstalledExtension>) {
 	return {
 		version: 1 as const,
 		extensions: list.slice(0, MAX_EXTENSIONS).map((extension) => ({
-			id: bounded(extension.id),
-			name: bounded(extension.name),
-			version: bounded(extension.version),
-			description: bounded(extension.description),
-			scope: bounded(extension.scope),
+			id: boundedText(extension.id, MAX_TEXT_BYTES),
+			name: boundedText(extension.name, MAX_TEXT_BYTES),
+			version: boundedText(extension.version, MAX_TEXT_BYTES),
+			description: boundedText(extension.description, MAX_TEXT_BYTES),
+			scope: boundedText(extension.scope, MAX_TEXT_BYTES),
 			// The overlay's one state word, in the same precedence.
 			state: !extension.valid
 				? ("invalid" as const)
@@ -72,19 +62,28 @@ export function projectExtensions(list: ReadonlyArray<AcpInstalledExtension>) {
 						: extension.loadable
 							? ("eligible" as const)
 							: ("shadowed" as const),
-			...(extension.overriddenBy !== undefined ? { overriddenBy: bounded(extension.overriddenBy) } : {}),
+			...(extension.overriddenBy !== undefined
+				? { overriddenBy: boundedText(extension.overriddenBy, MAX_TEXT_BYTES) }
+				: {}),
 			runtime: extension.runtimeV2 !== undefined,
 			problems: extension.diagnostics.length,
-			diagnostics: extension.diagnostics.slice(0, MAX_DIAGNOSTICS).map((entry) => bounded(entry.message)),
+			diagnostics: extension.diagnostics
+				.slice(0, MAX_DIAGNOSTICS)
+				.map((entry) => boundedText(entry.message, MAX_TEXT_BYTES)),
 		})),
 		truncated: list.length > MAX_EXTENSIONS,
 	};
 }
 
 export function projectExtensionReload(outcome: AcpExtensionReloadOutcome) {
-	const lines = outcome.lines.slice(0, MAX_LINES).map(bounded);
+	const lines = outcome.lines.slice(0, MAX_LINES).map((text) => boundedText(text, MAX_TEXT_BYTES));
 	if (outcome.status !== "committed") {
-		return { status: "rejected" as const, reason: bounded(outcome.reason), generation: outcome.generation, lines };
+		return {
+			status: "rejected" as const,
+			reason: boundedText(outcome.reason, MAX_TEXT_BYTES),
+			generation: outcome.generation,
+			lines,
+		};
 	}
 	return {
 		status: "committed" as const,

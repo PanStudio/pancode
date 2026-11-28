@@ -31,6 +31,19 @@ function sliceToBytes(value: string, maxBytes: number): string {
 	return buffer.toString("utf8", 0, written);
 }
 
+/** Display text for the wire: control characters become spaces, then the result is cut to `maxBytes` with an ellipsis. */
+export function boundedText(text: string, maxBytes: number): string {
+	let safe = "";
+	for (const character of text) {
+		const code = character.codePointAt(0) ?? 0;
+		safe += code <= 0x1f || code === 0x7f ? " " : character;
+	}
+	if (Buffer.byteLength(safe, "utf8") <= maxBytes) return safe;
+	let cut = safe.slice(0, maxBytes);
+	while (Buffer.byteLength(cut, "utf8") > maxBytes - 3) cut = cut.slice(0, -1);
+	return `${cut}…`;
+}
+
 /** Bounds one string to `maxBytes` UTF-8 bytes, marker included in the budget. */
 export function boundString(value: string, maxBytes: number): string {
 	if (Buffer.byteLength(value, "utf8") <= maxBytes) return value;

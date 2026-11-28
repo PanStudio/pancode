@@ -15,7 +15,6 @@ export {
 export type { StatusController, StatusControllerDeps } from "./controller.js";
 export { createStatusController } from "./controller.js";
 export {
-	formatReasoningChip,
 	type ReasoningProvenance,
 	type ReasoningUsageView,
 	reasoningFromQuantity,

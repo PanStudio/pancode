@@ -5,8 +5,8 @@
  *
  * Pure ledger logic: which entries a replay works from, and the agent messages
  * they become. Nothing here renders, so the turn engine can import it without
- * reaching the terminal renderers; `chat-renderer.ts` re-exports the public
- * names and shares the entry-decoding helpers.
+ * reaching the terminal renderers; `chat-renderer.ts` shares the entry-decoding
+ * helpers.
  */
 
 import { createHostPolicyMessage } from "../core/host-policy-message.js";
@@ -502,7 +502,7 @@ function firstContentBlock(payload: unknown, type: string): Record<string, unkno
 	return null;
 }
 
-export interface ReplayToolCall {
+interface ReplayToolCall {
 	id: string;
 	name: string;
 	args: unknown;
@@ -851,7 +851,7 @@ export interface ReplayRender {
  * render places inserts with it, so the two cannot disagree: a failed assistant and the synthetic terminal-tool row
  * render nothing and are never anchors.
  */
-export function rowRenders(entry: SessionEntry): boolean {
+function rowRenders(entry: SessionEntry): boolean {
 	switch (entry.kind) {
 		case "message":
 			if (entry.role === "assistant")

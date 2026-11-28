@@ -23,7 +23,7 @@ export function formatSize(bytes: number): string {
 }
 
 /** A call's arguments as a subject rule reads them: always an object. */
-export type SubjectArgs = Readonly<Record<string, unknown>>;
+type SubjectArgs = Readonly<Record<string, unknown>>;
 
 /** What the surface knows beyond the arguments. */
 export interface SubjectContext {

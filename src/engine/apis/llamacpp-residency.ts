@@ -24,7 +24,7 @@ import type { ResidentModelInfo } from "./resident-models.js";
  * states are never managed.
  */
 
-export interface LlamaCppResidencyInput {
+interface LlamaCppResidencyInput {
 	/** OpenAI-compatible base URL, e.g. http://host:8080/v1. */
 	baseUrl: string;
 	targetId: string;

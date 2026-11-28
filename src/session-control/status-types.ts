@@ -85,7 +85,7 @@ export interface ToolOverlay {
 	judging?: boolean | undefined;
 }
 
-export interface DispatchOverlay {
+interface DispatchOverlay {
 	agentName: string;
 }
 

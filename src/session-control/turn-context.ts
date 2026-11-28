@@ -62,6 +62,7 @@ import type {
 import type { CallSettled } from "../core/telemetry/schemas.js";
 import type { ToolName } from "../core/tool-names.js";
 import type { TurnConstraints } from "../core/turn-constraints.js";
+import { asRecord } from "../core/type-guards.js";
 import type { NotificationLevel } from "../core/views/notice-words.js";
 import type { BudgetInspection } from "../domains/context/budget/inspection.js";
 import {
@@ -148,13 +149,7 @@ import type {
 } from "../engine/types.js";
 import type { AutonomyLevel } from "../lib/autonomy/autonomy.js";
 import type { ToolRegistry } from "../tools/registry-contract.js";
-import {
-	backendCacheVerdict,
-	extractUserText,
-	recordValue,
-	sumRunUsage,
-	toolSignatureFromState,
-} from "./chat-loop-messages.js";
+import { backendCacheVerdict, extractUserText, sumRunUsage, toolSignatureFromState } from "./chat-loop-messages.js";
 import { codexEffortGeneration, codexEffortUpdates } from "./codex-effort.js";
 import { coldCacheNoticeText } from "./cold-reasons.js";
 import type { HostInserts } from "./host-inserts.js";
@@ -3213,9 +3208,7 @@ export function createTurnContext(deps: TurnContextDeps): TurnContext {
 			);
 			// #423: named provider misses outrank host attribution; pending diagnostics preserve no-break.
 			const messageStart = anthropicResponse?.messageStart;
-			const miss = recordValue(
-				recordValue(messageStart?.diagnostics)?.cache_miss_reason ?? messageStart?.cache_miss_reason,
-			);
+			const miss = asRecord(asRecord(messageStart?.diagnostics)?.cache_miss_reason ?? messageStart?.cache_miss_reason);
 			if (typeof miss?.type === "string") {
 				observation.providerDiagnostic = {
 					provider: "anthropic",
@@ -3236,7 +3229,7 @@ export function createTurnContext(deps: TurnContextDeps): TurnContext {
 				}
 			} else if (Array.isArray(messageStart?.input_transformations) && messageStart.input_transformations.length > 0) {
 				const types = messageStart.input_transformations.flatMap((value) => {
-					const transformation = recordValue(value);
+					const transformation = asRecord(value);
 					return typeof transformation?.type === "string" ? [transformation.type] : [];
 				});
 				observation.providerDiagnostic = { provider: "anthropic", type: `input_transformations:${types.join(",")}` };

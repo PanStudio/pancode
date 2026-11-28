@@ -9,10 +9,10 @@
 
 import type { PermissionRequestedPayload, SafetyBlockedPayload } from "../core/telemetry/live-events.js";
 import { actionClassWords, safetyNetRailText } from "../core/views/approval-words.js";
+import { askAxis } from "../domains/safety/approval-axis.js";
 import type { SafetyDecision } from "../domains/safety/contract.js";
 import { describeBudgetBlock, readBudgetBlock } from "../domains/scheduling/budget.js";
 import type { NoticeSource } from "../session-control/notice-source.js";
-import { askAxis } from "./permission-overlay.js";
 
 export interface BusNotice {
 	level: "warn" | "error";

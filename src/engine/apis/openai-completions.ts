@@ -52,6 +52,7 @@ import { modelAdmissionReporter } from "../model-admission.js";
 import { captureErrorBody, restoreTruncatedErrorBody } from "../provider-error-body.js";
 import { deferResponseDeadline } from "../response-deadline.js";
 import { createSentinelStripper, stripTokenizerSentinels } from "../strip-tokenizer-sentinels.js";
+import { zeroUsage } from "../types.js";
 import { createDegradedInferenceStream, type WatchDegradedInferenceOptions } from "./degraded-inference.js";
 import {
 	applyDiffusionFrame,
@@ -92,8 +93,6 @@ declare module "@earendil-works/pi-ai" {
 }
 
 const piOpenAICompletions = openAICompletionsApi();
-
-export { estimateInputTokensFromContext, remainingContextMaxTokens } from "./output-budget.js";
 
 interface PancodeRuntimeMetadata {
 	pancode?: {
@@ -881,14 +880,7 @@ function emptyErrorMessage(model: Model<Api>, message: string): AssistantMessage
 		api: model.api,
 		provider: model.provider,
 		model: model.id,
-		usage: {
-			input: 0,
-			output: 0,
-			cacheRead: 0,
-			cacheWrite: 0,
-			totalTokens: 0,
-			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
-		},
+		usage: zeroUsage(),
 		stopReason: "error",
 		errorMessage: message,
 		timestamp: Date.now(),

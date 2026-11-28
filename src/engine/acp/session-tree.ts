@@ -3,7 +3,6 @@
 import type { AcpSessionTree } from "./types-session.js";
 
 export { ACP_SESSION_FORK_METHOD, ACP_SESSION_SWITCH_TURN_METHOD, ACP_SESSION_TREE_METHOD } from "./types.js";
-export type { AcpSessionTree, AcpTreeNodeKind } from "./types-session.js";
 
 /**
  * `_pancode/session/tree`: the terminal's /tree navigator as one bounded

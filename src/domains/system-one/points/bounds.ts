@@ -43,8 +43,3 @@ export function probability(answer: Answer | undefined): number | null {
 	if (answer === undefined || answer.type !== "noul" || answer.noul === undefined) return null;
 	return Number.isFinite(answer.noul) && answer.noul >= 0 && answer.noul <= 1 ? answer.noul : null;
 }
-
-/** Two decimals, the precision the ledger keeps. */
-export function round2(value: number): number {
-	return Math.round(value * 100) / 100;
-}

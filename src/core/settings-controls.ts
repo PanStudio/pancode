@@ -513,6 +513,8 @@ const MENU_ROWS = new Set([
 	"safety.egress.workers.mode",
 	"safety.scratchRoots",
 	"safety.sandboxCacheMaxGiB",
+	"safety.homeReads.main",
+	"safety.homeReads.workers",
 	"safety.snapshots",
 	"safety.unattendedAfterSeconds",
 	"safety.yoloConfinement",
@@ -556,6 +558,8 @@ const CHOICES: Record<string, readonly string[]> = {
 	"safety.egress.main.mode": ["proxied", "off", "open"],
 	"safety.egress.workers.mode": ["off", "proxied", "open"],
 	"safety.sandboxUnixSockets": ["block", "owned", "allow"],
+	"safety.homeReads.main": ["open", "listed"],
+	"safety.homeReads.workers": ["open", "listed"],
 	"safety.snapshots": ["auto", "off"],
 	"chat.thinkingLevel": THINKING_LEVELS,
 	"fleet.default.thinkingLevel": THINKING_LEVELS,
@@ -816,6 +820,22 @@ const EXTRA_HELP: Record<string, [string, string]> = {
 	"safety.sandboxCacheMaxGiB": [
 		"Sandbox cache cap (GiB)",
 		"Size the sandbox's own tool cache (npm, pnpm, pip, uv and Playwright downloads of your sandboxed commands) may reach. Once a day at startup, and on pancode doctor --fix, the least recently used tool folders are removed until it fits, never while a running session may use them. 0 is no cap. User settings only.",
+	],
+	"safety.homeReads.main": [
+		"Session shell home reads",
+		"What your session's sandboxed commands may read under your home. open reads it all, apart from the hidden credentials. listed hides your home, and on WSL2 the Windows drives, except the workspace, scratch roots, PanCode's own files and the roots and toolchains listed below. ~/.gitconfig stays hidden unless listed, so git has no identity unless the repository sets one; ~/.ssh stays hidden in every mode. A project layer may only set listed.",
+	],
+	"safety.homeReads.workers": [
+		"Worker shell home reads",
+		"What dispatched workers' sandboxed commands may read under the home of the host they run on. open reads it all, apart from the hidden credentials; listed shows only the run's own roots, PanCode's own files and the roots and toolchains listed below. A project layer may only set listed.",
+	],
+	"safety.homeReads.roots": [
+		"Home read roots",
+		"Absolute paths, or paths starting with ~/ in the running host's home, that listed home reads show back read-only, such as ~/src/myproject or ~/.gitconfig. Not your home itself or a directory above it. User settings only.",
+	],
+	"safety.homeReads.toolchains": [
+		"Home read toolchains",
+		"Toolchain installs in your home that listed home reads show back read-only, each a fixed set of paths: nvm (~/.nvm), pyenv (~/.pyenv), rustup (~/.rustup and the proxies in ~/.cargo), cargo (~/.cargo), go (~/go, ~/.config/go), uv (~/.local/share/uv, ~/.config/uv, ~/.local/bin/uv and uvx). User settings only.",
 	],
 	"interface.demo": [
 		"Demo presentation and guidance",

@@ -19,7 +19,7 @@ export const COMPLETION_LIMITATION_REASONS = [
 	"tool_unavailable",
 	"other",
 ] as const;
-export type CompletionLimitationReason = (typeof COMPLETION_LIMITATION_REASONS)[number];
+type CompletionLimitationReason = (typeof COMPLETION_LIMITATION_REASONS)[number];
 
 export interface CompletionDeclaration {
 	state: CompletionState;
