@@ -179,7 +179,7 @@ export function scratchRootFindings(workspaceRoot: string): DoctorFinding[] {
  * The host's OS sandbox as `pancode version --sandbox` reports it: the setting, the backend found, the seccomp
  * baseline and what the main shell and a local worker do with them, each on its own.
  */
-export function sandboxStatusFinding(): DoctorFinding {
+function sandboxStatusFinding(): DoctorFinding {
 	let safety = DEFAULT_SETTINGS.safety;
 	try {
 		safety = readSettings().safety;

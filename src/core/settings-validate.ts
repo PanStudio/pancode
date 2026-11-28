@@ -84,6 +84,14 @@ const TOP_LEVEL_KEYS = [
 	"store",
 ] as const;
 
+function readSandboxBooleans(issues: Issues, safety: Record<string, unknown>, target: PancodeSettings["safety"]): void {
+	for (const key of ["sandboxNetwork", "sandboxUnconfinedLocalWorkers"] as const) {
+		if (!(key in safety)) continue;
+		const parsed = expectBoolean(issues, `safety.${key}`, safety[key]);
+		if (parsed !== undefined) target[key] = parsed;
+	}
+}
+
 export interface SettingsValidationResult {
 	settings: PancodeSettings;
 	issues: SettingsIssue[];
@@ -969,10 +977,7 @@ export function validateSettings(raw: unknown): SettingsValidationResult {
 				const parsed = expectEnum(issues, "safety.sandbox", safety.sandbox, SANDBOX_MODES);
 				if (parsed !== undefined) settings.safety.sandbox = parsed;
 			}
-			if ("sandboxNetwork" in safety) {
-				const parsed = expectBoolean(issues, "safety.sandboxNetwork", safety.sandboxNetwork);
-				if (parsed !== undefined) settings.safety.sandboxNetwork = parsed;
-			}
+			readSandboxBooleans(issues, safety, settings.safety);
 			if ("snapshots" in safety) {
 				const parsed = expectEnum(issues, "safety.snapshots", safety.snapshots, WORKSPACE_SNAPSHOT_MODES);
 				if (parsed !== undefined) settings.safety.snapshots = parsed;
@@ -1030,10 +1035,6 @@ export function validateSettings(raw: unknown): SettingsValidationResult {
 			if ("sandboxUnixSockets" in safety) {
 				const parsed = expectEnum(issues, "safety.sandboxUnixSockets", safety.sandboxUnixSockets, UNIX_SOCKET_MODES);
 				if (parsed !== undefined) settings.safety.sandboxUnixSockets = parsed;
-			}
-			if ("sandboxUnconfinedLocalWorkers" in safety) {
-				const parsed = expectBoolean(issues, "safety.sandboxUnconfinedLocalWorkers", safety.sandboxUnconfinedLocalWorkers);
-				if (parsed !== undefined) settings.safety.sandboxUnconfinedLocalWorkers = parsed;
 			}
 			if ("sandboxCacheMaxGiB" in safety) {
 				const parsed = expectNumber(issues, "safety.sandboxCacheMaxGiB", safety.sandboxCacheMaxGiB, { min: 0 });

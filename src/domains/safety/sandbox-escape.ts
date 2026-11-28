@@ -17,37 +17,6 @@ export const SANDBOX_ESCAPE_RULE_ID = "sandbox-escape";
 export const SANDBOX_ESCAPE_REASON =
 	"unsandboxed: true leaves the main-session sandbox, so the command runs as the operator with the operator's credentials and files; it runs only when the operator approves it on this card or chose a session option that covers it";
 
-/** The argument a call that sets `unsandboxed: true` states its reason in; the operator reads it on the approval card. */
-export const UNSANDBOXED_REASON_ARG = "unsandboxed_reason";
-
-/** Reason code of the refusal of `unsandboxed: true` with no stated reason, before any review. */
-export const UNSANDBOXED_REASON_REQUIRED_CODE = "sandbox-escape-reason-required";
-
-const UNSANDBOXED_REASON_MAX_CHARS = 400;
-
-export const UNSANDBOXED_REASON_DESCRIPTION =
-	"Required with unsandboxed: true: one sentence on what the sandbox blocked and why the command needs to run outside it. The operator reads it on the approval card.";
-
-/** The agent's stated reason for leaving the sandbox, trimmed and bounded, or null when the call states none. */
-export function unsandboxedReason(args: Readonly<Record<string, unknown>> | undefined): string | null {
-	const raw = args?.[UNSANDBOXED_REASON_ARG];
-	if (typeof raw !== "string") return null;
-	const chars = Array.from(raw.replace(/\s+/gu, " ").trim());
-	if (chars.length === 0) return null;
-	return chars.length > UNSANDBOXED_REASON_MAX_CHARS
-		? `${chars.slice(0, UNSANDBOXED_REASON_MAX_CHARS - 1).join("")}…`
-		: chars.join("");
-}
-
-/**
- * Why a call that sets `unsandboxed: true` is refused before any review: it states no reason the operator could
- * weigh. Null when the call stays in the sandbox or states one.
- */
-export function missingUnsandboxedReason(tool: string, args: Readonly<Record<string, unknown>> | undefined): string | null {
-	if (args?.unsandboxed !== true || unsandboxedReason(args) !== null) return null;
-	return `${tool}: unsandboxed: true needs ${UNSANDBOXED_REASON_ARG}, one sentence on what the sandbox blocked and why the command must run outside it; the operator reads it on the approval card before approving the escape. The call did not run and was not reviewed.`;
-}
-
 /**
  * True when the ask would run a command outside the main-session sandbox,
  * whether the escape is the rule that asked or a reason joined to another ask.
@@ -101,22 +70,10 @@ export function askApproves(asked: AskedApproval): boolean {
 }
 
 /**
- * True when an answered ask_user round approves leaving the sandbox: the question itself names
- * leaving it and every option the operator chose is affirmative. The question and the labels are the
- * agent's text, so the round is context the safety judge reads, never consent: an escape still runs
- * only on the operator's approval card or a session option they chose.
- */
-export function askApprovesSandboxEscape(asked: AskedApproval): boolean {
-	return askApproves(asked) && LEAVES_SANDBOX.test(asked.question);
-}
-
-/**
  * The outside-workspace paths a shell call writes or deletes, or a write or
  * edit call changes, when the operator's own text names every one of them;
  * otherwise empty. A call whose targets cannot be read, or that touches nothing
- * outside the workspace, names nothing. Naming a path is not consent to leave
- * the sandbox, so for an escape the judge uses this only to hand the call to the
- * operator instead of a block; for any call it tells the judge the path is the operator's.
+ * outside the workspace, names nothing. It tells the judge the path is the operator's.
  */
 export function operatorNamedOutsideTargets(
 	call: { tool: string; args: Readonly<Record<string, unknown>> | undefined },

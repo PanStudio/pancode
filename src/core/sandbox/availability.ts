@@ -95,13 +95,9 @@ export function wslKind(osrelease?: string): "wsl1" | "wsl2" | null {
 /**
  * Run the probe directly rather than through safe-exec: safe-exec is the seam
  * that consults this module, and the probe is a fixed argv with no model
- * input and a hard timeout. Null when it succeeded, else why it failed.
+ * input and a hard timeout. A timed-out probe says nothing about the host, so
+ * callers must not cache it.
  */
-export function probeSandboxInvocation(invocation: SandboxInvocation, input?: Buffer): string | null {
-	return probe(invocation, input).failure;
-}
-
-/** A timed-out probe says nothing about the host, so callers must not cache it. */
 function probe(invocation: SandboxInvocation, input?: Buffer): { failure: string | null; timedOut: boolean } {
 	const result = spawnSync(invocation.file, invocation.args, {
 		stdio: [input === undefined ? "ignore" : "pipe", "ignore", "pipe"],

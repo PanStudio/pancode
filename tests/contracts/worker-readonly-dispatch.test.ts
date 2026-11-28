@@ -313,6 +313,29 @@ test("a worker refuses a permit or tool surface edited after the host sealed it"
 	throws(() => parseWorkerSpec(outside), /WorkerSpec\.envelope tools exceed the permit ceiling: dispatch/u);
 });
 
+test("a worker accepts unconfined commands only as admission sealed them: in the envelope, with no backend, under auto", async () => {
+	const sealed = await sealedCoderSpec("pancode-unconfined-seal-");
+	ok(sealed.sandbox);
+	const policyOnly = structuredClone(sealed);
+	ok(policyOnly.sandbox);
+	policyOnly.sandbox.unconfined = true;
+	throws(() => parseWorkerSpec(policyOnly), /WorkerSpec\.sandbox\.unconfined disagrees with the envelope/u);
+	const required = structuredClone(policyOnly);
+	ok(required.sandbox);
+	required.sandbox.mode = "required";
+	throws(
+		() => parseWorkerSpec(required),
+		/WorkerSpec\.sandbox\.unconfined must be true when present and only under mode auto/u,
+	);
+	const backed = structuredClone(sealed);
+	backed.envelope = { ...backed.envelope, sandbox: { ...backed.envelope.sandbox, backend: "bwrap", unconfined: true } };
+	resealEnvelope(backed);
+	throws(
+		() => parseWorkerSpec(backed),
+		/WorkerSpec\.envelope\.sandbox\.unconfined must be true and only with no backend/u,
+	);
+});
+
 test("a scout handed a batch's write roots seals a read-only permit its worker accepts", async () => {
 	const env = await isolatePancodeEnv("pancode-readonly-batch-roots-");
 	let captured: WorkerSpec | undefined;

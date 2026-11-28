@@ -100,7 +100,7 @@ import { createDropAlerts } from "./telemetry-drops.js";
 import { ACTIVITY_STEP_MS } from "./theme/glyphs.js";
 import { animationStep, GLYPH } from "./theme/index.js";
 import { modelNickname } from "./theme/labels.js";
-import type { WelcomeDashboardComponent } from "./welcome-dashboard.js";
+import type { WelcomeDashboardComponent, WelcomeShellSandbox } from "./welcome-dashboard.js";
 import { createWelcomeDashboard } from "./welcome-dashboard.js";
 import { bindWorkerResponseLimit } from "./worker-activity.js";
 import type { WorkspaceFacts } from "./workspace-facts.js";
@@ -357,6 +357,17 @@ function willEnterSteerActiveWork(deps: InteractivePresentationDeps, text: strin
 	return parseSlashCommand(trimmed).kind === "unknown";
 }
 
+/** The welcome's shell sandbox once the probe has landed; null before it, so the render path never probes. */
+function welcomeShellSandbox(safety: Readonly<PancodeSettings>["safety"]): WelcomeShellSandbox | null {
+	const known = probedSandboxAvailability();
+	if (known === null) return null;
+	return {
+		outcome: sandboxOutcome(safety.sandbox, known),
+		main: safety.sandbox === "off" ? "off" : mainShellContained(safety.sandbox, known) ? "contained" : "rails",
+		yolo: yoloShellState(effectiveYoloConfinement(safety), safety.sandbox, known),
+	};
+}
+
 /**
  * Construct the terminal-independent presentation graph around an injected
  * TUI. The composition root retains process/session ownership; this unit owns
@@ -471,17 +482,7 @@ export function createInteractivePresentation(deps: InteractivePresentationDeps)
 		// Subscription usage is read lazily off the render path and cached, so the
 		// banner reads a string and never awaits a provider.
 		getQuotaSummary: () => quotaSummary.peek(),
-		getShellSandbox: () => {
-			const safety = (deps.getSettings?.() ?? settings).safety;
-			const known = probedSandboxAvailability();
-			if (known === null) return null;
-			const contained = mainShellContained(safety.sandbox, known);
-			return {
-				outcome: sandboxOutcome(safety.sandbox, known),
-				main: safety.sandbox === "off" ? "off" : contained ? "contained" : "rails",
-				yolo: yoloShellState(effectiveYoloConfinement(safety), safety.sandbox, known),
-			};
-		},
+		getShellSandbox: () => welcomeShellSandbox((deps.getSettings?.() ?? settings).safety),
 		...(deps.getProjectConfigReminder ? { getProjectConfigReminder: deps.getProjectConfigReminder } : {}),
 		...(deps.getSettings ? { getSettings: deps.getSettings } : {}),
 		// The launchpad's `last here` fact; session history loads lazily, off the Stage 0 closure.

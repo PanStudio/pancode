@@ -371,7 +371,7 @@ test("under bwrap editor and agent startup files stay read-only, present or abse
 		"echo 'eval evil' > .envrc 2>/dev/null || echo envrc-refused",
 		"echo '{}' > .mcp.json 2>/dev/null || echo mcp-refused",
 		"mv .gitmodules gm 2>/dev/null || echo gitmodules-pinned",
-		"test -z \"$(git status --porcelain)\" && echo git-clean",
+		'test -z "$(git status --porcelain)" && echo git-clean',
 		"echo ok > ordinary.txt && echo ordinary-written",
 	].join("; ");
 	const plan = planMainSandboxSpawn(policy, { argv: ["/bin/bash", "-c", script] }, workspace, availability);

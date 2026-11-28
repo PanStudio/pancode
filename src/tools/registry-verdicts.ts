@@ -92,12 +92,9 @@ export function escapeScopeAskHint(scope: EscapeScope): string {
 	return `To run it, ask the operator with ask_user in one question that names running it outside the sandbox. PanCode adds the option "${escapeScopeOptionLabel(scope)}" to that question; choosing it lets unsandboxed reruns of those same unchanged script files, from the same cwd with the same env, run this session without asking, so rerun the call after they choose it. Do not write that option yourself. Otherwise continue with work that does not need it and name it in your report as left for the operator.`;
 }
 
-/** What a judge-blocked escape with a session option on offer says about retrying, before the option's hint. */
-export const ESCAPE_SCOPE_WAIT = "Until the operator answers, do not retry this call or a reworded form of it.";
-
 /** Why a refused sandbox escape gets no session option, and what can still let it run. */
 export function escapeNoScopeLine(why: string): string {
-	return `PanCode offers no session option for this call because ${why}; it runs only when an operator message, or an ask_user question the operator approves, names running it outside the sandbox.`;
+	return `PanCode offers no session option for this call because ${why}; it runs only when the operator approves it on an approval card, which this run cannot show; continue with work that does not need it and name it in your report as left for the operator.`;
 }
 
 /** The ask a granted escape scope answered, as the allow that runs it. */

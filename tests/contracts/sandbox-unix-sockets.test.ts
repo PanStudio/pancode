@@ -2,18 +2,28 @@
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import assert from "node:assert/strict";
 import { execFile, spawnSync } from "node:child_process";
-import { lstatSync, mkdirSync, mkdtempSync, realpathSync, renameSync, writeFileSync } from "node:fs";
+import {
+	chmodSync,
+	existsSync,
+	lstatSync,
+	mkdirSync,
+	mkdtempSync,
+	realpathSync,
+	renameSync,
+	writeFileSync,
+} from "node:fs";
 import { createServer, type Server } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { type TestContext, test } from "node:test";
 import type { ExtensionRuntimeDeclarationV2 } from "@pancode/sdk/pack";
 import { readSettings } from "../../src/core/config.js";
-import { sandboxAvailability } from "../../src/core/sandbox/availability.js";
+import { sandboxAvailability, untrustedBwrapReason, wslKind } from "../../src/core/sandbox/availability.js";
 import { buildBwrapInvocation } from "../../src/core/sandbox/bwrap.js";
 import { mainSandboxPolicy, planMainSandboxSpawn } from "../../src/core/sandbox/main-session.js";
 import { buildSeatbeltInvocation } from "../../src/core/sandbox/seatbelt.js";
 import { sandboxFilterProgram } from "../../src/core/sandbox/seccomp.js";
+import { sandboxStatus, sandboxStatusLine } from "../../src/core/sandbox/status.js";
 import { WORKER_SANDBOX_SPEC_VERSION, type WorkerSandboxSpec } from "../../src/core/sandbox/types.js";
 import { sandboxLaunchFilters } from "../../src/core/sandbox/unix-sockets.js";
 import { resolveWorkerSandboxSpec } from "../../src/core/sandbox/worker-policy.js";
@@ -164,6 +174,90 @@ test("the seccomp program holds the baseline on every covered ABI and adds the u
 		assert.equal(run(insns, arch, nr, arg0), underBlock, `${name} under block`);
 		assert.equal(run(base, arch, nr, arg0), baselineOnly, `${name} under owned or allow`);
 	}
+});
+
+test("a bwrap the operator's uid could replace is not trusted; a root-owned one outside writable roots is", (t) => {
+	const dir = mkdtempSync(join(tmpdir(), "bwrap-trust-"));
+	const fake = join(dir, "bwrap");
+	writeFileSync(fake, "#!/bin/sh\nexit 0\n");
+	chmodSync(fake, 0o755);
+	assert.match(untrustedBwrapReason(fake) ?? "", /owned by uid \d+, not root/u);
+	assert.match(untrustedBwrapReason(join(dir, "absent")) ?? "", /cannot be resolved/u);
+	if (!existsSync("/usr/bin/bwrap")) return t.skip("no /usr/bin/bwrap on this host");
+	assert.equal(untrustedBwrapReason("/usr/bin/bwrap"), null);
+	assert.equal(untrustedBwrapReason("/usr/bin/bwrap", 0), null);
+});
+
+test("WSL1 has no sandbox and names the fix; a WSL2 or plain kernel is probed as usual", () => {
+	assert.equal(wslKind("4.4.0-19041-Microsoft"), "wsl1");
+	assert.equal(wslKind("5.15.167.4-microsoft-standard-WSL2"), "wsl2");
+	assert.equal(wslKind("6.8.0-45-generic"), null);
+	const wsl1 = sandboxAvailability("linux", { PATH: "/usr/bin" }, "4.4.0-19041-Microsoft");
+	assert.equal(wsl1.available, false);
+	assert.match(wsl1.reason ?? "", /WSL1 is unsupported.*convert the distribution to WSL2/u);
+});
+
+test("the sandbox status says what the main shell and a local worker get for each setting and probe", () => {
+	const full = { available: true, backend: "bwrap" as const, executable: "/usr/bin/bwrap", reason: null };
+	const partial = { ...full, degraded: "bubblewrap did not load the seccomp filter: EINVAL" };
+	const lost = {
+		available: false,
+		backend: null,
+		executable: null,
+		reason: "pivot_root: EPERM",
+		found: "/usr/bin/bwrap",
+	};
+	const missing = { available: false, backend: null, executable: null, reason: "bubblewrap (bwrap) is not installed" };
+	const status = (
+		setting: "auto" | "required" | "off",
+		availability: Parameters<typeof sandboxStatus>[0]["availability"],
+		more: Partial<Parameters<typeof sandboxStatus>[0]> = {},
+	) =>
+		sandboxStatus({
+			setting,
+			availability,
+			networkIsolation: null,
+			unixSockets: "block",
+			wsl: null,
+			unconfinedLocalWorkers: false,
+			workerNetwork: false,
+			...more,
+		});
+	const pick = (s: ReturnType<typeof sandboxStatus>) => [s.outcome, s.seccomp, s.main, s.localWorker];
+	assert.deepEqual(pick(status("auto", full)), ["available", "loaded", "contained", "contained"]);
+	assert.deepEqual(pick(status("auto", partial)), ["partial", "degraded", "contained", "contained"]);
+	assert.deepEqual(pick(status("required", partial)), ["partial", "degraded", "rails", "refused"]);
+	assert.deepEqual(pick(status("auto", lost)), ["lost", "none", "rails", "refused"]);
+	assert.deepEqual(pick(status("auto", missing, { unconfinedLocalWorkers: true })), [
+		"missing",
+		"none",
+		"rails",
+		"unconfined",
+	]);
+	assert.deepEqual(pick(status("required", missing, { unconfinedLocalWorkers: true })), [
+		"missing",
+		"none",
+		"rails",
+		"refused",
+	]);
+	assert.deepEqual(pick(status("off", full)), ["off", "loaded", "off", "off"]);
+	// A worker command keeps no network unless safety.sandboxNetwork, so a bwrap that cannot isolate it refuses workers.
+	const netless = status("auto", full, { networkIsolation: "cannot unshare net" });
+	assert.deepEqual(pick(netless), ["available", "loaded", "contained", "refused"]);
+	assert.equal(status("auto", full, { networkIsolation: "x", workerNetwork: true }).localWorker, "contained");
+	assert.equal(status("auto", lost).executable, "/usr/bin/bwrap");
+	assert.match(
+		sandboxStatusLine(status("auto", lost)),
+		/backend lost: \/usr\/bin\/bwrap cannot build a sandbox here \(pivot_root: EPERM\)/u,
+	);
+	assert.match(
+		sandboxStatusLine(status("auto", partial, { wsl: "wsl2" })),
+		/partial: seccomp baseline not loaded \(.*EINVAL\); WSL2;/u,
+	);
+	assert.match(
+		sandboxStatusLine(status("auto", missing)),
+		/main shell not sandboxed \(approval rails only\); local native workers refused$/u,
+	);
 });
 
 test("the seatbelt temp-directory write grant keeps read-only paths protected", () => {
