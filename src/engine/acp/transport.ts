@@ -86,7 +86,7 @@ export interface AcpJsonRpcTransport {
 	forceTerminate(): Promise<AcpForceTerminationResult>;
 }
 
-export type AcpTerminationScope = "process-group" | "child";
+type AcpTerminationScope = "process-group" | "child";
 
 export interface AcpForceTerminationResult {
 	/** True only when the owned process scope and the direct child's stdio handles were observed closed. */
@@ -123,7 +123,7 @@ export interface AcpBootablePeerTransport extends AcpJsonRpcPeerTransport {
  * `{ diagnostic }` to hand its text, redacted and bounded, to the stderr
  * handlers instead of the parser.
  */
-export type AcpStdoutLineDisposition = string | null | { diagnostic: string } | { frame: Record<string, unknown> };
+type AcpStdoutLineDisposition = string | null | { diagnostic: string } | { frame: Record<string, unknown> };
 
 export interface StdioTransportOptions {
 	cwd?: string;
@@ -217,14 +217,14 @@ function redactedDiagnostic(text: string): string {
 }
 
 /** One shared bound on what a tool update keeps of its `content`, `rawInput` and `rawOutput`. */
-export interface AcpToolPayloadBudget {
+interface AcpToolPayloadBudget {
 	/** JSON values kept, containers and leaves alike, markers included. */
 	maxNodes: number;
 	/** UTF-16 code units across every string and record key kept, markers included. */
 	maxChars: number;
 }
 
-export const ACP_TOOL_PAYLOAD_BUDGET: AcpToolPayloadBudget = { maxNodes: 2_000, maxChars: 64 * 1024 };
+const ACP_TOOL_PAYLOAD_BUDGET: AcpToolPayloadBudget = { maxNodes: 2_000, maxChars: 64 * 1024 };
 
 const TOOL_PAYLOAD_FIELDS = ["content", "rawInput", "rawOutput"] as const;
 const FORMATTED_OUTPUT_KEYS = new Set(["formatted_output", "formattedOutput"]);
@@ -861,7 +861,7 @@ export function createStdioTransport(
 }
 
 /** ACP's protocol-level cancellation of one in-flight request. */
-export const ACP_CANCEL_REQUEST_METHOD = "$/cancel_request";
+const ACP_CANCEL_REQUEST_METHOD = "$/cancel_request";
 /** Methods ACP defines only as notifications: a request naming one is refused rather than run or booted for. */
 const NOTIFICATION_ONLY_METHODS: ReadonlySet<string> = new Set(["session/cancel", ACP_CANCEL_REQUEST_METHOD]);
 

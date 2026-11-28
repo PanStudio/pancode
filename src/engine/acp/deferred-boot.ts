@@ -7,7 +7,7 @@ import { AcpRequestError } from "./errors.js";
 import type { AcpHandshake } from "./server-options.js";
 import type { AcpBootablePeerTransport } from "./transport.js";
 
-export interface DeferredAcpOptions {
+interface DeferredAcpOptions {
 	transport: AcpBootablePeerTransport;
 	handshake: AcpHandshake;
 	launchCwd: string;

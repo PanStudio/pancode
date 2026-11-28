@@ -4,7 +4,7 @@
 import type { EgressCallerSettings } from "../core/defaults.js";
 import type { ModelRunInfo } from "../core/model-tier.js";
 import type { MainSandboxPolicy, YoloScriptSandboxState } from "../core/sandbox/main-session.js";
-import type { SandboxEnvPolicy, UnixSocketMode } from "../core/sandbox/types.js";
+import type { HomeReadList, SandboxEnvPolicy, UnixSocketMode } from "../core/sandbox/types.js";
 import type { PendingSkillToolPolicy } from "../core/skill-activation.js";
 import type { ToolName } from "../core/tool-names.js";
 import type { TurnConstraints } from "../core/turn-constraints.js";
@@ -125,6 +125,8 @@ export interface RegistryDeps {
 	sandboxEnv?: () => SandboxEnvPolicy;
 	/** `safety.sandboxUnixSockets`, read per contained call. Absent blocks them. */
 	sandboxUnixSockets?: () => UnixSocketMode;
+	/** The main session's `listed` home reads, read per contained call. Undefined reads the whole home. */
+	sandboxHomeReads?: () => HomeReadList | undefined;
 	/**
 	 * `safety.egress.main` and `safety.egress.upstreamProxy`, read per contained
 	 * call: how the session's contained commands reach the network. Absent

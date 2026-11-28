@@ -1,10 +1,8 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
-import type { AcpIgnoredProjectSurface } from "./types-session.js";
-
-export type { AcpIgnoredProjectSurface } from "./types-session.js";
 
 import { ACP_SESSION_TRUST_METHOD, ACP_TRUST_META_KEY } from "./types.js";
+import type { AcpIgnoredProjectSurface } from "./types-session.js";
 
 export { ACP_TRUST_META_KEY } from "./types.js";
 

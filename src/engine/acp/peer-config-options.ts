@@ -9,7 +9,7 @@
 import { isRecord } from "../../core/type-guards.js";
 import { AcpError } from "./errors.js";
 
-export interface PeerSelectOption {
+interface PeerSelectOption {
 	id: string;
 	currentValue: string | null;
 	values: string[];
@@ -77,7 +77,7 @@ function effortSuffix(id: string, base: string): string | null {
 	return EFFORT_SUFFIXES.has(suffix.toLowerCase()) ? suffix : null;
 }
 
-export interface PeerModelRequest {
+interface PeerModelRequest {
 	model?: string;
 	thinkingLevel?: string;
 }

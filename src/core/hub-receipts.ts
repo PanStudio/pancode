@@ -12,8 +12,8 @@ import type { EventName } from "./telemetry/events.js";
 import { telemetryHub } from "./telemetry/hub.js";
 import { pancodeStateDir } from "./xdg.js";
 
-export type LifecycleActor = "operator" | "model-confirmed" | "upgrade";
-export type LifecycleOperation =
+type LifecycleActor = "operator" | "model-confirmed" | "upgrade";
+type LifecycleOperation =
 	| "install"
 	| "update"
 	| "enable"
@@ -28,7 +28,7 @@ export interface LifecycleContext {
 	actor?: LifecycleActor;
 	source?: string;
 }
-export interface LifecycleReceipt {
+interface LifecycleReceipt {
 	operationId: string;
 	operation: LifecycleOperation;
 	kind: string;
@@ -52,7 +52,7 @@ const LIFECYCLE_EVENTS = {
 	import: "hub.imported",
 	"share-import": "hub.share_imported",
 } as const satisfies Record<LifecycleOperation, EventName>;
-export const HUB_RECEIPT_LIMIT = 512;
+const HUB_RECEIPT_LIMIT = 512;
 const MAX_BYTES = 1024 * 1024;
 function receiptPath(): string {
 	return join(pancodeStateDir(), "hub-receipts.json");

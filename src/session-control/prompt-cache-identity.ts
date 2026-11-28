@@ -7,7 +7,7 @@ import type { ContextWindowSource } from "../domains/providers/index.js";
 import type { AutonomyLevel } from "../lib/autonomy/autonomy.js";
 
 /** The exact schema bytes pi attaches to a provider request for one tool. */
-export interface AttachedToolSchema {
+interface AttachedToolSchema {
 	name: string;
 	description: string;
 	parameters: unknown;

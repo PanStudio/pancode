@@ -11,7 +11,7 @@ import { startJsonlCliRun } from "./jsonl-runner.js";
 import { OPENCODE_CLI_CONNECTOR } from "./opencode.js";
 import { startPiCliWorkerRun } from "./pi.js";
 
-export interface ExternalCliConnector {
+interface ExternalCliConnector {
 	runtimeId: string;
 	start(input: WorkerRunInput, emit: WorkerEventEmit): WorkerRunHandle;
 }

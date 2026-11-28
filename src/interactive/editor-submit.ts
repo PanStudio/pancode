@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import type { runBashCommand } from "../core/bash-exec.js";
-import { combineBashOutput, combineLiveBashOutput } from "../core/bash-exec.js";
+import { combineLiveBashOutput } from "../core/bash-exec.js";
 import { type ExternalEditResult, editTextExternally, resolveExternalEditor } from "../core/external-editor.js";
+import { combineSafeOutput } from "../core/safe-exec.js";
 import type { PendingSkillRequest } from "../core/skill-activation.js";
 import type { TurnConstraints } from "../core/turn-constraints.js";
 import type { DispatchContract } from "../domains/dispatch/contract.js";
@@ -294,7 +295,7 @@ export function createEditorSubmitController(deps: EditorSubmitDeps): EditorSubm
 					execution.fullOutputPath = entry.fullOutputPath;
 					// The record is masked, so a credential it hides changes its size. Only a capped run has bytes the card cannot show.
 					execution.totalBytes = entry.truncated
-						? Math.max(execution.totalBytes ?? 0, Buffer.byteLength(combineBashOutput(result), "utf8"))
+						? Math.max(execution.totalBytes ?? 0, Buffer.byteLength(combineSafeOutput(result), "utf8"))
 						: Buffer.byteLength(entry.output, "utf8");
 				}
 				// `parentTurnId` was the leaf when the command started and stays the

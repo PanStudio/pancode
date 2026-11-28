@@ -3,7 +3,7 @@
 import { canonicalEndpointUrl } from "./endpoint-key.js";
 
 /** Runtime families whose model residency PanCode can actively mutate. */
-export type ResidencyRuntimeId = "llamacpp" | "lmstudio" | "ollama";
+type ResidencyRuntimeId = "llamacpp" | "lmstudio" | "ollama";
 
 const RESIDENCY_RUNTIME_IDS: ReadonlySet<string> = new Set<ResidencyRuntimeId>(["llamacpp", "lmstudio", "ollama"]);
 

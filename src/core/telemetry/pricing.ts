@@ -29,7 +29,7 @@ export function pricedUsd(pricedBy: PricedBy, usd: number | null, freeRule?: Fre
 }
 
 /** Who priced a route and, when free, by which rule: what a call's settlement needs to price it (#434). */
-export interface PricingBasis {
+interface PricingBasis {
 	pricedBy: Exclude<PricedBy, "provider">;
 	freeRule?: FreeRule;
 }

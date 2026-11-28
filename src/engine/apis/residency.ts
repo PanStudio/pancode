@@ -59,7 +59,7 @@ export type { RuntimeNoticeKind };
 
 // --- notice sink -----------------------------------------------------------
 
-export type ResidencyNoticeSink = (notice: ResidencyNotice) => void;
+type ResidencyNoticeSink = (notice: ResidencyNotice) => void;
 
 function busNoticeSink(notice: ResidencyNotice): void {
 	telemetryHub().emit("runtime.notice_raised", notice as DeclaredRuntimeNotice);
@@ -99,7 +99,7 @@ const noticeProducers = new Map<string, ReadonlySet<RuntimeNoticeKind>>();
  * error. A producer that owns an injected bus passes it; otherwise the notice
  * goes to the active sink.
  */
-export type RuntimeNoticeEmitter<K extends RuntimeNoticeKind> = (
+type RuntimeNoticeEmitter<K extends RuntimeNoticeKind> = (
 	notice: ResidencyNotice & { kind: K },
 	bus?: Pick<TelemetryHub, "emit">,
 ) => void;
@@ -148,7 +148,7 @@ export function emitResidencyMutation(mutation: Omit<ResidencyMutationPayload, "
 // live effective settings, and the worker entry from the protectedModels list
 // carried on its WorkerSpec, so every process protects the same set. A bare
 // string is accepted for an id whose role the caller does not know.
-export type ProtectedModelEntry = string | ProtectedModelRef;
+type ProtectedModelEntry = string | ProtectedModelRef;
 
 let protectedModelsProvider: (() => ReadonlyArray<ProtectedModelEntry>) | null = null;
 
@@ -266,7 +266,7 @@ export function reportPancodeModelLoad(load: PancodeModelLoad, targetKey: string
 }
 
 /** How to reach the server a worker loaded a model on, from the orchestrator's own settings. */
-export interface WorkerModelLoadEndpoint {
+interface WorkerModelLoadEndpoint {
 	runtimeId: string;
 	baseUrl: string;
 	headers: Record<string, string>;
@@ -392,7 +392,7 @@ export async function releaseModelsLoadedDuring<T>(task: () => Promise<T>, scope
 // --- TTL fast path ---------------------------------------------------------
 
 /** Skip the listResident round-trip for this long after a clean reconcile. */
-export const RECONCILE_TTL_MS = 60_000;
+const RECONCILE_TTL_MS = 60_000;
 const reconcileCache = new Map<string, { modelId: string; decision: "reconcile" | "observe"; at: number }>();
 
 // --- residency decision (pure) ----------------------------------------------
@@ -410,7 +410,7 @@ const reconcileCache = new Map<string, { modelId: string; decision: "reconcile" 
  *     PanCode's own unprotected stragglers are released, because PanCode pins them
  *     with keep_alive -1 and nothing else ever reclaims them.
  */
-export type ResidencyStrategy = "router" | "jit" | "scheduler";
+type ResidencyStrategy = "router" | "jit" | "scheduler";
 
 /**
  * Why a resident model may not be evicted, when it may not. `worker` marks a
@@ -418,9 +418,9 @@ export type ResidencyStrategy = "router" | "jit" | "scheduler";
  * dispatch may still use it, so no PanCode stream evicts it mid-session and the
  * release on exit reclaims it instead.
  */
-export type ResidencyProtection = "tag" | "config" | "worker";
+type ResidencyProtection = "tag" | "config" | "worker";
 
-export interface ResidentClassified extends ResidentModelInfo {
+interface ResidentClassified extends ResidentModelInfo {
 	/** True when this process's PanCode-loaded registry attributes the model to PanCode. */
 	loadedByPancode: boolean;
 	/** Set when the resident is protected from eviction (server tag or operator config). */
@@ -429,7 +429,7 @@ export interface ResidentClassified extends ResidentModelInfo {
 	role?: ResidencyRole;
 }
 
-export interface ResidencyFacts {
+interface ResidencyFacts {
 	targetId: string;
 	runtimeId: string;
 	keepModelId: string;
@@ -450,9 +450,9 @@ export interface ResidencyFacts {
 	modelMaxContext?: number;
 }
 
-export type ResidencyDecision = "reconcile" | "observe" | "decline";
+type ResidencyDecision = "reconcile" | "observe" | "decline";
 
-export interface ResidencyPlan {
+interface ResidencyPlan {
 	decision: ResidencyDecision;
 	/** Residents the plan releases before making the keep model resident. */
 	evict: ResidentModelInfo[];
@@ -767,7 +767,7 @@ export interface ResidencyAdapter {
 	ttlMs?: number;
 }
 
-export type ReconcileResult = ResidencyPlan;
+type ReconcileResult = ResidencyPlan;
 
 /**
  * Put back the models an eviction removed once the load it made room for has

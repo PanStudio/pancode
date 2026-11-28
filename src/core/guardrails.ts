@@ -11,7 +11,7 @@
  * settings.yaml themselves.
  */
 
-export interface GuardrailValues {
+interface GuardrailValues {
 	/**
 	 * Orchestrator per-turn soft tool-call budget. Crossing it blocks every
 	 * further call in the turn with a stop-and-summarize directive; the hard

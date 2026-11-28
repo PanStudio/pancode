@@ -66,10 +66,10 @@ export const PANCODE_DECISION_TRAILER_CAP = 32;
  * never inject a second trailer line or a stray control character into a
  * commit message.
  */
-export const DECISION_REF_PATTERN = /^[A-Za-z0-9][A-Za-z0-9:._-]{0,127}\/[a-z0-9]+(?:[_-][a-z0-9]+)*$/u;
+const DECISION_REF_PATTERN = /^[A-Za-z0-9][A-Za-z0-9:._-]{0,127}\/[a-z0-9]+(?:[_-][a-z0-9]+)*$/u;
 
 /** A finished run's identity, the digest of its run.settled, for a commit the run directly accounts for (#434). */
-export interface CommitRunEvidence {
+interface CommitRunEvidence {
 	version: 1;
 	algorithm: "sha256";
 	digest: string;
@@ -177,7 +177,7 @@ function runTrailer(run: CommitRunEvidence | undefined): string | null {
 	return `PanCode-Evidence: run-v${run.version}/sha256:${run.digest}`;
 }
 
-export interface CommitAttributionOptions {
+interface CommitAttributionOptions {
 	/**
 	 * PanCode is the commit's author (an autonomous commit), and this is the human
 	 * committer's `Name <email>`. PanCode's Assisted-by and Co-authored-by are then

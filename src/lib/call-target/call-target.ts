@@ -90,7 +90,7 @@ const DISPLAY_TAB_WIDTH = 4;
 /** Stands in for a control byte that was neutralized, so the cut is visible. */
 const CONTROL_BYTE_PLACEHOLDER = "·";
 
-export interface SanitizedDisplayText {
+interface SanitizedDisplayText {
 	text: string;
 	/** A control byte or escape sequence was neutralized. */
 	neutralized: boolean;
@@ -177,7 +177,7 @@ export interface CallActionDescriptor {
  * the renderer: this string crosses a process boundary, so a hostile argument
  * must be small before it is transported, not after.
  */
-export const CALL_ACTION_OBJECT_MAX_CHARS = 64;
+const CALL_ACTION_OBJECT_MAX_CHARS = 64;
 
 /** Maximum characters carried by the approval overlay's one-line call target. */
 export const CALL_TARGET_MAX_CHARS = 120;

@@ -14,9 +14,9 @@ import { resolvePackageRoot } from "./package-root.js";
  * `<name>.exe` starts what `<name>.launch` beside it names, with the caller's
  * command line appended unchanged, so no cmd.exe runs in between.
  */
-export const WINDOWS_LAUNCHER_LAUNCH_SUFFIX = ".launch";
+const WINDOWS_LAUNCHER_LAUNCH_SUFFIX = ".launch";
 
-export interface WindowsLauncherOptions {
+interface WindowsLauncherOptions {
 	arch?: string;
 	/** Where to take the launcher binaries from; pins always come from the running package. */
 	packageRoot?: string;

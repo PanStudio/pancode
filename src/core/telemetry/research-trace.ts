@@ -6,7 +6,7 @@ import type { PreimageData, PreimageEventName } from "./events.js";
  * The session-scoped home of background research traces. Memory and compaction code runs outside any call, so it
  * reaches the owning session's journal through the one sink its composition root registers (#434).
  */
-export interface ResearchTraceSink {
+interface ResearchTraceSink {
 	/** Answered from memory without allocating, so emitters can skip building a trace standard mode refuses. */
 	admits(kind: PreimageEventName): boolean;
 	/** Ownership of `data` and `preimage` transfers to the sink. */

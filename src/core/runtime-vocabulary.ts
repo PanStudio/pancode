@@ -40,4 +40,3 @@ export const BOOLEAN_CAPABILITY_KEYS = [
 	"rerank",
 	"fim",
 ] as const;
-export type BooleanCapabilityKey = (typeof BOOLEAN_CAPABILITY_KEYS)[number];

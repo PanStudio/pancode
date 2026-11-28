@@ -64,7 +64,7 @@ export type AntigravitySidebandSignal =
 	  }
 	| { readonly kind: "non-resumable"; readonly idx: number; readonly reason: "INVALID_THINKING_SIGNATURE" };
 
-export type AntigravitySidebandNoSignal =
+type AntigravitySidebandNoSignal =
 	| "invalid-session-id"
 	| "invalid-cursor"
 	| "outside-profile"
@@ -73,14 +73,14 @@ export type AntigravitySidebandNoSignal =
 	| "unreadable"
 	| "sqlite-unavailable";
 
-export interface AntigravitySidebandRead {
+interface AntigravitySidebandRead {
 	/** Pass back as `afterIdx` on the next read; no error row at or below it is read again, none above it is skipped. */
 	readonly cursor: number;
 	readonly signals: readonly AntigravitySidebandSignal[];
 	readonly noSignal?: AntigravitySidebandNoSignal;
 }
 
-export interface AntigravitySidebandQuery {
+interface AntigravitySidebandQuery {
 	/** Directory holding `conversations/`: agy's `<gemini-dir>/<app-data-dir>`, `~/.gemini/antigravity-cli` by default. */
 	readonly profileDir: string;
 	readonly sessionId: string;

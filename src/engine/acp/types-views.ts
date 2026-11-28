@@ -219,7 +219,7 @@ export interface AcpCommandDescriptor {
 }
 
 /** The marks a prompt template's row carries, as the terminal's palette shows them. */
-export interface AcpPromptMarks {
+interface AcpPromptMarks {
 	/** Why the template cannot expand; the row refuses a pick. */
 	unavailable?: string;
 	/** A reference card shown to the operator; nothing is sent to the model. */

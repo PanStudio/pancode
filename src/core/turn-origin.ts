@@ -7,7 +7,7 @@
  * fire prompt_submit, turn_start and turn_end, and a continuation still runs
  * under the template's tool scope (WTF-P campaign, 2026-11-15).
  */
-export type TurnOriginKind = "operator" | "continuation" | "job" | "peer";
+type TurnOriginKind = "operator" | "continuation" | "job" | "peer";
 
 /**
  * A tool call as a continuation's hooks read it: the tool, its arguments

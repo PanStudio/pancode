@@ -44,7 +44,7 @@ export type {
 	Usage,
 } from "@earendil-works/pi-ai";
 
-import type { Api as PiApi, Model as PiModel } from "@earendil-works/pi-ai";
+import type { Api as PiApi, Model as PiModel, Usage as PiUsage } from "@earendil-works/pi-ai";
 
 /**
  * The one PanCode-facing model shape. Runtime descriptors synthesize
@@ -182,3 +182,15 @@ export interface CodexTransportObservation {
 
 /** The Pi message roles a provider request carries; the agent keeps other roles in its own list. */
 export const LLM_MESSAGE_ROLES: ReadonlySet<string> = new Set(["system", "user", "assistant", "toolResult"]);
+
+/** A fresh all-zero usage block, for messages no provider call produced. */
+export function zeroUsage(): PiUsage {
+	return {
+		input: 0,
+		output: 0,
+		cacheRead: 0,
+		cacheWrite: 0,
+		totalTokens: 0,
+		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+	};
+}

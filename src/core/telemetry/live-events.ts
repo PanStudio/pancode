@@ -591,7 +591,7 @@ export interface PermissionRequestedPayload {
 }
 
 /** Live-grant facts carried on a worker permission resolution (Phase D). */
-export interface PermissionGrantFacts {
+interface PermissionGrantFacts {
 	attempt: number;
 	authority: "main" | "operator";
 	issuer?: "main" | "operator" | undefined;
@@ -737,7 +737,7 @@ export interface DispatchProgressPayload {
  * one finalizer is a compile error; optional on {@link DispatchFailedPayload}
  * because the retry-denied emitter has no run to report on.
  */
-export interface DispatchTerminalStats {
+interface DispatchTerminalStats {
 	sessionId?: string | null;
 	lineage: RunLineage;
 	/** The run's spend, one fact per quantity, as its run.settled states it (#434). */

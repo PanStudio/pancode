@@ -4,7 +4,7 @@ import { markHostAuthored } from "../core/message-accounting.js";
 import { systemReminderBlock, TOOL_RESULT_NOTES_SEPARATOR, toolResultNote } from "../core/reminder-framing.js";
 import { stripDeadToolCallMarkup } from "../core/tool-call-markup.js";
 import { priorFailureLine } from "./loop-guard-reasons.js";
-import type { AgentMessage } from "./types.js";
+import { type AgentMessage, zeroUsage } from "./types.js";
 
 /** True when a sanitized locked reply holds nothing but the fallback notice. */
 export function isLockedSynthesisFallbackOnly(message: AgentMessage | undefined): boolean {
@@ -107,12 +107,7 @@ export function lockedSynthesisRepromptMessages(
 			content: [{ type: "toolCall", id, name: LOCKED_SYNTHESIS_REPROMPT_TOOL, arguments: {} }],
 			stopReason: "toolUse",
 			usage: {
-				input: 0,
-				output: 0,
-				cacheRead: 0,
-				cacheWrite: 0,
-				totalTokens: 0,
-				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+				...zeroUsage(),
 				// PanCode wrote this message; no provider was called for it. Receipts
 				// and journals count only calls that reached one.
 				callInvoked: false,

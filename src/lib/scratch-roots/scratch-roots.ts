@@ -77,7 +77,7 @@ export function scratchRootProblem(root: string): string | null {
 }
 
 /** A configured root the runtime set leaves out for one workspace, and why. */
-export interface DroppedScratchRoot {
+interface DroppedScratchRoot {
 	root: string;
 	reason: string;
 }
