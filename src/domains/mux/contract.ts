@@ -22,6 +22,7 @@
  */
 
 import type { DomainContract } from "../../core/domain-loader.js";
+import { processAlive } from "../../core/process-identity.js";
 import type { MuxDetection } from "./detect.js";
 import {
 	createDockController,
@@ -291,16 +292,6 @@ function refuseControlBytes(values: ReadonlyArray<string>): void {
 function token(value: string | undefined | null): string | null {
 	if (typeof value !== "string" || value.length === 0) return null;
 	return value.length > TOKEN_VALUE_MAX ? value.slice(0, TOKEN_VALUE_MAX) : value;
-}
-
-/** `kill(pid, 0)` probes without signalling; EPERM means the process exists under another user. */
-function processIsAlive(pid: number): boolean {
-	try {
-		process.kill(pid, 0);
-		return true;
-	} catch (error) {
-		return (error as NodeJS.ErrnoException).code === "EPERM";
-	}
 }
 
 function hasOwnedPaneToken(tokens: Readonly<Record<string, string>>): boolean {
@@ -737,7 +728,7 @@ export function createMuxRuntime(options: MuxRuntimeOptions): MuxRuntime {
 						// A dock whose recorded owner still runs is that session's dock, not a survivor:
 						// adopting it would let this session close or hide it.
 						const owner = Number(pane.tokens.pid);
-						if (Number.isInteger(owner) && owner > 0 && owner !== process.pid && processIsAlive(owner)) continue;
+						if (Number.isInteger(owner) && owner > 0 && owner !== process.pid && processAlive(owner)) continue;
 						const ref: MuxPaneRef = { paneId: pane.paneId, tabId: pane.tabId, workspaceId: pane.workspaceId };
 						registry.record(
 							paneRecord(ref, {
@@ -885,7 +876,7 @@ export function createMuxRuntime(options: MuxRuntimeOptions): MuxRuntime {
 					for (const pane of snapshot.panes) {
 						if (!parkedTabs.has(pane.tabId) || !hasOwnedPaneToken(pane.tokens) || registry.owns(pane.paneId)) continue;
 						const owner = Number(pane.tokens.pid);
-						if (!pane.tokens.dock || !Number.isInteger(owner) || owner <= 0 || processIsAlive(owner)) continue;
+						if (!pane.tokens.dock || !Number.isInteger(owner) || owner <= 0 || processAlive(owner)) continue;
 						await live.paneClose(pane.paneId).catch(() => undefined);
 						reaped += 1;
 					}

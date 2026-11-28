@@ -39,10 +39,11 @@ export function claudeSdkComponentDir(): string {
 	return componentInstallDir(COMPONENT_ID, CLAUDE_AGENT_SDK_VERSION);
 }
 
-function resolveInPrefix(prefix: string): string | null {
-	if (!existsSync(join(prefix, "node_modules", CLAUDE_AGENT_SDK_PACKAGE))) return null;
+/** The package's resolved entry under a private install prefix, or null when the prefix lacks it. */
+export function resolvePackageInPrefix(prefix: string, packageName: string): string | null {
+	if (!existsSync(join(prefix, "node_modules", packageName))) return null;
 	// Once the package exists, bad exports, missing entry files and malformed metadata are broken installs.
-	return createRequire(join(prefix, "package.json")).resolve(CLAUDE_AGENT_SDK_PACKAGE);
+	return createRequire(join(prefix, "package.json")).resolve(packageName);
 }
 
 /**
@@ -51,9 +52,9 @@ function resolveInPrefix(prefix: string): string | null {
  */
 export function resolveClaudeAgentSdkEntry(): string | null {
 	const prepared = preparedPrefix();
-	if (prepared) return resolveInPrefix(prepared);
+	if (prepared) return resolvePackageInPrefix(prepared, CLAUDE_AGENT_SDK_PACKAGE);
 	for (const prefix of componentSearchDirs(COMPONENT_ID, CLAUDE_AGENT_SDK_VERSION)) {
-		const component = resolveInPrefix(prefix);
+		const component = resolvePackageInPrefix(prefix, CLAUDE_AGENT_SDK_PACKAGE);
 		if (component) return component;
 	}
 	const require = createRequire(join(inspectInstallation().root, "package.json"));
@@ -123,7 +124,7 @@ export async function installClaudeAgentSdk(options: Pick<ClaudeSdkInstallOption
 	return withStateFileLock(
 		target,
 		async () => {
-			if (resolveInPrefix(target)) return target;
+			if (resolvePackageInPrefix(target, CLAUDE_AGENT_SDK_PACKAGE)) return target;
 			const installation = inspectInstallation();
 			const node = installation.installer?.node ?? process.execPath;
 			const npm = claudeSdkNpmCommand(node, installation.installer !== undefined);
@@ -155,7 +156,7 @@ export async function installClaudeAgentSdk(options: Pick<ClaudeSdkInstallOption
 					throw new Error(
 						`Claude SDK provisioning failed: ${result.stderr || result.stdout}. Retry: ${CLAUDE_AGENT_SDK_INSTALL_COMMAND}`,
 					);
-				const entry = resolveInPrefix(staging);
+				const entry = resolvePackageInPrefix(staging, CLAUDE_AGENT_SDK_PACKAGE);
 				if (!entry) throw new Error("Claude SDK provisioning completed without the SDK package.");
 				const sdk = await import(pathToFileURL(entry).href);
 				if (typeof sdk.query !== "function") throw new Error("Provisioned Claude SDK does not export query.");

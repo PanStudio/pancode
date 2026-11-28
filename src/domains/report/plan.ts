@@ -3,6 +3,7 @@
 import { draftIdentity, isFixedPoint, type RenderedReport, renderReport } from "./body.js";
 import { deleteReportBundle } from "./bundle.js";
 import { issueCanaryFinding, issueCanaryGate } from "./canary.js";
+import type { ReportCommandRunner } from "./command.js";
 import {
 	applyVerdict,
 	findRelated,
@@ -16,7 +17,7 @@ import { type ReportEnvironment, type ReportSessionFacts, reportEnvironment } fr
 import { reportFingerprint } from "./fingerprint.js";
 import type { ReportObservation } from "./observe.js";
 import { outboxEntry, readOutbox, recentSends, updateOutbox } from "./outbox.js";
-import type { LocalIdentity, MaskKind, ReportMask } from "./scrub.js";
+import { type IdentitySettings, type LocalIdentity, localIdentity, type MaskKind, type ReportMask } from "./scrub.js";
 import { deleteReportDraft, listReportDrafts, readReportDraft, saveReportDraft, writeReportMarkdown } from "./store.js";
 import {
 	checkLastAttempt,
@@ -33,6 +34,36 @@ import { REPORT_HEADINGS, REPORT_REPOSITORY, type ReportKind, type ReportSurface
  * A detected `ReportTransport` is assignable to this.
  */
 export type ReportPlanTransport = { kind: "gh"; login: string | null } | { kind: "browser" } | { kind: "file" };
+
+/** What a report host needs to name who reports and which transport a preview would use. */
+export interface ReportHostProbeDeps {
+	cwd: () => string;
+	identitySettings?: () => IdentitySettings;
+	run?: ReportCommandRunner;
+	findGh?: () => string | null;
+	browserAvailable?: (env: NodeJS.ProcessEnv) => boolean;
+}
+
+/** The local identity, gh lookup and offline transport probes the dialog and text report hosts share. */
+export function reportHostProbes(deps: ReportHostProbeDeps, env: NodeJS.ProcessEnv) {
+	const identity = () =>
+		localIdentity(deps.cwd(), deps.identitySettings?.() ?? {}, {
+			env,
+			...(deps.run !== undefined ? { run: deps.run } : {}),
+		});
+	const findGh = async (): Promise<string | null> => {
+		if (deps.findGh) return deps.findGh();
+		const { resolveToolBinary } = await import("../toolchain/index.js");
+		return resolveToolBinary("gh").binaryPath;
+	};
+	// The preview names the transport from what is on this machine; it never asks GitHub who is signed in.
+	const offline = async (): Promise<ReportPlanTransport> => {
+		if ((await findGh()) !== null) return { kind: "gh", login: null };
+		const browser = deps.browserAvailable ?? (await import("../../core/open-browser.js")).canOpenBrowser;
+		return browser(env) ? { kind: "browser" } : { kind: "file" };
+	};
+	return { identity, findGh, offline };
+}
 
 /**
  * Everything a surface shows before it sends: the CLI, the TUI overlay and the GUI all render this, and none of them

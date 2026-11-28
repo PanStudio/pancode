@@ -67,6 +67,7 @@ import {
 	sectionRule,
 	sparkline,
 } from "./theme/index.js";
+import { contributed, sessionTokenQuantity } from "./turn-spend.js";
 import {
 	creditCost,
 	economyEvidence,
@@ -106,14 +107,6 @@ function nonZero(quantity: Quantity | null | undefined): quantity is Quantity {
 	return "kind" in fact
 		? fact.kind === "unknown" || fact.kind === "estimated" || (fact.kind === "measured" && fact.value > 0)
 		: fact.unknownCount > 0 || factKnownValue(fact) > 0;
-}
-
-/** Some call fed this sum, so its value (a measured zero, a local `$0.00`, or `not measured`) is worth a row. */
-function contributed(quantity: Quantity): boolean {
-	const fact = quantity.fact;
-	return "kind" in fact
-		? fact.kind !== "absent"
-		: fact.coverage.measured + fact.coverage.estimated + fact.unknownCount > 0;
 }
 
 /**
@@ -230,15 +223,7 @@ function tokensText(display: string): string {
 function tokenRows(view: TelemetryView, model: string | undefined, sections: UsageSections): FactRow[] {
 	// Each row is the figure alone; the coverage row above the table says once how many calls reported nothing (F4).
 	// One mark at most: `≥~27,252` stacked two qualifiers; the usage data row says once which calls PanCode estimated.
-	const quantity = (metric: FactMetric) =>
-		view.quantity(
-			factRef({
-				scope: "session",
-				owner: view.sessionId,
-				metric,
-				...(model === undefined ? {} : { group: { by: "model", key: model } }),
-			}),
-		);
+	const quantity = (metric: FactMetric) => sessionTokenQuantity(view, metric, model);
 	const display = (metric: FactMetric) => usageLineFigure(quantity(metric));
 	if (sections === "totals") return [figureRow("processed", display("total"), "tokens")];
 	// `processed` counts the cache write, so Standard shows it whenever it is not zero, as the exit summary does.

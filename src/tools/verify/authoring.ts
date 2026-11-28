@@ -21,6 +21,7 @@ import {
 	PROJECT_VERIFIER_CATALOG_RELATIVE_PATH,
 	PROJECT_VERIFIER_CATALOG_VERSION,
 	parseProjectVerifierCatalogText,
+	workspaceRelative,
 } from "./catalog.js";
 import { verifyTool } from "./index.js";
 import {
@@ -221,11 +222,6 @@ function kindFields(
 	};
 }
 
-function relativePath(workspaceRoot: string, filePath: string): string {
-	const relative = path.relative(workspaceRoot, filePath);
-	return relative.length === 0 ? "." : relative.split(path.sep).join("/");
-}
-
 function boundedId(base: string, suffix = ""): string {
 	const cap = PROJECT_VERIFIER_CATALOG_CAPS.idBytes - Buffer.byteLength(suffix, "utf8");
 	let result = "";
@@ -266,7 +262,7 @@ function sourceProvenance(workspaceRoot: string, check: DeclaredCheck): Verifier
 	if (check.source.kind === "package.json") {
 		return {
 			kind: "package-script",
-			path: relativePath(workspaceRoot, check.source.path),
+			path: workspaceRelative(workspaceRoot, check.source.path),
 			detail: `package.json script '${check.id}'`,
 			authority: "project-declared",
 		};

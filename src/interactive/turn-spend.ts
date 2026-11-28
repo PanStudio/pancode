@@ -65,11 +65,24 @@ export interface TurnWorkerSpend {
 }
 
 /** The known part of a quantity: a measured or estimated value, or a sum's measured and estimated parts. */
+/** One session token metric, optionally for one model group. */
+export function sessionTokenQuantity(view: TelemetryView, metric: FactMetric, model?: string): Quantity | null {
+	return view.quantity(
+		factRef({
+			scope: "session",
+			owner: view.sessionId,
+			metric,
+			...(model === undefined ? {} : { group: { by: "model", key: model } }),
+		}),
+	);
+}
+
 function known(quantity: Quantity): number {
 	return factKnownValue(quantity.fact);
 }
 
-function contributed(quantity: Quantity): boolean {
+/** Some call fed this sum, so its value (a measured zero, a local `$0.00`, or `not measured`) is worth a row. */
+export function contributed(quantity: Quantity): boolean {
 	const fact = quantity.fact;
 	return "kind" in fact
 		? fact.kind !== "absent"

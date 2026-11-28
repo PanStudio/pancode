@@ -36,6 +36,7 @@ import type { ChatLoopEvent } from "../session-control/chat-loop.js";
 import { COUNCIL_SEALED_REPORT_AGENT_ID } from "../session-control/council.js";
 import type { WorkerRunResultFacts } from "../session-control/worker-stream.js";
 import { effectiveToolCall, gatewayChainReceipts } from "../tools/surface.js";
+import { sessionTokenQuantity } from "./turn-spend.js";
 import {
 	neverSentCallCount,
 	sentCallCount,
@@ -228,15 +229,7 @@ export type ExitSpend =
  * how many PanCode estimated (E1).
  */
 function tokenFacts(view: TelemetryView, model?: string): { figures: string[]; total: string; notes: string[] } {
-	const quantity = (metric: FactMetric) =>
-		view.quantity(
-			factRef({
-				scope: "session",
-				owner: view.sessionId,
-				metric,
-				...(model === undefined ? {} : { group: { by: "model", key: model } }),
-			}),
-		);
+	const quantity = (metric: FactMetric) => sessionTokenQuantity(view, metric, model);
 	// In and out are the amounts; the rest earn a place only with something to say, what nobody reported is said once,
 	// and the calls that reported nothing are counted once at the end rather than beside every figure (F4).
 	// `in` is the uncached input, as /usage, the turn receipt and the footer say it, with the cache read beside it: the

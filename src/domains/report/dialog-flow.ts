@@ -17,14 +17,14 @@ import {
 	planReport,
 	REPORT_THANKS,
 	type ReportPlan,
-	type ReportPlanTransport,
 	type ReportRow,
 	relatedLine,
+	reportHostProbes,
 	reportRows,
 	runReportSend,
 	sentLine,
 } from "./plan.js";
-import { type IdentitySettings, localIdentity, type ReportMask, SECRET_MASK_ID } from "./scrub.js";
+import { type IdentitySettings, type ReportMask, SECRET_MASK_ID } from "./scrub.js";
 import { readReportDraft, saveReportDraft } from "./store.js";
 import { detectTransport, type ReportTransport } from "./transport.js";
 import type { ReportKind } from "./vocabulary.js";
@@ -103,22 +103,7 @@ export class ReportDialogError extends Error {
 
 export function createReportDialogHost(deps: ReportDialogDeps): ReportDialogHost {
 	const env = deps.env ?? process.env;
-	const identity = () =>
-		localIdentity(deps.cwd(), deps.identitySettings?.() ?? {}, {
-			env,
-			...(deps.run !== undefined ? { run: deps.run } : {}),
-		});
-	const findGh = async (): Promise<string | null> => {
-		if (deps.findGh) return deps.findGh();
-		const { resolveToolBinary } = await import("../toolchain/index.js");
-		return resolveToolBinary("gh").binaryPath;
-	};
-	// The preview names the transport from what is on this machine; it never asks GitHub who is signed in.
-	const offline = async (): Promise<ReportPlanTransport> => {
-		if ((await findGh()) !== null) return { kind: "gh", login: null };
-		const browser = deps.browserAvailable ?? (await import("../../core/open-browser.js")).canOpenBrowser;
-		return browser(env) ? { kind: "browser" } : { kind: "file" };
-	};
+	const { identity, findGh, offline } = reportHostProbes(deps, env);
 	const load = (draftId: string) => {
 		const draft = readReportDraft(deps.stateDir, draftId);
 		if (draft === null) throw new ReportDialogError("not-found", `no saved draft ${draftId}`);

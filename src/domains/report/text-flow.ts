@@ -19,13 +19,13 @@ import {
 	planReport,
 	REPORT_THANKS,
 	type ReportPlan,
-	type ReportPlanTransport,
 	relatedLine,
+	reportHostProbes,
 	reportRows,
 	runReportSend,
 	sentLine,
 } from "./plan.js";
-import { type IdentitySettings, localIdentity } from "./scrub.js";
+import type { IdentitySettings } from "./scrub.js";
 import { readReportDraft, saveReportDraft } from "./store.js";
 import { detectTransport, type ReportTransport, routeFor } from "./transport.js";
 import type { ReportKind } from "./vocabulary.js";
@@ -114,22 +114,7 @@ function bundleLines(built: BuiltBundle): string[] {
 
 export function createReportTextHost(deps: ReportTextDeps): ReportTextHost {
 	const env = deps.env ?? process.env;
-	const identity = () =>
-		localIdentity(deps.cwd(), deps.identitySettings?.() ?? {}, {
-			env,
-			...(deps.run !== undefined ? { run: deps.run } : {}),
-		});
-	const findGh = async (): Promise<string | null> => {
-		if (deps.findGh) return deps.findGh();
-		const { resolveToolBinary } = await import("../toolchain/index.js");
-		return resolveToolBinary("gh").binaryPath;
-	};
-	// The preview names the transport from what is on this machine; it never asks GitHub who is signed in.
-	const offline = async (): Promise<ReportPlanTransport> => {
-		if ((await findGh()) !== null) return { kind: "gh", login: null };
-		const browser = deps.browserAvailable ?? (await import("../../core/open-browser.js")).canOpenBrowser;
-		return browser(env) ? { kind: "browser" } : { kind: "file" };
-	};
+	const { identity, findGh, offline } = reportHostProbes(deps, env);
 	// The exact text this host last showed per draft. A draft saved elsewhere (the agent's report tool, a shell), or
 	// rewritten on disk after its preview, is shown here again before any send, so an ACP send always follows a
 	// preview of that exact text.

@@ -6,7 +6,7 @@ import { dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { withStateFileLock } from "../../core/state-file-lock.js";
 import { pancodeDataDir } from "../../core/xdg.js";
-import { claudeSdkNpmCommand } from "./claude-sdk-install.js";
+import { claudeSdkNpmCommand, resolvePackageInPrefix } from "./claude-sdk-install.js";
 import {
 	componentInstallDir,
 	componentNpmEnv,
@@ -36,15 +36,10 @@ function copilotSdkComponentDir(): string {
 	return componentInstallDir(COMPONENT_ID, COPILOT_SDK_VERSION);
 }
 
-function resolveInPrefix(prefix: string): string | null {
-	if (!existsSync(join(prefix, "node_modules", COPILOT_SDK_PACKAGE))) return null;
-	return createRequire(join(prefix, "package.json")).resolve(COPILOT_SDK_PACKAGE);
-}
-
 /** The per-user component (this process's, then the operator's), then a package-local or development install. */
 export function resolveCopilotSdkEntry(): string | null {
 	for (const prefix of componentSearchDirs(COMPONENT_ID, COPILOT_SDK_VERSION)) {
-		const component = resolveInPrefix(prefix);
+		const component = resolvePackageInPrefix(prefix, COPILOT_SDK_PACKAGE);
 		if (component) return component;
 	}
 	const require = createRequire(join(inspectInstallation().root, "package.json"));
@@ -80,7 +75,7 @@ export async function installCopilotSdk(options: Pick<CopilotSdkInstallOptions, 
 	return withStateFileLock(
 		target,
 		async () => {
-			if (resolveInPrefix(target)) return target;
+			if (resolvePackageInPrefix(target, COPILOT_SDK_PACKAGE)) return target;
 			const installation = inspectInstallation();
 			const node = installation.installer?.node ?? process.execPath;
 			const npm = claudeSdkNpmCommand(node, installation.installer !== undefined, "");
@@ -116,7 +111,7 @@ export async function installCopilotSdk(options: Pick<CopilotSdkInstallOptions, 
 					throw new Error(
 						`Copilot SDK provisioning failed: ${result.stderr || result.stdout}. Retry: ${COPILOT_SDK_INSTALL_COMMAND}`,
 					);
-				const entry = resolveInPrefix(staging);
+				const entry = resolvePackageInPrefix(staging, COPILOT_SDK_PACKAGE);
 				if (!entry) throw new Error("Copilot SDK provisioning completed without the SDK package.");
 				const sdk = await import(pathToFileURL(entry).href);
 				if (typeof sdk.CopilotClient !== "function")
