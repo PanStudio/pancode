@@ -94,9 +94,9 @@ export function MissionControl({ client }: { client: Client }) {
 					<Icon name="evidence" />
 					<span>Evidence</span>
 				</Link>
-				<Link className="wb-icon wb-icon--text" to="/machines" aria-label="Machines">
+				<Link className="wb-icon wb-icon--text" to="/nodes" aria-label="Nodes">
 					<Icon name="system" />
-					<span>Machines</span>
+					<span>Nodes</span>
 				</Link>
 				<button
 					type="button"
@@ -173,7 +173,7 @@ export function MissionControl({ client }: { client: Client }) {
 								value={searchBox.value}
 								maxLength={256}
 								onChange={searchBox.onChange}
-								placeholder="Find a session, project, model or machine…"
+								placeholder="Find a session, project, model or node…"
 							/>
 						</label>
 						<label>

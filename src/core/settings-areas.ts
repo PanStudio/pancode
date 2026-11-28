@@ -27,7 +27,7 @@ export const SETTINGS_AREAS = [
 	{
 		id: "workers",
 		label: "Workers",
-		description: "Workers and agents: default worker, profiles, agent routes, machines, limits, run history, and loops.",
+		description: "Workers and agents: default worker, profiles, agent routes, nodes, limits, run history, and loops.",
 	},
 	{
 		id: "context",
@@ -71,7 +71,7 @@ export const SETTINGS_AREA_GROUPS: Readonly<Record<SettingsAreaId, readonly stri
 		"Profiles",
 		"Agent routes",
 		"Automatic routing",
-		"Machines",
+		"Nodes",
 		"Limits & retries",
 		"Run history",
 		"Loops",
@@ -168,7 +168,7 @@ export function settingsPlacementForRow(id: string, path: string): SettingsPlace
 			return place("workspace", "Task copies");
 		case "fleet.concurrency":
 		case "fleet.staggerSharedPrefix":
-			return place("workers", "Machines");
+			return place("workers", "Nodes");
 		case "fleet.limits.toolCallsPerRun":
 		case "fleet.limits.runTimeoutMs":
 		case "fleet.retry.maxRetries":
@@ -273,7 +273,7 @@ export function settingsPlacementForRow(id: string, path: string): SettingsPlace
 	if (under(path, "fleet.default")) return place("workers", "Default worker");
 	if (under(path, "fleet.profiles")) return place("workers", "Profiles");
 	if (path === "fleet.defaultNode" || under(path, "fleet.nodes") || under(path, "fleet.endpoints"))
-		return place("workers", "Machines");
+		return place("workers", "Nodes");
 	if (under(path, "fleet.history")) return place("workers", "Run history");
 	if (under(path, "fleet.permissions")) return place("safety", "Worker approvals");
 	if (under(path, "safety.resources")) return place("safety", "Sandbox");

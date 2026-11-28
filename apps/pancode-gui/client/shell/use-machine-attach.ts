@@ -15,8 +15,8 @@ export function useMachineAttach(local: Client, enabled = true) {
 	const queries = useQueryClient();
 	const [pending, setPending] = useState<string | null>(null);
 	const attachments = useQuery({
-		queryKey: ["machine-attachments"],
-		queryFn: ({ signal }) => local.call(routes.machineAttachments, emptyInput, undefined, signal),
+		queryKey: ["node-attachments"],
+		queryFn: ({ signal }) => local.call(routes.nodeAttachments, emptyInput, undefined, signal),
 		enabled: enabled && local.signedIn,
 		staleTime: 5_000,
 		retry: false,
@@ -25,9 +25,9 @@ export function useMachineAttach(local: Client, enabled = true) {
 		meta: { errorSurface: "inline" },
 	});
 	const attach = useMutation({
-		mutationFn: (id: string) => local.call(routes.machineAttach, { ...emptyInput, params: { id } }),
+		mutationFn: (id: string) => local.call(routes.nodeAttach, { ...emptyInput, params: { id } }),
 		onSuccess: (attachment: MachineAttachment) => {
-			queries.setQueryData<MachineAttachments>(["machine-attachments"], (current) =>
+			queries.setQueryData<MachineAttachments>(["node-attachments"], (current) =>
 				current
 					? {
 							attachments: current.attachments.some((row) => row.id === attachment.id)

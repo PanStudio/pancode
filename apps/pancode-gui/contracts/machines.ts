@@ -23,7 +23,7 @@ export const MachineAdd = Type.Object(
 );
 export type MachineAdd = Static<typeof MachineAdd>;
 export const MachineMutation = Type.Union([
-	Type.Object({ action: Type.Literal("add"), machine: MachineAdd }, closed),
+	Type.Object({ action: Type.Literal("add"), node: MachineAdd }, closed),
 	Type.Object({ action: Type.Literal("remove"), id: MachineId, confirmed: Type.Literal(true) }, closed),
 	Type.Object({ action: Type.Literal("check"), id: MachineId, confirmed: Type.Literal(true) }, closed),
 ]);
@@ -82,7 +82,7 @@ export const Machines = Type.Object(
 		workspaceId: Type.Union([Id, Type.Null()]),
 		projectRoot: Type.Union([Type.String(), Type.Null()]),
 		observedAt: Type.String(),
-		machines: Type.Array(Machine),
+		nodes: Type.Array(Machine),
 	},
 	closed,
 );

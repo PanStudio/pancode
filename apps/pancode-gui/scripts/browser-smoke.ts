@@ -123,9 +123,9 @@ function expectedRefusal(item: { method: string; path: string; status: number })
 		// The harness PanCode does not expose session history, so the read refuses. The same path also
 		// creates a session, and a refused create must still fail the run.
 		(item.method === "GET" && item.status === 409 && /^\/api\/workspaces\/[^/]+\/sessions$/.test(item.path)) ||
-		// The harness wires no machine management, so the Machines page's list read refuses; the width step
+		// The harness wires no node management, so the Nodes page's list read refuses; the width step
 		// still lays the page out.
-		(item.method === "GET" && item.status === 409 && /^\/api\/workspaces\/[^/]+\/machines$/.test(item.path)) ||
+		(item.method === "GET" && item.status === 409 && /^\/api\/workspaces\/[^/]+\/nodes$/.test(item.path)) ||
 		(item.status === 401 && firstReads.includes(item.path))
 	);
 }

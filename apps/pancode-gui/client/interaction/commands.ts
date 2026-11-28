@@ -51,7 +51,7 @@ export const DESTINATIONS: readonly Destination[] = [
 	{ label: "Traces", path: "/traces", keywords: ["runs", "forensics"] },
 	{ label: "Programs", path: "/programs", keywords: ["programs", "tools", "install"] },
 	{ label: "Sessions", path: "/sessions", keywords: ["tasks", "conversations", "history", "resume"] },
-	{ label: "Machines", path: "/machines", keywords: ["hosts", "remote", "servers", "attach"] },
+	{ label: "Nodes", path: "/nodes", keywords: ["machines", "hosts", "remote", "servers", "attach"] },
 	{ label: "Settings", path: "/settings", keywords: ["configuration", "preferences"] },
 	{ label: "General settings", path: "/settings/general", keywords: ["theme", "appearance", "install", "app"] },
 	{ label: "Model settings", path: "/settings/models", keywords: ["model", "default", "thinking", "connection"] },

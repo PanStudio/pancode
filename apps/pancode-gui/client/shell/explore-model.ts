@@ -5,7 +5,7 @@ import { matchesText } from "../design/text-match.js";
 import { SETTINGS_SECTIONS } from "./shell-model.js";
 
 const GROUPS = [
-	{ label: "Workbench", detail: "Sessions and research machines", sections: ["sessions", "machines"] },
+	{ label: "Workbench", detail: "Sessions and compute nodes", sections: ["sessions", "nodes"] },
 	{ label: "Capabilities", detail: "What PanCode can use", sections: ["hub", "skills", "programs", "interop"] },
 	{
 		label: "Research activity",
@@ -23,7 +23,7 @@ const EXTRA = [
 	{ id: "interop", label: "Other coding agents", path: "/system/interop", icon: "system" },
 ] as const;
 const KEYWORDS: Readonly<Record<string, string>> = {
-	machines: "ssh remote lab workstation server",
+	nodes: "ssh remote lab workstation server machine",
 	usage: "cost costs spending tokens calls models",
 	programs: "programs tools executables install setup",
 	traces: "replay timeline execution events",

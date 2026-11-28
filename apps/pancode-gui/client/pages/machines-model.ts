@@ -91,7 +91,7 @@ export function machineDraft(draft: MachineDraft): { machine: MachineAdd; error?
 		),
 	];
 	if (!/^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/.test(id) || id === "local")
-		return { error: "Use a machine ID of up to 64 letters, numbers, underscores or hyphens. “local” is reserved." };
+		return { error: "Use a node ID of up to 64 letters, numbers, underscores or hyphens. “local” is reserved." };
 	if (host.length > 253 || !/^[A-Za-z0-9:][A-Za-z0-9._:-]*$/.test(host))
 		return { error: "Enter an SSH alias, hostname or address. Put the SSH user in its own field." };
 	if (user && (user.length > 64 || !/^[A-Za-z0-9_][A-Za-z0-9_.-]*$/.test(user)))

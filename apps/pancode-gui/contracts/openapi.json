@@ -153,9 +153,9 @@
 				}
 			}
 		},
-		"/api/workspaces/{id}/machines": {
+		"/api/workspaces/{id}/nodes": {
 			"get": {
-				"operationId": "machines",
+				"operationId": "nodes",
 				"summary": "Read registered SSH nodes and recorded project readiness without probing hosts.",
 				"security": [
 					{
@@ -180,7 +180,7 @@
 							"application/json": {
 								"schema": {
 									"type": "object",
-									"required": ["workspaceId", "projectRoot", "observedAt", "machines"],
+									"required": ["workspaceId", "projectRoot", "observedAt", "nodes"],
 									"properties": {
 										"workspaceId": {
 											"$ref": "#/components/schemas/Union_64e2ef54"
@@ -198,7 +198,7 @@
 										"observedAt": {
 											"type": "string"
 										},
-										"machines": {
+										"nodes": {
 											"type": "array",
 											"items": {
 												"type": "object",
@@ -457,7 +457,7 @@
 				}
 			},
 			"post": {
-				"operationId": "machineMutation",
+				"operationId": "nodeMutation",
 				"summary": "Register, remove, or explicitly check an SSH node through a serial operation.",
 				"security": [
 					{
@@ -502,13 +502,13 @@
 								"anyOf": [
 									{
 										"type": "object",
-										"required": ["action", "machine"],
+										"required": ["action", "node"],
 										"properties": {
 											"action": {
 												"type": "string",
 												"const": "add"
 											},
-											"machine": {
+											"node": {
 												"type": "object",
 												"required": ["id", "host", "maxWorkers", "labels"],
 												"properties": {
@@ -636,9 +636,9 @@
 				}
 			}
 		},
-		"/api/machines": {
+		"/api/nodes": {
 			"get": {
-				"operationId": "installationMachines",
+				"operationId": "installationNodes",
 				"summary": "Read the registered SSH nodes with no workspace open; readiness is not checked for any project.",
 				"security": [
 					{
@@ -653,7 +653,7 @@
 							"application/json": {
 								"schema": {
 									"type": "object",
-									"required": ["workspaceId", "projectRoot", "observedAt", "machines"],
+									"required": ["workspaceId", "projectRoot", "observedAt", "nodes"],
 									"properties": {
 										"workspaceId": {
 											"$ref": "#/components/schemas/Union_64e2ef54"
@@ -671,7 +671,7 @@
 										"observedAt": {
 											"type": "string"
 										},
-										"machines": {
+										"nodes": {
 											"type": "array",
 											"items": {
 												"type": "object",
@@ -930,7 +930,7 @@
 				}
 			},
 			"post": {
-				"operationId": "installationMachineMutation",
+				"operationId": "installationNodeMutation",
 				"summary": "Register or remove an SSH node with no workspace open; a readiness check needs a workspace.",
 				"security": [
 					{
@@ -966,13 +966,13 @@
 								"anyOf": [
 									{
 										"type": "object",
-										"required": ["action", "machine"],
+										"required": ["action", "node"],
 										"properties": {
 											"action": {
 												"type": "string",
 												"const": "add"
 											},
-											"machine": {
+											"node": {
 												"type": "object",
 												"required": ["id", "host", "maxWorkers", "labels"],
 												"properties": {
@@ -1100,9 +1100,9 @@
 				}
 			}
 		},
-		"/api/machines/attachments": {
+		"/api/nodes/attachments": {
 			"get": {
-				"operationId": "machineAttachments",
+				"operationId": "nodeAttachments",
 				"summary": "Registered SSH nodes with the state of this app's attachment to each node's own GUI.",
 				"security": [
 					{
@@ -1158,9 +1158,9 @@
 				}
 			}
 		},
-		"/api/machines/{id}/attach": {
+		"/api/nodes/{id}/attach": {
 			"post": {
-				"operationId": "machineAttach",
+				"operationId": "nodeAttach",
 				"summary": "Start or resume this app's attachment to the node's own GUI over SSH, answering the current state.",
 				"security": [
 					{
@@ -31543,7 +31543,7 @@
 							},
 							"type": {
 								"type": "string",
-								"const": "machine.attach"
+								"const": "node.attach"
 							},
 							"payload": {
 								"$ref": "#/components/schemas/Object_attempt_detail_host_85e8c3d2"

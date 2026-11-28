@@ -208,7 +208,7 @@ test("project and session toolbar controls retain names when their visible text 
 			<MissionControl client={client} />
 		</SessionControlsProvider>,
 	);
-	for (const label of ["Trace replay", "Evidence", "Machines"]) assert.ok(sessions.includes(`aria-label="${label}"`));
+	for (const label of ["Trace replay", "Evidence", "Nodes"]) assert.ok(sessions.includes(`aria-label="${label}"`));
 	assert.match(sessions, /aria-label="(?:Updating|Refresh) sessions"/);
 });
 

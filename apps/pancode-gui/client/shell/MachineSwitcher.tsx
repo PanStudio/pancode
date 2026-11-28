@@ -39,7 +39,7 @@ export function MachineSwitcher({
 				if (event.currentTarget.open) setWanted(true);
 			}}
 		>
-			<summary className="wb-action" aria-label={`Machine: ${label}. Switch machine`} title="Switch machine">
+			<summary className="wb-action" aria-label={`Node: ${label}. Switch node`} title="Switch node">
 				<Icon name="system" />
 				<span className="wb-machine__label">{label}</span>
 				<Icon name="chevronDown" />
@@ -48,7 +48,7 @@ export function MachineSwitcher({
 			<div
 				className="wb-menu__panel wb-machine__panel"
 				role="menu"
-				aria-label="Machines"
+				aria-label="Nodes"
 				onClick={(event) => {
 					if (event.target instanceof Element && event.target.closest('[role="menuitem"]') && ref.current)
 						ref.current.open = false;
@@ -84,14 +84,14 @@ export function MachineSwitcher({
 						</button>
 					);
 				})}
-				{loading ? <p className="wb-note">Reading machines…</p> : null}
+				{loading ? <p className="wb-note">Reading nodes…</p> : null}
 				{error ? (
 					<p className="wb-note" role="alert">
-						Machines unavailable.
+						Nodes unavailable.
 					</p>
 				) : null}
 				{!loading && !error && attachments.length === 0 ? (
-					<p className="wb-note">No registered machines yet. Add one under Machines.</p>
+					<p className="wb-note">No registered nodes yet. Add one under Nodes.</p>
 				) : null}
 			</div>
 		</details>

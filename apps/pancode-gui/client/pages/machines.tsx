@@ -107,7 +107,7 @@ function AddMachine({
 			<p>Use an existing SSH alias or the address of a lab workstation or server. Registration saves user settings.</p>
 			<fieldset disabled={busy} className="machines-fields">
 				<label>
-					Machine ID
+					Node ID
 					<input
 						ref={inputRef}
 						required
@@ -178,11 +178,11 @@ function AddMachine({
 			</details>
 			<p className="machines-caption">
 				SSH uses the configuration and available keys on the machine running PanCode. Labels are your declarations, not
-				measured hardware. Adding a machine does not connect to it.
+				measured hardware. Adding a node does not connect to it.
 			</p>
 			{error && <p role="alert">{error}</p>}
 			<button type="submit" className="machines-primary" disabled={busy}>
-				<Icon name="plus" /> Register machine
+				<Icon name="plus" /> Register node
 			</button>
 		</form>
 	);
@@ -217,10 +217,10 @@ function MachineDetail({
 	const attachStatus = attachmentStatus(opening ? "connecting" : attachState);
 	const install = attachment ? attachInstallCommand(attachment) : null;
 	return (
-		<article className="machines-detail" aria-label={`Machine ${machine.id}`}>
+		<article className="machines-detail" aria-label={`Node ${machine.id}`}>
 			<div className="machines-section-heading">
 				<div>
-					<span className="machines-kicker">Registered destination</span>
+					<span className="machines-kicker">Registered node</span>
 					<h2>{machine.id}</h2>
 				</div>
 				<Icon name="system" />
@@ -256,7 +256,7 @@ function MachineDetail({
 				<div className="machines-evidence">
 					<span className="machines-kicker">Recorded project evidence</span>
 					<p className="machines-caption">
-						Readiness is recorded for one project. Open a workspace to see or check this machine's readiness for it.
+						Readiness is recorded for one project. Open a workspace to see or check this node's readiness for it.
 					</p>
 				</div>
 			) : (
@@ -333,13 +333,13 @@ function MachineDetail({
 					</button>
 				)}
 				<button type="button" disabled={busy} onClick={() => setConfirm("remove")}>
-					Remove machine
+					Remove node
 				</button>
 			</div>
 			{confirm !== null ? (
 				<Dialog
 					title={confirm === "check" ? "Check this project over SSH?" : `Remove ${machine.id}?`}
-					eyebrow="Machine control"
+					eyebrow="Node control"
 					onClose={() => setConfirm(null)}
 				>
 					{confirm === "check" ? (
@@ -384,7 +384,7 @@ function MachineDetail({
 
 export function MachinesPage({ client, local }: { client: Client; local: Client }) {
 	useEffect(() => {
-		setPageTitle("Machines");
+		setPageTitle("Nodes");
 		return () => setPageTitle(null);
 	}, []);
 	const queries = useQueryClient();
@@ -394,11 +394,11 @@ export function MachinesPage({ client, local }: { client: Client; local: Client 
 	const { id } = selection;
 	const [now, setNow] = useState(() => clock.now());
 	const [search, setSearch] = useSearchParams();
-	const selectedId = search.get("machine") ?? "";
+	const selectedId = search.get("node") ?? "";
 	const query = search.get("q") ?? "";
 	const searchBox = useSearchDraft(query, (value) => {
 		const next = liveSearchWith("q", value);
-		next.delete("machine");
+		next.delete("node");
 		setSearch(next, { replace: true });
 	});
 	const filter = MACHINE_FILTERS.find((item) => item === search.get("status")) ?? "all";
@@ -406,7 +406,7 @@ export function MachinesPage({ client, local }: { client: Client; local: Client 
 		setSearch(
 			(previous) => {
 				const next = searchWith(previous, key, value);
-				if (key !== "machine") next.delete("machine");
+				if (key !== "node") next.delete("node");
 				return next;
 			},
 			{ replace: true },
@@ -435,12 +435,12 @@ export function MachinesPage({ client, local }: { client: Client; local: Client 
 	// With no workspace open the registry still lists and accepts machines; readiness needs a project.
 	const resolved = !selection.workspaces.isPending && !selection.missing;
 	const inventory = useQuery({
-		queryKey: ["machines", id],
+		queryKey: ["nodes", id],
 		enabled: resolved,
 		queryFn: ({ signal }) =>
 			id
-				? client.call(routes.machines, { ...emptyInput, params: { id } }, undefined, signal)
-				: client.call(routes.installationMachines, emptyInput, undefined, signal),
+				? client.call(routes.nodes, { ...emptyInput, params: { id } }, undefined, signal)
+				: client.call(routes.installationNodes, emptyInput, undefined, signal),
 		staleTime: 30_000,
 		retry: false,
 		meta: { errorSurface: "inline" },
@@ -487,14 +487,14 @@ export function MachinesPage({ client, local }: { client: Client; local: Client 
 				const accepted =
 					sent.workspaceId === null
 						? await client.call(
-								routes.installationMachineMutation,
+								routes.installationNodeMutation,
 								{ ...emptyInput, body: sent.body },
 								sent.key,
 								undefined,
 								currentMeta.epoch,
 							)
 						: await client.call(
-								routes.machineMutation,
+								routes.nodeMutation,
 								{ ...emptyInput, params: { id: sent.workspaceId }, body: sent.body },
 								sent.key,
 								undefined,
@@ -522,13 +522,13 @@ export function MachinesPage({ client, local }: { client: Client; local: Client 
 		const settling = settlingMachineOperation(request, operation.data, epochChanged);
 		if (!request || !settling) return;
 		// Registration is user-wide; readiness is scoped to the checked workspace.
-		void queries.invalidateQueries({ queryKey: ["machines"] });
+		void queries.invalidateQueries({ queryKey: ["nodes"] });
 		store.update((current) => settleMachineRequest(current, request, settling.status));
 		for (const key of machineSettingsInvalidations(request, settling.status))
 			void queries.invalidateQueries({ queryKey: [key] });
 	}, [operation.data, request, epochChanged, queries, store]);
 	const busy = saved.sending || (request !== null && !request.settled);
-	const machines = inventory.data?.machines ?? [];
+	const machines = inventory.data?.nodes ?? [];
 	const shown = filterMachines(machines, query, filter, now);
 	const selected = shown.find((machine) => machine.id === selectedId) ?? shown[0];
 	const summary = machineSummary(machines, now);
@@ -554,8 +554,8 @@ export function MachinesPage({ client, local }: { client: Client; local: Client 
 			<header className="machines-heading">
 				<div>
 					<span className="machines-kicker">Research infrastructure / SSH fleet</span>
-					<h1>Machines</h1>
-					<p>Your lab, ready for the work.</p>
+					<h1>Nodes</h1>
+					<p>A node is a machine PanCode can run workers on.</p>
 				</div>
 				<button
 					type="button"
@@ -564,7 +564,7 @@ export function MachinesPage({ client, local }: { client: Client; local: Client 
 					aria-expanded={adding}
 					onClick={() => setAdding(!adding)}
 				>
-					<Icon name="plus" /> Add machine
+					<Icon name="plus" /> Add node
 				</button>
 			</header>
 			<div className="machines-scope">
@@ -577,7 +577,7 @@ export function MachinesPage({ client, local }: { client: Client; local: Client 
 			</div>
 			{inventory.error && (
 				<div className="machines-operation" role="alert">
-					<p>The saved machine registry could not be read. {inventory.error.message}</p>
+					<p>The saved node registry could not be read. {inventory.error.message}</p>
 					<button type="button" disabled={inventory.isFetching} onClick={() => void inventory.refetch()}>
 						Retry registry
 					</button>
@@ -588,8 +588,7 @@ export function MachinesPage({ client, local }: { client: Client; local: Client 
 				<div className="machines-operation" role="status" ref={recovery} tabIndex={-1}>
 					{saved.error ? <p role="alert">{saved.error}</p> : null}
 					<strong>
-						Original request: {request.body.action}{" "}
-						{request.body.action === "add" ? request.body.machine.id : request.body.id}
+						Original request: {request.body.action} {request.body.action === "add" ? request.body.node.id : request.body.id}
 					</strong>
 					<p>
 						Workspace:{" "}
@@ -630,8 +629,8 @@ export function MachinesPage({ client, local }: { client: Client; local: Client 
 						(forgetConfirm ? (
 							<>
 								<p>
-									Only forget tracking after reviewing the saved machine records. The earlier operation may have run; a new
-									request can repeat its effects.
+									Only forget tracking after reviewing the saved node records. The earlier operation may have run; a new request
+									can repeat its effects.
 								</p>
 								<button
 									type="button"
@@ -663,7 +662,7 @@ export function MachinesPage({ client, local }: { client: Client; local: Client 
 						<button
 							type="button"
 							className="machines-operation__dismiss"
-							aria-label="Dismiss completed machine operation"
+							aria-label="Dismiss completed node operation"
 							onClick={() =>
 								store.update((current) =>
 									current.request?.settled && current.request.key === request.key
@@ -676,7 +675,7 @@ export function MachinesPage({ client, local }: { client: Client; local: Client 
 						</button>
 					) : null}
 					<strong>
-						Machine {operationScope.action} · {operation.data?.status ?? "awaiting status"}
+						Node {operationScope.action} · {operation.data?.status ?? "awaiting status"}
 					</strong>
 					{(operationScope.workspaceId ?? "") !== id && (
 						<p>This operation belongs to the workspace selected when it was started.</p>
@@ -703,7 +702,7 @@ export function MachinesPage({ client, local }: { client: Client; local: Client 
 			)}
 			{adding && (
 				<Dialog
-					title="Add an SSH machine"
+					title="Add an SSH node"
 					eyebrow="Connect your research infrastructure"
 					size="wide"
 					className="machines-add-dialog"
@@ -714,13 +713,13 @@ export function MachinesPage({ client, local }: { client: Client; local: Client 
 						busy={busy}
 						draft={saved.draft}
 						onDraft={(draft) => store.update((current) => ({ ...current, draft }))}
-						onAdd={(machine) => act({ action: "add", machine })}
+						onAdd={(node) => act({ action: "add", node })}
 						inputRef={addField}
 					/>
 				</Dialog>
 			)}
 			{selection.missing ? null : !resolved || inventory.isPending ? (
-				<p role="status">Reading the saved machine registry…</p>
+				<p role="status">Reading the saved node registry…</p>
 			) : (
 				inventory.data && (
 					<>
@@ -761,22 +760,22 @@ export function MachinesPage({ client, local }: { client: Client; local: Client 
 							<div className="machines-toolbar">
 								<label className="machines-search">
 									<Icon name="search" />
-									<span className="sr-only">Search machines</span>
+									<span className="sr-only">Search nodes</span>
 									<input
 										type="search"
 										value={searchBox.value}
 										maxLength={256}
 										onChange={searchBox.onChange}
-										placeholder="Search machine, host or label…"
+										placeholder="Search node, host or label…"
 									/>
 								</label>
 								<label>
-									<span className="sr-only">Filter machine readiness</span>
+									<span className="sr-only">Filter node readiness</span>
 									<select
 										value={filter}
 										onChange={(event) => set("status", event.target.value === "all" ? "" : event.target.value)}
 									>
-										<option value="all">All machines</option>
+										<option value="all">All nodes</option>
 										<option value="ready">Project ready</option>
 										<option value="attention">Needs attention</option>
 										<option value="unchecked">Not checked</option>
@@ -794,13 +793,13 @@ export function MachinesPage({ client, local }: { client: Client; local: Client 
 										: "Register a workstation or server. Open a workspace to check that it can run PanCode for that project."}
 								</p>
 								<button type="button" disabled={busy} onClick={() => setAdding(true)}>
-									Add your first machine
+									Add your first node
 								</button>
 							</div>
 						) : shown.length === 0 ? (
 							<div className="machines-empty">
 								<Icon name="search" />
-								<h2>No machines match this view</h2>
+								<h2>No nodes match this view</h2>
 								<p>Try another name, host, label or readiness filter.</p>
 								<button
 									type="button"
@@ -808,7 +807,7 @@ export function MachinesPage({ client, local }: { client: Client; local: Client 
 										setSearch(
 											(previous) => {
 												const next = new URLSearchParams(previous);
-												for (const key of ["q", "status", "machine"]) next.delete(key);
+												for (const key of ["q", "status", "node"]) next.delete(key);
 												return next;
 											},
 											{ replace: true },
@@ -820,7 +819,7 @@ export function MachinesPage({ client, local }: { client: Client; local: Client 
 							</div>
 						) : (
 							<div className="machines-workbench">
-								<nav className="machines-list" aria-label="Registered machines">
+								<nav className="machines-list" aria-label="Registered nodes">
 									{shown.map((machine) => {
 										const status = machineStatus(machine, now);
 										return (
@@ -829,7 +828,7 @@ export function MachinesPage({ client, local }: { client: Client; local: Client 
 												className="machines-row"
 												key={machine.id}
 												aria-current={selected?.id === machine.id ? "true" : undefined}
-												onClick={() => set("machine", machine.id)}
+												onClick={() => set("node", machine.id)}
 											>
 												<span className="machines-row-title">
 													<Icon name="system" />

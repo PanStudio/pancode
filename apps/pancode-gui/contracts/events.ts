@@ -110,7 +110,7 @@ export const Event = Type.Union([
 		),
 	}),
 	/** This app's attachment to a node's own GUI changed state. */
-	Type.Object({ ...base, type: Type.Literal("machine.attach"), payload: MachineAttachment }),
+	Type.Object({ ...base, type: Type.Literal("node.attach"), payload: MachineAttachment }),
 	/** A launch found the app window open and asks it to show a page. The window the launcher focused takes it. */
 	Type.Object({
 		...base,

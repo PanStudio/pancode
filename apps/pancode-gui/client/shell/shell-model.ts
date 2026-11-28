@@ -297,7 +297,7 @@ const SETTINGS_SEGMENTS = new Set([
 	"research",
 	"arena",
 	"docs",
-	"machines",
+	"nodes",
 	"skills",
 ]);
 
@@ -424,7 +424,7 @@ export const SETTINGS_SECTIONS: readonly SettingsSection[] = [
 	{ id: "arena", label: "Arena", path: "/arena", icon: "arena", group: "activity", owns: ["/arena"] },
 	{ id: "system", label: "System", path: "/system", icon: "system", group: "capabilities", owns: ["/system"] },
 	{ id: "sessions", label: "Sessions", path: "/sessions", icon: "sessions", group: "activity", owns: ["/sessions"] },
-	{ id: "machines", label: "Machines", path: "/machines", icon: "system", group: "capabilities", owns: ["/machines"] },
+	{ id: "nodes", label: "Nodes", path: "/nodes", icon: "system", group: "capabilities", owns: ["/nodes"] },
 ];
 
 export function settingsDestination(path: string, workspaceId: string | null | undefined): string {

@@ -90,12 +90,12 @@ export async function readMachineEndpoints(cwd: string): Promise<MachineEndpoint
 export async function mutateMachine(cwd: string, mutation: MachineMutation) {
 	try {
 		if (mutation.action === "add") {
-			await runner.run({ kind: "machines.add", machine: mutation.machine }, cwd);
-			return { id: mutation.machine.id, message: "Machine registered. No SSH check was run." };
+			await runner.run({ kind: "machines.add", machine: mutation.node }, cwd);
+			return { id: mutation.node.id, message: "Node registered. No SSH check was run." };
 		}
 		if (mutation.action === "remove") {
 			await runner.run({ kind: "machines.remove", id: mutation.id }, cwd);
-			return { id: mutation.id, message: "Machine removed from the registry. Remote files remain in place." };
+			return { id: mutation.id, message: "Node removed from the registry. Remote files remain in place." };
 		}
 		const raw = object(await runner.run({ kind: "machines.check", id: mutation.id }, cwd));
 		if (raw.nodeId !== mutation.id || typeof raw.ok !== "boolean")
@@ -104,7 +104,7 @@ export async function mutateMachine(cwd: string, mutation: MachineMutation) {
 			id: mutation.id,
 			message: raw.ok
 				? "Check recorded. Refresh the project inventory to see current eligibility."
-				: "Check recorded: this machine needs attention. Review its project evidence.",
+				: "Check recorded: this node needs attention. Review its project evidence.",
 		};
 	} catch (error) {
 		if (mutation.action === "remove" && error instanceof AppProblem && /exit code 2/.test(error.message))

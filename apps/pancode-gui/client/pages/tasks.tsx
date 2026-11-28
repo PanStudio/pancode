@@ -343,7 +343,7 @@ export function Sessions({ client }: { client: Client }) {
 					<footer className="taskpage__scope">
 						<Link to="/sessions">All sessions</Link>
 						<span>·</span>
-						<Link to={`/machines?workspace=${workspaceId}`}>Project machines</Link>
+						<Link to={`/nodes?workspace=${workspaceId}`}>Project nodes</Link>
 						<span>·</span>
 						<span>Open sessions and saved history are shown together when available.</span>
 					</footer>

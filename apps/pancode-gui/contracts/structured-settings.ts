@@ -18,7 +18,7 @@ export const STRUCTURED_SETTINGS: Readonly<Record<string, StructuredSettingEdito
 			{ key: "target", label: "Connection" },
 			{ key: "model", label: "Model" },
 			{ key: "thinkingLevel", label: "Thinking", choices: THINKING_LEVELS },
-			{ key: "node", label: "Worker machine" },
+			{ key: "node", label: "Worker node" },
 		],
 	},
 	"fleet.agentProfiles": {
@@ -39,15 +39,15 @@ export const STRUCTURED_SETTINGS: Readonly<Record<string, StructuredSettingEdito
 	},
 	"fleet.nodes": {
 		kind: "list",
-		name: "Worker machine",
+		name: "Worker node",
 		fields: [
-			{ key: "id", label: "Machine ID" },
+			{ key: "id", label: "Node ID" },
 			{ key: "host", label: "SSH host" },
 			{ key: "user", label: "SSH user" },
 			{ key: "port", label: "SSH port", kind: "number" },
 			{ key: "identityFile", label: "Identity file path" },
 			{ key: "pancodeEntry", label: "PanCode executable path" },
-			{ key: "labels", label: "Machine labels", kind: "list" },
+			{ key: "labels", label: "Node labels", kind: "list" },
 			{ key: "maxWorkers", label: "Worker slots", kind: "number" },
 			{ key: "residency", label: "Residency", choices: ["observe", "manage"] },
 		],

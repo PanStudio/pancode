@@ -9,7 +9,7 @@ import type { navigation } from "../design/navigation.js";
 import { formatKeybinding, INTERVIEW_KEYBINDING_NAMESPACE, KEYBINDING_ORDER } from "./keybindings.js";
 
 // The task screens are the rail's own and are not in the navigation table, but the reference still explains them.
-type NavPath = (typeof navigation)[number]["path"] | "/" | "/sessions" | "/machines";
+type NavPath = (typeof navigation)[number]["path"] | "/" | "/sessions" | "/nodes";
 
 export interface HelpEntry {
 	readonly term: string;
@@ -42,10 +42,10 @@ export const VIEW_GUIDE: Readonly<Record<NavPath, { title: string; meaning: stri
 		meaning:
 			"Follow the sessions held by this PanCode server across projects. Filter by activity, review requests for your input, stop a turn or continue a session.",
 	},
-	"/machines": {
-		title: "Machines",
+	"/nodes": {
+		title: "Nodes",
 		meaning:
-			"Register lab workstations and servers for SSH workers. Readiness is recorded separately for each project; checks run only when you request them.",
+			"A node is a machine PanCode can run workers on. Register SSH nodes; readiness is recorded separately for each project and checks run only when you request them.",
 	},
 	"/traces": {
 		title: "Traces",

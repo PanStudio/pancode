@@ -331,7 +331,7 @@ export function subscribe(
 				for (const key of telemetryInvalidations(event.payload.update)) keys.add(key);
 				telemetry.set(event.payload.resource, keys);
 			}
-			if (event.type === "machine.attach") invalidate.add("machine-attachments");
+			if (event.type === "node.attach") invalidate.add("node-attachments");
 			if (event.type === "session.control") {
 				const { resource, controller } = event.payload;
 				const key = ["session-control", resource];
@@ -477,7 +477,7 @@ export function subscribe(
 			"operation.progress",
 			"operation.finished",
 			"programs.changed",
-			"machine.attach",
+			"node.attach",
 			"interview.changed",
 			"elicitation.changed",
 			"queue.changed",

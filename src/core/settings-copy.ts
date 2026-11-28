@@ -688,7 +688,7 @@ export const EXTRA_HELP: Record<string, [string, string]> = {
 	],
 	"fleet.default.node": [
 		"Default worker location",
-		"Where workers run unless their profile says otherwise. Enter local or a configured remote machine name; clear to let PanCode choose.",
+		"Where workers run unless their profile says otherwise. Enter local or a configured remote node name; clear to let PanCode choose.",
 	],
 	"fleet.profiles": [
 		"Worker profiles",
@@ -771,8 +771,8 @@ export const EXTRA_HELP: Record<string, [string, string]> = {
 		"Unpinned work stays local until chosen. Explicit and profile pins take priority; leave blank to allow a session placement question.",
 	],
 	"fleet.nodes": [
-		"Remote worker machines",
-		"Machines where workers may run. Edit the JSON list of machine details; adding one does not change the default model.",
+		"Remote worker nodes",
+		"A node is a machine PanCode can run workers on. Edit the JSON list of node details; adding one does not change the default model.",
 	],
 	"store.projectId": [
 		"Store project id",

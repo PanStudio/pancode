@@ -407,7 +407,7 @@ export class MachineAttachments implements MachineAttachmentsApi {
 			...entry.attachment,
 			state: "failed",
 			since: new Date().toISOString(),
-			detail: delay === null ? `${detail} Reconnecting stopped; open the machine again to retry.` : detail,
+			detail: delay === null ? `${detail} Reconnecting stopped; open the node again to retry.` : detail,
 			attempt: failures,
 			retryAt: delay === null ? null : new Date(Date.now() + delay).toISOString(),
 			remote: null,
@@ -447,6 +447,6 @@ export class MachineAttachments implements MachineAttachmentsApi {
 	}
 
 	private publish(entry: Entry) {
-		this.deps.hub.publish({ type: "machine.attach", payload: entry.attachment });
+		this.deps.hub.publish({ type: "node.attach", payload: entry.attachment });
 	}
 }

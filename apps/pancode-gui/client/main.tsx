@@ -283,7 +283,7 @@ const router = createBrowserRouter([
 				},
 			},
 			{
-				path: "/machines",
+				path: "/nodes",
 				lazy: async () => {
 					const { MachinesPage } = await import("./pages/machines.js");
 					return { element: <MachinesPage client={client} local={local} /> };

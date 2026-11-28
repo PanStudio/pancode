@@ -32,7 +32,7 @@ export class MachinesService {
 			projectRoot: workspace?.path ?? null,
 			observedAt: new Date().toISOString(),
 			// Readiness is recorded per project; with none open no record applies.
-			machines:
+			nodes:
 				workspace === null
 					? machines.map((machine) => ({
 							...machine,
@@ -48,17 +48,17 @@ export class MachinesService {
 						}))
 					: machines,
 		};
-		if (!Value.Check(Machines, result)) throw new AppProblem("unavailable", "Invalid machine inventory.");
+		if (!Value.Check(Machines, result)) throw new AppProblem("unavailable", "Invalid node inventory.");
 		return result;
 	}
 
 	async mutate(workspaceId: string | null, mutation: MachineMutation, key: string) {
 		if (workspaceId === null && mutation.action === "check")
-			throw new AppProblem("validation", "Readiness is checked for one project. Open a workspace to check this machine.");
+			throw new AppProblem("validation", "Readiness is checked for one project. Open a workspace to check this node.");
 		const workspace = workspaceId === null ? null : await this.workspaces.get(workspaceId);
 		const cwd = workspace?.path ?? (await this.workspaces.installationPath());
 		return this.operations.create({
-			kind: `machines.${mutation.action}`,
+			kind: `nodes.${mutation.action}`,
 			scope: workspaceId ?? "installation",
 			key,
 			fingerprint: fingerprint({ workspaceId, mutation }),

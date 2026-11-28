@@ -58,23 +58,23 @@ export function machinesRoutes(
 	attachments?: MachineAttachmentsApi,
 ) {
 	const service = () => {
-		if (!machines) throw new AppProblem("unsupported", "Machine management is not enabled on this host.");
+		if (!machines) throw new AppProblem("unsupported", "Node management is not enabled on this host.");
 		return machines;
 	};
 	const attached = () => {
-		if (!attachments) throw new AppProblem("unsupported", "Machine attachment is not enabled on this host.");
+		if (!attachments) throw new AppProblem("unsupported", "Node attachment is not enabled on this host.");
 		return attachments;
 	};
-	register(app, hub, routes.machines, ({ params }) => service().list(params.id));
-	register(app, hub, routes.machineMutation, async ({ params, body }, context) => ({
+	register(app, hub, routes.nodes, ({ params }) => service().list(params.id));
+	register(app, hub, routes.nodeMutation, async ({ params, body }, context) => ({
 		operationId: await service().mutate(params.id, body, idempotencyKey(context)),
 	}));
-	register(app, hub, routes.installationMachines, () => service().list(null));
-	register(app, hub, routes.installationMachineMutation, async ({ body }, context) => ({
+	register(app, hub, routes.installationNodes, () => service().list(null));
+	register(app, hub, routes.installationNodeMutation, async ({ body }, context) => ({
 		operationId: await service().mutate(null, body, idempotencyKey(context)),
 	}));
-	register(app, hub, routes.machineAttachments, async () => ({ attachments: await attached().list() }));
-	register(app, hub, routes.machineAttach, ({ params }) => attached().attach(params.id));
+	register(app, hub, routes.nodeAttachments, async () => ({ attachments: await attached().list() }));
+	register(app, hub, routes.nodeAttach, ({ params }) => attached().attach(params.id));
 	// The node's own API, through its forward. The local auth middleware has already checked this app's
 	// origin and the browser client's credential; only machines that are registered and ready are
 	// reachable. Each local client is its own client on the node too, so the node attributes and
@@ -82,11 +82,11 @@ export function machinesRoutes(
 	app.all("/m/:id/api/*", async (context) => {
 		const id = context.req.param("id");
 		const route = MACHINE_ID.test(id) ? attached().route(id) : null;
-		if (!route) throw new AppProblem("not_found", `Machine ${id} is not attached. Open it from Machines first.`);
+		if (!route) throw new AppProblem("not_found", `Node ${id} is not attached. Open it from Nodes first.`);
 		if (route.kind === "pending")
 			throw new AppProblem(
 				"unavailable",
-				`Machine ${id} is ${route.state.replace("-", " ")}; PanCode on it is not reachable yet.`,
+				`Node ${id} is ${route.state.replace("-", " ")}; PanCode on it is not reachable yet.`,
 			);
 		const url = new URL(context.req.url);
 		const path = url.pathname.slice(`/m/${id}`.length);
@@ -103,11 +103,7 @@ export function machinesRoutes(
 			throw new AppProblem("not_found", "Credentials and stream tickets are issued by this server, not through it.");
 		const client = requestClient(context);
 		const refused = () =>
-			new AppProblem(
-				"unavailable",
-				`PanCode on machine ${id} refused this window's credentials. Open the machine again.`,
-				502,
-			);
+			new AppProblem("unavailable", `PanCode on node ${id} refused this window's credentials. Open the node again.`, 502);
 		let credential: string | null;
 		try {
 			credential = await clientCredential(
@@ -138,7 +134,7 @@ export function machinesRoutes(
 				signal: context.req.raw.signal,
 			});
 		} catch {
-			throw new AppProblem("unavailable", `Machine ${id} did not answer through its SSH forward.`, 502);
+			throw new AppProblem("unavailable", `Node ${id} did not answer through its SSH forward.`, 502);
 		}
 		// A remote refusal must not read as this app refusing the browser's token, which the client would drop.
 		if (upstream.status === 401 || upstream.status === 421) {

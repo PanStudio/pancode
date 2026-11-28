@@ -7,6 +7,8 @@ import { type FleetPreflightRecord, fleetNodeSandboxSummary } from "../domains/d
 
 const HELP = `pancode fleet nodes <command>
 
+A node is a machine PanCode can run workers on.
+
   setup <id> [--host <SSH alias or address> and add flags] [--yes]
   setup --all [--yes]                   add the node when --host is given, install this exact build
                                         when the node lacks it (preview without --yes), and record
