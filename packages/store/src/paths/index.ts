@@ -26,8 +26,7 @@
  * Records for tag `T` are blobs of the sibling tag `recordsTag(T)`.
  */
 import { createHash } from "node:crypto";
-import { existsSync, lstatSync, readFileSync, realpathSync } from "node:fs";
-import { homedir } from "node:os";
+import { lstatSync, readFileSync, realpathSync } from "node:fs";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import type { StoreTagClass } from "../backend/types.js";
 
@@ -149,29 +148,6 @@ export function storeMainCheckout(root: string): string {
 	}
 }
 
-/**
- * The project a directory belongs to, for a host that has no project walk of its own: the nearest ancestor of
- * `dir` holding a `.git` entry, else `dir`, then its main checkout. A home directory that is a repository never
- * serves the folders under it. PanCode's own walk ends at the same boundary.
- */
-export function storeProjectRootOf(dir: string): string {
-	const start = resolve(dir);
-	const homes = new Set([resolve(homedir())]);
-	try {
-		homes.add(realpathSync(homedir()));
-	} catch {
-		// A home that does not resolve is matched by its plain path only.
-	}
-	let current = start;
-	while (true) {
-		if (homes.has(current) && current !== start) return storeMainCheckout(start);
-		if (existsSync(join(current, ".git"))) return storeMainCheckout(current);
-		const parent = dirname(current);
-		if (parent === current) return storeMainCheckout(start);
-		current = parent;
-	}
-}
-
 export function storeProjectDir(storeRoot: string, projectKey: string): string {
 	return join(storeRoot, "projects", projectKey);
 }
@@ -192,14 +168,6 @@ export function storeCacheDir(cacheDir: string, projectKey: string): string {
 /** The directory holding the project's lock files. */
 export function storeLocksDir(projectDir: string): string {
 	return join(projectDir, "locks");
-}
-
-/**
- * Directory boundaries a grant of `tags` adds to a writer's scope: each tag's
- * directory and its records tag's directory.
- */
-export function storeGrantBoundaries(projectDir: string, tags: ReadonlyArray<string>): string[] {
-	return tags.flatMap((tag) => [`${storeTagDir(projectDir, tag)}/`, `${storeTagDir(projectDir, recordsTag(tag))}/`]);
 }
 
 /**
