@@ -9,10 +9,11 @@ import { readRunGateIndex } from "../evidence/index.js";
 import {
 	listRunTelemetryIds,
 	loadRunTelemetrySource,
+	readRunRecord,
+	runRowTelemetry,
 	runTelemetryDirectoryExists,
 	runTelemetryWrittenMs,
-} from "../session/index.js";
-import { readRunRecord, runRowTelemetry } from "../telemetry/index.js";
+} from "../telemetry/index.js";
 import { councilTopologies } from "./council-topology.js";
 import { gateTopology } from "./gate-topology.js";
 import { runEvidenceOf } from "./run-result-facts.js";

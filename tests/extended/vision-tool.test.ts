@@ -5,11 +5,11 @@ import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { it } from "node:test";
 import { ToolNames } from "../../src/core/tool-names.js";
-import type { VisionSidecar } from "../../src/domains/providers/vision-sidecar.js";
 import { createWorkerSafety } from "../../src/engine/worker-tools.js";
 import { registerCoreTools } from "../../src/tools/core-bootstrap.js";
 import { createRegistry } from "../../src/tools/registry.js";
 import { createVisionTool } from "../../src/tools/vision.js";
+import type { VisionSidecar } from "../../src/tools/vision-sidecar.js";
 import { isolatePancodeEnv } from "../harness/scratch-env.js";
 
 it("lets the main agent ask an explicit image question through the configured sidecar", async () => {

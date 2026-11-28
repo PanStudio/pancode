@@ -1,15 +1,10 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0 AND MIT
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
+
+import { PANE_PEER_IDS, type PanePeerId } from "../core/pane-peers.js";
 import type { SettingsAreaId } from "../core/settings-areas.js";
 import { isExtensionCommandToken } from "../domains/extensions/operator-commands.js";
-import {
-	PANE_PEER_IDS,
-	PANES_PRESET_IDS,
-	PANES_PRESETS,
-	type PanePeerId,
-	type PanesStatus,
-	resolvePanesPresetId,
-} from "../domains/mux/operations.js";
+import { PANES_PRESET_IDS, PANES_PRESETS, type PanesStatus, resolvePanesPresetId } from "../domains/mux/operations.js";
 import { isPancodeHostSocket } from "../domains/mux/workspace/platform.js";
 import type { ExtensionReloadOutcome } from "../entry/extension-reload.js";
 import { pinnedProgramMissing } from "../lib/programs/index.js";

@@ -342,7 +342,7 @@ export async function bootOrchestrator(options: BootOptions = {}): Promise<BootR
 	// Only a headless run commits autonomously; TUI and ACP sessions keep the human author at any autonomy.
 	setAutonomousCommitProcess(bootSurface === "run");
 	// Every session this boot opens names its surface in the live record (#439).
-	(await import("../domains/session/heartbeat.js")).configureSessionHeartbeat({
+	(await import("../lib/heartbeat/heartbeat.js")).configureSessionHeartbeat({
 		surface: bootSurface,
 		terminate: (notice) => {
 			const termination = getTerminationCoordinator();

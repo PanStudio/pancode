@@ -5,7 +5,6 @@ import { join } from "node:path";
 import { readLayeredSettings } from "../core/settings-layers.js";
 import type { SessionTelemetryV1 } from "../core/telemetry/dto.js";
 import { pancodeStateDir } from "../core/xdg.js";
-import { loadSessionTelemetrySourceAsync } from "../domains/session/telemetry-source.js";
 import { workspaceTelemetryCapture } from "../domains/telemetry/consent.js";
 import {
 	TELEMETRY_BUNDLE_FILE,
@@ -17,6 +16,7 @@ import {
 } from "../domains/telemetry/paths.js";
 import { sessionTelemetry } from "../domains/telemetry/read-model-reports.js";
 import { describeSealMismatch, readTelemetryScopeFiles, verifyTelemetryScope } from "../domains/telemetry/seal.js";
+import { loadSessionTelemetrySourceAsync } from "../domains/telemetry/telemetry-source.js";
 import { printError } from "./argv.js";
 
 type ScopeKind = "session" | "run" | "process";

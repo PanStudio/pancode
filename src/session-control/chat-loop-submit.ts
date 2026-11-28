@@ -23,7 +23,6 @@ import {
 	registerForegroundStream,
 	runtimeTargetSnapshot,
 } from "../domains/providers/index.js";
-import { visionObservationText } from "../domains/providers/vision-sidecar.js";
 import type { ContextSnapshot } from "../domains/session/context-accounting.js";
 import { readPromptCompileRecords } from "../domains/session/prompt-manifest.js";
 import { classifyRecoveryFailure, isRetryableRecoveryFailure } from "../domains/session/retry.js";
@@ -39,6 +38,7 @@ import { reduceTurnOutcome } from "../lib/turn-control/index.js";
 import { resolveSessionTools } from "../tools/agent-tools.js";
 import { finalizeAskUserInterviewForHost } from "../tools/ask-user.js";
 import { scopedCapabilityShapes, scopeShapesDelta } from "../tools/gateway/scope-shapes.js";
+import { visionObservationText } from "../tools/vision-sidecar.js";
 import type { ChatLoop, ChatSubmitOptions, StepPipelineEnd } from "./chat-loop.js";
 import {
 	classifyTurnEnding,

@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 
-import { isRecord } from "../../core/type-guards.js";
-import type { WorkerBudget } from "../../lib/worker-wire/spec-contract.js";
-import type { AgentBudget, AgentBudgetPhase } from "../agents/recipe.js";
+import type { AgentBudget, AgentBudgetPhase } from "../domains/agents/recipe.js";
+import type { WorkerBudget } from "../lib/worker-wire/spec-contract.js";
+import { isRecord } from "./type-guards.js";
 
 /** Invocation-level phase requested by dispatch. */
 export interface DispatchBudgetPhase {

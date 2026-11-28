@@ -12,10 +12,10 @@ import {
 	SESSION_FILE_MODE,
 	sessionPaths,
 } from "../../engine/session.js";
+import { liveSessionOwner } from "../../lib/heartbeat/live-owner.js";
 import { collectSessionEntries } from "./compaction/session-entries.js";
 import type { SessionMeta } from "./contract.js";
 import { isSessionHeader, type LabelEntry, type SessionInfoEntry } from "./entries.js";
-import { liveSessionOwner } from "./live-owner.js";
 import { resumedSessionRoute } from "./resumed-route.js";
 
 /**

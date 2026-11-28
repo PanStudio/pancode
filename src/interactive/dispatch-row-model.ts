@@ -4,10 +4,10 @@
 /** The dispatch board's row model and the shared presentation of one run: status, origin, usage, evidence, and card key-value lines. */
 
 import { formatElapsed } from "../core/format-time.js";
+import type { RunToolBudgetEnvelope } from "../core/run-budget-envelope.js";
 import type { Quantity, RunTelemetryV1 } from "../core/telemetry/dto.js";
 import type { HostVerificationStatus } from "../core/telemetry/run-vocabulary.js";
 import type { AgentAudience } from "../domains/agents/spec.js";
-import type { RunToolBudgetEnvelope } from "../domains/dispatch/budget-envelope.js";
 import type { CompletedRunCaveat } from "../domains/dispatch/failure-headline.js";
 import { completedRunCaveat } from "../domains/dispatch/failure-headline.js";
 import type { DispatchRequestOrigin, RunKind } from "../domains/dispatch/types.js";

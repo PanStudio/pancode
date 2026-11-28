@@ -38,7 +38,6 @@ import { removeSessionAtRest, renameSessionAtRest, sessionRemovalRefusal } from 
 import type { SessionMeta } from "../domains/session/contract.js";
 import { type HeadlessCompactionOutcome, replayedContextSize } from "../domains/session/headless-compact.js";
 import { listSessionsForCwd, listSessionWorkspaces } from "../domains/session/history.js";
-import { sessionLiveOwner } from "../domains/session/live-owner.js";
 import { resolveSessionTarget } from "../domains/session/names.js";
 import { foldSessionArtifacts, resolveSessionArtifactPath } from "../domains/session/session-artifacts.js";
 import { renderTranscriptMarkdown, writeTranscriptExport } from "../domains/session/transcript-export.js";
@@ -46,6 +45,7 @@ import { filterEntriesToActivePath } from "../domains/session/tree/active-path.j
 import { forkSessionAtRest } from "../domains/session/tree/fork.js";
 import { readTreeBundle } from "../domains/session/tree/manager.js";
 import type { PancodeSessionOwner } from "../engine/session.js";
+import { sessionLiveOwner } from "../lib/heartbeat/live-owner.js";
 import { formatColumns } from "./argv.js";
 import { confirmAction } from "./lib/confirm.js";
 import { EXIT_CODES } from "./lib/exit-codes.js";

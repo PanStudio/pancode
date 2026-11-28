@@ -12,11 +12,11 @@
  * which copies the typed fields the outcome count reads and leaves every text field behind.
  */
 
+import { TASK_BOARD_COMPLETION_CLAIM_PREFIX } from "../../core/task-board-claims.js";
 import type { TelemetryRecord } from "../../core/telemetry/envelope.js";
 import type { EVENTS, JournalEventName } from "../../core/telemetry/events.js";
 import { countsAsToolCall, type ToolFileKind } from "../../core/telemetry/tool-schemas.js";
 import { isRecord } from "../../core/type-guards.js";
-import { TASK_BOARD_COMPLETION_CLAIM_PREFIX } from "../session/task-board.js";
 
 export const INSIGHT_CATEGORIES = [
 	"data analysis",
