@@ -664,24 +664,6 @@ export function createGatewayTool(deps: GatewayToolDeps): ToolSpec {
 		}
 	};
 
-	/**
-	 * A direct tool whose attached schema is a compact projection (dispatch)
-	 * still accepts its canonical fields. describe returns the attached schema,
-	 * so without this block compete, council and review have no discovery path
-	 * at all. `mode` is repeated because only the canonical
-	 * description names compete and council.
-	 */
-	const advancedDirectParameters = (spec: ToolSpec): Record<string, unknown> | null => {
-		if (spec.modelParameters === undefined) return null;
-		const attached = (spec.modelParameters as { properties?: Record<string, unknown> }).properties ?? {};
-		const canonical = (spec.parameters as { properties?: Record<string, unknown> }).properties ?? {};
-		const properties: Record<string, unknown> = {};
-		for (const [key, value] of Object.entries(canonical)) {
-			if (!(key in attached) || key === "mode") properties[key] = wireParameterSchema(value);
-		}
-		return Object.keys(properties).length > 0 ? { type: "object", properties } : null;
-	};
-
 	/** Authority notes shared by a live spec and a cached MCP descriptor, which describe identically. */
 	const admissionNotes = (name: string, actionClass: ActionClass): string[] => [
 		`Runs through the same admission as a direct call, under its own name and action class (${actionClass}); the approval overlay, audit row, and ledger record name ${name}, not the gateway.`,
@@ -827,18 +809,18 @@ export function createGatewayTool(deps: GatewayToolDeps): ToolSpec {
 		const mcpNote = kind === "mcp" ? deps.mcp?.authorityNote(spec.name, spec.baseActionClass) : null;
 		if (mcpNote) authority.push(mcpNote);
 		const examples = gatewayExamples(spec, "", 3, allowed);
-		const advanced = direct ? advancedDirectParameters(spec) : null;
-		if (advanced !== null) {
+		// A compact attached schema (dispatch) leaves fields out to save tokens; describe shows them all, as the
+		// top-level fields they are, so none reads as a wrapper the call should send.
+		if (direct && spec.modelParameters !== undefined) {
 			authority.push(
-				"advanced lists canonical fields the attached schema omits to save tokens; the direct call accepts them and canonical validation checks every call.",
+				"parameters is the full schema; the attached schema is a compact subset of it. Every field listed is a top-level argument of the direct call, and canonical validation checks every call.",
 			);
 		}
 		const payload = {
 			name: spec.name,
 			kind,
 			description: spec.description,
-			parameters: wireParameterSchema(direct ? (spec.modelParameters ?? spec.parameters) : spec.parameters),
-			...(advanced !== null ? { advanced } : {}),
+			parameters: wireParameterSchema(spec.parameters),
 			...(spec.metadata?.discoveryHint ? { orientation: spec.metadata.discoveryHint } : {}),
 			actionClass: spec.baseActionClass,
 			executionMode: spec.executionMode ?? "sequential",

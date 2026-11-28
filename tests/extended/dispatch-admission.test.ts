@@ -10,6 +10,8 @@ import { afterEach, beforeEach, describe, it } from "node:test";
 import { setTimeout as sleep } from "node:timers/promises";
 import { DEFAULT_SETTINGS } from "../../src/core/defaults.js";
 import type { DomainName } from "../../src/core/domain-loader.js";
+import { HEADLESS_PERMISSION_DENIED_REASON } from "../../src/core/headless-permission.js";
+import type { Playbook } from "../../src/domains/agents/playbook.js";
 import type { AgentSpec } from "../../src/domains/agents/spec.js";
 import {
 	admit,
@@ -32,7 +34,9 @@ import {
 	readCapacityStateUnsafe,
 	releaseMainCacheLanes,
 } from "../../src/domains/dispatch/capacity-lease.js";
-import type { AgentRoleFacts } from "../../src/domains/dispatch/execution-role.js";
+import { type AgentRoleFacts, agentRoleFactsResolver } from "../../src/domains/dispatch/execution-role.js";
+import type { FleetRunLauncher, FleetRunLaunchInput } from "../../src/domains/dispatch/fleet-run-launcher.js";
+import { compileFleetRunPreview } from "../../src/domains/dispatch/fleet-run-preview.js";
 import {
 	isBoundedGateRolePrompt,
 	REVIEWER_GATE_PROMPT,
@@ -68,14 +72,18 @@ import copilotSdkRuntime from "../../src/domains/providers/runtimes/copilot/copi
 import { quotaSharedStatePath } from "../../src/domains/quota/shared-state.js";
 import { credentialFingerprint } from "../../src/domains/quota/types.js";
 import { isSubset, READONLY_SCOPE, WORKSPACE_SCOPE } from "../../src/domains/safety/scope.js";
+import { createWorkerSafety } from "../../src/engine/worker-tools.js";
 import { planFacts, planRouteSources, readDispatchPlan } from "../../src/interactive/dispatch-plan-summary.js";
+import type { AutonomyLevel } from "../../src/lib/autonomy/autonomy.js";
 import type { WorkerSpec } from "../../src/lib/worker-wire/spec-contract.js";
 import { createDispatchTool } from "../../src/tools/dispatch.js";
 import { createDispatchAdmissionController } from "../../src/tools/dispatch-admission.js";
 import { dispatchRequestsFromArgs } from "../../src/tools/dispatch-arguments.js";
 import { normalizeDispatchAdmission } from "../../src/tools/dispatch-normalize.js";
 import { DISPATCH_PLAN_PREPARATION_ERROR_ARGUMENT, describeDispatchPlan } from "../../src/tools/dispatch-plan.js";
+import type { DispatchPlaybookPort } from "../../src/tools/dispatch-playbook.js";
 import type { DispatchToolDeps } from "../../src/tools/dispatch-types.js";
+import { createRegistry } from "../../src/tools/registry.js";
 import { isolateDispatchState, makeDispatchBundle, restoreDispatchState } from "../harness/dispatch.js";
 import { dispatchStubContext } from "../harness/dispatch-stub-context.js";
 
@@ -568,6 +576,8 @@ describe("dispatch admission boundary", () => {
 			match(refusal({}, [{ id: "a", task: "Read a.", depends_on: ["ghost"] }]), /depends on 'ghost', which no task/u);
 			match(refusal({ mode: "sequential" }), /drop mode=sequential/u);
 			match(refusal({ detach: true }), /runs attached.*drop detach/u);
+			// A8: a wrapped field is refused, never unwrapped or dropped; advanced:{review} once ran ungated.
+			match(refusal({ advanced: { review: { max_cycles: 2 } } }), /^dispatch: unknown field advanced; nothing/u);
 		} finally {
 			await bundle.extension.stop?.();
 		}
@@ -617,6 +627,112 @@ describe("dispatch admission boundary", () => {
 			strictEqual(started[0], "map");
 			deepStrictEqual(started.slice(1).sort(), ["docs:", "tests:"]);
 		} finally {
+			await bundle.extension.stop?.();
+		}
+	});
+
+	it("starts a playbook from dispatch: a preview answers with the card, a run parks once on it and launches the sealed plan (F1)", async () => {
+		const context = dispatchStubContext();
+		const agents = context.getContract("agents");
+		ok(agents);
+		const bundle = makeDispatchBundle(context);
+		await bundle.extension.start();
+		const root = mkdtempSync(join(tmpdir(), "dispatch-playbook-"));
+		try {
+			const book = {
+				version: 3,
+				name: "survey",
+				description: "Survey fixture",
+				path: join(root, "survey.md"),
+				body: "Survey {{task}} and report.",
+				maxWorkers: 1,
+				budgetUsd: null,
+				onFailure: "stop",
+				steps: [{ kind: "agent", id: "survey", agent: "scout", scope: "readonly", dependencies: [] }],
+			} as unknown as Playbook;
+			const launched: FleetRunLaunchInput[] = [];
+			const port: DispatchPlaybookPort = {
+				launcher: {
+					launch: (input: FleetRunLaunchInput) => {
+						launched.push(input);
+						return { status: "refused", reason: "fixture: the launcher took the run" };
+					},
+				} as unknown as FleetRunLauncher,
+				workspaceRoot: () => root,
+				detachable: true,
+				preview: (name, vars) =>
+					compileFleetRunPreview({
+						workspaceRoot: root,
+						name,
+						vars,
+						getAgentSpec: (id) => agents.getSpec(id),
+						roleFacts: agentRoleFactsResolver((id) => agents.getSpec(id)),
+						load: () => ({ playbook: book, commands: null }),
+					}),
+			};
+			let autonomy: AutonomyLevel = "default";
+			const registry = createRegistry({ safety: createWorkerSafety({ cwd: root }), autonomy: () => autonomy });
+			registry.register(
+				createDispatchTool({
+					dispatch: bundle.contract,
+					getAgentSpecs: () => agents.listSpecs(),
+					getAutonomy: () => autonomy,
+					playbooks: port,
+				}),
+			);
+			const asks: string[] = [];
+			let answer: "approve" | "deny" | "headless" = "approve";
+			registry.onPermissionRequired((_call, decision, meta) => {
+				asks.push(decision.kind === "ask" ? decision.rejection.short : decision.kind);
+				if (answer === "approve") {
+					void registry.resumeParkedCalls({ actionClass: "dispatch", requestId: meta.requestId, requestedBy: "test" });
+				} else if (answer === "deny") {
+					registry.cancelParkedCalls("Operator denied this action.", { denied: true });
+				} else registry.cancelParkedCalls(HEADLESS_PERMISSION_DENIED_REASON);
+			});
+			const call = (playbook: Record<string, unknown>) =>
+				registry.invoke({
+					tool: "dispatch",
+					args: { playbook: { name: "survey", vars: { task: "the parser" }, ...playbook } },
+				});
+
+			// A preview is read-only: it answers with the card, parks nothing and starts nothing.
+			const preview = await call({ preview: true });
+			ok(preview.kind === "ok" && preview.result.kind === "ok", JSON.stringify(preview));
+			match(preview.result.output, /survey/u);
+			deepStrictEqual([asks.length, launched.length], [0, 0]);
+
+			// Declined or headless-denied, the run never reaches the launcher; headless names the CLI way forward.
+			answer = "deny";
+			strictEqual((await call({})).kind, "blocked");
+			answer = "headless";
+			const headless = await call({});
+			ok(headless.kind === "blocked");
+			match(JSON.stringify(headless.decision), /pancode fleet run survey \\"<task>\\"/u);
+			strictEqual(launched.length, 0);
+
+			// Approved once on the card, the launcher gets the sealed plan as the main agent's run.
+			answer = "approve";
+			const approved = await call({});
+			ok(approved.kind === "ok" && approved.result.kind === "error", JSON.stringify(approved));
+			match(approved.result.message, /fixture: the launcher took the run/u);
+			deepStrictEqual(asks, [
+				"playbook survey needs approval (1 step) at autonomy default",
+				"playbook survey needs approval (1 step) at autonomy default",
+				"playbook survey needs approval (1 step) at autonomy default",
+			]);
+			strictEqual(launched.length, 1);
+			strictEqual(launched[0]?.origin, "model");
+			const compiled = port.preview("survey", { task: "the parser" });
+			ok(compiled.ok);
+			strictEqual(launched[0]?.preview.planHash, compiled.preview.planHash);
+
+			// Yolo runs it with no ask.
+			autonomy = "yolo";
+			ok((await call({})).kind === "ok");
+			deepStrictEqual([asks.length, launched.length], [3, 2]);
+		} finally {
+			rmSync(root, { recursive: true, force: true });
 			await bundle.extension.stop?.();
 		}
 	});
