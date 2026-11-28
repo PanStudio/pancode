@@ -8,4 +8,4 @@ export { conversationShape, dispatchKeysFromArgs, nextClarificationStreak, reduc
 export type { TurnControlRecord } from "./record.js";
 export { renderCollectedBlock, renderCollectedElsewhereBlock, TURN_CONTROL_BLOCK_MAX_CHARS } from "./render.js";
 export type { TurnControlSettings } from "./settings.js";
-export { TURN_CONTROL_WORKFLOWS } from "./settings.js";
+export { TURN_CONTROL_HOOKS } from "./settings.js";

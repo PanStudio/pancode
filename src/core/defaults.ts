@@ -1012,7 +1012,7 @@ interface IntegrationsSettings {
 export const DEFAULT_SETTINGS = {
 	version: 2 as const,
 	turnControl: {
-		workflows: ["detached-collection"],
+		hooks: ["detached-collection"],
 	} as TurnControlSettings,
 	targets: [] as TargetDescriptor[],
 	funding: {} as FundingDefinitions,

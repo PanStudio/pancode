@@ -10,7 +10,7 @@
 import { isAbsolute } from "node:path";
 import { AUTONOMY_LEVELS, YOLO_CONFINEMENTS } from "../lib/autonomy/autonomy.js";
 import { scratchRootProblem } from "../lib/scratch-roots/scratch-roots.js";
-import { TURN_CONTROL_WORKFLOWS } from "../lib/turn-control/settings.js";
+import { TURN_CONTROL_HOOKS } from "../lib/turn-control/settings.js";
 import { validationWrapperProblem } from "../lib/validation-wrappers/validation-wrappers.js";
 import type { PancodeSettings } from "./config.js";
 import {
@@ -209,17 +209,17 @@ export function validateSettings(raw: unknown): SettingsValidationResult {
 		if (!isRecord(raw.turnControl)) issues.add("turnControl", `expected a map, got ${describe(raw.turnControl)}`);
 		else {
 			const control = raw.turnControl;
-			issues.unknownKeys("turnControl", control, ["workflows"]);
-			if ("workflows" in control) {
-				if (!Array.isArray(control.workflows))
-					issues.add("turnControl.workflows", `expected a list, got ${describe(control.workflows)}`);
+			issues.unknownKeys("turnControl", control, ["hooks"]);
+			if ("hooks" in control) {
+				if (!Array.isArray(control.hooks))
+					issues.add("turnControl.hooks", `expected a list, got ${describe(control.hooks)}`);
 				else {
-					const workflows: PancodeSettings["turnControl"]["workflows"] = [];
-					for (const [index, value] of control.workflows.entries()) {
-						const parsed = expectEnum(issues, `turnControl.workflows[${index}]`, value, TURN_CONTROL_WORKFLOWS);
-						if (parsed !== undefined) workflows.push(parsed);
+					const hooks: PancodeSettings["turnControl"]["hooks"] = [];
+					for (const [index, value] of control.hooks.entries()) {
+						const parsed = expectEnum(issues, `turnControl.hooks[${index}]`, value, TURN_CONTROL_HOOKS);
+						if (parsed !== undefined) hooks.push(parsed);
 					}
-					settings.turnControl.workflows = workflows;
+					settings.turnControl.hooks = hooks;
 				}
 			}
 		}

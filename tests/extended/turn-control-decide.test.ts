@@ -20,15 +20,15 @@ const facts = (overrides: Partial<TurnFacts> = {}): TurnFacts => ({
 	finishedDetachedBatchIds: [],
 	...overrides,
 });
-const on = { workflows: ["detached-collection" as const] };
+const on = { hooks: ["detached-collection" as const] };
 
-it("collects finished batches only when the workflow is on and no explicit constraints apply", () => {
+it("collects finished batches only when the hook is on and no explicit constraints apply", () => {
 	deepStrictEqual(decide(facts({ finishedDetachedBatchIds: ["a", "b"] }), on), {
 		kind: "collect",
 		batchIds: ["a", "b"],
 	});
 	deepStrictEqual(decide(facts(), on), { kind: "none", reason: "nothing-finished" });
-	deepStrictEqual(decide(facts({ finishedDetachedBatchIds: ["a"] }), { workflows: [] }), {
+	deepStrictEqual(decide(facts({ finishedDetachedBatchIds: ["a"] }), { hooks: [] }), {
 		kind: "none",
 		reason: "off",
 	});
@@ -48,24 +48,24 @@ it("hashes decisions and facts stably and keeps the collected block inside its b
 	strictEqual(renderCollectedBlock("x".repeat(9000)).length <= TURN_CONTROL_BLOCK_MAX_CHARS, true);
 });
 
-it("round-trips the defaults and refuses a retired or invented workflow", () => {
+it("round-trips the defaults and refuses a retired or invented hook", () => {
 	const defaults = validateSettings(parse(SETTINGS_SCAFFOLD_YAML));
 	deepStrictEqual(defaults.issues, []);
 	deepStrictEqual(defaults.settings.turnControl, DEFAULT_SETTINGS.turnControl);
 	// `pancode upgrade` removed the retired values from the user file; the reader no longer drops them.
 	const home = validateSettings({
 		turnControl: {
-			workflows: ["orientation", "detached-collection"],
+			hooks: ["orientation", "detached-collection"],
 			orientation: { maxSplit: 4, maxCostUsdPerTurn: null },
 		},
 	});
 	deepStrictEqual(
 		home.issues.map((issue) => issue.path),
-		["turnControl.orientation", "turnControl.workflows[0]"],
+		["turnControl.orientation", "turnControl.hooks[0]"],
 	);
 	strictEqual(home.issues[0]?.message, "unknown key");
-	const unknown = validateSettings({ turnControl: { workflows: ["invented"] } });
-	strictEqual(unknown.issues[0]?.path, "turnControl.workflows[0]");
+	const unknown = validateSettings({ turnControl: { hooks: ["invented"] } });
+	strictEqual(unknown.issues[0]?.path, "turnControl.hooks[0]");
 	match(unknown.issues[0]?.message ?? "", /detached-collection/);
-	for (const key of ["turnControl", "turnControl.workflows"]) strictEqual(settingsChangeKind(key), "nextTurn", key);
+	for (const key of ["turnControl", "turnControl.hooks"]) strictEqual(settingsChangeKind(key), "nextTurn", key);
 });

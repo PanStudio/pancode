@@ -36,7 +36,7 @@ const ACTION_COPY: Readonly<Record<string, { title: string; description: string 
 	btw: { title: "Side question", description: "Ask a quick question without interrupting the main conversation" },
 	draft: { title: "Compare approaches", description: "Explore different ways to tackle your request" },
 	extensions: { title: "Tools and add-ons", description: "See the tools available to this session" },
-	"fleet-run": { title: "Run a workflow", description: "Choose a saved workflow and review it before starting" },
+	"fleet-run": { title: "Run a playbook", description: "Choose a saved playbook and review it before starting" },
 };
 // Every command the engine offers gets a written title; a bare command name ("Mcp", "Oracle") reads as jargon.
 const COMMAND_TITLES: Readonly<Record<string, string>> = {

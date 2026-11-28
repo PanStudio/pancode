@@ -395,7 +395,7 @@ export async function sessionActionSteps(run: SmokeRun) {
 	});
 	await step("playbook run", async () => {
 		// A playbook: preview compiles and starts nothing; the run starts the plan shown.
-		const fleetDialog = await slashAction("fleet run", "Run a playbook", "Run a workflow");
+		const fleetDialog = await slashAction("fleet run", "Run a playbook", "Run a playbook");
 		const fleetPanel = fleetDialog;
 		await fleetPanel.getByLabel("Playbook name", { exact: true }).fill("survey");
 		await fleetPanel.getByLabel("Variables, one name=value per line", { exact: true }).fill("site=plot-7");

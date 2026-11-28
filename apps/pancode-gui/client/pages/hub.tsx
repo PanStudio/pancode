@@ -133,7 +133,7 @@ const purpose: Record<HubCollection, string> = {
 	Agents: "Specialists PanCode can assign work to. Their specifications describe the tools, skills and limits they use.",
 	Skills: "Reusable instructions that guide PanCode through a task.",
 	Prompts: "Saved starting points for conversations and common tasks.",
-	Playbooks: "Saved workflows the fleet runs, coordinating several steps or specialists.",
+	Playbooks: "Saved playbooks the fleet runs, coordinating several steps or specialists.",
 	Extensions: "Installed packs that add executable capabilities. Admission state shows whether PanCode can load them.",
 	Verifiers: "Checks PanCode discovered for this workspace. Viewing this list does not run them.",
 };

@@ -30,7 +30,7 @@ import {
 import { settingsRuntimeFacts } from "../../domains/providers/settings-facts.js";
 import type { Component } from "../../engine/tui.js";
 import { Input } from "../../engine/tui.js";
-import { TURN_CONTROL_WORKFLOWS } from "../../lib/turn-control/index.js";
+import { TURN_CONTROL_HOOKS } from "../../lib/turn-control/index.js";
 import { GLYPH } from "../theme/index.js";
 import {
 	cycleAffordance,
@@ -173,7 +173,7 @@ export function targetUrlCta(): SettingsCenterItem {
 	};
 }
 
-const TURN_PREPARATION_LABELS: Readonly<Record<(typeof TURN_CONTROL_WORKFLOWS)[number], string>> = {
+const TURN_PREPARATION_LABELS: Readonly<Record<(typeof TURN_CONTROL_HOOKS)[number], string>> = {
 	"detached-collection": "Collect finished background runs",
 };
 
@@ -182,9 +182,9 @@ const turnPreparationSubmenu: SettingSubmenuBuilder = (currentValue, done) => {
 	let active: Component;
 	const showChoices = (selectedIndex: number): void => {
 		const choices = [
-			...TURN_CONTROL_WORKFLOWS.map((workflow) => ({
-				value: workflow as string,
-				label: `${selected.has(workflow) ? GLYPH.ok : GLYPH.hollow} ${TURN_PREPARATION_LABELS[workflow]}`,
+			...TURN_CONTROL_HOOKS.map((hook) => ({
+				value: hook as string,
+				label: `${selected.has(hook) ? GLYPH.ok : GLYPH.hollow} ${TURN_PREPARATION_LABELS[hook]}`,
 			})),
 			{ value: "apply", label: "Apply these choices" },
 		];
@@ -192,7 +192,7 @@ const turnPreparationSubmenu: SettingSubmenuBuilder = (currentValue, done) => {
 		list.setSelectedIndex(selectedIndex);
 		list.onSelect = (choice) => {
 			if (choice.value === "apply") {
-				done(TURN_CONTROL_WORKFLOWS.filter((workflow) => selected.has(workflow)).join(", "));
+				done(TURN_CONTROL_HOOKS.filter((hook) => selected.has(hook)).join(", "));
 				return;
 			}
 			if (selected.has(choice.value)) selected.delete(choice.value);
@@ -317,7 +317,7 @@ export function commonControlItem(control: SettingControl, live: () => Readonly<
 		readOnly: control.readOnly,
 		presentationKind: "setting",
 		valueSegments: [],
-		...(control.path === "turnControl.workflows"
+		...(control.path === "turnControl.hooks"
 			? { submenu: turnPreparationSubmenu }
 			: control.choices || control.kind === "boolean"
 				? { values: [...(control.choices ?? ["true", "false"])] }

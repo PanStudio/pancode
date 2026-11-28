@@ -758,7 +758,7 @@ export const EXTRA_HELP: Record<string, [string, string]> = {
 		"Suggest reports",
 		"When PanCode itself fails, such as an internal error or a crash, it may suggest /report: at most once a session and once a week, and never again for a problem you declined. Off never suggests. Nothing is sent without your keypress.",
 	],
-	"turnControl.workflows": [
+	"turnControl.hooks": [
 		"Before PanCode answers",
 		"Choose whether PanCode collects finished background runs before answering.",
 	],

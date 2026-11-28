@@ -12,7 +12,7 @@ export type WorkflowDecision =
 
 export function decide(facts: TurnFacts, settings: TurnControlSettings): WorkflowDecision {
 	if (facts.explicitConstraints) return { kind: "none", reason: "constraints" };
-	if (!settings.workflows.includes("detached-collection")) return { kind: "none", reason: "off" };
+	if (!settings.hooks.includes("detached-collection")) return { kind: "none", reason: "off" };
 	if (facts.finishedDetachedBatchIds.length === 0) return { kind: "none", reason: "nothing-finished" };
 	return { kind: "collect", batchIds: [...facts.finishedDetachedBatchIds] };
 }

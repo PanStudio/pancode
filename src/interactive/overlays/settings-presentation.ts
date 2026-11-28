@@ -100,7 +100,7 @@ export function formatSettingsValue(path: string, value: string): string {
 	if (value === "(built-in)") return "Built in";
 	if (value === "(defaults)") return "Default keys";
 	if (value === "(turn end only)") return "At turn end";
-	if (path === "turnControl.workflows" && !value.startsWith("["))
+	if (path === "turnControl.hooks" && !value.startsWith("["))
 		return `${value.split(",").filter((entry) => entry.trim().length > 0).length} enabled`;
 	if (path === "chat.maxOutputTokens" && value === "0") return "Model limit";
 	if (path === "context.workingSet.minEvictableTokens" && value === "0") return "Any size";
@@ -115,7 +115,7 @@ export function formatSettingsValue(path: string, value: string): string {
 				: collection !== null && typeof collection === "object"
 					? Object.keys(collection).length
 					: 0;
-			if (path === "turnControl.workflows") return `${count} enabled`;
+			if (path === "turnControl.hooks") return `${count} enabled`;
 			if (path === "fleet.rosters") return count === 0 ? "No rosters" : `${count} rosters`;
 			if (path === "fleet.nodes") return count === 0 ? "No remote nodes" : `${count} remote nodes`;
 			if (path === "interface.keybindings") return count === 0 ? "Default keys" : `${count} custom keys`;

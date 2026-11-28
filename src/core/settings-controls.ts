@@ -91,7 +91,7 @@ export interface SettingControl {
 const MENU_ROWS = new Set([
 	"fleet.defaultNode",
 	"fleet.default.node",
-	"turnControl.workflows",
+	"turnControl.hooks",
 	"chat.cacheKeepalive",
 	"chat.loopsUntilStopped",
 	"chat.steering.triage.enabled",

@@ -92,7 +92,7 @@ const DIALOG_COPY: Readonly<Record<SlashAction, { title: string; eyebrow: string
 	btw: { title: "Side question", eyebrow: "Alongside your work" },
 	draft: { title: "Compare approaches", eyebrow: "Explore a request" },
 	extensions: { title: "Tools and add-ons", eyebrow: "Session tools" },
-	"fleet-run": { title: "Run a workflow", eyebrow: "Guided workflow" },
+	"fleet-run": { title: "Run a playbook", eyebrow: "Playbook" },
 	report: { title: "Report a problem", eyebrow: "PanCode" },
 };
 
