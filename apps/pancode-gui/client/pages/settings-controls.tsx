@@ -551,8 +551,8 @@ export function SettingsControlsView({
 	const startCheck = useMutation({
 		mutationFn: (targetId: string) =>
 			workspaceId === null
-				? client.call(routes.userTargetsProbe, { ...emptyInput, params: { targetId } })
-				: client.call(routes.targetsProbe, { ...emptyInput, params: { id: workspaceId, targetId } }),
+				? client.call(routes.userTargetsProbe, { ...emptyInput, params: { connectionId: targetId } })
+				: client.call(routes.targetsProbe, { ...emptyInput, params: { id: workspaceId, connectionId: targetId } }),
 		onSuccess: (value, targetId) => setCheck({ operationId: value.operationId, targetId }),
 	});
 	useEffect(() => {
@@ -568,14 +568,14 @@ export function SettingsControlsView({
 			return {
 				models: null,
 				defaultModel: null,
-				note: `${targetControl?.label ?? targetPath} is automatic, so type an exact model id or choose a target first.`,
+				note: `${targetControl?.label ?? targetPath} is automatic, so type an exact model id or choose a connection first.`,
 			};
 		if (inventory.isPending) return { models: null, defaultModel: null, note: `Reading ${targetId}'s models…` };
 		if (!inventory.data)
 			return {
 				models: null,
 				defaultModel: null,
-				note: `The target list could not be read${inventory.error ? `: ${inventory.error.message}` : "."}`,
+				note: `The connection list could not be read${inventory.error ? `: ${inventory.error.message}` : "."}`,
 			};
 		const target = inventory.data.targets.find((row) => row.id === targetId);
 		// The setting saved a connection the running engine does not list; that is what fails, not the choice itself.
@@ -770,7 +770,7 @@ export function SettingsControlsView({
 			{active === "targets" && (
 				<>
 					<ConnectionSetup />
-					{workspaceId && <Link to={`/settings/targets?workspace=${workspaceId}`}>Manage connections</Link>}
+					{workspaceId && <Link to={`/settings/connections?workspace=${workspaceId}`}>Manage connections</Link>}
 				</>
 			)}
 			{active === "advanced" && (

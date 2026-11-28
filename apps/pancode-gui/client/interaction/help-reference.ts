@@ -174,8 +174,8 @@ export const HELP_SECTIONS: readonly HelpSection[] = [
 		title: "Vocabulary",
 		lede: "Words you may see while working.",
 		entries: [
-			{ term: "Target", meaning: "A configured service or runtime that handles a turn." },
-			{ term: "Model", meaning: "The AI model a target uses for that turn." },
+			{ term: "Connection", meaning: "A configured service or runtime that handles a turn." },
+			{ term: "Model", meaning: "The AI model a connection uses for that turn." },
 			{ term: "Session", meaning: "A saved conversation you can resume. A project can have many sessions." },
 			{ term: "Turn", meaning: "One request and everything PanCode does in response." },
 			{

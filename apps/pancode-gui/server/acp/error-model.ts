@@ -16,13 +16,13 @@ export function promptAdmissionDetail(reason: unknown): string {
 		case "target-not-configured":
 		case "target-unknown":
 		case "target-not-found":
-			return "PanCode did not start this turn because its selected target is not configured or available. Check the conversation route and connection settings before retrying.";
+			return "PanCode did not start this turn because its selected connection is not configured or available. Check the conversation route and connection settings before retrying.";
 		case "model-not-configured":
 			return "PanCode did not start this turn because its session model is not configured. Choose an available model in the conversation controls before retrying.";
 		case "runtime-not-registered":
 		case "chat-unsupported":
 		case "streaming-unsupported":
-			return "PanCode did not start this turn because its selected runtime cannot serve this conversation. Check the connection runtime and choose a supported target before retrying.";
+			return "PanCode did not start this turn because its selected runtime cannot serve this conversation. Check the connection runtime and choose a supported connection before retrying.";
 		case "context-window-exceeded":
 			return "PanCode did not start this turn because the request exceeds the model's context window. Compact the conversation or reduce the request before retrying.";
 		default:

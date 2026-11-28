@@ -4,7 +4,7 @@ import { type Static, Type } from "typebox";
 
 const closed = { additionalProperties: false };
 const identifier = Type.String({ minLength: 1, maxLength: 256, pattern: "^[^\\u0000-\\u001f\\u007f]+$" });
-const ConfigId = Type.Union([Type.Literal("target"), Type.Literal("model"), Type.Literal("thinkingLevel")]);
+const ConfigId = Type.Union([Type.Literal("connection"), Type.Literal("model"), Type.Literal("thinkingLevel")]);
 export const ConfigOption = Type.Object(
 	{
 		id: ConfigId,

@@ -11569,7 +11569,7 @@
 													"required": ["settled", "seal", "result"],
 													"properties": {
 														"settled": {
-															"$ref": "#/components/schemas/Union_b92c370c"
+															"$ref": "#/components/schemas/Union_5899c79b"
 														},
 														"seal": {
 															"$ref": "#/components/schemas/Union_4dc8870f"
@@ -12080,10 +12080,10 @@
 				}
 			}
 		},
-		"/api/workspaces/{id}/targets": {
+		"/api/workspaces/{id}/connections": {
 			"get": {
 				"operationId": "targetsList",
-				"summary": "Configured targets through the canonical CLI",
+				"summary": "Configured connections through the canonical CLI",
 				"security": [
 					{
 						"bearer": []
@@ -12407,10 +12407,10 @@
 				}
 			}
 		},
-		"/api/workspaces/{id}/targets/{targetId}/probe": {
+		"/api/workspaces/{id}/connections/{connectionId}/probe": {
 			"post": {
 				"operationId": "targetsProbe",
-				"summary": "Probe configured targets and return this target's status",
+				"summary": "Probe configured connections and return this connection's status",
 				"security": [
 					{
 						"bearer": []
@@ -12427,7 +12427,7 @@
 						}
 					},
 					{
-						"name": "targetId",
+						"name": "connectionId",
 						"in": "path",
 						"required": true,
 						"schema": {
@@ -12505,10 +12505,10 @@
 				}
 			}
 		},
-		"/api/workspaces/{id}/targets/{targetId}/use": {
+		"/api/workspaces/{id}/connections/{connectionId}/use": {
 			"post": {
 				"operationId": "targetsUse",
-				"summary": "Use a target for chat and fleet through the CLI",
+				"summary": "Use a connection for chat and fleet through the CLI",
 				"security": [
 					{
 						"bearer": []
@@ -12525,7 +12525,7 @@
 						}
 					},
 					{
-						"name": "targetId",
+						"name": "connectionId",
 						"in": "path",
 						"required": true,
 						"schema": {
@@ -12603,10 +12603,10 @@
 				}
 			}
 		},
-		"/api/workspaces/{id}/targets/{targetId}/remove": {
+		"/api/workspaces/{id}/connections/{connectionId}/remove": {
 			"post": {
 				"operationId": "targetsRemove",
-				"summary": "Remove a configured target through the CLI",
+				"summary": "Remove a configured connection through the CLI",
 				"security": [
 					{
 						"bearer": []
@@ -12623,7 +12623,7 @@
 						}
 					},
 					{
-						"name": "targetId",
+						"name": "connectionId",
 						"in": "path",
 						"required": true,
 						"schema": {
@@ -12701,10 +12701,10 @@
 				}
 			}
 		},
-		"/api/workspaces/{id}/targets/{targetId}/signout": {
+		"/api/workspaces/{id}/connections/{connectionId}/signout": {
 			"post": {
 				"operationId": "targetsSignOut",
-				"summary": "Remove the stored credential for a target through the CLI",
+				"summary": "Remove the stored credential for a connection through the CLI",
 				"security": [
 					{
 						"bearer": []
@@ -12721,7 +12721,7 @@
 						}
 					},
 					{
-						"name": "targetId",
+						"name": "connectionId",
 						"in": "path",
 						"required": true,
 						"schema": {
@@ -12799,10 +12799,10 @@
 				}
 			}
 		},
-		"/api/targets": {
+		"/api/connections": {
 			"get": {
 				"operationId": "userTargetsList",
-				"summary": "The user's configured targets with no workspace open",
+				"summary": "The user's configured connections with no workspace open",
 				"security": [
 					{
 						"bearer": []
@@ -13106,10 +13106,10 @@
 				}
 			}
 		},
-		"/api/targets/{targetId}/probe": {
+		"/api/connections/{connectionId}/probe": {
 			"post": {
 				"operationId": "userTargetsProbe",
-				"summary": "Probe a user-level target with no workspace open",
+				"summary": "Probe a user-level connection with no workspace open",
 				"security": [
 					{
 						"bearer": []
@@ -13117,7 +13117,7 @@
 				],
 				"parameters": [
 					{
-						"name": "targetId",
+						"name": "connectionId",
 						"in": "path",
 						"required": true,
 						"schema": {
@@ -13195,10 +13195,10 @@
 				}
 			}
 		},
-		"/api/targets/{targetId}/use": {
+		"/api/connections/{connectionId}/use": {
 			"post": {
 				"operationId": "userTargetsUse",
-				"summary": "Use a target for chat and fleet with no workspace open",
+				"summary": "Use a connection for chat and fleet with no workspace open",
 				"security": [
 					{
 						"bearer": []
@@ -13206,7 +13206,7 @@
 				],
 				"parameters": [
 					{
-						"name": "targetId",
+						"name": "connectionId",
 						"in": "path",
 						"required": true,
 						"schema": {
@@ -13284,10 +13284,10 @@
 				}
 			}
 		},
-		"/api/targets/{targetId}/remove": {
+		"/api/connections/{connectionId}/remove": {
 			"post": {
 				"operationId": "userTargetsRemove",
-				"summary": "Remove a user-level target with no workspace open",
+				"summary": "Remove a user-level connection with no workspace open",
 				"security": [
 					{
 						"bearer": []
@@ -13295,7 +13295,7 @@
 				],
 				"parameters": [
 					{
-						"name": "targetId",
+						"name": "connectionId",
 						"in": "path",
 						"required": true,
 						"schema": {
@@ -13373,10 +13373,10 @@
 				}
 			}
 		},
-		"/api/targets/{targetId}/signout": {
+		"/api/connections/{connectionId}/signout": {
 			"post": {
 				"operationId": "userTargetsSignOut",
-				"summary": "Remove the stored credential for a target with no workspace open",
+				"summary": "Remove the stored credential for a connection with no workspace open",
 				"security": [
 					{
 						"bearer": []
@@ -13384,7 +13384,7 @@
 				],
 				"parameters": [
 					{
-						"name": "targetId",
+						"name": "connectionId",
 						"in": "path",
 						"required": true,
 						"schema": {
@@ -21516,7 +21516,7 @@
 								"required": ["configId", "value"],
 								"properties": {
 									"configId": {
-										"$ref": "#/components/schemas/Union_c6270044"
+										"$ref": "#/components/schemas/Union_58240345"
 									},
 									"value": {
 										"type": "string",
@@ -21536,7 +21536,7 @@
 						"content": {
 							"application/json": {
 								"schema": {
-									"$ref": "#/components/schemas/Object_options_target_72bcec3a"
+									"$ref": "#/components/schemas/Object_options_target_e10c017b"
 								}
 							}
 						},
@@ -21568,10 +21568,10 @@
 				}
 			}
 		},
-		"/api/sessions/{id}/targets": {
+		"/api/sessions/{id}/connections": {
 			"get": {
 				"operationId": "sessionTargets",
-				"summary": "Targets available to this ACP session",
+				"summary": "Connections available to this ACP session",
 				"security": [
 					{
 						"bearer": []
@@ -21670,10 +21670,10 @@
 				}
 			}
 		},
-		"/api/sessions/{id}/targets/{targetId}/probe": {
+		"/api/sessions/{id}/connections/{connectionId}/probe": {
 			"post": {
 				"operationId": "probeSessionTarget",
-				"summary": "Probe a configured target through ACP",
+				"summary": "Probe a configured connection through ACP",
 				"security": [
 					{
 						"bearer": []
@@ -21690,7 +21690,7 @@
 						}
 					},
 					{
-						"name": "targetId",
+						"name": "connectionId",
 						"in": "path",
 						"required": true,
 						"schema": {
@@ -21988,7 +21988,7 @@
 						"content": {
 							"application/json": {
 								"schema": {
-									"$ref": "#/components/schemas/Object_config_contextWork_fleet_3cb2edaf"
+									"$ref": "#/components/schemas/Object_config_contextWork_fleet_27a118ef"
 								}
 							}
 						},
@@ -23069,7 +23069,7 @@
 						"content": {
 							"application/json": {
 								"schema": {
-									"$ref": "#/components/schemas/Object_config_contextWork_fleet_3cb2edaf"
+									"$ref": "#/components/schemas/Object_config_contextWork_fleet_27a118ef"
 								}
 							}
 						},
@@ -23164,7 +23164,7 @@
 						"content": {
 							"application/json": {
 								"schema": {
-									"$ref": "#/components/schemas/Object_config_contextWork_fleet_3cb2edaf"
+									"$ref": "#/components/schemas/Object_config_contextWork_fleet_27a118ef"
 								}
 							}
 						},
@@ -23405,7 +23405,7 @@
 								"schema": {
 									"type": "array",
 									"items": {
-										"$ref": "#/components/schemas/Object_config_contextWork_fleet_3cb2edaf"
+										"$ref": "#/components/schemas/Object_config_contextWork_fleet_27a118ef"
 									}
 								}
 							}
@@ -23986,7 +23986,7 @@
 						"content": {
 							"application/json": {
 								"schema": {
-									"$ref": "#/components/schemas/Object_config_contextWork_fleet_3cb2edaf"
+									"$ref": "#/components/schemas/Object_config_contextWork_fleet_27a118ef"
 								}
 							}
 						},
@@ -24852,7 +24852,7 @@
 													"required": ["settled", "seal", "result"],
 													"properties": {
 														"settled": {
-															"$ref": "#/components/schemas/Union_b92c370c"
+															"$ref": "#/components/schemas/Union_5899c79b"
 														},
 														"seal": {
 															"$ref": "#/components/schemas/Union_4dc8870f"
@@ -28297,6 +28297,13 @@
 				},
 				"maxItems": 512
 			},
+			"Array_049df995": {
+				"type": "array",
+				"items": {
+					"$ref": "#/components/schemas/Object_currentValue_id_notice_1b56c055"
+				},
+				"maxItems": 3
+			},
 			"Array_0603e7a2": {
 				"type": "array",
 				"items": {
@@ -28392,12 +28399,6 @@
 					"maxLength": 256
 				},
 				"maxItems": 200
-			},
-			"Array_40fe896a": {
-				"type": "array",
-				"items": {
-					"$ref": "#/components/schemas/Object_details_files_finishedAt_71ae0199"
-				}
 			},
 			"Array_479fdf57": {
 				"type": "array",
@@ -28800,6 +28801,12 @@
 				},
 				"maxItems": 1024
 			},
+			"Array_d2c94fb3": {
+				"type": "array",
+				"items": {
+					"$ref": "#/components/schemas/Object_details_files_finishedAt_11440f98"
+				}
+			},
 			"Array_d390febe": {
 				"type": "array",
 				"items": {
@@ -28830,13 +28837,6 @@
 					"maxLength": 4096
 				},
 				"maxItems": 500
-			},
-			"Array_de2d36b0": {
-				"type": "array",
-				"items": {
-					"$ref": "#/components/schemas/Object_currentValue_id_notice_a206921e"
-				},
-				"maxItems": 3
 			},
 			"Array_dffde4ed": {
 				"type": "array",
@@ -30265,7 +30265,7 @@
 										"minimum": 1
 									},
 									"turn": {
-										"$ref": "#/components/schemas/Object_details_files_finishedAt_71ae0199"
+										"$ref": "#/components/schemas/Object_details_files_finishedAt_11440f98"
 									}
 								},
 								"additionalProperties": false
@@ -30492,7 +30492,7 @@
 										"$ref": "#/components/schemas/Union_06dbc26b"
 									},
 									"details": {
-										"$ref": "#/components/schemas/Object_model_outputTokensPerSecond_target_ba0fc302"
+										"$ref": "#/components/schemas/Object_connection_model_outputTokensPerSecond_5514233f"
 									},
 									"problem": {
 										"$ref": "#/components/schemas/Union_fbc21a9b"
@@ -30710,7 +30710,7 @@
 										"minimum": 1
 									},
 									"config": {
-										"$ref": "#/components/schemas/Object_options_target_72bcec3a"
+										"$ref": "#/components/schemas/Object_options_target_e10c017b"
 									}
 								},
 								"additionalProperties": false
@@ -31955,7 +31955,7 @@
 				},
 				"additionalProperties": false
 			},
-			"Object_agentId_answerBudgetBytes_apiCalls_c060c7c6": {
+			"Object_agentId_answerBudgetBytes_apiCalls_a17687f1": {
 				"type": "object",
 				"required": [
 					"version",
@@ -32011,7 +32011,7 @@
 					"digest"
 				],
 				"properties": {
-					"$ref": "#/components/schemas/Shape_7a1bc206"
+					"$ref": "#/components/schemas/Shape_00f52883"
 				},
 				"additionalProperties": false
 			},
@@ -32689,7 +32689,7 @@
 				},
 				"additionalProperties": false
 			},
-			"Object_approval_digest_exec_b67c2db3": {
+			"Object_approval_digest_exec_006c41c8": {
 				"type": "object",
 				"required": [
 					"version",
@@ -32707,7 +32707,7 @@
 					"staticHead"
 				],
 				"properties": {
-					"$ref": "#/components/schemas/Shape_51d95255"
+					"$ref": "#/components/schemas/Shape_b6a0e6b4"
 				},
 				"additionalProperties": false
 			},
@@ -33514,7 +33514,7 @@
 				},
 				"additionalProperties": false
 			},
-			"Object_backend_confinesWrites_unconfined_877862f1": {
+			"Object_backend_confinesWrites_unconfined_364de3fc": {
 				"type": "object",
 				"required": ["backend", "confinesWrites"],
 				"properties": {
@@ -33529,6 +33529,10 @@
 					"unconfined": {
 						"type": "boolean",
 						"const": true
+					},
+					"workerIsolation": {
+						"type": "string",
+						"const": "process"
 					}
 				},
 				"additionalProperties": false
@@ -34744,7 +34748,7 @@
 				},
 				"additionalProperties": false
 			},
-			"Object_config_contextWork_fleet_3cb2edaf": {
+			"Object_config_contextWork_fleet_27a118ef": {
 				"type": "object",
 				"required": [
 					"id",
@@ -34761,7 +34765,7 @@
 					"health"
 				],
 				"properties": {
-					"$ref": "#/components/schemas/Shape_05339c55"
+					"$ref": "#/components/schemas/Shape_84706d61"
 				},
 				"additionalProperties": false
 			},
@@ -34894,6 +34898,28 @@
 				],
 				"properties": {
 					"$ref": "#/components/schemas/Shape_5d40719c"
+				},
+				"additionalProperties": false
+			},
+			"Object_connection_model_outputTokensPerSecond_5514233f": {
+				"type": "object",
+				"properties": {
+					"model": {
+						"type": "string",
+						"maxLength": 256
+					},
+					"connection": {
+						"type": "string",
+						"maxLength": 128
+					},
+					"ttftMs": {
+						"type": "number",
+						"minimum": 0
+					},
+					"outputTokensPerSecond": {
+						"type": "number",
+						"minimum": 0
+					}
 				},
 				"additionalProperties": false
 			},
@@ -35041,11 +35067,11 @@
 				},
 				"additionalProperties": false
 			},
-			"Object_currentValue_id_notice_a206921e": {
+			"Object_currentValue_id_notice_1b56c055": {
 				"type": "object",
 				"required": ["id", "currentValue", "options"],
 				"properties": {
-					"$ref": "#/components/schemas/Shape_d4f7cc87"
+					"$ref": "#/components/schemas/Shape_0712fc50"
 				},
 				"additionalProperties": false
 			},
@@ -35311,11 +35337,11 @@
 				},
 				"additionalProperties": false
 			},
-			"Object_details_files_finishedAt_71ae0199": {
+			"Object_details_files_finishedAt_11440f98": {
 				"type": "object",
 				"required": ["id", "prompt", "origin", "status", "startedAt", "finishedAt", "stopReason", "usage", "problem"],
 				"properties": {
-					"$ref": "#/components/schemas/Shape_e97aa373"
+					"$ref": "#/components/schemas/Shape_21a268ce"
 				},
 				"additionalProperties": false
 			},
@@ -36830,28 +36856,6 @@
 				},
 				"additionalProperties": false
 			},
-			"Object_model_outputTokensPerSecond_target_ba0fc302": {
-				"type": "object",
-				"properties": {
-					"model": {
-						"type": "string",
-						"maxLength": 256
-					},
-					"target": {
-						"type": "string",
-						"maxLength": 128
-					},
-					"ttftMs": {
-						"type": "number",
-						"minimum": 0
-					},
-					"outputTokensPerSecond": {
-						"type": "number",
-						"minimum": 0
-					}
-				},
-				"additionalProperties": false
-			},
 			"Object_model_pool_role_0c099801": {
 				"type": "object",
 				"required": ["role", "model", "target", "pool"],
@@ -36939,11 +36943,11 @@
 				},
 				"additionalProperties": false
 			},
-			"Object_options_target_72bcec3a": {
+			"Object_options_target_e10c017b": {
 				"type": "object",
 				"required": ["options"],
 				"properties": {
-					"$ref": "#/components/schemas/Shape_2b7a18ac"
+					"$ref": "#/components/schemas/Shape_3bde08e9"
 				},
 				"additionalProperties": false
 			},
@@ -37719,7 +37723,7 @@
 						"$ref": "#/components/schemas/Object_display_fact_ref_ae685bfe"
 					},
 					"settled": {
-						"$ref": "#/components/schemas/Union_b92c370c"
+						"$ref": "#/components/schemas/Union_5899c79b"
 					},
 					"seal": {
 						"$ref": "#/components/schemas/Union_4dc8870f"
@@ -38484,6 +38488,236 @@
 					"$ref": "#/components/schemas/Object_cost_kwh_f31e53ef"
 				}
 			},
+			"Shape_00f52883": {
+				"version": {
+					"type": "number",
+					"const": 1
+				},
+				"agentId": {
+					"type": "string",
+					"minLength": 1,
+					"maxLength": 512
+				},
+				"executionRole": {
+					"$ref": "#/components/schemas/Enum_c81979a1"
+				},
+				"requestOrigin": {
+					"$ref": "#/components/schemas/Union_d7ccdb8b"
+				},
+				"identity": {
+					"$ref": "#/components/schemas/Union_5cd84371"
+				},
+				"route": {
+					"$ref": "#/components/schemas/Object_runtimeId_runtimeKind_targetId_8f906072"
+				},
+				"node": {
+					"$ref": "#/components/schemas/Union_b0281a53"
+				},
+				"routeDecision": {
+					"$ref": "#/components/schemas/Union_1d5c99f1"
+				},
+				"attempt": {
+					"type": "integer",
+					"minimum": 0,
+					"maximum": 9007199254740991
+				},
+				"phaseTiming": {
+					"$ref": "#/components/schemas/Object_queueWaitMs_totalEndToEndMs_02a09d83"
+				},
+				"routingIntent": {
+					"$ref": "#/components/schemas/Object_deadlineMs_failover_locality_da525918"
+				},
+				"startedAt": {
+					"type": "string",
+					"pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$"
+				},
+				"endedAt": {
+					"type": "string",
+					"pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$"
+				},
+				"outcome": {
+					"$ref": "#/components/schemas/Enum_7c26d95b"
+				},
+				"outcomeCode": {
+					"$ref": "#/components/schemas/Union_05a40a95"
+				},
+				"exitCode": {
+					"anyOf": [
+						{
+							"type": "integer"
+						},
+						{
+							"type": "null"
+						}
+					]
+				},
+				"outcomeDetail": {
+					"anyOf": [
+						{
+							"type": "string",
+							"maxLength": 1024
+						},
+						{
+							"type": "null"
+						}
+					]
+				},
+				"failureMessage": {
+					"anyOf": [
+						{
+							"type": "string",
+							"maxLength": 1024
+						},
+						{
+							"type": "null"
+						}
+					]
+				},
+				"terminalReason": {
+					"$ref": "#/components/schemas/Enum_8bfbcdd9"
+				},
+				"callIds": {
+					"$ref": "#/components/schemas/Union_90280c4e"
+				},
+				"processExitCode": {
+					"anyOf": [
+						{
+							"type": "integer"
+						},
+						{
+							"type": "null"
+						}
+					]
+				},
+				"boundKind": {
+					"$ref": "#/components/schemas/Union_f6453495"
+				},
+				"stepPipeline": {
+					"$ref": "#/components/schemas/Object_done_stepTool_stoppedBy_0b2ff353"
+				},
+				"repairRounds": {
+					"$ref": "#/components/schemas/Object_display_fact_ref_ae685bfe"
+				},
+				"frameType": {
+					"anyOf": [
+						{
+							"type": "string",
+							"maxLength": 4096
+						},
+						{
+							"type": "null"
+						}
+					]
+				},
+				"usage": {
+					"$ref": "#/components/schemas/Object_cacheRead_cacheWrite_cacheWrite1h_88a7022a"
+				},
+				"totalTokens": {
+					"$ref": "#/components/schemas/Union_1cb1d650"
+				},
+				"apiCalls": {
+					"$ref": "#/components/schemas/Union_1cb1d650"
+				},
+				"pricing": {
+					"$ref": "#/components/schemas/Object_freeRule_pricedBy_rateRef_d7589007"
+				},
+				"economics": {
+					"$ref": "#/components/schemas/Object_additive_comparison_funding_373ea90d"
+				},
+				"toolCalls": {
+					"type": "integer",
+					"minimum": 0,
+					"maximum": 9007199254740991
+				},
+				"tools": {
+					"$ref": "#/components/schemas/Array_0e929bca"
+				},
+				"skills": {
+					"$ref": "#/components/schemas/Array_a62e240b"
+				},
+				"toolActivity": {
+					"$ref": "#/components/schemas/Union_8b6f6387"
+				},
+				"capabilityMismatch": {
+					"$ref": "#/components/schemas/Union_26e30db3"
+				},
+				"budget": {
+					"$ref": "#/components/schemas/Union_e315aa3b"
+				},
+				"context": {
+					"$ref": "#/components/schemas/Object_briefingBytes_project_worker_7fcee349"
+				},
+				"upstream": {
+					"$ref": "#/components/schemas/Object_gatewayRoutes_responseModelIds_efe23277"
+				},
+				"blockedAttempts": {
+					"$ref": "#/components/schemas/Array_cbd5fc6c"
+				},
+				"guardBlockedAttempts": {
+					"$ref": "#/components/schemas/Array_cbd5fc6c"
+				},
+				"permissionRequestedAttempts": {
+					"$ref": "#/components/schemas/Array_cbd5fc6c"
+				},
+				"escalations": {
+					"$ref": "#/components/schemas/Union_ae6654b9"
+				},
+				"flowRestrictions": {
+					"$ref": "#/components/schemas/Union_db2664c0"
+				},
+				"toolGovernance": {
+					"$ref": "#/components/schemas/Union_2f4b4e0c"
+				},
+				"verification": {
+					"$ref": "#/components/schemas/Object_basis_detail_state_8ef9228e"
+				},
+				"quality": {
+					"$ref": "#/components/schemas/Union_409ae0f7"
+				},
+				"validationGrounding": {
+					"$ref": "#/components/schemas/Union_9e0c3568"
+				},
+				"unclassifiedAfterLastCheck": {
+					"$ref": "#/components/schemas/Object_commands_count_302a6639"
+				},
+				"routeWarnings": {
+					"$ref": "#/components/schemas/Array_5164076d"
+				},
+				"answerBudgetBytes": {
+					"type": "integer",
+					"minimum": 1,
+					"maximum": 1000000
+				},
+				"verdict": {
+					"$ref": "#/components/schemas/Object_assurance_obligation_rules_78de37b8"
+				},
+				"envelope": {
+					"$ref": "#/components/schemas/Object_approval_digest_exec_006c41c8"
+				},
+				"worktree": {
+					"$ref": "#/components/schemas/Union_7acf3e39"
+				},
+				"hostVerification": {
+					"$ref": "#/components/schemas/Union_4d4e769e"
+				},
+				"contextProvenance": {
+					"enum": ["recorded", "invalid", "not_applicable", "unknown"]
+				},
+				"hashes": {
+					"$ref": "#/components/schemas/Array_03efb017"
+				},
+				"result": {
+					"$ref": "#/components/schemas/Object_canonicalization_function_id_9126948f"
+				},
+				"at": {
+					"type": "string",
+					"pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$"
+				},
+				"digest": {
+					"type": "string",
+					"pattern": "^[0-9a-f]{64}$"
+				}
+			},
 			"Shape_03001f9a": {
 				"type": {
 					"type": "string"
@@ -38542,66 +38776,6 @@
 					"minimum": 0
 				}
 			},
-			"Shape_05339c55": {
-				"id": {
-					"type": "string",
-					"pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
-				},
-				"workspaceId": {
-					"type": "string",
-					"pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
-				},
-				"state": {
-					"$ref": "#/components/schemas/Union_5f624b4c"
-				},
-				"revision": {
-					"type": "integer",
-					"minimum": 0
-				},
-				"timeline": {
-					"$ref": "#/components/schemas/Array_729f68c8"
-				},
-				"timelineTruncated": {
-					"type": "boolean"
-				},
-				"turns": {
-					"$ref": "#/components/schemas/Array_40fe896a"
-				},
-				"recoveredOrphan": {
-					"type": "boolean"
-				},
-				"label": {
-					"anyOf": [
-						{
-							"type": "string"
-						},
-						{
-							"type": "null"
-						}
-					]
-				},
-				"config": {
-					"$ref": "#/components/schemas/Object_options_target_72bcec3a"
-				},
-				"telemetry": {
-					"$ref": "#/components/schemas/Object_autonomy_budget_commandsRevision_499abcd0"
-				},
-				"contextWork": {
-					"$ref": "#/components/schemas/Object_active_latest_version_957fa474"
-				},
-				"permissions": {
-					"$ref": "#/components/schemas/Array_858fdefb"
-				},
-				"fleet": {
-					"$ref": "#/components/schemas/Array_fdb8a333"
-				},
-				"health": {
-					"$ref": "#/components/schemas/Array_9ea511b0"
-				},
-				"jobs": {
-					"$ref": "#/components/schemas/Array_ce46742a"
-				}
-			},
 			"Shape_063a8d79": {
 				"briefingBytes": {
 					"$ref": "#/components/schemas/Union_3f7c181d"
@@ -38611,6 +38785,24 @@
 				},
 				"project": {
 					"$ref": "#/components/schemas/Union_171a208a"
+				}
+			},
+			"Shape_0712fc50": {
+				"id": {
+					"$ref": "#/components/schemas/Union_58240345"
+				},
+				"currentValue": {
+					"type": "string",
+					"minLength": 1,
+					"maxLength": 256,
+					"pattern": "^[^\\u0000-\\u001f\\u007f]+$"
+				},
+				"notice": {
+					"type": "string",
+					"maxLength": 4096
+				},
+				"options": {
+					"$ref": "#/components/schemas/Array_881efca5"
 				}
 			},
 			"Shape_0886a51c": {
@@ -38749,6 +38941,74 @@
 				},
 				"sum": {
 					"$ref": "#/components/schemas/Object_absentCount_coverage_estimated_ae225c75"
+				}
+			},
+			"Shape_21a268ce": {
+				"id": {
+					"type": "string",
+					"pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
+				},
+				"prompt": {
+					"type": "string"
+				},
+				"origin": {
+					"$ref": "#/components/schemas/Union_e60bfcab"
+				},
+				"status": {
+					"$ref": "#/components/schemas/Union_8f1f29d6"
+				},
+				"startedAt": {
+					"anyOf": [
+						{
+							"type": "string"
+						},
+						{
+							"type": "null"
+						}
+					]
+				},
+				"finishedAt": {
+					"anyOf": [
+						{
+							"type": "string"
+						},
+						{
+							"type": "null"
+						}
+					]
+				},
+				"stopReason": {
+					"anyOf": [
+						{
+							"type": "string"
+						},
+						{
+							"type": "null"
+						}
+					]
+				},
+				"usage": {
+					"$ref": "#/components/schemas/Union_06dbc26b"
+				},
+				"details": {
+					"$ref": "#/components/schemas/Object_connection_model_outputTokensPerSecond_5514233f"
+				},
+				"problem": {
+					"$ref": "#/components/schemas/Union_fbc21a9b"
+				},
+				"images": {
+					"type": "integer",
+					"minimum": 1,
+					"maximum": 4
+				},
+				"files": {
+					"type": "integer",
+					"minimum": 1,
+					"maximum": 4
+				},
+				"queued": {
+					"type": "boolean",
+					"const": true
 				}
 			},
 			"Shape_233bb951": {
@@ -38898,14 +39158,6 @@
 					"$ref": "#/components/schemas/Object_display_fact_ref_ae685bfe"
 				}
 			},
-			"Shape_2b7a18ac": {
-				"target": {
-					"$ref": "#/components/schemas/Union_82090872"
-				},
-				"options": {
-					"$ref": "#/components/schemas/Array_de2d36b0"
-				}
-			},
 			"Shape_2cd9ab75": {
 				"key": {
 					"type": "string",
@@ -38973,6 +39225,14 @@
 				},
 				"breakUsd": {
 					"$ref": "#/components/schemas/Object_display_fact_ref_ae685bfe"
+				}
+			},
+			"Shape_3bde08e9": {
+				"target": {
+					"$ref": "#/components/schemas/Union_82090872"
+				},
+				"options": {
+					"$ref": "#/components/schemas/Array_049df995"
 				}
 			},
 			"Shape_3c02a4fe": {
@@ -39512,54 +39772,6 @@
 				},
 				"firstToken": {
 					"$ref": "#/components/schemas/Object_display_fact_ref_ae685bfe"
-				}
-			},
-			"Shape_51d95255": {
-				"version": {
-					"type": "integer",
-					"minimum": 0,
-					"maximum": 9007199254740991
-				},
-				"digest": {
-					"type": "string",
-					"maxLength": 256
-				},
-				"permitDigest": {
-					"type": "string",
-					"maxLength": 256
-				},
-				"role": {
-					"type": "string",
-					"minLength": 1,
-					"maxLength": 512
-				},
-				"skills": {
-					"$ref": "#/components/schemas/Object_bound_discovery_116a0e29"
-				},
-				"read": {
-					"$ref": "#/components/schemas/Object_outside_roots_669520ed"
-				},
-				"write": {
-					"$ref": "#/components/schemas/Object_commandsBounded_mode_roots_434f1551"
-				},
-				"exec": {
-					"$ref": "#/components/schemas/Object_checks_shell_3923d1f3"
-				},
-				"network": {
-					"$ref": "#/components/schemas/Object_mcp_shell_tools_efcc5147"
-				},
-				"approval": {
-					"$ref": "#/components/schemas/Object_asks_autonomy_f43c8f85"
-				},
-				"sandbox": {
-					"$ref": "#/components/schemas/Object_backend_confinesWrites_unconfined_877862f1"
-				},
-				"withheld": {
-					"$ref": "#/components/schemas/Array_6d15fda7"
-				},
-				"staticHead": {
-					"type": "string",
-					"maxLength": 256
 				}
 			},
 			"Shape_54cdd7f3": {
@@ -40383,236 +40595,6 @@
 					"$ref": "#/components/schemas/Problem"
 				}
 			},
-			"Shape_7a1bc206": {
-				"version": {
-					"type": "number",
-					"const": 1
-				},
-				"agentId": {
-					"type": "string",
-					"minLength": 1,
-					"maxLength": 512
-				},
-				"executionRole": {
-					"$ref": "#/components/schemas/Enum_c81979a1"
-				},
-				"requestOrigin": {
-					"$ref": "#/components/schemas/Union_d7ccdb8b"
-				},
-				"identity": {
-					"$ref": "#/components/schemas/Union_5cd84371"
-				},
-				"route": {
-					"$ref": "#/components/schemas/Object_runtimeId_runtimeKind_targetId_8f906072"
-				},
-				"node": {
-					"$ref": "#/components/schemas/Union_b0281a53"
-				},
-				"routeDecision": {
-					"$ref": "#/components/schemas/Union_1d5c99f1"
-				},
-				"attempt": {
-					"type": "integer",
-					"minimum": 0,
-					"maximum": 9007199254740991
-				},
-				"phaseTiming": {
-					"$ref": "#/components/schemas/Object_queueWaitMs_totalEndToEndMs_02a09d83"
-				},
-				"routingIntent": {
-					"$ref": "#/components/schemas/Object_deadlineMs_failover_locality_da525918"
-				},
-				"startedAt": {
-					"type": "string",
-					"pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$"
-				},
-				"endedAt": {
-					"type": "string",
-					"pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$"
-				},
-				"outcome": {
-					"$ref": "#/components/schemas/Enum_7c26d95b"
-				},
-				"outcomeCode": {
-					"$ref": "#/components/schemas/Union_05a40a95"
-				},
-				"exitCode": {
-					"anyOf": [
-						{
-							"type": "integer"
-						},
-						{
-							"type": "null"
-						}
-					]
-				},
-				"outcomeDetail": {
-					"anyOf": [
-						{
-							"type": "string",
-							"maxLength": 1024
-						},
-						{
-							"type": "null"
-						}
-					]
-				},
-				"failureMessage": {
-					"anyOf": [
-						{
-							"type": "string",
-							"maxLength": 1024
-						},
-						{
-							"type": "null"
-						}
-					]
-				},
-				"terminalReason": {
-					"$ref": "#/components/schemas/Enum_8bfbcdd9"
-				},
-				"callIds": {
-					"$ref": "#/components/schemas/Union_90280c4e"
-				},
-				"processExitCode": {
-					"anyOf": [
-						{
-							"type": "integer"
-						},
-						{
-							"type": "null"
-						}
-					]
-				},
-				"boundKind": {
-					"$ref": "#/components/schemas/Union_f6453495"
-				},
-				"stepPipeline": {
-					"$ref": "#/components/schemas/Object_done_stepTool_stoppedBy_0b2ff353"
-				},
-				"repairRounds": {
-					"$ref": "#/components/schemas/Object_display_fact_ref_ae685bfe"
-				},
-				"frameType": {
-					"anyOf": [
-						{
-							"type": "string",
-							"maxLength": 4096
-						},
-						{
-							"type": "null"
-						}
-					]
-				},
-				"usage": {
-					"$ref": "#/components/schemas/Object_cacheRead_cacheWrite_cacheWrite1h_88a7022a"
-				},
-				"totalTokens": {
-					"$ref": "#/components/schemas/Union_1cb1d650"
-				},
-				"apiCalls": {
-					"$ref": "#/components/schemas/Union_1cb1d650"
-				},
-				"pricing": {
-					"$ref": "#/components/schemas/Object_freeRule_pricedBy_rateRef_d7589007"
-				},
-				"economics": {
-					"$ref": "#/components/schemas/Object_additive_comparison_funding_373ea90d"
-				},
-				"toolCalls": {
-					"type": "integer",
-					"minimum": 0,
-					"maximum": 9007199254740991
-				},
-				"tools": {
-					"$ref": "#/components/schemas/Array_0e929bca"
-				},
-				"skills": {
-					"$ref": "#/components/schemas/Array_a62e240b"
-				},
-				"toolActivity": {
-					"$ref": "#/components/schemas/Union_8b6f6387"
-				},
-				"capabilityMismatch": {
-					"$ref": "#/components/schemas/Union_26e30db3"
-				},
-				"budget": {
-					"$ref": "#/components/schemas/Union_e315aa3b"
-				},
-				"context": {
-					"$ref": "#/components/schemas/Object_briefingBytes_project_worker_7fcee349"
-				},
-				"upstream": {
-					"$ref": "#/components/schemas/Object_gatewayRoutes_responseModelIds_efe23277"
-				},
-				"blockedAttempts": {
-					"$ref": "#/components/schemas/Array_cbd5fc6c"
-				},
-				"guardBlockedAttempts": {
-					"$ref": "#/components/schemas/Array_cbd5fc6c"
-				},
-				"permissionRequestedAttempts": {
-					"$ref": "#/components/schemas/Array_cbd5fc6c"
-				},
-				"escalations": {
-					"$ref": "#/components/schemas/Union_ae6654b9"
-				},
-				"flowRestrictions": {
-					"$ref": "#/components/schemas/Union_db2664c0"
-				},
-				"toolGovernance": {
-					"$ref": "#/components/schemas/Union_2f4b4e0c"
-				},
-				"verification": {
-					"$ref": "#/components/schemas/Object_basis_detail_state_8ef9228e"
-				},
-				"quality": {
-					"$ref": "#/components/schemas/Union_409ae0f7"
-				},
-				"validationGrounding": {
-					"$ref": "#/components/schemas/Union_9e0c3568"
-				},
-				"unclassifiedAfterLastCheck": {
-					"$ref": "#/components/schemas/Object_commands_count_302a6639"
-				},
-				"routeWarnings": {
-					"$ref": "#/components/schemas/Array_5164076d"
-				},
-				"answerBudgetBytes": {
-					"type": "integer",
-					"minimum": 1,
-					"maximum": 1000000
-				},
-				"verdict": {
-					"$ref": "#/components/schemas/Object_assurance_obligation_rules_78de37b8"
-				},
-				"envelope": {
-					"$ref": "#/components/schemas/Object_approval_digest_exec_b67c2db3"
-				},
-				"worktree": {
-					"$ref": "#/components/schemas/Union_7acf3e39"
-				},
-				"hostVerification": {
-					"$ref": "#/components/schemas/Union_4d4e769e"
-				},
-				"contextProvenance": {
-					"enum": ["recorded", "invalid", "not_applicable", "unknown"]
-				},
-				"hashes": {
-					"$ref": "#/components/schemas/Array_03efb017"
-				},
-				"result": {
-					"$ref": "#/components/schemas/Object_canonicalization_function_id_9126948f"
-				},
-				"at": {
-					"type": "string",
-					"pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$"
-				},
-				"digest": {
-					"type": "string",
-					"pattern": "^[0-9a-f]{64}$"
-				}
-			},
 			"Shape_7c21800d": {
 				"id": {
 					"type": "string",
@@ -40810,6 +40792,66 @@
 				},
 				"key": {
 					"type": "string"
+				}
+			},
+			"Shape_84706d61": {
+				"id": {
+					"type": "string",
+					"pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
+				},
+				"workspaceId": {
+					"type": "string",
+					"pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
+				},
+				"state": {
+					"$ref": "#/components/schemas/Union_5f624b4c"
+				},
+				"revision": {
+					"type": "integer",
+					"minimum": 0
+				},
+				"timeline": {
+					"$ref": "#/components/schemas/Array_729f68c8"
+				},
+				"timelineTruncated": {
+					"type": "boolean"
+				},
+				"turns": {
+					"$ref": "#/components/schemas/Array_d2c94fb3"
+				},
+				"recoveredOrphan": {
+					"type": "boolean"
+				},
+				"label": {
+					"anyOf": [
+						{
+							"type": "string"
+						},
+						{
+							"type": "null"
+						}
+					]
+				},
+				"config": {
+					"$ref": "#/components/schemas/Object_options_target_e10c017b"
+				},
+				"telemetry": {
+					"$ref": "#/components/schemas/Object_autonomy_budget_commandsRevision_499abcd0"
+				},
+				"contextWork": {
+					"$ref": "#/components/schemas/Object_active_latest_version_957fa474"
+				},
+				"permissions": {
+					"$ref": "#/components/schemas/Array_858fdefb"
+				},
+				"fleet": {
+					"$ref": "#/components/schemas/Array_fdb8a333"
+				},
+				"health": {
+					"$ref": "#/components/schemas/Array_9ea511b0"
+				},
+				"jobs": {
+					"$ref": "#/components/schemas/Array_ce46742a"
 				}
 			},
 			"Shape_863e1321": {
@@ -41368,6 +41410,54 @@
 				},
 				"payload": {
 					"$ref": "#/components/schemas/Object_findingCount_firstPassSuccess_runId_d72f3030"
+				}
+			},
+			"Shape_b6a0e6b4": {
+				"version": {
+					"type": "integer",
+					"minimum": 0,
+					"maximum": 9007199254740991
+				},
+				"digest": {
+					"type": "string",
+					"maxLength": 256
+				},
+				"permitDigest": {
+					"type": "string",
+					"maxLength": 256
+				},
+				"role": {
+					"type": "string",
+					"minLength": 1,
+					"maxLength": 512
+				},
+				"skills": {
+					"$ref": "#/components/schemas/Object_bound_discovery_116a0e29"
+				},
+				"read": {
+					"$ref": "#/components/schemas/Object_outside_roots_669520ed"
+				},
+				"write": {
+					"$ref": "#/components/schemas/Object_commandsBounded_mode_roots_434f1551"
+				},
+				"exec": {
+					"$ref": "#/components/schemas/Object_checks_shell_3923d1f3"
+				},
+				"network": {
+					"$ref": "#/components/schemas/Object_mcp_shell_tools_efcc5147"
+				},
+				"approval": {
+					"$ref": "#/components/schemas/Object_asks_autonomy_f43c8f85"
+				},
+				"sandbox": {
+					"$ref": "#/components/schemas/Object_backend_confinesWrites_unconfined_364de3fc"
+				},
+				"withheld": {
+					"$ref": "#/components/schemas/Array_6d15fda7"
+				},
+				"staticHead": {
+					"type": "string",
+					"maxLength": 256
 				}
 			},
 			"Shape_b883248f": {
@@ -41975,24 +42065,6 @@
 					"$ref": "#/components/schemas/Union_1cb1d650"
 				}
 			},
-			"Shape_d4f7cc87": {
-				"id": {
-					"$ref": "#/components/schemas/Union_c6270044"
-				},
-				"currentValue": {
-					"type": "string",
-					"minLength": 1,
-					"maxLength": 256,
-					"pattern": "^[^\\u0000-\\u001f\\u007f]+$"
-				},
-				"notice": {
-					"type": "string",
-					"maxLength": 4096
-				},
-				"options": {
-					"$ref": "#/components/schemas/Array_881efca5"
-				}
-			},
 			"Shape_d7d8710c": {
 				"nanoAiu": {
 					"$ref": "#/components/schemas/Object_kind_method_value_3e0590ea"
@@ -42230,74 +42302,6 @@
 				},
 				"issues": {
 					"$ref": "#/components/schemas/Array_541b9459"
-				}
-			},
-			"Shape_e97aa373": {
-				"id": {
-					"type": "string",
-					"pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
-				},
-				"prompt": {
-					"type": "string"
-				},
-				"origin": {
-					"$ref": "#/components/schemas/Union_e60bfcab"
-				},
-				"status": {
-					"$ref": "#/components/schemas/Union_8f1f29d6"
-				},
-				"startedAt": {
-					"anyOf": [
-						{
-							"type": "string"
-						},
-						{
-							"type": "null"
-						}
-					]
-				},
-				"finishedAt": {
-					"anyOf": [
-						{
-							"type": "string"
-						},
-						{
-							"type": "null"
-						}
-					]
-				},
-				"stopReason": {
-					"anyOf": [
-						{
-							"type": "string"
-						},
-						{
-							"type": "null"
-						}
-					]
-				},
-				"usage": {
-					"$ref": "#/components/schemas/Union_06dbc26b"
-				},
-				"details": {
-					"$ref": "#/components/schemas/Object_model_outputTokensPerSecond_target_ba0fc302"
-				},
-				"problem": {
-					"$ref": "#/components/schemas/Union_fbc21a9b"
-				},
-				"images": {
-					"type": "integer",
-					"minimum": 1,
-					"maximum": 4
-				},
-				"files": {
-					"type": "integer",
-					"minimum": 1,
-					"maximum": 4
-				},
-				"queued": {
-					"type": "boolean",
-					"const": true
 				}
 			},
 			"Shape_ec387842": {
@@ -44679,6 +44683,32 @@
 					}
 				]
 			},
+			"Union_58240345": {
+				"anyOf": [
+					{
+						"type": "string",
+						"const": "connection"
+					},
+					{
+						"type": "string",
+						"const": "model"
+					},
+					{
+						"type": "string",
+						"const": "thinkingLevel"
+					}
+				]
+			},
+			"Union_5899c79b": {
+				"anyOf": [
+					{
+						"$ref": "#/components/schemas/Object_agentId_answerBudgetBytes_apiCalls_a17687f1"
+					},
+					{
+						"type": "null"
+					}
+				]
+			},
 			"Union_5c6c2ff9": {
 				"anyOf": [
 					{
@@ -45914,16 +45944,6 @@
 					}
 				]
 			},
-			"Union_b92c370c": {
-				"anyOf": [
-					{
-						"$ref": "#/components/schemas/Object_agentId_answerBudgetBytes_apiCalls_c060c7c6"
-					},
-					{
-						"type": "null"
-					}
-				]
-			},
 			"Union_be300fe4": {
 				"anyOf": [
 					{
@@ -45987,22 +46007,6 @@
 					{
 						"type": "string",
 						"const": "requested-model"
-					}
-				]
-			},
-			"Union_c6270044": {
-				"anyOf": [
-					{
-						"type": "string",
-						"const": "target"
-					},
-					{
-						"type": "string",
-						"const": "model"
-					},
-					{
-						"type": "string",
-						"const": "thinkingLevel"
 					}
 				]
 			},

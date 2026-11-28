@@ -12,7 +12,7 @@ const command: CommandDescriptor = {
 	group: "Work",
 	args: {
 		flags: [
-			{ name: "--target", takesValue: true },
+			{ name: "--connection", takesValue: true },
 			{ name: "--share" },
 			{ name: "--require", takesValue: true, repeatable: true },
 		],
@@ -31,7 +31,7 @@ test("catalog is the only source of offered commands", () => {
 test("plans bounded argv from flags, repeated values and final task text", () => {
 	assert.deepEqual(
 		planCommand(command, {
-			"flag:--target": "local",
+			"flag:--connection": "local",
 			"flag:--share": true,
 			"flag:--require": "code\njson",
 			"pos:0": "reviewer",
@@ -42,7 +42,7 @@ test("plans bounded argv from flags, repeated values and final task text", () =>
 				request: {
 					command: "run",
 					argv: [
-						"--target",
+						"--connection",
 						"local",
 						"--share",
 						"--require",
@@ -53,7 +53,7 @@ test("plans bounded argv from flags, repeated values and final task text", () =>
 						"Review this project",
 					],
 				},
-				description: "/run --target local --share --require code --require json reviewer Review this project",
+				description: "/run --connection local --share --require code --require json reviewer Review this project",
 			},
 		},
 	);
@@ -90,7 +90,7 @@ test("rejects malformed tokens before a command can reach the ACP bridge", () =>
 		assert.ok(planCommand(command, { "pos:0": value, "pos:1": "Do work" }).error, value.slice(0, 40));
 	}
 	assert.match(planCommand(command, { "pos:0": "worker" }).error ?? "", /required/);
-	assert.ok(planCommand(command, { "flag:--target": "two words", "pos:0": "worker", "pos:1": "Do work" }).error);
+	assert.ok(planCommand(command, { "flag:--connection": "two words", "pos:0": "worker", "pos:1": "Do work" }).error);
 	assert.ok(planCommand(command, { "pos:0": "worker", "pos:1": "Do\nwork" }).error);
 	assert.ok(planCommand(command, { "pos:0": "worker", "pos:1": "--force" }).error);
 });

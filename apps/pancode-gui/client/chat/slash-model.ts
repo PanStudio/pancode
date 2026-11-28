@@ -402,7 +402,7 @@ export const SLASH_ALIASES: readonly SlashAliasSpec[] = [
 	{
 		names: ["login"],
 		summary: "Manage saved connections in Settings",
-		target: { kind: "navigate", path: "/settings/targets" },
+		target: { kind: "navigate", path: "/settings/connections" },
 	},
 	{
 		names: ["tree"],

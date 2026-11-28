@@ -1019,7 +1019,7 @@ async function handle(frame) {
 				result = {
 					sessionId,
 					...(ROUTE
-						? { configOptions: configOptions(), _meta: { "pancode/session": { target: settings.chat.target } } }
+						? { configOptions: configOptions(), _meta: { "pancode/session": { connection: settings.chat.target } } }
 						: {}),
 					modes: {
 						currentModeId: autonomy,
@@ -1053,7 +1053,7 @@ async function handle(frame) {
 								"pancode/session": {
 									createdAt: "2026-01-01T00:00:00.000Z",
 									endedAt: "2026-01-01T00:00:00.000Z",
-									target: "fixture",
+									connection: "fixture",
 									model: "fixture-model",
 									hasModelTurn: true,
 								},
@@ -1066,7 +1066,7 @@ async function handle(frame) {
 				sessionId = frame.params.sessionId;
 				result = {
 					...(ROUTE
-						? { configOptions: configOptions(), _meta: { "pancode/session": { target: settings.chat.target } } }
+						? { configOptions: configOptions(), _meta: { "pancode/session": { connection: settings.chat.target } } }
 						: {}),
 					modes: {
 						currentModeId: autonomy,
@@ -1077,7 +1077,7 @@ async function handle(frame) {
 				for (let turn = 1; turn <= Math.max(1, REPLAY_TURNS); turn++) {
 					const meta = {
 						"pancode/replay": { turn },
-						"pancode/turn": { model: "replay-model", target: "replay-target" },
+						"pancode/turn": { model: "replay-model", connection: "replay-target" },
 					};
 					const long = REPLAY_TURNS > 0;
 					update(
@@ -1181,7 +1181,7 @@ async function handle(frame) {
 						stopReason: "end_turn",
 						_meta: {
 							"pancode/usage": usage,
-							"pancode/turn": { model: "fixture-model", target: "fixture-target" },
+							"pancode/turn": { model: "fixture-model", connection: "fixture-target" },
 						},
 					};
 					break;
@@ -1927,7 +1927,7 @@ async function handle(frame) {
 				if (ROUTE)
 					update(
 						{ sessionUpdate: "config_option_update", configOptions: configOptions() },
-						{ "pancode/session": { target: settings.chat.target } },
+						{ "pancode/session": { connection: settings.chat.target } },
 					);
 				break;
 			case "_pancode/settings/get_safe":

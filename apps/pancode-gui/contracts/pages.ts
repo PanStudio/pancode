@@ -23,7 +23,7 @@ export const PAGE_PATHS = [
 	"/settings/advanced",
 	"/settings/effective",
 	"/settings/why",
-	"/settings/targets",
+	"/settings/connections",
 	"/settings/routing",
 	"/fleet",
 	"/fleet/:id",

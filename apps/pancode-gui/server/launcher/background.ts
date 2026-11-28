@@ -689,7 +689,7 @@ export async function background(args: string[], launch: LaunchPaths, platform: 
 		console.log(JSON.stringify({ ...result, windows }, null, 2));
 		if (values.json && !values.open) return;
 		console.log(
-			"Background sessions use PanCode's saved credentials. If a target key exists only in your terminal environment, save it with pancode auth login <target> before starting a conversation.",
+			"Background sessions use PanCode's saved credentials. If a connection key exists only in your terminal environment, save it with pancode auth login <connection> before starting a conversation.",
 		);
 		if (!values.open) {
 			console.log(

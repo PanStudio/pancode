@@ -191,7 +191,7 @@ function RouteForm({
 		queryKey: ["session-target-probe", sessionId, chosenTarget],
 		queryFn: async () => {
 			const result = await client.call(routes.probeSessionTarget, {
-				params: { id: sessionId, targetId: chosenTarget },
+				params: { id: sessionId, connectionId: chosenTarget },
 				query: {},
 				body: {},
 			});
@@ -326,7 +326,7 @@ function RouteForm({
 				<p>
 					No connection is selected, and PanCode has not exposed a connection selector for this conversation.{" "}
 					<Link
-						to={workspaceId ? `/settings/targets?${new URLSearchParams({ workspace: workspaceId })}` : "/settings/targets"}
+						to={workspaceId ? `/settings/connections?${new URLSearchParams({ workspace: workspaceId })}` : "/settings/connections"}
 					>
 						Manage saved connections
 					</Link>{" "}

@@ -482,7 +482,7 @@ function NewMatch({
 			</label>
 			<fieldset disabled={running}>
 				<legend>Contenders</legend>
-				{targets.error && <p className="arena-error">Targets could not be read: {problemText(targets.error)}</p>}
+				{targets.error && <p className="arena-error">Connections could not be read: {problemText(targets.error)}</p>}
 				{draft.contenders.map((contender, index) => {
 					const target = targets.data?.targets.find((item) => item.id === contender.target);
 					return (
@@ -490,14 +490,14 @@ function NewMatch({
 						<div className="arena-new__contender" key={index}>
 							<span>{index + 1}</span>
 							<select
-								aria-label={`Contender ${index + 1} target`}
+								aria-label={`Contender ${index + 1} connection`}
 								value={contender.target}
 								onChange={(event) => {
 									const next = targets.data?.targets.find((item) => item.id === event.target.value);
 									setContender(index, { target: event.target.value, model: next?.defaultModel ?? next?.models[0] ?? "" });
 								}}
 							>
-								<option value="">Pick a target</option>
+								<option value="">Pick a connection</option>
 								{targets.data?.targets.map((item) => (
 									<option key={item.id} value={item.id}>
 										{item.id}

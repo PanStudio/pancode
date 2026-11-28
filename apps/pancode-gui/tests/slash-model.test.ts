@@ -197,10 +197,10 @@ test("the palette lists the agent's prompt templates last and finds rows by the 
 	assert.deepEqual(names("comp").slice(0, 1), ["context compact"], "a later word of the name ranks before letters");
 	assert.equal(
 		argumentHint({
-			flags: [{ name: "--target", takesValue: true, valueName: "target" }],
+			flags: [{ name: "--connection", takesValue: true, valueName: "connection" }],
 			positionals: [{ name: "task", required: true, rest: true }],
 		} as never),
-		"[--target <target>] <task>",
+		"[--connection <connection>] <task>",
 	);
 });
 

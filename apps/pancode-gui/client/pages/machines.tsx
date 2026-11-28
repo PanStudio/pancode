@@ -346,7 +346,7 @@ function MachineDetail({
 								temporary shared-storage marker in this workspace.
 							</p>
 							<p>
-								PanCode may send currently authorized credentials for model targets pinned to this node over SSH. This check
+								PanCode may send currently authorized credentials for model connections pinned to this node over SSH. This check
 								uses existing SSH access and does not install software.
 							</p>
 						</>

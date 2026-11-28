@@ -28,10 +28,10 @@ export function targetsRoutes(app: Hono, hub: EventHub, targets: TargetsService,
 	] as const;
 	for (const [action, scoped, user] of actions) {
 		register(app, hub, scoped, async ({ params }, context) => ({
-			operationId: await targets.mutate(params.id, params.targetId, action, idempotencyKey(context)),
+			operationId: await targets.mutate(params.id, params.connectionId, action, idempotencyKey(context)),
 		}));
 		register(app, hub, user, async ({ params }, context) => ({
-			operationId: await targets.mutate(null, params.targetId, action, idempotencyKey(context)),
+			operationId: await targets.mutate(null, params.connectionId, action, idempotencyKey(context)),
 		}));
 	}
 }

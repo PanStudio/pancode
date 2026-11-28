@@ -580,7 +580,7 @@ test("a completed turn footer carries its time, tokens and tool count, and an un
 
 test("the Detailed line reports route, speed, the prompt split and cache only when they were reported", () => {
 	const view = turnOutcome(
-		turn({ details: { model: "qwen3.8-27b", target: "lab-gpu", ttftMs: 420, outputTokensPerSecond: 38.4 } }),
+		turn({ details: { model: "qwen3.8-27b", connection: "lab-gpu", ttftMs: 420, outputTokensPerSecond: 38.4 } }),
 		0,
 	);
 	assert.deepEqual(view.nerd, [
@@ -603,7 +603,7 @@ test("the Detailed line reports route, speed, the prompt split and cache only wh
 	assert.deepEqual(
 		view.breakdown.filter((row) => row.group === "Model").map((row) => [row.label, row.value]),
 		[
-			["Target", "lab-gpu"],
+			["Connection", "lab-gpu"],
 			["Model", "qwen3.8-27b"],
 		],
 	);

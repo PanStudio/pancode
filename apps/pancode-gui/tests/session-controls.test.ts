@@ -38,7 +38,7 @@ test("session config retains open/load options, publishes updates, and never sav
 	const events: Event[] = [];
 	t.after(h.hub.connect(undefined, (event) => events.push(event)));
 	const before = await readFile(join(h.home.path, "acp.jsonl"), "utf8");
-	const unavailableTarget = await h.post(`${base}/config`, { configId: "target", value: "other" });
+	const unavailableTarget = await h.post(`${base}/config`, { configId: "connection", value: "other" });
 	assert.equal(unavailableTarget.status, 409);
 	assert.equal((await json(unavailableTarget, Problem)).code, "conflict");
 	assert.equal((await h.post(`${base}/config`, { configId: "model", value: "not-listed" })).status, 422);
@@ -63,7 +63,7 @@ test("session config retains open/load options, publishes updates, and never sav
 	assert.equal(configOf(loaded)?.options.find((option) => option.id === "model")?.currentValue, "fixture-model");
 	assert.ok(loaded.timeline.some((item) => item.origin === "replay"));
 	// A replayed turn carries the model and route its ledger recorded.
-	assert.deepEqual(loaded.turns[0]?.details, { model: "replay-model", target: "replay-target" });
+	assert.deepEqual(loaded.turns[0]?.details, { model: "replay-model", connection: "replay-target" });
 });
 
 test("an older ACP peer has no conversation config and refuses the write locally", async (t) => {
@@ -123,7 +123,7 @@ test("a prompt-turn command runs as a visible turn with its dispatch call inside
 	assert.equal(dispatch?.status, "completed");
 	// The span and the route are the engine's report, not a clock the host kept.
 	assert.equal(dispatch?.durationMs, 4321);
-	assert.equal(snapshot.turns.at(-1)?.details?.target, "fixture-target");
+	assert.equal(snapshot.turns.at(-1)?.details?.connection, "fixture-target");
 	assert.doesNotMatch(await readFile(join(h.home.path, "acp.jsonl"), "utf8"), /"method":"_pancode\/commands\/invoke"/);
 });
 
@@ -644,10 +644,10 @@ test("safe settings reject extra keys before ACP, project four keys, and expose 
 	);
 	assert.equal(changed.settings.chat.model, "next-model");
 	assert.equal(changed.settings.chat.thinkingLevel, "high");
-	const targets = await json(await h.request(`${base}/targets`), routes.sessionTargets.response);
+	const targets = await json(await h.request(`${base}/connections`), routes.sessionTargets.response);
 	assert.equal(targets.truncated, true);
 	assert.doesNotMatch(JSON.stringify(targets), /apiKey|must-be-stripped/);
-	const probe = await json(await h.post(`${base}/targets/fixture/probe`), routes.probeSessionTarget.response);
+	const probe = await json(await h.post(`${base}/connections/fixture/probe`), routes.probeSessionTarget.response);
 	assert.equal(probe.healthy, true);
 	assert.equal(probe.latencyMs, 5);
 	const autonomy = await json(

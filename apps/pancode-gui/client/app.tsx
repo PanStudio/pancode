@@ -177,7 +177,7 @@ function Workbench({ client, local }: { client: Client; local: Client }) {
 			}
 			setFirstRun(false);
 			const from = (location.state as { from?: unknown } | null)?.from;
-			void navigate(to === "home" ? "/" : typeof from === "string" ? from : "/settings/targets", { replace: true });
+			void navigate(to === "home" ? "/" : typeof from === "string" ? from : "/settings/connections", { replace: true });
 		},
 		[navigate, location.state, location.pathname],
 	);

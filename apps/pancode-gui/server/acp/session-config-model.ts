@@ -6,7 +6,7 @@ import { ConfigOption, type SessionConfig } from "../../contracts/session-config
 import { ACP_NOTICE_META_KEY, ACP_THINKING_LEVELS_META_KEY } from "../../contracts/wire.js";
 
 const UnselectedTarget = Type.Object(
-	{ ...ConfigOption.properties, id: Type.Literal("target"), currentValue: Type.Null() },
+	{ ...ConfigOption.properties, id: Type.Literal("connection"), currentValue: Type.Null() },
 	{ additionalProperties: false },
 );
 
@@ -37,12 +37,12 @@ export function projectSessionConfigOptions(raw: unknown): SessionConfig["option
 	const seen = new Set<string>();
 	for (const value of raw) {
 		const row: Record<string, unknown> = value && typeof value === "object" && !Array.isArray(value) ? value : {};
-		if (row.id !== "target" && row.id !== "model" && row.id !== "thinkingLevel") continue;
+		if (row.id !== "connection" && row.id !== "model" && row.id !== "thinkingLevel") continue;
 		if (seen.has(row.id)) return null;
 		seen.add(row.id);
 		// GUI-03: ACP reports an unconfigured target as null. Its absence stays in SessionConfig.target;
 		// omitting this unselected control must not discard the model or thinking controls beside it.
-		if (row.id === "target" && row.currentValue === null) {
+		if (row.id === "connection" && row.currentValue === null) {
 			if (!Value.Check(UnselectedTarget, Value.Clean(UnselectedTarget, structuredClone(row)))) return null;
 			continue;
 		}

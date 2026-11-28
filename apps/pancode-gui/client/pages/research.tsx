@@ -593,10 +593,10 @@ function NewCampaign({
 			</fieldset>
 			<fieldset disabled={running}>
 				<legend>Agent</legend>
-				{targets.error && <p className="research-error">Targets could not be read: {problemText(targets.error)}</p>}
+				{targets.error && <p className="research-error">Connections could not be read: {problemText(targets.error)}</p>}
 				<div className="research-new__row">
 					<label>
-						Target
+						Connection
 						<select
 							value={draft.target}
 							onChange={(event) => {

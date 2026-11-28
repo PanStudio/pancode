@@ -38,10 +38,10 @@ function items(value: unknown): unknown[] {
 }
 async function readTargets(client: AcpClient): Promise<CliTargets> {
 	if (!client.capabilities.targets?.list)
-		throw new AppProblem("unsupported", "This PanCode build does not expose target inventory.");
+		throw new AppProblem("unsupported", "This PanCode build does not expose connection inventory.");
 	const raw = Value.Clean(AcpTargetList, await client.request(ACP_TARGETS_LIST_METHOD, {}));
 	if (!Value.Check(AcpTargetList, raw))
-		throw new AppProblem("upstream_acp", "PanCode returned an invalid target inventory.");
+		throw new AppProblem("upstream_acp", "PanCode returned an invalid connection inventory.");
 	const result = {
 		targets: raw.targets.map((target) => ({
 			id: target.id,
@@ -59,22 +59,22 @@ async function readTargets(client: AcpClient): Promise<CliTargets> {
 		truncated: raw._meta?.[ACP_TRUNCATED_META_KEY] === true,
 	};
 	if (!Value.Check(CliTargets, result))
-		throw new AppProblem("upstream_acp", "PanCode returned an invalid target projection.");
+		throw new AppProblem("upstream_acp", "PanCode returned an invalid connection projection.");
 	return result;
 }
 /** What a probe that did not reach the target means, in the words the connection card uses. */
 const PROBE_FAILURE: Record<NonNullable<AcpTargetProbe["reason"]>, string> = {
-	"not-configured": "Target is not reachable: PanCode has no usable credential for it.",
-	unreachable: "Target is not reachable: it did not answer the check.",
+	"not-configured": "Connection is not reachable: PanCode has no usable credential for it.",
+	unreachable: "Connection is not reachable: it did not answer the check.",
 	unsupported: "This runtime offers no connection check, so reachability is unknown.",
 	"probe-failed": "The connection check could not run, so reachability is unknown.",
-	"component-missing": "Target cannot run yet: its runtime needs a component that is not installed.",
+	"component-missing": "Connection cannot run yet: its runtime needs a component that is not installed.",
 };
 /** The probe's sentence for the connection card; a missing component names itself and its install command. */
 function probeFailure(probe: AcpTargetProbe | undefined): string {
 	const remedy = probe?.reason === "component-missing" ? missingComponentRemedy(probe.component) : null;
 	return remedy !== null
-		? `Target cannot run yet: ${remedy}, then check again.`
+		? `Connection cannot run yet: ${remedy}, then check again.`
 		: PROBE_FAILURE[probe?.reason ?? "probe-failed"];
 }
 export class TargetsService {
@@ -105,10 +105,10 @@ export class TargetsService {
 			run: async (progress, signal): Promise<TargetOperationResult> => {
 				progress(
 					action === "probe"
-						? "PanCode is probing the selected target."
+						? "PanCode is probing the selected connection."
 						: action === "signout"
 							? "PanCode is removing the stored credential."
-							: "PanCode is updating user target settings.",
+							: "PanCode is updating user connection settings.",
 				);
 				let probe: AcpTargetProbe | undefined;
 				let probedTargets: CliTargets | undefined;
@@ -118,13 +118,13 @@ export class TargetsService {
 							workspaceId,
 							async (client) => {
 								if (!client.capabilities.targets?.probe)
-									throw new AppProblem("unsupported", "This PanCode build does not expose target probes.");
+									throw new AppProblem("unsupported", "This PanCode build does not expose connection probes.");
 								const probe = Value.Clean(
 									AcpTargetProbe,
 									await client.request(ACP_TARGETS_PROBE_METHOD, { targetId: id }, 60_000),
 								);
 								if (!Value.Check(AcpTargetProbe, probe) || probe.targetId !== id)
-									throw new AppProblem("upstream_acp", "PanCode returned an invalid target probe.");
+									throw new AppProblem("upstream_acp", "PanCode returned an invalid connection probe.");
 								return { probe, targets: await readTargets(client) };
 							},
 							signal,
@@ -162,11 +162,11 @@ export class TargetsService {
 					message:
 						action === "probe"
 							? probe?.healthy
-								? `Target is reachable${probe.latencyMs === null ? "" : ` · ${probe.latencyMs} ms`}.`
+								? `Connection is reachable${probe.latencyMs === null ? "" : ` · ${probe.latencyMs} ms`}.`
 								: probeFailure(probe)
 							: action === "signout"
 								? `Signed out of ${id}. Its stored credential is removed; the connection stays configured and needs a new sign-in before it is used.`
-								: "User target settings updated.",
+								: "User connection settings updated.",
 					targets,
 					...(probe ? { probe } : {}),
 					...(settings ? { settings } : {}),
@@ -181,7 +181,7 @@ export class TargetsService {
 			this.runner.run({ kind: "routing.profiles" }, cwd),
 			this.runner.run({ kind: "routing.bindings" }, cwd),
 		]);
-		// `targets profile list --json` reads `{ default, profiles }`; the fleet default is not a named profile.
+		// `connections profile list --json` reads `{ default, profiles }`; the fleet default is not a named profile.
 		const profileList = object(rawProfiles);
 		const models = items(rawModels),
 			profiles = items(profileList.profiles),

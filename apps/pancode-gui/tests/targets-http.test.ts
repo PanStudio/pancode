@@ -40,7 +40,7 @@ test("targets HTTP: real CLI use/remove, typed follow-up reads, redaction and of
 		await mkdir(cwd);
 		const workspace = await json(await h.post("/api/workspaces", { path: cwd }), Workspace);
 		const path = `/api/workspaces/${workspace.id}`;
-		const listed = await json(await h.request(`${path}/targets`), CliTargets);
+		const listed = await json(await h.request(`${path}/connections`), CliTargets);
 		assert.deepEqual(
 			listed.targets.map((target) => target.id),
 			["fixture", "fixture-target", "field-station"],
@@ -67,10 +67,10 @@ test("targets HTTP: real CLI use/remove, typed follow-up reads, redaction and of
 		assert.ok(routing.models.every((model) => model.target === "fixture-target"));
 		for (const action of ["use", "remove"] as const) {
 			const key = crypto.randomUUID();
-			const admitted = await h.post(`${path}/targets/fixture-target/${action}`, {}, key);
+			const admitted = await h.post(`${path}/connections/fixture-target/${action}`, {}, key);
 			assert.equal(admitted.status, 202);
 			const accepted = await json(admitted, Accepted);
-			assert.deepEqual(await json(await h.post(`${path}/targets/fixture-target/${action}`, {}, key), Accepted), accepted);
+			assert.deepEqual(await json(await h.post(`${path}/connections/fixture-target/${action}`, {}, key), Accepted), accepted);
 			const op = await finished(h, accepted.operationId);
 			assert.equal(op.status, "succeeded", JSON.stringify(op));
 			assert.ok(op.status === "succeeded" && "kind" in op.result && op.result.kind === "targets");
@@ -97,8 +97,8 @@ test("targets HTTP: real CLI use/remove, typed follow-up reads, redaction and of
 			const routed = await json(await h.request(`${path}/routing`), Routing);
 			assert.equal(routed.default?.target ?? null, action === "use" ? "fixture-target" : null);
 		}
-		assert.equal((await h.request(`/api/workspaces/unknown/targets`)).status, 404);
-		assert.equal((await h.post(`${path}/targets/--help/use`)).status, 422);
+		assert.equal((await h.request(`/api/workspaces/unknown/connections`)).status, 404);
+		assert.equal((await h.post(`${path}/connections/--help/use`)).status, 422);
 	} finally {
 		await h.close();
 	}
@@ -108,7 +108,7 @@ test("targets HTTP: connections, routing, the interop inventory and the config g
 	const h = await harness({}, { scenario: "markdown", env: { PANCODE_WEB_FIXTURE_ROUTE: "1" } });
 	try {
 		await seedSettings(h.home.path, h.home.env);
-		const listed = await json(await h.request("/api/targets"), CliTargets);
+		const listed = await json(await h.request("/api/connections"), CliTargets);
 		assert.deepEqual(
 			listed.targets.map((target) => target.id),
 			["fixture", "fixture-target", "field-station"],
@@ -143,7 +143,7 @@ test("targets HTTP: ACP probe reaps its child and failed administrative CLI exit
 			await writeFile(join(h.home.path, "record-commands"), "");
 			const workspace = await json(await h.post("/api/workspaces", { path: h.home.path }), Workspace);
 			const accepted = await json(
-				await h.post(`/api/workspaces/${workspace.id}/targets/local/${scenario === "probe" ? "probe" : "remove"}`),
+				await h.post(`/api/workspaces/${workspace.id}/connections/local/${scenario === "probe" ? "probe" : "remove"}`),
 				Accepted,
 			);
 			if (scenario === "probe") {

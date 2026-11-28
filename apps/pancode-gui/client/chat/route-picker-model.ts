@@ -35,7 +35,7 @@ export function conversationChanges(
 	thinkingLevels?: readonly string[],
 ): SetConfigOption[] {
 	const changes: SetConfigOption[] = [];
-	if (draft.target !== reported.target) changes.push({ configId: "target", value: draft.target });
+	if (draft.target !== reported.target) changes.push({ configId: "connection", value: draft.target });
 	if (draft.model !== "" && draft.model !== reported.model) changes.push({ configId: "model", value: draft.model });
 	if (
 		draft.thinking !== "" &&
@@ -88,7 +88,7 @@ export function routePickerChoices(
 	modelEditable: boolean;
 	needsConnectionSetup: boolean;
 } {
-	const targetControl = config?.options.find((option) => option.id === "target");
+	const targetControl = config?.options.find((option) => option.id === "connection");
 	const modelControl = config?.options.find((option) => option.id === "model");
 	const targets: ModelOption[] = (targetControl?.options ?? []).map((row) => ({ value: row.value, label: row.name }));
 	if (draft.target && !targets.some((row) => row.value === draft.target))
