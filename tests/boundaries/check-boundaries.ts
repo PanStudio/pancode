@@ -820,7 +820,6 @@ const FUNCTION_LINE_EXEMPTIONS: ReadonlyMap<string, number> = new Map([
 	["src/interactive/overlays/settings-items.ts#buildSettingItems", 523],
 	["src/interactive/panes-runtime.ts#createPanesRuntime", 582],
 	["src/session-control/chat-loop-composition.ts#createChatLoopComposition", 662],
-	["src/session-control/chat-loop-state-machine.ts#createChatLoopStateMachine", 645],
 	["src/session-control/chat-loop-submit.ts#createChatLoopSubmit", 1483],
 	["src/session-control/chat-loop-submit.ts#createChatLoopSubmit.submit", 1439],
 	["src/session-control/chat-loop.ts#createChatLoop", 1570],
