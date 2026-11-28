@@ -20,6 +20,9 @@ export const MCP_SKILL_APPROVAL_RULE_ID = "mcp-skill-approval";
  */
 export const SHELL_EGRESS_RULE_ID = "shell-egress";
 
+/** What a shell-egress ask does, where a card names the effect of a call; its synthetic `web_read` reads no file. */
+export const SHELL_EGRESS_EFFECT_TEXT = "connects to the network";
+
 /** The rail as the card, the parked row and the grant row name it. */
 export const SESSION_CODE_CONSENT_TEXT = "session test-runner consent";
 

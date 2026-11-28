@@ -7,7 +7,11 @@
  */
 
 import { formatCountdown } from "../core/format-time.js";
-import { SESSION_CODE_CONSENT_RULE_ID, workerAuthorityWords } from "../core/views/approval-words.js";
+import {
+	SESSION_CODE_CONSENT_RULE_ID,
+	SHELL_EGRESS_RULE_ID,
+	workerAuthorityWords,
+} from "../core/views/approval-words.js";
 import type { ActionClass } from "../domains/safety/action-classifier.js";
 import { credentialedCallKind } from "../domains/safety/call-consequence.js";
 import {
@@ -246,6 +250,17 @@ export function permissionChoices(
 							: "denies it; no main turn is running, and this worker keeps running",
 				tone: "error",
 			},
+		];
+	}
+	if (view.axis.kind === "net" && view.axis.ruleId === SHELL_EGRESS_RULE_ID) {
+		return [
+			{
+				key: "Enter",
+				verb: "allow",
+				consequence: `sandboxed commands reach it until this session ends${draftNote}`,
+			},
+			{ key: "Esc", verb: "deny", consequence: "refuses it; this session does not ask about it again" },
+			{ key: permissionKeyLabel(PERMISSION_STOP_KEY), verb: "stop", consequence: stopWords, tone: "error" },
 		];
 	}
 	if (view.axis.kind === "net" && view.axis.ruleId === SESSION_CODE_CONSENT_RULE_ID) {
