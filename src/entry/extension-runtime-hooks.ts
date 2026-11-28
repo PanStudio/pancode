@@ -149,6 +149,8 @@ export function createQuietHookRuns(sink: HookReceiptSink, sessionId?: () => str
 				receipt.sessionId ?? null,
 				receipt.runId ?? null,
 				receipt.turnId ?? null,
+				// Runs that ran in different places are not one record.
+				receipt.confinement ?? null,
 			]);
 			const duration = Math.max(0, receipt.durationMs ?? 0);
 			const prior = held.get(key);

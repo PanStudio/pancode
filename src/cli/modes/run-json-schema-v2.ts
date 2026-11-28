@@ -203,6 +203,8 @@ export interface RunVerifyCheckV2 {
 	exitCode?: number;
 	durationMs?: number;
 	ranAfterLastEdit?: boolean;
+	/** The operator's own command runs on the host, outside PanCode's sandbox (P8). */
+	confinement?: "host";
 	/**
 	 * CLI-4: a failing check replayed on the commit the run started from, through dispatch's base comparison. `failed`
 	 * with no reason is a base that fails the same way, so the check's own status reads `not_implicated`.
@@ -240,6 +242,7 @@ export function verifyChecksV2(
 			...(result.exitCode !== null ? { exitCode: result.exitCode } : {}),
 			durationMs: result.durationMs,
 			ranAfterLastEdit: result.ranAfterLastEdit,
+			confinement: result.confinement,
 			...(result.base !== undefined
 				? {
 						base: {

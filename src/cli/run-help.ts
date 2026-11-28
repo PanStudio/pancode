@@ -150,11 +150,13 @@ run-acceptance-2, ...); nothing is written to .pancode/verifiers.yaml. The
 finish gate treats it like a declared verifier: when the agent changes files
 and then runs the command through bash, as a whole && segment, it counts as a
 check. After the turn, the run itself runs each check with bash and reports it
-as {id, command, exitCode, passed, durationMs, timedOut, ranAfterLastEdit} in
+as {id, command, exitCode, passed, durationMs, timedOut, ranAfterLastEdit,
+confinement} in
 a {"type":"verify"} frame under --output-format stream-json, in the run_end
 envelope's "verify" under --output-format json|stream-json, and on stderr in
 text mode. ranAfterLastEdit says whether
-the agent ran the check after its last edit. A failed check does not change
+the agent ran the check after its last edit. A check is the operator's own
+command and runs on the host, outside PanCode's sandbox (confinement "host"). A failed check does not change
 the run's exit code. An interrupted run skips the checks.
 
 There is no operator in a headless run: permission asks are denied, and the

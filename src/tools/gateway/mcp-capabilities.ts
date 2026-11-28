@@ -4,7 +4,6 @@ import { lstatSync, mkdirSync, realpathSync } from "node:fs";
 import path from "node:path";
 import type { TSchema } from "typebox";
 import { neutralizeFraming, neutralizeFramingValue } from "../../core/reminder-framing.js";
-import { workerSandboxApplies } from "../../core/sandbox/worker-process.js";
 import type { DynamicToolName } from "../../core/tool-names.js";
 import { isMcpResourceCapability, mcpToolName } from "../../core/tool-names.js";
 import { mcpToolActionClass, mcpToolConfirmationRule, mcpToolOwner } from "../../domains/mcp/action-classes.js";
@@ -98,6 +97,7 @@ import {
 	mcpOutboundFiles,
 	prepareMcpFiles,
 } from "./mcp-files.js";
+import { createMcpLaunchPlanner, launchConfinement, type McpLaunchDecision } from "./mcp-launch.js";
 import { namedPathArguments, pathArgumentEffects, pathArgumentRefusal } from "./mcp-path-arguments.js";
 import {
 	declares,
@@ -139,15 +139,12 @@ function actionClassFor(declaration: GatewayMcpServer, tool: NamedTool): McpTrus
  * trusted and only when the first find, describe, or call needs it, registers
  * each of its tools in the registry as `mcp_<id>__<tool>` (placement gateway,
  * action class from operator policy or advisory hints), and closes every client it opened at
- * session end. In the orchestrator launching a server does not sandbox it, and
- * the trust record is the operator's explicit acceptance of that; a worker's
- * servers start under the worker's OS sandbox when one applies.
+ * session end. In the orchestrator launching a server does not sandbox it
+ * unless the operator names it in `safety.confine` (P8, D11), and the trust
+ * record is the operator's explicit acceptance of that; a worker's servers
+ * start under the worker's OS sandbox when one applies. Every stdio server's
+ * tools and calls say which.
  */
-
-/** What confines a launched server, as discovery tells the model. */
-function launchConfinement(): string {
-	return workerSandboxApplies() ? "it runs under this worker's OS sandbox" : "launching it does not sandbox it";
-}
 
 /**
  * Why a read-only turn may not start `declaration`'s server, or null when it
@@ -185,7 +182,7 @@ function objectiveOf(tool: NamedTool): string {
  * discovery reads identically whether the metadata came off a live listing or
  * off disk and a caller can never tell the two apart by shape alone.
  */
-function describeTool(declaration: GatewayMcpServer, tool: NamedTool): string {
+function describeTool(declaration: GatewayMcpServer, tool: NamedTool, decision: McpLaunchDecision | null): string {
 	if (declaration.url !== undefined) {
 		const where =
 			declaration.scope === "client" ? "supplied by the ACP client for this session" : `${declaration.scope} scope`;
@@ -194,7 +191,29 @@ function describeTool(declaration: GatewayMcpServer, tool: NamedTool): string {
 	if (declaration.scope === "client") {
 		return `${objectiveOf(tool)}\nLocal MCP server ${declaration.id}, supplied by the ACP client for this session. Its calls use the gateway's unknown action class and session autonomy.`;
 	}
-	return `${objectiveOf(tool)}\nLocal MCP server ${declaration.id} (${declaration.scope} scope), trusted with action class ${actionClassFor(declaration, tool)}; ${launchConfinement()}.`;
+	return `${objectiveOf(tool)}\nLocal MCP server ${declaration.id} (${declaration.scope} scope), trusted with action class ${actionClassFor(declaration, tool)}${decision !== null ? `; ${launchConfinement(decision)}` : ""}.`;
+}
+
+/** A tool's description and parameters as the model sees them, with its file arguments when the server takes files. */
+function toolFilePresentation(
+	declaration: GatewayMcpServer,
+	tool: { name: string; description: string; inputSchema: Record<string, unknown> },
+	filesOffered: boolean,
+	launch: McpLaunchDecision | null,
+): {
+	description: string;
+	parameters: Record<string, unknown>;
+	fileArguments: ReadonlyArray<McpFileArgument> | null;
+} {
+	const fileSchema = filesOffered ? mcpFileSchema(tool.inputSchema) : null;
+	const fileArguments = fileSchema?.kind === "files" ? fileSchema.arguments : null;
+	const described = describeTool(declaration, tool, launch);
+	const description =
+		fileSchema?.kind === "unsupported"
+			? `${described}\nPanCode does not send files to this tool: ${fileSchema.reason}.`
+			: described;
+	const parameters = fileArguments !== null ? mcpFileModelSchema(tool.inputSchema, fileArguments) : tool.inputSchema;
+	return { description, parameters, fileArguments };
 }
 
 /** Remedies name the CLI first: it exists in every session, interactive or not. */
@@ -282,6 +301,10 @@ function sameMcpAdmission(current: ResolvedMcpServer, admitted: GatewayMcpServer
 		current.trust.actionClass === admitted.trust.actionClass &&
 		(current.trust.status === "trusted" ? current.trust.network : undefined) ===
 			(admitted.trust.status === "trusted" ? admitted.trust.network : undefined) &&
+		sameStringList(
+			current.trust.status === "trusted" ? current.trust.allow : undefined,
+			admitted.trust.status === "trusted" ? admitted.trust.allow : undefined,
+		) &&
 		sameStringList(current.fileTargets, admitted.fileTargets)
 	);
 }
@@ -658,30 +681,12 @@ export function createMcpCapabilitySource(options: McpCapabilitySourceOptions): 
 		state.catalog = undefined;
 	};
 
+	const launches = createMcpLaunchPlanner(options);
 	const attestedNetwork = (serverId: string): boolean =>
 		options.admitted?.tools.some((entry) => entry.serverId === serverId && entry.network === true) === true;
 	/** The main session transfers files out of band; a worker only with the server's attested network grant. */
 	const fileTransfersPermitted = (serverId: string): boolean =>
 		options.admitted === undefined || attestedNetwork(serverId);
-
-	const toolFilePresentation = (
-		declaration: GatewayMcpServer,
-		tool: { name: string; description: string; inputSchema: Record<string, unknown> },
-		filesOffered: boolean,
-	): {
-		description: string;
-		parameters: Record<string, unknown>;
-		fileArguments: ReadonlyArray<McpFileArgument> | null;
-	} => {
-		const fileSchema = filesOffered ? mcpFileSchema(tool.inputSchema) : null;
-		const fileArguments = fileSchema?.kind === "files" ? fileSchema.arguments : null;
-		const description =
-			fileSchema?.kind === "unsupported"
-				? `${describeTool(declaration, tool)}\nPanCode does not send files to this tool: ${fileSchema.reason}.`
-				: describeTool(declaration, tool);
-		const parameters = fileArguments !== null ? mcpFileModelSchema(tool.inputSchema, fileArguments) : tool.inputSchema;
-		return { description, parameters, fileArguments };
-	};
 
 	const makeSpec = (state: ServerState, tool: McpToolDescriptor, name: DynamicToolName): ToolSpec => {
 		const { declaration } = state;
@@ -713,7 +718,12 @@ export function createMcpCapabilitySource(options: McpCapabilitySourceOptions): 
 		// The server resolves a relative path against the cwd it was started in.
 		const pathCwd = launchPlacement(declaration).cwd;
 		// Experimental MCP files extension: the model names files by path, and PanCode sends their bytes.
-		const presentation = toolFilePresentation(declaration, tool, state.client?.filesOffered() != null);
+		const presentation = toolFilePresentation(
+			declaration,
+			tool,
+			state.client?.filesOffered() != null,
+			launches.decide(declaration),
+		);
 		const { fileArguments } = presentation;
 		const fileTargets = declaration.fileTargets ?? [];
 		const spec: ToolSpec = {
@@ -922,6 +932,7 @@ export function createMcpCapabilitySource(options: McpCapabilitySourceOptions): 
 						tool: tool.name,
 						contentTypes,
 						textTruncated: rendered.truncated,
+						...(state.launchRecord !== undefined ? { sandbox: state.launchRecord } : {}),
 						...(result.structuredContent !== undefined ? { structuredContent: result.structuredContent } : {}),
 						...(result.structuredContentJson !== undefined ? { structuredContentJson: result.structuredContentJson } : {}),
 						...(result.elicitations !== undefined ? { elicitations: result.elicitations } : {}),
@@ -1055,6 +1066,7 @@ export function createMcpCapabilitySource(options: McpCapabilitySourceOptions): 
 				return typeof sources === "string" ? [] : mcpOutboundFiles(sources, declaration.id, options.cwd, options.store);
 			};
 		}
+		spec.hostLaunchNote = () => launches.cardNote(declaration, state);
 		if (trustClass === "execute" && declaration.url === undefined) {
 			const launchCall: ClassifierCall = {
 				tool: "bash",
@@ -1189,9 +1201,11 @@ export function createMcpCapabilitySource(options: McpCapabilitySourceOptions): 
 						}
 					}
 					preparePluginDataDir(declaration);
+					const placed = launches.clientLaunch(declaration, state);
 					const clientOptions: McpClientOptions = {
 						workspaceRoot: placement.workspaceRoot,
 						...(sandboxNetwork ? { sandboxNetwork: true } : {}),
+						...placed,
 						...(fileTransfersPermitted(declaration.id) ? { fileTransfers: true } : {}),
 						...(elicitationHost !== undefined
 							? {
@@ -1511,7 +1525,7 @@ export function createMcpCapabilitySource(options: McpCapabilitySourceOptions): 
 			// A name the registry already holds is served by that live spec instead;
 			// a cached descriptor must never shadow a connected one.
 			if (name === null || ownerOf(name) !== state || registry.get(name) !== undefined) continue;
-			const presentation = toolFilePresentation(declaration, tool, catalog.files === true);
+			const presentation = toolFilePresentation(declaration, tool, catalog.files === true, launches.decide(declaration));
 			entries.push({
 				name,
 				description: presentation.description,
@@ -1734,7 +1748,7 @@ export function createMcpCapabilitySource(options: McpCapabilitySourceOptions): 
 					reason: `mcp server ${declaration.id} records no tool named ${toolName}${catalog.truncated ? `, and its catalog is incomplete: list it again with ${catalogRemedy(declaration.id)}` : ""}`,
 				};
 			}
-			const presentation = toolFilePresentation(declaration, tool, catalog.files === true);
+			const presentation = toolFilePresentation(declaration, tool, catalog.files === true, launches.decide(declaration));
 			return {
 				metadata: {
 					name,
@@ -1841,7 +1855,7 @@ export function createMcpCapabilitySource(options: McpCapabilitySourceOptions): 
 				const surface = surfaceOf(owner);
 				const unapproved =
 					surface === null || surface.status === "approved" ? "" : ` Reads are refused for now: ${surface.reason}.`;
-				return `Resources of local stdio MCP server ${declaration.id} (${declaration.scope} scope, declared in ${declaration.path}), trusted with action class ${declaration.trust.actionClass}; listing and reading resources runs as ${actionClass}, and needs the server's tool surface approved; ${launchConfinement()}.${unapproved}`;
+				return `Resources of local stdio MCP server ${declaration.id} (${declaration.scope} scope, declared in ${declaration.path}), trusted with action class ${declaration.trust.actionClass}; listing and reading resources runs as ${actionClass}, and needs the server's tool surface approved; ${launchConfinement(launches.decide(declaration))}.${unapproved}`;
 			}
 			const serverClass = declaration.trust.actionClass;
 			const remote = declaration.url !== undefined;
@@ -1866,7 +1880,9 @@ export function createMcpCapabilitySource(options: McpCapabilitySourceOptions): 
 			const serverLabel = remote
 				? `Remote MCP server ${declaration.id} at ${mcpOriginOf(declaration.url)}`
 				: `Local stdio MCP server ${declaration.id}`;
-			const confinement = remote ? "it runs off this machine, and what a call sends leaves it" : launchConfinement();
+			const confinement = remote
+				? "it runs off this machine, and what a call sends leaves it"
+				: launchConfinement(launches.decide(declaration));
 			const filesOffered =
 				owner.client !== null ? owner.client.filesOffered() !== null : cachedCatalog(owner)?.files === true;
 			const sendsFiles =

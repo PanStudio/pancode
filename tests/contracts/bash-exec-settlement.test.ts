@@ -297,6 +297,36 @@ describe("worker cancel stops running commands", () => {
 		const settled = await Promise.race([run, new Promise<null>((resolve) => setTimeout(() => resolve(null), 3_000))]);
 		ok(settled !== null, "the command outlived the kill");
 	});
+
+	it("settles the sandbox launch record as refused when the run deadline expires before spawn (P6)", async () => {
+		const { sandboxAvailability } = await import("../../src/core/sandbox/availability.js");
+		const { mainSandboxPolicy } = await import("../../src/core/sandbox/main-session.js");
+		const { telemetryHub } = await import("../../src/core/telemetry/hub.js");
+		if (!sandboxAvailability().available) return;
+		const workspace = mkdtempSync(join(tmpdir(), "pancode-deadline-sbx-"));
+		const seen: Array<{ outcome: string }> = [];
+		const unsub = telemetryHub().subscribe("sandbox.launched", (payload) => {
+			seen.push(payload);
+		});
+		try {
+			const result = await runBashCommand("echo never", {
+				cwd: workspace,
+				timeoutMs: 30_000,
+				deadlineAt: performance.now() - 10,
+				shellSandbox: mainSandboxPolicy({ workspace, scratchRoots: [] }),
+			});
+			strictEqual(result.timedOut, true);
+			strictEqual(result.sandbox?.outcome, "refused");
+			strictEqual(result.sandbox?.network.observed, false);
+			deepStrictEqual(
+				seen.map((record) => record.outcome),
+				["refused"],
+			);
+		} finally {
+			unsub();
+			rmSync(workspace, { recursive: true, force: true });
+		}
+	});
 });
 
 // M-12: a tool command that inherited the TUI's terminal or its pane host's coordinates typed into the composer and

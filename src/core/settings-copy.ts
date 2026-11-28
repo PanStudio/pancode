@@ -626,6 +626,10 @@ export const EXTRA_HELP: Record<string, [string, string]> = {
 		"Sandbox unix sockets",
 		"Block stops sandboxed commands from opening Unix sockets, because a socket they can reach (tmux, an X11 display, a daemon's control socket) can run commands outside the sandbox. Database sockets, Docker and other local IPC then fail inside it, and a command that needs one runs unsandboxed after review. Owned hides only the sockets you own (tmux, an X11 socket file, your agents) and leaves other users' reachable, such as the MUNGE and SSSD sockets cluster commands need; abstract sockets stay reachable. Allow leaves every socket reachable. User settings only.",
 	],
+	"safety.confine": [
+		"Confined integrations",
+		"Host-launched integrations that run in PanCode's OS sandbox: mcp:<server id> (main-session MCP servers), extension:<extension id> (a pack's binaries and panes), hooks (project and extension command hooks), git (the typed git tool) and jobs (scheduled job commands). Any other runs on the host as before and is labelled unconfined in its result, doctor and approval card. A project may only add entries.",
+	],
 	"safety.sandboxUnconfinedLocalWorkers": [
 		"Unconfined local workers",
 		"When this host has no usable OS sandbox, lets dispatched workers here run their shell and check commands with no sandbox, under your account with your files and network. Off refuses such a worker before it starts. safety.sandbox: required ignores it; fleet nodes keep their own allowUnsandboxed. User settings only.",
