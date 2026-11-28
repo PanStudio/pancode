@@ -40,6 +40,7 @@ export interface TurnContextScope {
 	readonly memoryOrigin: (runtime: AgentRuntime) => string;
 	readonly classifyCall: ClassifyCall;
 	readonly budgetProducer: LiveBudgetProducer;
+	readonly pendingColdReasons: Set<ExpectedColdReason>;
 	readonly loadCacheCallBaseline: () => void;
 	readonly resetCacheCallBaseline: () => void;
 	readonly noteColdReason: (reason: ExpectedColdReason) => void;

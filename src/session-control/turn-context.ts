@@ -6,14 +6,12 @@ import { providerCheckpointFromMessage, providerFallbackDigests } from "../core/
 import type { SandboxAvailability } from "../core/sandbox/types.js";
 import { mainAgent } from "../core/telemetry/context.js";
 import { telemetryHub } from "../core/telemetry/hub.js";
-import { factKnownValue } from "../core/telemetry/known.js";
 import { pancodeStateDir } from "../core/xdg.js";
 import type { SuccessfulMemoryContextCommit } from "../domains/memory/commit-state.js";
 import type { MemoryInterventionRegistration } from "../domains/memory/intervention-types.js";
 import { compactionBudget, getCatalogModelForRuntime } from "../domains/providers/catalog.js";
 import { readSessionContextSnapshots } from "../domains/telemetry/index.js";
 import {
-	engineCodexConfiguration,
 	engineCodexUserTurn,
 	engineInitialSystemPrompt,
 	estimateEngineRequestTokens,
@@ -37,30 +35,15 @@ import { createMessageListFold, withSettledHistory } from "./message-list-digest
  * all flow through it.
  */
 
-import type {
-	BackendCacheVerdict,
-	BackendCompletionTimings,
-	CacheCallTransport,
-	CacheRequestFingerprint,
-} from "../core/cache-telemetry.js";
-import { buildCacheCallObservation, uncachedPrefillTokens } from "../core/cache-telemetry.js";
+import type { BackendCacheVerdict, BackendCompletionTimings } from "../core/cache-telemetry.js";
 import type { PancodeSettings } from "../core/config.js";
-import { sha256Hex } from "../core/hash.js";
 import { hostFramedTexts, systemReminderBlock } from "../core/reminder-framing.js";
-import { residencyTargetKey } from "../core/residency-target-key.js";
 import type { RouteName, RouteSource } from "../core/route-provenance.js";
 import type { PendingSkillToolPolicy } from "../core/skill-activation.js";
 import type { TelemetryHub } from "../core/telemetry/hub.js";
-import type {
-	CompactionPayload,
-	ContextRecalledPayload,
-	MemoryStepCompletedPayload,
-	ResidencyMutationPayload,
-} from "../core/telemetry/live-events.js";
 import type { CallSettled } from "../core/telemetry/schemas.js";
 import type { ToolName } from "../core/tool-names.js";
 import type { TurnConstraints } from "../core/turn-constraints.js";
-import { asRecord } from "../core/type-guards.js";
 import type { NotificationLevel } from "../core/views/notice-words.js";
 import type { BudgetInspection } from "../domains/context/budget/inspection.js";
 import {
@@ -84,9 +67,7 @@ import type { PromptsContract } from "../domains/prompts/contract.js";
 import {
 	type ContextWindowDetails,
 	type ContextWindowSource,
-	canonicalEndpointKey,
 	isOrchestratorEligibleRuntime,
-	modelEndpointKey,
 	type ProvidersContract,
 	type ResolvedRuntimeTarget,
 	resolveModelReference,
@@ -130,7 +111,6 @@ import {
 import { readPromptCompileRecords, type SessionPromptCompileRecord } from "../domains/session/prompt-manifest.js";
 import { activePath, findLastEntry } from "../domains/session/tree/active-path.js";
 import type { TelemetryContract } from "../domains/telemetry/contract.js";
-import { cacheLifetimeSeconds } from "../engine/cache-keepalive.js";
 import type {
 	AgentMessage,
 	AnthropicResponseObservation,
@@ -141,9 +121,8 @@ import type {
 } from "../engine/types.js";
 import type { AutonomyLevel } from "../lib/autonomy/autonomy.js";
 import type { ToolRegistry } from "../tools/registry-contract.js";
-import { backendCacheVerdict, extractUserText, sumRunUsage, toolSignatureFromState } from "./chat-loop-messages.js";
+import { extractUserText, toolSignatureFromState } from "./chat-loop-messages.js";
 import { codexEffortGeneration, codexEffortUpdates } from "./codex-effort.js";
-import { coldCacheNoticeText } from "./cold-reasons.js";
 import type { HostInserts } from "./host-inserts.js";
 import { continuityContextFromSession, renderModelReplay } from "./model-session-replay.js";
 import {
@@ -154,6 +133,7 @@ import {
 	turnAdmissionRemedy,
 } from "./output-reserve.js";
 import { extractTurnText } from "./session-replay-messages.js";
+import { createTurnContextCache } from "./turn-context/cache.js";
 import {
 	anchorModelKey,
 	capturedBreakdown,
@@ -163,7 +143,6 @@ import {
 	optionalProjection,
 	sameRoute,
 	snapshotWindowSource,
-	TIER_INDEPENDENT_COLD_REASONS,
 	toolResultTail,
 } from "./turn-context/helpers.js";
 import { createTurnContextCompaction } from "./turn-context-compaction.js";
@@ -720,13 +699,13 @@ export function createTurnContext(deps: TurnContextDeps): TurnContext {
 		classifyCall,
 		budgetProducer,
 		get loadCacheCallBaseline() {
-			return loadCacheCallBaseline;
+			return cache.loadCacheCallBaseline;
 		},
 		get resetCacheCallBaseline() {
-			return resetCacheCallBaseline;
+			return cache.resetCacheCallBaseline;
 		},
 		get noteColdReason() {
-			return noteColdReason;
+			return cache.noteColdReason;
 		},
 		get persistContextSnapshot() {
 			return persistContextSnapshot;
@@ -844,115 +823,10 @@ export function createTurnContext(deps: TurnContextDeps): TurnContext {
 		get controller() {
 			return controller;
 		},
+		pendingColdReasons,
 	};
 
-	const loadCacheCallBaseline = (): void => {
-		if (!shared.cacheCallBaselineLoaded) {
-			shared.cacheCallBaselineLoaded = true;
-			// #423: a fresh process resumes only the active branch's last persisted call.
-			const entries = activeEntries();
-			for (let index = entries.length - 1; index >= 0; index -= 1) {
-				const entry = entries[index];
-				if (!entry) continue;
-				if (entry.kind === "compactionSummary" || entry.kind === "contextEviction") break;
-				if (entry.kind !== "message" || entry.role !== "assistant") continue;
-				const payload = entry.payload as {
-					promptCache?: {
-						input?: number;
-						cacheRead?: number;
-						cacheWrite?: number;
-						observation?: { requestFingerprint?: CacheRequestFingerprint; transport?: CacheCallTransport };
-					};
-				} | null;
-				const prior = payload?.promptCache;
-				const endedAt = Date.parse(entry.timestamp);
-				if (typeof prior?.input === "number" && Number.isFinite(endedAt)) {
-					const transportRequest = prior.observation?.transport?.request;
-					shared.cacheCallBaseline = {
-						inclusiveInputTokens: prior.input + (prior.cacheRead ?? 0) + (prior.cacheWrite ?? 0),
-						endedAt,
-						...(prior.observation?.requestFingerprint ? { requestFingerprint: prior.observation.requestFingerprint } : {}),
-						...(transportRequest ? { transportRequest } : {}),
-					};
-				}
-				break;
-			}
-		}
-	};
-	const resetCacheCallBaseline = (): void => {
-		shared.cacheCallBaseline = null;
-		// #423: a generation reset must not reload the pre-reduction ledger baseline.
-		shared.cacheCallBaselineLoaded = true;
-		shared.cacheGeneration += 1;
-	};
-	const stampsOnTier = (reason: ExpectedColdReason, runtimeId: string | undefined): boolean =>
-		TIER_INDEPENDENT_COLD_REASONS.has(reason) ||
-		(runtimeId !== undefined && deps.providers.getRuntime(runtimeId)?.tier === "local-native");
-	// An expected cold cache is telemetry about the next response: it goes to
-	// the footer's notice slot, and the Detailed receipt names the reasons with
-	// the reuse the provider actually reported.
-	const noteExpectedCold = (reasons: ReadonlyArray<string>): void => {
-		if (deps.emitCacheNotice) deps.emitCacheNotice(reasons);
-		else deps.emitNotice(coldCacheNoticeText(reasons));
-	};
-	const noteColdReason = (reason: ExpectedColdReason): void => {
-		if (!state.streaming) {
-			pendingColdReasons.add(reason);
-			return;
-		}
-		if (!stampsOnTier(reason, state.runtime?.runtimeId)) return;
-		if (!shared.callColdReasons.includes(reason)) shared.callColdReasons.push(reason);
-		if (!shared.runExpectedColdReasons.includes(reason)) shared.runExpectedColdReasons.push(reason);
-		if (shared.nextAssistantColdReasons.includes(reason)) return;
-		shared.nextAssistantColdReasons.push(reason);
-		noteExpectedCold(shared.nextAssistantColdReasons);
-	};
-	const unsubscribeColdReasonSources = [
-		...(["run.started", "run.completed", "run.failed"] as const).map(
-			(channel) =>
-				deps.bus?.subscribe(channel, () => {
-					noteColdReason("dispatch");
-				}) ?? null,
-		),
-		...(["compaction.started", "compaction.ended"] as const).map(
-			(channel) =>
-				deps.bus?.subscribe(channel, (payload: CompactionPayload) => {
-					// A step checkpoint makes no provider call, so its own reason, on every tier, is true only once its entry
-					// was appended: a checkpoint whose append failed left the context as it was.
-					if (payload?.trigger !== "step") noteColdReason("compaction");
-					else if (channel === "compaction.ended" && payload.outcome === "completed") noteColdReason("step_checkpoint");
-				}) ?? null,
-		),
-		// A completed compaction rebuilds the context, so the next compile takes
-		// the live memory section instead of the frozen one (#423).
-		deps.bus?.subscribe("compaction.ended", (payload: CompactionPayload) => {
-			if (payload.outcome === "completed") {
-				shared.frozenMemorySection = null;
-				resetCacheCallBaseline();
-				shared.frozenRouteSources = undefined;
-			}
-		}) ?? null,
-		deps.bus?.subscribe("residency.mutated", (payload: ResidencyMutationPayload) => {
-			const runtime = state.runtime;
-			const model = runtime?.agent.state.model as { baseUrl?: unknown } | undefined;
-			const baseUrl = typeof model?.baseUrl === "string" ? model.baseUrl : null;
-			if (payload.targetKey !== residencyTargetKey(runtime?.runtimeId ?? "", baseUrl)) return;
-			noteColdReason("residency");
-		}) ?? null,
-		// A memory step on another endpoint disturbs nothing here, so the stamp is
-		// gated on the step having called the very server this session streams to.
-		deps.bus?.subscribe("memory.step_completed", (payload: MemoryStepCompletedPayload) => {
-			const target = state.runtime?.runtimeResolution.target;
-			if (target === undefined) return;
-			// Behind a model-routed gateway only a step on this session's own model shares its backend.
-			const own = [canonicalEndpointKey(target), modelEndpointKey(target, state.runtime?.wireModelId)];
-			if (!own.includes(payload.endpointKey)) return;
-			noteColdReason("background_memory");
-		}) ?? null,
-		deps.bus?.subscribe("context.recalled", (payload: ContextRecalledPayload) => {
-			middleware.fireCompactionHook("working_set_recall", payload.trigger);
-		}) ?? null,
-	];
+	const cache = createTurnContextCache(shared);
 
 	const persistContextSnapshot = (snapshot: ContextSnapshot): void => {
 		const currentSession = deps.session?.current();
@@ -2684,247 +2558,23 @@ export function createTurnContext(deps: TurnContextDeps): TurnContext {
 			});
 		},
 
-		noteColdReason,
+		noteColdReason: cache.noteColdReason,
 
-		consumeExpectedColdReasons(runtimeId: string): void {
-			// Cache-disturbance honesty (T3.3): consume disturbances since
-			// the last settled run. Only single-slot local backends lose their
-			// prefix cache to interleaved work, so residency, dispatch, and
-			// compaction stamp only on local-native targets. Prefix-byte and
-			// reasoning changes stamp every tier (#423; see stampsOnTier).
-			shared.runExpectedColdReasons = [];
-			shared.nextAssistantColdReasons = [];
-			if (pendingColdReasons.size > 0) {
-				const reasons = [...pendingColdReasons].filter((reason) => stampsOnTier(reason, runtimeId));
-				pendingColdReasons.clear();
-				if (reasons.length > 0) {
-					shared.runExpectedColdReasons = reasons;
-					shared.nextAssistantColdReasons = reasons;
-					shared.callColdReasons = [...new Set([...shared.callColdReasons, ...reasons])];
-					noteExpectedCold(reasons);
-				}
-			}
-		},
+		consumeExpectedColdReasons: cache.methods.consumeExpectedColdReasons,
 
-		takeCallColdReasons(): ExpectedColdReason[] {
-			const reasons = shared.callColdReasons;
-			shared.callColdReasons = [];
-			return reasons;
-		},
+		takeCallColdReasons: cache.methods.takeCallColdReasons,
 
-		cacheGeneration: () => shared.cacheGeneration,
+		cacheGeneration: cache.methods.cacheGeneration,
 
-		noteCacheRequestToolChoice(toolChoice, afterRejection = false): void {
-			shared.cacheRequestToolChoice = toolChoice;
-			const route = JSON.stringify([state.runtime?.targetId, state.runtime?.wireModelId]);
-			const previous = afterRejection ? shared.priorSentToolChoice : shared.sentToolChoice;
-			if (previous?.route === route && previous.toolChoice !== toolChoice) noteColdReason("tool_choice_change");
-			if (!afterRejection) shared.priorSentToolChoice = shared.sentToolChoice;
-			shared.sentToolChoice = { route, toolChoice };
-		},
+		noteCacheRequestToolChoice: cache.methods.noteCacheRequestToolChoice,
 
-		noteCacheRequestSystemPrompt(afterRejection = false): void {
-			const runtime = state.runtime;
-			if (!runtime) return;
-			const hash = sha256Hex(engineInitialSystemPrompt(runtime.agent));
-			shared.cacheRequestSystemPromptHash = hash;
-			const route = JSON.stringify([runtime.targetId, runtime.wireModelId]);
-			loadCacheCallBaseline();
-			const recorded = shared.cacheCallBaseline?.requestFingerprint;
-			const previous = afterRejection
-				? shared.priorSentSystemPrompt
-				: (shared.sentSystemPrompt ??
-					(recorded?.systemPromptHash === undefined
-						? undefined
-						: { route: JSON.stringify([recorded.targetId, recorded.modelId]), hash: recorded.systemPromptHash }));
-			// A recompile already names this change; the reason catches a prefix that moved without one.
-			if (previous?.route === route && previous.hash !== hash && !shared.callColdReasons.includes("prompt_recompiled")) {
-				noteColdReason("system_prompt_changed");
-			}
-			if (!afterRejection) shared.priorSentSystemPrompt = shared.sentSystemPrompt;
-			shared.sentSystemPrompt = { route, hash };
-		},
+		noteCacheRequestSystemPrompt: cache.methods.noteCacheRequestSystemPrompt,
 
-		promptCachePayloadForAssistant(
-			usage: Usage,
-			backend?: BackendCompletionTimings,
-			anthropicResponse?: AnthropicResponseObservation,
-			transport?: CodexTransportObservation,
-			responsesDiagnostic?: ResponsesCacheDiagnostic,
-		): Record<string, unknown> {
-			// Per-call prompt-cache record (T3.2) keeps normalized provider usage
-			// beside any timings captured from the server response. The run's first
-			// persisted call also carries any expected-cold reasons.
-			const input = typeof usage.input === "number" ? usage.input : 0;
-			const cacheRead = typeof usage.cacheRead === "number" ? usage.cacheRead : 0;
-			const cacheWrite = typeof usage.cacheWrite === "number" ? usage.cacheWrite : 0;
-			loadCacheCallBaseline();
-			// #423: fingerprint only truncations verified against their durable operator text.
-			// A later fresh connection with the same replayed bytes is not another rewrite.
-			const truncated: string[] = [];
-			for (const message of state.runtime?.agent.state.messages ?? []) {
-				if (message.role !== "user") continue;
-				const text = extractUserText(message);
-				const marker = /\n\n\[\.\.\. (\d+) more characters truncated from replay context\]$/.exec(text);
-				if (!marker) continue;
-				const prefix = text.slice(0, marker.index);
-				const original = (deps.readSessionEntries?.() ?? []).find(
-					(entry) => entry.kind === "message" && entry.role === "user" && Date.parse(entry.timestamp) === message.timestamp,
-				);
-				if (original?.kind !== "message") continue;
-				const source = extractTurnText(original.payload);
-				if (source.startsWith(prefix) && source.length === prefix.length + Number(marker[1])) truncated.push(text);
-			}
-			const replayTruncationHash = truncated.length > 0 ? sha256Json(truncated) : undefined;
-			const now = Date.now();
-			// #423: on Codex the wire effort is the generation's initial effort for every call; a /thinking change
-			// travels as a configuration_update item and keeps the cache (measured 2026-10-30), so it is no break cause.
-			const wireEffort = state.runtime ? engineCodexConfiguration(state.runtime.agent)?.initialEffort : undefined;
-			// #423: the lifetime the keepalive would have refreshed against is the one idle is judged by.
-			const model = state.runtime?.agent.state.model;
-			const lifetimeSeconds = model ? cacheLifetimeSeconds(model, undefined) : undefined;
-			// A server that omits cache reads from its usage but reports cache_n in its timings is judged by those
-			// timings, as the journal judges it, so doctor and /usage count the same breaks (#434).
-			const evaluated = usage.cacheReadField === "omitted" ? uncachedPrefillTokens(backend) : null;
-			const observation = buildCacheCallObservation(
-				evaluated !== null && backend
-					? { input: evaluated, cacheRead: backend.promptTokens - evaluated, cacheWrite: 0 }
-					: { input, cacheRead: usage.cacheReadField === "omitted" ? null : cacheRead, cacheWrite },
-				shared.cacheCallBaseline,
-				shared.nextAssistantColdReasons,
-				now,
-				state.runtime
-					? {
-							targetId: state.runtime.targetId,
-							modelId: state.runtime.wireModelId,
-							thinkingLevel: wireEffort ?? state.runtime.runtimeResolution.effectiveThinkingLevel,
-							toolChoice: shared.cacheRequestToolChoice,
-							...(replayTruncationHash === undefined ? {} : { replayTruncationHash }),
-							...(shared.cacheRequestSystemPromptHash === undefined
-								? {}
-								: { systemPromptHash: shared.cacheRequestSystemPromptHash }),
-						}
-					: undefined,
-				{
-					ttlMs: lifetimeSeconds === undefined ? null : lifetimeSeconds * 1000,
-					...(transport
-						? {
-								transport: {
-									mode: transport.mode,
-									request: transport.request,
-									...(transport.reason ? { reason: transport.reason } : {}),
-									...(transport.recovery ? { recovery: true } : {}),
-								},
-							}
-						: {}),
-				},
-			);
-			// #423: named provider misses outrank host attribution; pending diagnostics preserve no-break.
-			const messageStart = anthropicResponse?.messageStart;
-			const miss = asRecord(asRecord(messageStart?.diagnostics)?.cache_miss_reason ?? messageStart?.cache_miss_reason);
-			if (typeof miss?.type === "string") {
-				observation.providerDiagnostic = {
-					provider: "anthropic",
-					type: miss.type,
-					...(typeof miss.cache_missed_input_tokens === "number"
-						? { missedInputTokens: miss.cache_missed_input_tokens }
-						: {}),
-				};
-				const causes = {
-					model_changed: "model_changed",
-					system_changed: "prompt_recompiled",
-					tools_changed: "tools_changed",
-					messages_changed: "input_changed",
-				} as const;
-				if (Object.hasOwn(causes, miss.type)) {
-					observation.cause = causes[miss.type as keyof typeof causes];
-					observation.causeBasis = "provider";
-				}
-			} else if (Array.isArray(messageStart?.input_transformations) && messageStart.input_transformations.length > 0) {
-				const types = messageStart.input_transformations.flatMap((value) => {
-					const transformation = asRecord(value);
-					return typeof transformation?.type === "string" ? [transformation.type] : [];
-				});
-				observation.providerDiagnostic = { provider: "anthropic", type: `input_transformations:${types.join(",")}` };
-			} else if (responsesDiagnostic !== undefined) {
-				// PV-2: the public Responses verdict against the previous response; only a named miss is a cause.
-				observation.providerDiagnostic = {
-					provider: responsesDiagnostic.provider,
-					type: responsesDiagnostic.reason ?? responsesDiagnostic.type,
-					...(responsesDiagnostic.missedInputTokens === undefined
-						? {}
-						: { missedInputTokens: responsesDiagnostic.missedInputTokens }),
-				};
-				const causes = {
-					model_changed: "model_changed",
-					tools_changed: "tools_changed",
-					input_changed: "input_changed",
-					reasoning_effort_changed: "reasoning_changed",
-					context_compacted: "compaction",
-				} as const;
-				const reason = responsesDiagnostic.type === "cache_miss" ? responsesDiagnostic.reason : undefined;
-				if (reason !== undefined && Object.hasOwn(causes, reason)) {
-					observation.cause = causes[reason as keyof typeof causes];
-					observation.causeBasis = "provider";
-				}
-			}
-			if (observation.cause === "prompt_recompiled" && shared.nextChangedSection !== undefined) {
-				observation.changedSection = shared.nextChangedSection;
-			}
-			shared.nextChangedSection = undefined;
-			shared.cacheCallBaseline = {
-				inclusiveInputTokens: observation.inclusiveInputTokens,
-				endedAt: now,
-				...(observation.requestFingerprint ? { requestFingerprint: observation.requestFingerprint } : {}),
-				...(observation.transport ? { transportRequest: observation.transport.request } : {}),
-			};
-			const promptCache: Record<string, unknown> = {
-				input,
-				cacheRead,
-				cacheWrite,
-				backendVerdict: backendCacheVerdict(input, cacheRead, cacheWrite, backend, usage.cacheReadField),
-				observation,
-			};
-			if (backend !== undefined) promptCache.backend = { ...backend };
-			if (shared.nextAssistantColdReasons.length > 0) {
-				promptCache.expectedColdReasons = [...shared.nextAssistantColdReasons];
-				shared.nextAssistantColdReasons = [];
-			}
-			return promptCache;
-		},
+		promptCachePayloadForAssistant: cache.methods.promptCachePayloadForAssistant,
 
-		notePrewarm(prewarm: PrewarmStats): void {
-			shared.lastPrewarm = prewarm;
-		},
+		notePrewarm: cache.methods.notePrewarm,
 
-		noteRunCacheSummary(messages, runFirstCallVerdict): void {
-			// The settled run is the answer to the pre-warm's question, so the
-			// pre-warm line stops being the newest fact about the prefix here.
-			shared.lastPrewarm = null;
-			const cacheSummary = sumRunUsage(messages);
-			if (cacheSummary.hadUsage) {
-				let lastBackend: BackendCompletionTimings | null = null;
-				for (let index = messages.length - 1; index >= 0; index -= 1) {
-					const message = messages[index];
-					if (message?.role !== "assistant") continue;
-					lastBackend = (message as { backendTimings?: BackendCompletionTimings }).backendTimings ?? null;
-					break;
-				}
-				const cacheRead = factKnownValue(cacheSummary.totals.usage.cacheRead);
-				const cacheWrite = factKnownValue(cacheSummary.totals.usage.cacheWrite);
-				const cacheReported = cacheRead > 0 || cacheWrite > 0;
-				shared.lastPromptCache = {
-					shellReused: shared.lastSystemPromptReused,
-					cacheReadTokens: cacheReported ? cacheRead : null,
-					cacheWriteTokens: cacheReported ? cacheWrite : null,
-					uncachedInputTokens: factKnownValue(cacheSummary.totals.usage.input),
-					backend: lastBackend,
-					uncachedPrefillTokens: uncachedPrefillTokens(lastBackend),
-					backendVerdict: runFirstCallVerdict,
-					...(shared.runExpectedColdReasons.length > 0 ? { expectedColdReasons: [...shared.runExpectedColdReasons] } : {}),
-				};
-			}
-		},
+		noteRunCacheSummary: cache.methods.noteRunCacheSummary,
 
 		resetForSession(incomingBranchAnchorTurnId: string | null = null): void {
 			shared.cacheCallBaseline = null;
@@ -2951,7 +2601,7 @@ export function createTurnContext(deps: TurnContextDeps): TurnContext {
 			// recorded hash usually equals its fresh compile, so the stamp comes
 			// from here. Only when this process had actually applied a prompt:
 			// before the first compile there is nothing in the slot to have lost.
-			if (shared.sessionPromptHash !== null) noteColdReason("prompt_recompiled");
+			if (shared.sessionPromptHash !== null) cache.noteColdReason("prompt_recompiled");
 			shared.frozenMemorySection = null;
 			shared.frozenRouteSources = undefined;
 			shared.frozenRouteIdentity = "";
@@ -3038,7 +2688,7 @@ export function createTurnContext(deps: TurnContextDeps): TurnContext {
 		dispose(): void {
 			shared.disposed = true;
 			shared.compactionController?.abort();
-			for (const unsubscribe of unsubscribeColdReasonSources) unsubscribe?.();
+			for (const unsubscribe of cache.unsubscribeColdReasonSources) unsubscribe?.();
 		},
 	};
 	return controller;
