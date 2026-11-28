@@ -11,6 +11,7 @@ import { spawn } from "node:child_process";
 import { copyFileSync, cpSync, mkdtempSync, rmSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { initializePancodeHome } from "../../src/core/init.js";
 import { resetXdgCache } from "../../src/core/xdg.js";
 import type { RunEnvelope } from "../../src/domains/dispatch/types.js";
@@ -18,7 +19,7 @@ import type { SettledRunRecord } from "../../src/domains/telemetry/index.js";
 import { readRunJournal } from "./run-journal.js";
 import { dropGeneratedToolEnv, scratchPancodeEnvVars } from "./scratch-env.js";
 
-const ROOT = new URL("../..", import.meta.url).pathname;
+const ROOT = fileURLToPath(new URL("../..", import.meta.url));
 const CLI = join(ROOT, "dist", "cli", "index.js");
 const SOURCE_CLI = join(ROOT, "src", "cli", "index.ts");
 
