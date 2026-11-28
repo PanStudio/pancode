@@ -22,7 +22,7 @@ import {
 	reserveObservation,
 } from "../observation.js";
 import { readMaxBytes } from "../read.js";
-import type { ToolInvokeOptions } from "../registry-contract.js";
+import type { ToolInvokeOptions } from "../registry/contract.js";
 import { imageOmissionNotice } from "../result-shaping.js";
 import type { ToolResult, ToolSpec } from "../tool-spec.js";
 import { byteLength } from "../truncate-utf8.js";

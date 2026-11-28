@@ -30,7 +30,7 @@ import {
 import { resolveReadPath } from "./path-utils.js";
 import type { DocumentKind } from "./read-documents/index.js";
 import { MALFORMED_READ_PATHS, READ_PATHS_MAX, readPathsShapeError } from "./read-fan-out.js";
-import type { ToolInvokeOptions } from "./registry-contract.js";
+import type { ToolInvokeOptions } from "./registry/contract.js";
 import { toolResultContextText } from "./result-disposition.js";
 import { isSessionOffloadPath } from "./result-shaping.js";
 import { hookLandingRefusal } from "./tool-landing.js";

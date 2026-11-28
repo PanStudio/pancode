@@ -17,8 +17,8 @@ import { createLoopGuardRegistration } from "../../src/engine/loop-guard.js";
 import { createWorkerSafety, createWorkerToolRegistry } from "../../src/engine/worker-tools.js";
 import { resolveAgentTools } from "../../src/tools/agent-tools.js";
 import { registerAllTools } from "../../src/tools/bootstrap.js";
+import type { ToolRegistry } from "../../src/tools/registry/contract.js";
 import { createRegistry } from "../../src/tools/registry.js";
-import type { ToolRegistry } from "../../src/tools/registry-contract.js";
 import { type IsolatedPancodeEnv, isolatePancodeEnv } from "../harness/scratch-env.js";
 
 /**

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import type { AskUserHandler, AskUserQuestion, AskUserResult } from "../../tools/ask-user.js";
-import { createHarnessHold } from "../../tools/registry-contract.js";
+import { createHarnessHold } from "../../tools/registry/contract.js";
 import type { DecisionPresentation } from "../safety/decision-presentation.js";
 import { hostCheckBaseNote } from "./host-verification-note.js";
 import { boundedCheck } from "./merge-gate.js";

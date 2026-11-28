@@ -19,7 +19,7 @@ import { type FlowRestrictionSet, mergeFlowRestrictions } from "../domains/safet
 import type { DispatchEventSummary } from "./dispatch-run-events.js";
 import { scoutTransitionDetail } from "./dispatch-scout.js";
 import type { DispatchResultForm, DispatchToolDeps } from "./dispatch-types.js";
-import { FLOW_RESTRICTIONS_DETAIL } from "./registry-verdicts.js";
+import { FLOW_RESTRICTIONS_DETAIL } from "./registry/verdicts.js";
 import type { ToolResultDetails } from "./tool-spec.js";
 import { truncateUtf8 } from "./truncate-utf8.js";
 import {

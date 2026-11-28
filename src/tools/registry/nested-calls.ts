@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import { AsyncLocalStorage } from "node:async_hooks";
-import { withToolTelemetryContext } from "../core/telemetry/context.js";
-import type { SafetyDecision } from "../domains/safety/contract.js";
-import type { ToolDenial } from "../domains/safety/denial.js";
-import type { ExecutionProvenance, RegistryVerdict, ToolInvokeOptions } from "./registry-contract.js";
-import type { ToolResult } from "./tool-spec.js";
+import { withToolTelemetryContext } from "../../core/telemetry/context.js";
+import type { SafetyDecision } from "../../domains/safety/contract.js";
+import type { ToolDenial } from "../../domains/safety/denial.js";
+import type { ToolResult } from "../tool-spec.js";
+import type { ExecutionProvenance, RegistryVerdict, ToolInvokeOptions } from "./contract.js";
 
 /** Delegated execution evidence stays in process, never in model-visible result fields. */
 /** Whether the invocation in progress is a capability the gateway runs under the model's call (C-9). */

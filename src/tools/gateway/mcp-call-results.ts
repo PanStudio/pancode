@@ -31,8 +31,8 @@ import {
 	reserveObservation,
 } from "../observation.js";
 import { readMaxBytes } from "../read.js";
-import type { ToolInvokeOptions } from "../registry-contract.js";
-import { nestedBlockedResult } from "../registry-nested-calls.js";
+import type { ToolInvokeOptions } from "../registry/contract.js";
+import { nestedBlockedResult } from "../registry/nested-calls.js";
 import { imageOmissionNotice, offloadPointer, writeToolOffload } from "../result-shaping.js";
 import type { ToolResult } from "../tool-spec.js";
 import { byteLength } from "../truncate-utf8.js";

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 
-import { sha256Hex } from "../core/hash.js";
+import { sha256Hex } from "../../core/hash.js";
 import {
 	carriesHostFraming,
 	carriesToolResultNote,
@@ -9,26 +9,26 @@ import {
 	TOOL_RESULT_HOST_NOTES_KEY,
 	TOOL_RESULT_NOTES_SEPARATOR,
 	toolResultNote,
-} from "../core/reminder-framing.js";
-import { ToolNames } from "../core/tool-names.js";
-import { containsInstructionMarkers, INSTRUCTION_SHAPED_NOTE } from "../core/untrusted-content.js";
+} from "../../core/reminder-framing.js";
+import { ToolNames } from "../../core/tool-names.js";
+import { containsInstructionMarkers, INSTRUCTION_SHAPED_NOTE } from "../../core/untrusted-content.js";
 import type {
 	MiddlewareEffect,
 	MiddlewareHookInput,
 	MiddlewareHookResult,
 	MiddlewareMetadataValue,
-} from "../domains/middleware/types.js";
-import type { ClassifierCall } from "../domains/safety/action-classifier.js";
-import { callVerdict, echoedCheckExit } from "../domains/safety/check-classifier.js";
-import type { SafetyDecision } from "../domains/safety/contract.js";
-import type { FlowRestrictionSet } from "../domains/safety/information-flow.js";
-import { hashToolCall } from "../domains/safety/loop-detector.js";
-import { detectValidationCommand } from "../domains/safety/protected-artifacts.js";
-import type { ToolInvokeOptions } from "./registry-contract.js";
-import type { ToolResultDigest } from "./result-disposition.js";
-import { toolResultContextText } from "./result-disposition.js";
-import { shellExitSpeaksForCommand } from "./shell-exit-scope.js";
-import type { ToolMetadata, ToolResult, ToolResultDetails, ToolSpec } from "./tool-spec.js";
+} from "../../domains/middleware/types.js";
+import type { ClassifierCall } from "../../domains/safety/action-classifier.js";
+import { callVerdict, echoedCheckExit } from "../../domains/safety/check-classifier.js";
+import type { SafetyDecision } from "../../domains/safety/contract.js";
+import type { FlowRestrictionSet } from "../../domains/safety/information-flow.js";
+import { hashToolCall } from "../../domains/safety/loop-detector.js";
+import { detectValidationCommand } from "../../domains/safety/protected-artifacts.js";
+import type { ToolResultDigest } from "../result-disposition.js";
+import { toolResultContextText } from "../result-disposition.js";
+import { shellExitSpeaksForCommand } from "../shell-exit-scope.js";
+import type { ToolMetadata, ToolResult, ToolResultDetails, ToolSpec } from "../tool-spec.js";
+import type { ToolInvokeOptions } from "./contract.js";
 
 export function buildToolHookInput(
 	hook: "before_tool" | "after_tool",
