@@ -264,6 +264,32 @@ export function createWorkerToolRegistry(
 }
 
 /**
+ * A worker SafetyContract that compiles its policy on first use. The private registries behind the attested names and
+ * schemas only project names and specs, so they keep canonical registration and extension verification without
+ * compiling an unused policy; executable worker registries still construct their safety contract eagerly.
+ */
+function deferredWorkerSafety(): SafetyContract {
+	let safety: SafetyContract | undefined;
+	const resolveSafety = (): SafetyContract => (safety ??= createWorkerSafety());
+	return {
+		classify: (call) => resolveSafety().classify(call),
+		evaluate: (call, posture, scope) => resolveSafety().evaluate(call, posture, scope),
+		observeLoop: (key, now) => resolveSafety().observeLoop(key, now),
+		get scopes() {
+			return resolveSafety().scopes;
+		},
+		isSubset: (worker, orchestrator) => resolveSafety().isSubset(worker, orchestrator),
+		get policy() {
+			// biome-ignore lint/style/noNonNullAssertion: createWorkerSafety always sets policy; the optional member is the contract shape, not this value.
+			return resolveSafety().policy!;
+		},
+		get decisions() {
+			return resolveSafety().decisions;
+		},
+	};
+}
+
+/**
  * Native worker registries receive no DispatchContract, so no worker runtime
  * mediates nested PanCode dispatch. A constant, not a lookup: there is nothing to
  * vary by runtime, and a parameter would imply otherwise.
@@ -297,27 +323,7 @@ export function attestedToolNames(input: AttestedToolIdentityInput): string[] {
 	if (!input.toolsSupported || input.allowedTools.length === 0) {
 		return input.helperResult === true && input.toolsSupported ? [INTERNAL_HELPER_RESULT_TOOL] : [];
 	}
-	// This private registry only projects names. Preserve canonical registration
-	// and extension verification without compiling an unused policy; executable
-	// worker registries still construct their safety contract eagerly.
-	let safety: SafetyContract | undefined;
-	const resolveSafety = (): SafetyContract => (safety ??= createWorkerSafety());
-	const registry = createWorkerToolRegistry(undefined, {
-		classify: (call) => resolveSafety().classify(call),
-		evaluate: (call, posture, scope) => resolveSafety().evaluate(call, posture, scope),
-		observeLoop: (key, now) => resolveSafety().observeLoop(key, now),
-		get scopes() {
-			return resolveSafety().scopes;
-		},
-		isSubset: (worker, orchestrator) => resolveSafety().isSubset(worker, orchestrator),
-		get policy() {
-			// biome-ignore lint/style/noNonNullAssertion: createWorkerSafety always sets policy; the optional member is the contract shape, not this value.
-			return resolveSafety().policy!;
-		},
-		get decisions() {
-			return resolveSafety().decisions;
-		},
-	});
+	const registry = createWorkerToolRegistry(undefined, deferredWorkerSafety());
 	// The envelope's names this build serves, as resolveAgentTools attaches them: no second narrowing (fleet M7).
 	const names = envelopeSurfaceNames(registry, input.allowedTools);
 	// The registry projection attaches `gateway` for any gateway-placed
@@ -345,7 +351,7 @@ let schemaRegistry: ToolRegistry | undefined;
  */
 export function attestedToolSchemaSignature(names: ReadonlyArray<string>): string {
 	if (names.length === 0) return sha256Hex("pancode.toolSchemas:[]");
-	schemaRegistry ??= createWorkerToolRegistry();
+	schemaRegistry ??= createWorkerToolRegistry(undefined, deferredWorkerSafety());
 	const registry = schemaRegistry;
 	const entries = [...new Set(names)].sort().map((name) => {
 		const spec = registry.get(name as ToolName);
