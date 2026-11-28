@@ -21,7 +21,7 @@
  * header, and a replay run and a live run must index the same ledger the same
  * way.
  *
- * This is `extractFileOps` in `compaction/compact.ts` generalized: same
+ * This is `extractFileOps` in `memory/compaction/compact.ts` generalized: same
  * `path | file_path | filePath` argument reading, same tool-call pairing as
  * `chat-renderer.ts`, plus ranges, listings, failures, and turn positions.
  */

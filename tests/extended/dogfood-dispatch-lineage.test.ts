@@ -9,6 +9,7 @@ import type { HeadlessShutdownHooks } from "../../src/cli/modes/headless-run-typ
 import { runHeadlessMainAgent } from "../../src/cli/modes/print.js";
 import { DEFAULT_SETTINGS } from "../../src/core/defaults.js";
 import { withTelemetryContext } from "../../src/core/telemetry/context.js";
+import { telemetryRunDirectory } from "../../src/core/telemetry/paths.js";
 import { pancodeStateDir } from "../../src/core/xdg.js";
 import type { DispatchPreparationOptions, DispatchRequest } from "../../src/domains/dispatch/contract.js";
 import { readGateDecisionArtifacts } from "../../src/domains/dispatch/gate-decisions.js";
@@ -17,7 +18,6 @@ import type { RunLineage } from "../../src/domains/dispatch/types.js";
 import type { SpawnedWorker, SpawnedWorkerResult, WorkerSpec } from "../../src/domains/dispatch/worker-spawn.js";
 import type { ProvidersContract, RuntimeDescriptor } from "../../src/domains/providers/index.js";
 import { EMPTY_CAPABILITIES } from "../../src/domains/providers/index.js";
-import { telemetryRunDirectory } from "../../src/domains/telemetry/paths.js";
 import { createEngineAgent } from "../../src/engine/agent.js";
 import type { AgentEvent, AgentMessage } from "../../src/engine/types.js";
 import { type CreateChatLoopDeps, createChatLoop } from "../../src/session-control/chat-loop.js";

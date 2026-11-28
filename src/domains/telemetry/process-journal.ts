@@ -8,11 +8,11 @@ import type { TelemetryCapture } from "../../core/telemetry/capture.js";
 import { captureAdmits, STANDARD_CAPTURE } from "../../core/telemetry/capture.js";
 import type { TelemetryContext } from "../../core/telemetry/context.js";
 import { newProcessId } from "../../core/telemetry/ids.js";
+import { TELEMETRY_JOURNAL_FILE, telemetryProcessDirectory } from "../../core/telemetry/paths.js";
 import type { PendingTelemetry, TelemetrySink } from "../../core/telemetry/producer.js";
 import { registerProcessTelemetrySink } from "../../core/telemetry/producer.js";
 import type { CallJournal } from "./call-journal.js";
 import { openCallJournal } from "./call-journal.js";
-import { TELEMETRY_JOURNAL_FILE, telemetryProcessDirectory } from "./paths.js";
 
 let processId: string | undefined;
 

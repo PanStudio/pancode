@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import { readFile } from "node:fs/promises";
+import { telemetryImportedStateDir } from "../core/telemetry/paths.js";
 import { pancodeStateDir } from "../core/xdg.js";
-import { telemetryImportedStateDir } from "../domains/telemetry/paths.js";
 import type { SealVerdict } from "../domains/telemetry/seal.js";
 import { describeSealMismatch, readTelemetryScopeFiles, verifyTelemetryScope } from "../domains/telemetry/seal.js";
 import { printError } from "./argv.js";

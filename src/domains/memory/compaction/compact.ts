@@ -11,29 +11,30 @@ import { ProviderCompactionError } from "../../../core/provider-checkpoint-handl
 import type { SurfaceId } from "../../../core/side-surfaces.js";
 import type { CheckpointDefect, CompactionFailureCause } from "../../../core/telemetry/context-schemas.js";
 import type { CallMessageObserver } from "../../../core/telemetry/producer.js";
-// Direct modules, not the memory barrel: entries and compaction sit in the
-// interactive Stage 0 graph, and the barrel would pull in the whole runtime.
+import type { AdmissionHold, CallJournalOptions, CallScope } from "../../telemetry/call-scope.js";
+import { openCallScope } from "../../telemetry/index.js";
 import {
 	buildLivePrefixUserText,
 	buildTurnPrefixUserText,
 	buildUserText,
 	COMPACTION_SYSTEM_PROMPT,
-} from "../../memory/compaction-prompts.js";
-import type { MemoryCompactionOffer, MemoryConsumptionReceipt, MemoryOfferOutcome } from "../../memory/contract.js";
-import { observationEvent, observationTracing, traceObservation } from "../../memory/observation-events.js";
-import type { AdmissionHold, CallJournalOptions, CallScope } from "../../telemetry/call-scope.js";
-import { openCallScope } from "../../telemetry/call-scope.js";
+} from "../compaction-prompts.js";
+import type { MemoryCompactionOffer, MemoryConsumptionReceipt, MemoryOfferOutcome } from "../contract.js";
+import { observationEvent, observationTracing, traceObservation } from "../observation-events.js";
 
 export {
 	COMPACTION_SYSTEM_PROMPT,
 	COMPACTION_TURN_PREFIX_PROMPT_TEMPLATE,
 	COMPACTION_USER_PROMPT_TEMPLATE,
-} from "../../memory/compaction-prompts.js";
+} from "../compaction-prompts.js";
 
 import { ceilChars, normalizeTokenUsage } from "../../../core/token-split.js";
-import { continuityPayloadFromFold } from "../continuity/carry.js";
-import type { ContinuityCheckpointPayload } from "../continuity/contract.js";
-import { type ContinuityProjectionInput, resolveContinuityProjection } from "../continuity/projection.js";
+import type { ContinuityCheckpointPayload } from "../../session/continuity/contract.js";
+import {
+	type ContinuityProjectionInput,
+	continuityPayloadFromFold,
+	resolveContinuityProjection,
+} from "../../session/index.js";
 
 /**
  * Compaction orchestration.
@@ -51,41 +52,46 @@ import { sha256Hex } from "../../../core/hash.js";
 import { effectiveToolCall, expandChainMessages } from "../../../core/tool-surface.js";
 import { hasAssistantGenerationDelta, streamSimple } from "../../../engine/ai.js";
 import type { EngineModel, ProviderCheckpointHandle, ProviderCompactionResult, Usage } from "../../../engine/types.js";
-import { foldWorkingSet } from "../../context/working-set/fold.js";
-import { projectWorkingSet } from "../../context/working-set/project.js";
-import { recallableRefs } from "../../context/working-set/recall.js";
-import { estimateAgentContextTokens, extractReasoningTokens } from "../context-accounting.js";
-import type { CompactionSummaryEntry } from "../entries.js";
+import { foldWorkingSet, lazyCodeSkeleton, projectWorkingSet, recallableRefs } from "../../context/index.js";
+import type { CompactionSummaryEntry } from "../../session/entries.js";
 import {
 	type CompactionUsage,
+	type ContinuityNoteCost,
+	calculateContextTokens,
+	codeReadSkeletons,
+	DEFAULT_KEEP_RECENT_TOKENS,
+	DEFAULT_RESERVE_TOKENS,
+	estimateAgentContextTokens,
+	estimateTokens,
+	extractReasoningTokens,
+	type FileOperations,
+	findCutPoint,
+	findLastEntry,
+	formatExactFacts,
+	getLastAssistantUsage,
 	latestSkillContextState,
+	noteSummaryUsage,
 	OPERATOR_NOTE_ENTRY,
 	type PreservedUserContext,
+	recordPriorFileOperations,
+	type SerializeConversationOptions,
 	type SessionEntry,
 	type SkillContextCheckpoint,
 	type SkillContextState,
+	serializeConversation,
 	skillContextContentHash,
 	standingOperatorNotes,
-	verifiedSkillContextCheckpoint,
-} from "../entries.js";
-import { findLastEntry } from "../tree/active-path.js";
-import {
-	codeReadSkeletons,
-	type SerializeConversationOptions,
-	serializeConversation,
-	TOOL_RESULT_MAX_CHARS,
-} from "./branch-summary.js";
-import { findCutPoint } from "./cut-point.js";
-import { DEFAULT_KEEP_RECENT_TOKENS, DEFAULT_RESERVE_TOKENS } from "./defaults.js";
-import {
-	type FileOperations,
-	formatExactFacts,
-	recordPriorFileOperations,
 	stripEchoedExactFacts,
-} from "./exact-facts.js";
-import { noteSummaryUsage } from "./reasoning-share.js";
-import { summaryOutputBudget, summaryOutputForRoom, summaryRoomTokens } from "./summary-output.js";
-import { type ContinuityNoteCost, calculateContextTokens, estimateTokens, getLastAssistantUsage } from "./tokens.js";
+	summaryOutputBudget,
+	summaryOutputForRoom,
+	summaryRoomTokens,
+	TOOL_RESULT_MAX_CHARS,
+	verifiedSkillContextCheckpoint,
+} from "../../session/index.js";
+
+/** Skeletons of the over-cap code reads in `entries`, parsed by context's tree-sitter, loaded only when a read qualifies. */
+const codeReadSkeletonsOf = (entries: ReadonlyArray<SessionEntry>) =>
+	codeReadSkeletons(entries, TOOL_RESULT_MAX_CHARS, lazyCodeSkeleton);
 
 /** Why a compaction failed and, for a refused checkpoint, what the validator refused (FX-6). */
 type CompactionFailure = { cause: CompactionFailureCause; defect?: CheckpointDefect };
@@ -1866,7 +1872,7 @@ async function compactWithCalls(input: CompactInput): Promise<CompactResult> {
 	// priced with it: at the fixed floor a read the model last saw whole reached the next summary as its head and tail
 	// alone (CTX-6). Message clipping stays on the slice.
 	// A code read that would be clipped goes in as its signatures instead (CTX-17); one that fits stays whole.
-	const skeletons = await codeReadSkeletons([...previousContextEntries, ...pre, ...turnPrefix], TOOL_RESULT_MAX_CHARS);
+	const skeletons = await codeReadSkeletonsOf([...previousContextEntries, ...pre, ...turnPrefix]);
 	interface Serialized {
 		text: string;
 		previous: string;

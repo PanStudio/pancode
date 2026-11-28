@@ -4,6 +4,7 @@ import { deepStrictEqual, match, ok, strictEqual } from "node:assert/strict";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { describe, it } from "node:test";
+import { telemetryRunDirectory } from "../../src/core/telemetry/paths.js";
 import { GRADE_LAYERS, GRADE_RULE_IDS } from "../../src/core/telemetry/run-vocabulary.js";
 import { pancodeStateDir } from "../../src/core/xdg.js";
 import { isDeterministicOutcomeCode } from "../../src/domains/dispatch/backoff.js";
@@ -27,7 +28,6 @@ import {
 import type { ToolCallStat } from "../../src/domains/dispatch/types.js";
 import type { ActionClass } from "../../src/domains/safety/action-classifier.js";
 import { readCallJournal } from "../../src/domains/telemetry/call-journal.js";
-import { telemetryRunDirectory } from "../../src/domains/telemetry/paths.js";
 import { WORKER_PROVIDER_HTTP_STATUS_MARKER } from "../../src/lib/worker-wire/spec-contract.js";
 import { settleStubBuilder } from "../harness/dispatch.js";
 import { BUILDER_GRADE, cleanGradeFacts, gradeWork } from "../harness/grade-facts.js";

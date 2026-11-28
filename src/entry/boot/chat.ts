@@ -22,6 +22,12 @@ import type { DispatchContract } from "../../domains/dispatch/contract.js";
 import type { ExtensionsContract } from "../../domains/extensions/contract.js";
 import { isLoadableExtension } from "../../domains/extensions/index.js";
 import type { ExtensionRuntimeHookBridge } from "../../domains/extensions/runtime-hook-bridge.js";
+import type { CompactInput, CompactResult } from "../../domains/memory/compaction/compact.js";
+import type {
+	CompactionFlowAdmission,
+	CompactionFlowBudget,
+	CompactionTelemetry,
+} from "../../domains/memory/compaction/flow.js";
 import type { MemoryGuardian } from "../../domains/memory/guardian.js";
 import { type MemoryRuntime, memoryRecordStanding, renderTaskMemoryHandoffSource } from "../../domains/memory/index.js";
 import type { MemoryInterventionRegistration } from "../../domains/memory/intervention-types.js";
@@ -37,12 +43,6 @@ import type { AutonomyWindow } from "../../domains/safety/autonomy-window.js";
 import type { SafetyContract } from "../../domains/safety/contract.js";
 import type { ProtectedArtifactsRegistration } from "../../domains/safety/protected-artifacts-registration.js";
 import type { SchedulingContract } from "../../domains/scheduling/contract.js";
-import type { CompactInput, CompactResult } from "../../domains/session/compaction/compact.js";
-import type {
-	CompactionFlowAdmission,
-	CompactionFlowBudget,
-	CompactionTelemetry,
-} from "../../domains/session/compaction/flow.js";
 import type { SessionContract } from "../../domains/session/contract.js";
 import type { DecisionBoardStore } from "../../domains/session/decision-board.js";
 import type { CompactionTrigger, SessionEntry } from "../../domains/session/entries.js";

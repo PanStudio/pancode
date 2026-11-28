@@ -31,6 +31,14 @@ import { captureProjectSurface, projectSurfaceTrustNotice } from "../core/worksp
 import { createWorktreeBootRecovery } from "../domains/dispatch/index.js";
 import { ensurePancodeState } from "../domains/install/index.js";
 import { prepareBackgroundMemoryModel } from "../domains/memory/background-route.js";
+import type { CompactInput, CompactResult } from "../domains/memory/compaction/compact.js";
+import {
+	type CompactionFlowAdmission,
+	type CompactionFlowBudget,
+	type CompactionReplay,
+	type CompactionTelemetry,
+	runCompactionFlow,
+} from "../domains/memory/compaction/flow.js";
 import { createCapabilityGate } from "../domains/middleware/capability-gate.js";
 import type { ProvidersContract } from "../domains/providers/index.js";
 import {
@@ -47,14 +55,6 @@ import type { GitHookDriftGuard } from "../domains/safety/hook-drift.js";
 import type { FlowRestrictionSet } from "../domains/safety/index.js";
 import type { ProtectedArtifactState } from "../domains/safety/protected-artifacts.js";
 import type { SafetyJudgeSeat } from "../domains/safety/safety-judge.js";
-import type { CompactInput, CompactResult } from "../domains/session/compaction/compact.js";
-import {
-	type CompactionFlowAdmission,
-	type CompactionFlowBudget,
-	type CompactionReplay,
-	type CompactionTelemetry,
-	runCompactionFlow,
-} from "../domains/session/compaction/flow.js";
 import { collectSessionEntries } from "../domains/session/compaction/session-entries.js";
 import type { SessionContract, SessionMeta } from "../domains/session/contract.js";
 import type { CompactionTrigger, SessionEntry } from "../domains/session/entries.js";

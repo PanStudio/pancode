@@ -80,6 +80,7 @@ import { foldTriggerReserve } from "../domains/context/fold/pressure.js";
 import type { planEviction } from "../domains/context/working-set/engine.js";
 import type { ClassifyCall } from "../domains/context/working-set/superseded.js";
 import { type PinnedContextBlock, pinnedContextDelta } from "../domains/extensions/pinned-context.js";
+import type { CompactInput, CompactResult } from "../domains/memory/compaction/compact.js";
 import type { MemoryPromptRequest } from "../domains/memory/prompt-cache.js";
 import type { MemoryRecordStanding } from "../domains/memory/prompt-section.js";
 import type { CompiledSessionPrompt, SessionPromptInputs } from "../domains/prompts/compiler.js";
@@ -102,7 +103,6 @@ import {
 	effectiveCompactionThreshold,
 	shouldCompact,
 } from "../domains/session/compaction/auto.js";
-import type { CompactInput, CompactResult } from "../domains/session/compaction/compact.js";
 import { summaryOutputReserve } from "../domains/session/compaction/summary-output.js";
 import {
 	type CaptureContextSnapshotInput,

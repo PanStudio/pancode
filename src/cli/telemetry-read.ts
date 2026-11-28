@@ -18,6 +18,7 @@ import type {
 import { parseFactRef } from "../core/telemetry/dto.js";
 import type { EconomyProjection, EconomyQuantities } from "../core/telemetry/economy.js";
 import { AgentRole, Disposition } from "../core/telemetry/enums.js";
+import { TELEMETRY_INSTALL_ID, telemetryImportedStateDir, telemetrySessionDirectory } from "../core/telemetry/paths.js";
 import {
 	COST_NOT_MEASURED,
 	renderCount,
@@ -27,11 +28,6 @@ import {
 import { economyTotalKnown } from "../core/views/usage-words.js";
 import { pancodeStateDir } from "../core/xdg.js";
 import { fleetRootStepRunIds } from "../domains/dispatch/fleet-root-seal.js";
-import {
-	TELEMETRY_INSTALL_ID,
-	telemetryImportedStateDir,
-	telemetrySessionDirectory,
-} from "../domains/telemetry/paths.js";
 import { explain } from "../domains/telemetry/read-model.js";
 import { cacheReport } from "../domains/telemetry/read-model-cache.js";
 import {

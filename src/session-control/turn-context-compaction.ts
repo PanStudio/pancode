@@ -22,7 +22,7 @@ import {
 	checkpointContinuityCarry,
 	checkpointSkillContext,
 	hostCheckpoint,
-} from "../domains/session/compaction/compact.js";
+} from "../domains/memory/compaction/compact.js";
 import { DEFAULT_KEEP_RECENT_TOKENS } from "../domains/session/compaction/defaults.js";
 import { estimateTokens } from "../domains/session/compaction/tokens.js";
 import type { SessionContract } from "../domains/session/contract.js";

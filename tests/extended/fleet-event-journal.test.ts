@@ -10,6 +10,7 @@ import { dirname, join } from "node:path";
 import { test } from "node:test";
 import { runFleetEvents } from "../../src/cli/fleet-events.js";
 import { sha256Hex } from "../../src/core/hash.js";
+import { telemetryRunDirectory } from "../../src/core/telemetry/paths.js";
 import { pancodeStateDir } from "../../src/core/xdg.js";
 import { claimAssignmentVerdict } from "../../src/domains/dispatch/assignment-store.js";
 import { compileExecutionPlan } from "../../src/domains/dispatch/execution-plan.js";
@@ -22,7 +23,6 @@ import {
 import { executeFleetRun } from "../../src/domains/dispatch/fleet-run.js";
 import { readFleetRun, writeFleetRun } from "../../src/domains/dispatch/state.js";
 import { readCallJournalSync } from "../../src/domains/telemetry/call-journal.js";
-import { telemetryRunDirectory } from "../../src/domains/telemetry/paths.js";
 import { isolatePancodeEnv } from "../harness/scratch-env.js";
 
 function git(root: string, ...args: string[]) {
