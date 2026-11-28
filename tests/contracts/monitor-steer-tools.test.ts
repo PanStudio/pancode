@@ -4,8 +4,11 @@ import { deepStrictEqual, match, strictEqual } from "node:assert/strict";
 import { afterEach, beforeEach, describe, it } from "node:test";
 import { setImmediate } from "node:timers/promises";
 import { settleDispatchedRuns } from "../../src/cli/modes/headless-dispatched-runs.js";
+import { pricedUsd, sumPricing } from "../../src/core/telemetry/pricing.js";
 import { ToolNames } from "../../src/core/tool-names.js";
 import type { DispatchRequest } from "../../src/domains/dispatch/contract.js";
+import { fleetEndDocument } from "../../src/domains/dispatch/fleet-end-document.js";
+import { writeFleetResult, writeFleetRootRecord } from "../../src/domains/dispatch/fleet-root-record.js";
 import type { SpawnedWorker, SpawnedWorkerResult } from "../../src/domains/dispatch/worker-spawn.js";
 import { createWorkerSafety } from "../../src/engine/worker-tools.js";
 import { registerAllTools } from "../../src/tools/bootstrap.js";
@@ -331,6 +334,74 @@ describe("monitor tool", () => {
 		} finally {
 			t.mock.timers.reset();
 			t.mock.restoreAll();
+			await f.stop();
+		}
+	});
+
+	it("answers a fleet root from its durable record and collects its sealed fleet_end facts", async () => {
+		const f = await fixture(scratch);
+		try {
+			const rootId = "fleet-t4root00001";
+			writeFleetRootRecord({ rootId, playbook: "build-review", cwd: process.cwd() });
+			const running = okResult(await f.call(ToolNames.Monitor, { run_id: rootId }));
+			match(running.output, /fleet build-review root=fleet-t4root00001: running/);
+			const pending = okResult(await f.call(ToolNames.Monitor, { mode: "collect", run_id: rootId, timeout_ms: 20 }));
+			strictEqual(pending.details?.complete, false);
+			strictEqual(pending.details?.timedOut, true);
+			match(errorMessage(await f.call(ToolNames.Monitor, { mode: "record", run_id: rootId })), /has not sealed/);
+
+			const worktree = {
+				path: "/work/fleet-t4root00001",
+				branch: "pancode/fleet-t4root00001",
+				commit: "abc1234",
+				preview: "pancode fleet land fleet-t4root00001",
+				land: "pancode fleet land fleet-t4root00001 --yes",
+			};
+			const document = fleetEndDocument(
+				{
+					rootId,
+					playbook: "build-review",
+					planHash: "plan-hash",
+					started: true,
+					refusedBeforeStep: false,
+					steps: [
+						{ stepId: "build", runId: "run-build", outcome: "succeeded" },
+						{ stepId: "review", runId: "run-review", outcome: "failed" },
+					],
+					stopCause: null,
+					cleanRun: false,
+					notRunStepIds: [],
+					totalCost: sumPricing([pricedUsd("catalog", 0.25)]),
+					totalUsage: null,
+					worktree,
+					limits: {
+						maxCostUsd: null,
+						maxCostSource: null,
+						enforced: false,
+						overshootPossible: false,
+						timeoutMs: null,
+					},
+				},
+				1,
+				[{ code: "run_failed", message: "step review failed: tests red" }],
+			);
+			writeFleetResult(rootId, document);
+
+			const collected = okResult(await f.call(ToolNames.Monitor, { mode: "collect", run_ids: [rootId] }));
+			strictEqual(collected.details?.complete, true);
+			deepStrictEqual(collected.details?.fleetEnd, JSON.parse(JSON.stringify(document)));
+			match(collected.output, /completed verdict=partial exit=1/);
+			match(collected.output, /- review failed run=run-review/);
+			match(collected.output, /cause run_failed: step review failed: tests red/);
+			match(collected.output, /worktree kept: \/work\/fleet-t4root00001 on pancode\/fleet-t4root00001/);
+			match(collected.output, /cost: ~\$0\.25/);
+			match(okResult(await f.call(ToolNames.Monitor, { mode: "record", run_id: rootId })).output, /"type": "fleet_end"/);
+			match(errorMessage(await f.call(ToolNames.Monitor, { mode: "peek", run_id: rootId })), /names its step run ids/);
+
+			writeFleetRootRecord({ rootId: "fleet-t4other0001", playbook: "build-review", cwd: scratch.dir });
+			match(errorMessage(await f.call(ToolNames.Monitor, { run_id: "fleet-t4other0001" })), /belongs to another project/);
+			match(errorMessage(await f.call(ToolNames.Monitor, { run_id: "fleet-nosuchroot" })), /unknown fleet root/);
+		} finally {
 			await f.stop();
 		}
 	});

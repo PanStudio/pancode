@@ -11,6 +11,7 @@ import {
 import { renderFactField, renderPricing } from "../core/telemetry/render.js";
 import { pancodeStateDir } from "../core/xdg.js";
 import type { DispatchContract } from "../domains/dispatch/contract.js";
+import { isFleetRootId } from "../domains/dispatch/fleet-root-record.js";
 import { sealedAnswerBudgetBytes } from "../domains/dispatch/handback.js";
 import { type DispatchOwnership, dispatchOwnerOf, dispatchOwnership } from "../domains/dispatch/ownership.js";
 import { isTerminalRunEnvelope, type RunEnvelope } from "../domains/dispatch/types.js";
@@ -21,6 +22,7 @@ import type { DispatchRunEventRegistry } from "./dispatch-run-events.js";
 import { grantRequestLines, pendingRequestsFor, requestsAwaitingMain } from "./grant-request-text.js";
 import type { JobOperations } from "./job-types.js";
 import { collectDetachedBatch, collectRuns, durableRunEvidence } from "./monitor-collect.js";
+import { monitorFleetRoot } from "./monitor-fleet.js";
 import { listJobMonitor, runJobMonitor } from "./monitor-jobs.js";
 import { monitorToolSurface } from "./monitor-surface.js";
 import type { ToolInvokeOptions } from "./registry-contract.js";
@@ -724,6 +726,19 @@ export function createMonitorTool(deps: MonitorToolDeps): ToolSpec {
 					message: `monitor: mode must be status, peek, record, answer, list, wait, collect, or tools; got '${mode}'`,
 				};
 			}
+			const batchArg = typeof args.batch_id === "string" ? args.batch_id.trim() : "";
+			if (mode !== "list" && isFleetRootId(runId) && batchArg.length === 0) {
+				return monitorFleetRoot({
+					rootId: runId,
+					mode,
+					timeoutMs: boundedTimeout(
+						args.timeout_ms,
+						mode === "collect" ? COLLECT_DEFAULT_TIMEOUT_MS : WAIT_DEFAULT_TIMEOUT_MS,
+					),
+					signal: options?.signal,
+					ownership: ownershipFor(deps, options),
+				});
+			}
 			if (mode === "list") {
 				const runs = listRuns(deps, options);
 				if (!deps.jobs || runs.kind === "error") return runs;
@@ -733,7 +748,7 @@ export function createMonitorTool(deps: MonitorToolDeps): ToolSpec {
 					: { kind: "ok", output: `${runs.output}\n\n${jobs.output}`, details: { ...runs.details, ...jobs.details } };
 			}
 			if (mode === "collect") {
-				const batchId = typeof args.batch_id === "string" ? args.batch_id.trim() : "";
+				const batchId = batchArg;
 				const runIds = rawRunIds
 					? rawRunIds.filter((entry): entry is string => typeof entry === "string" && entry.trim().length > 0)
 					: [];

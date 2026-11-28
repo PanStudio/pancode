@@ -154,3 +154,51 @@ export function fleetEndDocument(
 		...(facts.worktree !== null ? { worktree: facts.worktree } : {}),
 	};
 }
+
+function recordOf(value: unknown): Readonly<Record<string, unknown>> | null {
+	return typeof value === "object" && value !== null && !Array.isArray(value)
+		? (value as Readonly<Record<string, unknown>>)
+		: null;
+}
+
+function textOf(value: unknown): string | null {
+	return typeof value === "string" && value.length > 0 ? value : null;
+}
+
+/**
+ * A persisted fleet_end document as the lines a model or operator reads: how it ended, each step's verdict and run,
+ * the causes, the kept worktree and the cost. Read back from disk, so every field is checked rather than trusted.
+ */
+export function fleetEndLines(document: Readonly<Record<string, unknown>>): string[] {
+	const completion = recordOf(document.completion);
+	const verdict = recordOf(document.verdict);
+	const stopReason = textOf(completion?.stopReason);
+	const lines = [
+		`fleet ${String(document.playbook)} root=${String(document.rootId)}: ${String(completion?.state ?? "unknown")}${stopReason !== null ? ` (${stopReason})` : ""} verdict=${String(verdict?.aggregate ?? "none")} exit=${String(document.exitCode)}`,
+	];
+	const steps = Array.isArray(verdict?.steps) ? verdict.steps.map(recordOf).filter((step) => step !== null) : [];
+	if (steps.length > 0) {
+		const succeeded = steps.filter((step) => step.outcome !== "failed").length;
+		lines.push(`steps (${succeeded} of ${steps.length} succeeded):`);
+		for (const step of steps) {
+			const runId = textOf(step.runId);
+			lines.push(`- ${String(step.stepId)} ${String(step.outcome)}${runId !== null ? ` run=${runId}` : ""}`);
+		}
+	}
+	const causes = Array.isArray(document.causes) ? document.causes.map(recordOf).filter((cause) => cause !== null) : [];
+	for (const cause of causes) {
+		const message = textOf(cause.message);
+		lines.push(`cause ${String(cause.code)}${message !== null ? `: ${message}` : ""}`);
+	}
+	const worktree = recordOf(document.worktree);
+	if (worktree !== null) {
+		lines.push(
+			`worktree kept: ${String(worktree.path)} on ${String(worktree.branch)}; preview: ${String(worktree.preview)}; land: ${String(worktree.land)}`,
+		);
+	}
+	const cost = recordOf(document.cost);
+	lines.push(`cost: ${textOf(cost?.display) ?? "unknown"}`);
+	const usage = textOf(recordOf(document.usage)?.display);
+	if (usage !== null) lines.push(`usage: ${usage}`);
+	return lines;
+}
