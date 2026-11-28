@@ -1,8 +1,10 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
+
 import { existsSync } from "node:fs";
 import path from "node:path";
 import { sandboxUsable } from "./availability.js";
+import type { SandboxLaunchTally } from "./launch-record.js";
 import {
 	type EgressMode,
 	type HomeReadList,
@@ -126,6 +128,8 @@ export interface WorkerSandboxReceipt {
 	 * granted origins. Absent on receipts sealed before egress modes.
 	 */
 	egress?: EgressMode;
+	/** What the run's own launch records said happened (sandbox P6); absent on receipts sealed before them. */
+	observed?: SandboxLaunchTally;
 }
 
 /**

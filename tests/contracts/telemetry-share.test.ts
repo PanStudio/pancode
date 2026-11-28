@@ -214,6 +214,34 @@ test("a content-free share drops a planted secret, verifies as an archive, and i
 				context,
 				at,
 			),
+			// A launch record names the hosts a command reached and the integration that launched it (sandbox P6).
+			makeTelemetryRecord(
+				"sandbox.launched",
+				{
+					caller: "main",
+					launcher: "mcp-stdio",
+					integration: `mcp:${USER}-ledger`,
+					confinement: "sandboxed",
+					why: "confine-opt-in",
+					backend: "bwrap",
+					outcome: "ran",
+					exitCode: 0,
+					network: { mode: "proxied", observed: true },
+					destinations: [
+						{ host: PRIVATE_HOST, port: 8443, decision: "allowed", source: "grant", count: 2 },
+						{ host: `${USER}.exfil.test`, port: 443, decision: "denied", reason: "ungranted", count: 1 },
+					],
+					dropped: 3,
+				},
+				context,
+				at,
+			),
+			makeTelemetryRecord(
+				"sandbox.uncontained",
+				{ caller: "main", why: "sandbox-off", mode: "off", backend: null },
+				context,
+				at,
+			),
 		];
 		await writeFile(
 			join(directory, "journal.jsonl"),
@@ -245,6 +273,7 @@ test("a content-free share drops a planted secret, verifies as an archive, and i
 		const archive = await readFile(archivePath);
 		const unpacked = gunzipSync(archive).toString("utf8");
 		ok(!unpacked.includes(SECRET), "the planted secret left in the archive");
+		ok(unpacked.includes("sandbox.uncontained"), "the session's uncontained shell left the share");
 		ok(!unpacked.includes(HOST), "the source hostname left in the archive");
 		ok(unpacked.includes("config.changed"));
 		ok(unpacked.includes("run.settled"));
@@ -295,6 +324,10 @@ test("a content-free share drops a planted secret, verifies as an archive, and i
 			"confidential-operator",
 		])
 			ok(!structuralBytes.includes(leak), `${leak} left in the structural archive`);
+		// The launch record keeps its vocabulary and counts; its hosts and integration are anonymized.
+		ok(structuralBytes.includes("sandbox.launched") && structuralBytes.includes('"dropped":3'));
+		ok(structuralBytes.includes('"port":8443') && structuralBytes.includes('"reason":"ungranted"'));
+		ok(!structuralBytes.includes("exfil.test"), "a destination host left in the structural archive");
 		// Funding pools and each target's binding are private funding metadata under every profile (S10).
 		const reportPath = join(root, "report.tar.gz");
 		await writeShare(planShare({ scopes, skipped, profile: "report", source: freshShareSource(), writer }), reportPath);
