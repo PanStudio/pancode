@@ -14,6 +14,7 @@ import type { AcpServerEvents } from "./server-events.js";
 import type { AcpServerGuards } from "./server-guards.js";
 import type { AcpHandoffDraft, AcpHandshake, PancodeAcpServerOptions } from "./server-options.js";
 import type { AcpPermissionBridge } from "./server-permissions.js";
+import type { AcpServerReadouts } from "./server-readouts.js";
 import type { AcpServerSession, ActivePrompt } from "./server-tool-updates.js";
 
 /** One cancellable piece of work beside the session's turns: an operator shell line or an aside round. */
@@ -92,4 +93,5 @@ export interface AcpServerScope {
 	readonly commands: AcpServerCommands;
 	readonly control: AcpServerControl;
 	readonly events: AcpServerEvents;
+	readonly readoutFeed: AcpServerReadouts;
 }
