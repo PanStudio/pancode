@@ -19,25 +19,28 @@ import { type OutputChunk, rollup } from "rollup";
  * rewrites the imports, exports and `import()` sites of plain ES modules
  * without touching the code between them.
  *
- * The key has three parts, and each only ever narrows a group:
+ * A chunk's cell has two parts, and chunks never merge across cells:
  *   1. the first session boot stage that loads the chunk, so a stage's file
  *      holds nothing an earlier stage could have done without and the staged
  *      preload in src/entry/stage1-preload.ts keeps its event-loop turns;
  *   2. which exact paths reach it ({@link EXACT_PATHS}), so the launcher, a
  *      headless run, a native worker and the Stage 0 owner each load exactly
- *      the chunks they loaded before, only in fewer files;
- *   3. guard bits for every other load. A merged file loads whole, and it
- *      pulls in the imports of every chunk in it, so an `import()` that
- *      needed three chunks of a group can end up loading megabytes. Every
- *      import() site and entry outside the first two parts is costed by what
- *      its target loads transitively; guards split groups along a target's
- *      own closure until none is estimated to lose more than
- *      {@link GUARD_FLOOR_MS} or {@link GUARD_SHARE} of its load time. Loads
- *      that tolerate one split share a bit, and fragments a guard cut for no
- *      gain are folded back.
- * If chunk A imports chunk B, B's stage is no later and its bits are a
- * superset, so the merged files form a DAG exactly as the chunks did; the
- * fold-back step re-checks that for every merge it makes.
+ *      the chunks they loaded before, only in fewer files.
+ * Inside a cell, chunks fold together while every other load stays cheap. A
+ * merged file loads whole, and it pulls in the imports of every chunk in it,
+ * so an `import()` that needed three chunks of a group can end up loading
+ * megabytes. Every import() site and entry outside the exact paths is costed
+ * by what its target loads transitively, and a fold must leave each of them
+ * within {@link ALLOWANCE_FLOOR_MS} or {@link ALLOWANCE_SHARE} of its load
+ * time. Cells fold in boot order, and inside a cell pairs fold in the order
+ * of what merging them costs on the unmerged graph, ties broken by source
+ * paths. The grouping so depends on the module graph alone: esbuild's output
+ * order and chunk hashes decide nothing, and an import added or removed in
+ * one corner of the graph regroups only the cells it touches and those folded
+ * after them.
+ * If chunk A imports chunk B, B's stage is no later and its paths are a
+ * superset, so the cells form a DAG exactly as the chunks did; every fold
+ * re-checks that no third file sits on an import path between the two.
  */
 
 /** The interactive session's `import()` crossings, in boot order (src/cli/pancode.ts, src/entry/stage1-preload.ts). */
@@ -90,32 +93,17 @@ const SESSION_STAGES: ReadonlyArray<readonly [name: string, roots: ReadonlyArray
  * `help` keeps `help --json` to the kit and the command specs: without it the
  * kit shared a file with the import() namespace stub of
  * src/domains/prompts/preload.ts, whose imports load the session stage.
- * `fleetStatus` keeps `fleet status` off the providers stage: guards alone let
- * src/core/telemetry/pricing.ts share a file with src/domains/providers/ on
- * some builds and not others, since their allowance follows output bytes.
- * `fleetStatusRows` keeps the ledger rows `fleet status` loads by `import()`
- * off the plugin domain: guards alone let src/domains/dispatch/ownership.ts,
- * which src/cli/fleet-project-scope.ts imports, share a file with
- * src/core/settings-controls.ts, whose import of src/domains/config/classify.ts
- * sat in the same file as src/domains/plugins/index.ts. It also roots
- * src/domains/dispatch/capacity-lease.ts, which `fleet status` imports for the
- * drain line: guards alone let it share a file with src/domains/store/index.ts
- * once the safety domain's shell scanners left protected-artifacts.ts. It roots
- * src/domains/telemetry/run-journal-read.ts, the rows' run-journal reader, too:
- * after the dispatch and worker files split into smaller modules, guards alone
- * let src/domains/store/index.ts share the file of the safety domain's shell
- * scanners that reader's merged closure loads. It roots the two read-model
- * modules and the budget envelope the rows load by `import()` as well: once
- * src/core/settings-controls.ts stopped importing the providers domain, guards
- * alone grouped them with telemetry call-fact and store modules the rows never
- * run (61 files and 1,689,457 B against 57 and 1,654,992 B; 52 and 1,601,087 B
- * rooted). It roots the assignment store and the fleet event journal the rows
- * read too: after the install and programs moves, guards alone put them in a
- * file whose import of src/domains/system-one/julia-tokenizer.ts loaded
- * src/core/pinned-asset.ts beside src/domains/context/index.ts (45 files
- * against 39 and 1,521,183 B rooted).
+ * `fleetStatus` keeps `fleet status` off the providers stage, and
+ * `fleetStatusRows` keeps the ledger rows it loads by `import()` off the
+ * domain barrels (src/domains/store/index.ts, src/domains/agents/index.ts,
+ * src/domains/plugins/index.ts) that the allowance alone lets share a file
+ * with them. A path's third element names roots it follows: everything their
+ * own code reaches by `import()` joins the path, so a new import() site in
+ * src/cli/fleet-status.ts needs no root of its own here.
  */
-const EXACT_PATHS: ReadonlyArray<readonly [name: string, roots: ReadonlyArray<string>]> = [
+const EXACT_PATHS: ReadonlyArray<
+	readonly [name: string, roots: ReadonlyArray<string>, follow?: ReadonlyArray<string>]
+> = [
 	// The workspace launcher: the launch stage plus what starts the pane host and the session inside it.
 	[
 		"launcher",
@@ -153,37 +141,21 @@ const EXACT_PATHS: ReadonlyArray<readonly [name: string, roots: ReadonlyArray<st
 	["runHelp", ["src/cli/index.ts", "src/cli/run-help.ts"]],
 	["help", ["src/cli/index.ts", "src/cli/help-command.ts"]],
 	["fleetStatus", ["src/cli/index.ts", "src/cli/fleet-status.ts"]],
-	[
-		"fleetStatusRows",
-		[
-			"src/cli/index.ts",
-			"src/cli/fleet-status.ts",
-			"src/cli/fleet-project-scope.ts",
-			"src/domains/dispatch/capacity-lease.ts",
-			"src/domains/telemetry/run-journal-read.ts",
-			"src/domains/telemetry/read-model-runs.ts",
-			"src/domains/telemetry/read-model-usage.ts",
-			"src/domains/dispatch/budget-envelope.ts",
-			"src/domains/dispatch/assignment-store.ts",
-			"src/domains/dispatch/fleet-event-journal.ts",
-		],
-	],
+	["fleetStatusRows", ["src/cli/index.ts"], ["src/cli/fleet-status.ts"]],
 ];
 
 /**
- * Load-cost model for the guards, measured on the v081 build (Node 24, 24-core
+ * Load-cost model for the fold, measured on the v081 build (Node 24, 24-core
  * WSL2 host): a megabyte of chunk costs about 25 ms to parse without the
  * compile cache and evaluate, and a file costs about 0.33 ms. The allowance
- * sits inside the run-to-run noise of a cold command; the session's file count
- * barely depends on it (132 files at 8 ms and 15%, 136 at these values, 154 at
- * zero).
+ * sits inside the run-to-run noise of a cold command.
  */
 const MS_PER_MEGABYTE = 25;
 const MS_PER_FILE = 0.33;
 /** pi-ai, the heaviest external, links 125 files in about 25 ms; every external package is costed as that megabyte. */
 const EXTERNAL_PACKAGE_BYTES = 1_000_000;
-const GUARD_FLOOR_MS = 3;
-const GUARD_SHARE = 0.08;
+const ALLOWANCE_FLOOR_MS = 3;
+const ALLOWANCE_SHARE = 0.08;
 
 type Outputs = Metafile["outputs"];
 
@@ -214,6 +186,17 @@ function packageRoot(specifier: string): string {
 
 function isExternalPackage(specifier: string): boolean {
 	return !isBuiltin(packageRoot(specifier));
+}
+
+function compareText(left: string, right: string): number {
+	return left < right ? -1 : left > right ? 1 : 0;
+}
+
+/** Stable sort key for an esbuild output, separating dynamic-import facades from code chunks with the same source. */
+function outputSourceKey(name: string, built: Outputs[string] | undefined): string {
+	if (built?.entryPoint !== undefined) return `entry:${built.entryPoint}`;
+	const inputs = Object.keys(built?.inputs ?? {}).sort();
+	return inputs.length > 0 ? `inputs:${inputs.join("\n")}` : `output:${name}`;
 }
 
 /**
@@ -281,7 +264,23 @@ function planChunkGroups(outputs: Outputs, entries: ReadonlySet<string>): Map<st
 
 	// A chunk's cell is its stage and exact paths. Chunks never merge across cells, which is what keeps those exact.
 	const stages = SESSION_STAGES.map(([stage, roots]) => [stage, reach(roots)] as const);
-	const exact = EXACT_PATHS.map(([path, roots]) => [path, reach(roots)] as const);
+	// What a followed root's own code reaches by import() joins its path, and is exempt from the allowance as roots are.
+	const followed = new Set<number>();
+	const exact = EXACT_PATHS.map(([path, roots, follow = []]) => {
+		const loaded = reach([...roots, ...follow]);
+		const others = reach(roots);
+		for (const root of follow) {
+			const own = reach([root]);
+			names.forEach((name, chunk) => {
+				if (!holds(own, chunk) || holds(others, chunk)) return;
+				for (const target of internal(name, true)) {
+					followed.add(target);
+					include(loaded, closure(target));
+				}
+			});
+		}
+		return [path, loaded] as const;
+	});
 	const cellOf = names.map((name, chunk) => {
 		if (entries.has(name) || packages.has(name)) return undefined;
 		const stage = stages.find(([, chunks]) => holds(chunks, chunk))?.[0] ?? "";
@@ -293,26 +292,11 @@ function planChunkGroups(outputs: Outputs, entries: ReadonlySet<string>): Map<st
 	const group = new Int32Array(names.length).fill(-1);
 	const node = (chunk: number): number => ((group[chunk] ?? -1) === -1 ? chunk : (group[chunk] ?? -1));
 	const members = new Map<number, number[]>();
-	const guards: Array<{ chunks: ChunkSet }> = [];
-	const regroup = (): void => {
-		const byKey = new Map<string, number[]>();
-		cellOf.forEach((cell, chunk) => {
-			if (cell === undefined) return;
-			const held = guards.flatMap((guard, bit) => (holds(guard.chunks, chunk) ? [bit] : []));
-			if (cell === "|" && held.length === 0) return;
-			const key = `${cell}|${held.join("+")}`;
-			const mates = byKey.get(key);
-			if (mates) mates.push(chunk);
-			else byKey.set(key, [chunk]);
-		});
-		group.fill(-1);
-		members.clear();
-		for (const mates of byKey.values()) {
-			const id = mates[0] ?? -1;
-			members.set(id, mates);
-			for (const chunk of mates) group[chunk] = id;
-		}
-	};
+	cellOf.forEach((cell, chunk) => {
+		if (cell === undefined) return;
+		group[chunk] = chunk;
+		members.set(chunk, [chunk]);
+	});
 
 	/**
 	 * What each merged file loads: itself and everything its members import, transitively. A merged file drags in
@@ -367,10 +351,15 @@ function planChunkGroups(outputs: Outputs, entries: ReadonlySet<string>): Map<st
 	};
 
 	// Every import() site whose target is not a stage or exact-path root, and every other entry, is a load the
-	// merge must not make much dearer. Stage and exact-path roots are exempt: their cells keep them exact.
+	// merge must not make much dearer. Stage roots, exact-path roots and followed targets are exempt: their cells keep
+	// them exact.
 	const megabytes = (count: number): number => (count / 1e6) * MS_PER_MEGABYTE;
-	const rooted = new Set([...SESSION_STAGES, ...EXACT_PATHS].flatMap(([, roots]) => roots));
-	const isRooted = (chunk: number): boolean => rooted.has(outputs[names[chunk] ?? ""]?.entryPoint ?? "");
+	const rooted = new Set([
+		...SESSION_STAGES.flatMap(([, roots]) => roots),
+		...EXACT_PATHS.flatMap(([, roots, follow = []]) => [...roots, ...follow]),
+	]);
+	const isRooted = (chunk: number): boolean =>
+		followed.has(chunk) || rooted.has(outputs[names[chunk] ?? ""]?.entryPoint ?? "");
 	const units: LoadUnit[] = [];
 	const addUnit = (from: number, to: number): void => {
 		if (isRooted(to) || packages.has(names[to] ?? "") || (from !== -1 && holds(closure(from), to))) return;
@@ -381,7 +370,7 @@ function planChunkGroups(outputs: Outputs, entries: ReadonlySet<string>): Map<st
 			unit.bytes += size[chunk] ?? 0;
 			unit.files += 1;
 		});
-		unit.allowance = Math.max(GUARD_FLOOR_MS, GUARD_SHARE * (megabytes(unit.bytes) + unit.files * MS_PER_FILE));
+		unit.allowance = Math.max(ALLOWANCE_FLOOR_MS, ALLOWANCE_SHARE * (megabytes(unit.bytes) + unit.files * MS_PER_FILE));
 		units.push(unit);
 	};
 	names.forEach((name, chunk) => {
@@ -405,45 +394,12 @@ function planChunkGroups(outputs: Outputs, entries: ReadonlySet<string>): Map<st
 		const cost = megabytes(bytes - unit.bytes) - (unit.files - files) * MS_PER_FILE;
 		return cost > unit.allowance ? cost : 0;
 	};
-	/** The loads over their allowance under the current grouping; undefined when the grouping is cyclic. */
-	const overdrawn = (): Map<LoadUnit, number> | undefined => {
-		const loads = settle();
-		if (loads === undefined) return undefined;
-		const over = new Map<LoadUnit, number>();
-		for (const unit of units) {
-			const cost = excess(unit, loads[node(unit.to)] ?? emptySet(), unit.from === -1 ? undefined : loads[node(unit.from)]);
-			if (cost > 0) over.set(unit, cost);
-		}
-		return over;
-	};
 
-	// Guards: split along the closure of whichever load loses most, until none is over its allowance.
-	regroup();
-	for (;;) {
-		const over = overdrawn();
-		if (over === undefined) throw new Error("chunk-merge: the staged groups import each other in a cycle");
-		const worst = [...over].sort((a, b) => b[1] - a[1])[0]?.[0];
-		if (worst === undefined) break;
-		// Prefer widening a guard that already exists: every new bit splits every group it crosses.
-		const joined = guards.some((guard) => {
-			const previous = guard.chunks;
-			guard.chunks = previous.slice();
-			include(guard.chunks, closure(worst.to));
-			regroup();
-			const after = overdrawn();
-			if (after && [...after.keys()].every((unit) => unit !== worst && over.has(unit))) return true;
-			guard.chunks = previous;
-			return false;
-		});
-		if (!joined) guards.push({ chunks: closure(worst.to).slice() });
-		regroup();
-	}
-
-	// A guard splits every group it crosses, including ones where the split saves its load nothing. Undo those:
-	// fold the smallest group of a cell into a larger one whenever every load stays inside its allowance and the
-	// merged files still form a DAG. Folding two files only changes what the files that reach either of them
-	// load, which becomes the union of both, so a trial updates those sets instead of settling the graph again.
-	const loads = settle() ?? [];
+	// Fold two groups of a cell into one whenever every load stays inside its allowance and the merged files still
+	// form a DAG. Folding two files only changes what the files that reach either of them load, which becomes the
+	// union of both, so a trial updates those sets instead of settling the graph again.
+	const loads = settle();
+	if (loads === undefined) throw new Error("chunk-merge: esbuild's chunks import each other in a cycle");
 	const loadsOf = (id: number): ChunkSet => loads[id] ?? emptySet();
 	const fold = (small: number, host: number): boolean => {
 		const chunks = members.get(small) ?? [];
@@ -488,20 +444,78 @@ function planChunkGroups(outputs: Outputs, entries: ReadonlySet<string>): Map<st
 		members.set(host, [...into, ...chunks]);
 		return true;
 	};
-	const weight = (id: number): number => (members.get(id) ?? []).reduce((total, chunk) => total + (size[chunk] ?? 0), 0);
-	const bySize = (a: number, b: number): number => weight(a) - weight(b) || a - b;
-	for (let folded = true; folded; ) {
-		folded = false;
-		for (const small of [...members.keys()].sort(bySize)) {
-			if (!members.has(small)) continue;
-			const hosts = [...members.keys()].filter((id) => id !== small && cellOf[id] === cellOf[small]).sort(bySize);
-			if (hosts.reverse().some((host) => fold(small, host))) folded = true;
+	// The fold order is fixed on the unmerged graph, so the grouping so far never steers it. Merging two chunks costs
+	// a load that needs one and not the other the bytes the other drags in that the load did not hold anyway; a
+	// pair's cost is the worst such share of an allowance. Ties fall to source paths, never to output order or hashes.
+	const sourceKey = names.map((name) => outputSourceKey(name, outputs[name]));
+	const byKey = (a: number, b: number): number => compareText(sourceKey[a] ?? "", sourceKey[b] ?? "");
+	const minus = (set: ChunkSet, other: ChunkSet): ChunkSet => set.map((word, at) => word & ~(other[at] ?? 0));
+	const needs = units.map((unit) => (unit.from === -1 ? closure(unit.to) : minus(closure(unit.to), closure(unit.from))));
+	const seen = units.map((unit) => {
+		const held = closure(unit.to).slice();
+		if (unit.from !== -1) include(held, closure(unit.from));
+		return held;
+	});
+	const needers = names.map((_, chunk) => units.flatMap((_, at) => (holds(needs[at] ?? emptySet(), chunk) ? [at] : [])));
+	const drag = (chunk: number, at: number): number => {
+		const dragged = minus(closure(chunk), seen[at] ?? emptySet());
+		let bytes = 0;
+		for (let word = 0; word < dragged.length; word += 1) {
+			for (let bits = dragged[word] ?? 0; bits !== 0; bits &= bits - 1) {
+				bytes += size[word * 32 + 31 - Math.clz32(bits & -bits)] ?? 0;
+			}
+		}
+		return megabytes(bytes) / (units[at]?.allowance ?? 1);
+	};
+	const pairCost = (a: number, b: number): number => {
+		const forA = new Set(needers[a]);
+		const forB = new Set(needers[b]);
+		let cost = 0;
+		for (const at of forA) if (!forB.has(at)) cost = Math.max(cost, drag(b, at));
+		for (const at of forB) if (!forA.has(at)) cost = Math.max(cost, drag(a, at));
+		return cost;
+	};
+
+	// Cells fold in boot order, the cells more paths share first, so a cell's grouping depends only on the cells
+	// folded before it. Inside a cell every pair a load could afford is tried cheapest first until none folds.
+	const cells = new Map<string, number[]>();
+	for (const id of members.keys()) {
+		const cell = cellOf[id] ?? "|";
+		cells.set(cell, [...(cells.get(cell) ?? []), id]);
+	}
+	const stageRank = (cell: string): number => {
+		const at = SESSION_STAGES.findIndex(([stage]) => stage === cell.slice(0, cell.indexOf("|")));
+		return at === -1 ? SESSION_STAGES.length : at;
+	};
+	const pathCount = (cell: string): number =>
+		cell
+			.slice(cell.indexOf("|") + 1)
+			.split("+")
+			.filter(Boolean).length;
+	const cellOrder = [...cells.keys()].sort(
+		(a, b) => stageRank(a) - stageRank(b) || pathCount(b) - pathCount(a) || (a < b ? -1 : a > b ? 1 : 0),
+	);
+	for (const cell of cellOrder) {
+		const chunks = (cells.get(cell) ?? []).sort(byKey);
+		const pairs: Array<readonly [cost: number, a: number, b: number]> = [];
+		chunks.forEach((a, at) => {
+			for (const b of chunks.slice(at + 1)) {
+				const cost = pairCost(a, b);
+				if (cost <= 1) pairs.push([cost, a, b]);
+			}
+		});
+		pairs.sort((p, q) => p[0] - q[0] || byKey(p[1], q[1]) || byKey(p[2], q[2]));
+		for (let folded = true; folded; ) {
+			folded = false;
+			for (const [, a, b] of pairs) {
+				if (node(a) !== node(b) && fold(node(a), node(b))) folded = true;
+			}
 		}
 	}
 
 	const plan = new Map<string, string>();
 	const counters = new Map<string, number>();
-	const ordered = [...members.keys()].sort((a, b) => (names[a] ?? "").localeCompare(names[b] ?? "", "en"));
+	const ordered = [...members.keys()].sort((a, b) => byKey(a, b) || compareText(names[a] ?? "", names[b] ?? ""));
 	for (const id of ordered) {
 		const cell = cellOf[id] ?? "|";
 		const stage = cell.slice(0, cell.indexOf("|"));
@@ -586,12 +600,18 @@ async function mergeChunks(options: MergeOptions): Promise<{ files: BuiltFile[];
 	}
 
 	const input: Record<string, string> = {};
-	for (const entry of entries) input[relative(prefix, entry).slice(0, -".js".length)] = resolve(entry);
+	for (const entry of [...entries].sort(compareText))
+		input[relative(prefix, entry).slice(0, -".js".length)] = resolve(entry);
 	// A merged file exports only what another file imports, so a symbol every importer was merged with would stop
 	// being reachable from outside. One more entry that imports every chunk export keeps each one exported from
 	// the file it lands in, as esbuild's chunks exported them; its own output is discarded.
 	const everyExport = [...nameOf]
 		.filter(([, name]) => !entries.has(name))
+		.sort(
+			([, left], [, right]) =>
+				compareText(outputSourceKey(left, metafile.outputs[left]), outputSourceKey(right, metafile.outputs[right])) ||
+				compareText(left, right),
+		)
 		.map(([id, name], chunk) => {
 			const exported = (metafile.outputs[name]?.exports ?? []).map((binding, at) => `${binding} as e${chunk}_${at}`);
 			return `export{${exported.join(",")}}from${JSON.stringify(id)};`;
