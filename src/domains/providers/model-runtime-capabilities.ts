@@ -247,7 +247,7 @@ export function reasoningClassForMechanism(mechanism: ThinkingMechanism | null |
 	return "switchable";
 }
 
-export function inferThinkingMechanism(
+function inferThinkingMechanism(
 	quirks: LocalModelQuirks | undefined,
 	caps: CapabilityHints | undefined,
 ): ThinkingMechanism {
@@ -264,7 +264,7 @@ export function inferThinkingMechanism(
 	}
 }
 
-export function applyThinkingMechanism(
+function applyThinkingMechanism(
 	quirks: LocalModelQuirks | undefined,
 	level: ThinkingLevel,
 	caps?: CapabilityHints,
@@ -364,7 +364,7 @@ function supportedEffortLevels(
 	return out.length > 0 ? out : baseLevels;
 }
 
-export function restrictThinkingLevelsByMechanism(
+function restrictThinkingLevelsByMechanism(
 	levels: ReadonlyArray<ThinkingLevel>,
 	mechanism: ThinkingMechanism | null,
 	quirks?: LocalModelQuirks,
@@ -732,7 +732,7 @@ export function resolveModelRuntimeCapabilities(
 	return result;
 }
 
-export function resolveModelRuntimeCapabilitiesForStatus(
+function resolveModelRuntimeCapabilitiesForStatus(
 	status: Pick<TargetStatus, "target" | "runtime" | "capabilities" | "probeCapabilities" | "probeModelId">,
 	wireModelId: string | null | undefined,
 	knowledgeBase: KnowledgeBase | null,

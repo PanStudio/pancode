@@ -13,6 +13,8 @@ import type { CacheReadField, CacheWriteField } from "../../core/token-split.js"
 import { isRecord } from "../../core/type-guards.js";
 import type { CodexQuotaObservation } from "../types.js";
 import { codexAccountScope, parseCodexQuotaEvent } from "./codex-quota.js";
+// The Usage and AssistantMessage fields read here are declared by this module's pi-ai augmentation.
+import type {} from "./openai-completions.js";
 import { withProxyConnectionNote } from "./proxy-connection-error.js";
 
 /** APIs whose lifecycle events carry the provider's response object. */
