@@ -770,8 +770,9 @@ const COMPACT_CONTEXT_WINDOW_TOKENS = 48_000;
 export const PROMPT_BUDGET_CHARS = {
 	attended: 26_000,
 	acp: 25_000,
-	// Measured total once the safety text names the all read-only local plan that runs without the plan stop.
-	headless: 19_244,
+	// Measured total once the sandbox text states the escape reason and operator card (sandbox D9) and the egress
+	// proxy with servers unreachable from outside (sandbox D2).
+	headless: 19_284,
 	headlessYolo: 21_000,
 	worker: 11_500,
 } as const;

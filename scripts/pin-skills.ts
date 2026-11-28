@@ -39,12 +39,12 @@ const REQUIRED_PANCODE_KEYS = ["registry-id", "source-url"] as const;
 const TOOL_SURFACE_KEYS = ["allowed-tools", "disallowed-tools"] as const;
 const PANCODE_TOOL_NAMES = new Set<string>(ALL_TOOL_NAMES);
 
-export interface PinSkillsOptions {
+interface PinSkillsOptions {
 	catalogDir?: string;
 	check?: boolean;
 }
 
-export interface PinSkillsResult {
+interface PinSkillsResult {
 	ok: boolean;
 	entries: CatalogEntry[];
 	errors: string[];

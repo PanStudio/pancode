@@ -5,7 +5,8 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { directImports, formatOpenapi, pnpmCommand, selectLaneTests } from "../../scripts/check-lane.mjs";
+import { directImports, formatOpenapi, selectLaneTests } from "../../scripts/check-lane.mjs";
+import { pnpmCommand } from "../../scripts/pnpm.mjs";
 
 test("check:lane selects changed tests and direct importers, and flags an added test no gate lists", () => {
 	const importsOf = new Map([

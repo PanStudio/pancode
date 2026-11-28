@@ -271,7 +271,8 @@ describe("smoke/process lifecycle", { concurrency: false, skip: process.platform
 			seedTarget(root, fixture.url);
 			child = spawn(
 				process.execPath,
-				[CLI, "--no-context-files", "--no-skills", "run", "--autonomy", "yolo", "--timeout", "4", "start child"],
+				// The run clock includes boot and the contained shell's start, which take about 4 s on a loaded host.
+				[CLI, "--no-context-files", "--no-skills", "run", "--autonomy", "yolo", "--timeout", "10", "start child"],
 				{ cwd: project, env, stdio: ["ignore", "pipe", "pipe"] },
 			);
 			let stderr = "";
