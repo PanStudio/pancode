@@ -730,7 +730,6 @@ function overlayScopeLabel(state: OverlayState): string {
 		"thinking-level": "Thinking level",
 		tasks: "Tasks",
 		decisions: "Decisions",
-		research: "Research",
 		memory: "Memory",
 		view: "View",
 		model: "Model",

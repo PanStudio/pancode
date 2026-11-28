@@ -1018,6 +1018,7 @@ export function createRunScriptTool(deps: RunScriptToolDeps = {}): ToolSpec {
 					env: request.env,
 					...(signal ? { signal } : {}),
 					...(options?.shellSandbox === undefined ? {} : { shellSandbox: options.shellSandbox }),
+					...(options?.resourceLimits === undefined ? {} : { resourceLimits: options.resourceLimits }),
 					output: {
 						retainHeadBytes: 0,
 						retainTailBytes: RUN_SCRIPT_CAPS.resultTailBytes,
@@ -1173,6 +1174,7 @@ export function createRunScriptTool(deps: RunScriptToolDeps = {}): ToolSpec {
 			if (sandboxHint !== null) lines.push(sandboxHint);
 			const egressNote = egressResultNote(result.egress);
 			if (egressNote !== null) lines.push(egressNote);
+			if (result.resourceNote !== undefined) lines.push(result.resourceNote);
 			if (result.sinkError !== undefined) {
 				lines.push(`log write failed (${result.sinkError}); the script was stopped and the logs are incomplete`);
 			}

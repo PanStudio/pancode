@@ -32,7 +32,7 @@ import {
 import { FUNDING_ID_PATTERN } from "./funding-config.js";
 import { LIVE_CHECK_LOGIN_RUNTIMES } from "./sandbox/env-scrub.js";
 import { confineEntryProblem } from "./sandbox/host-launch.js";
-import { SANDBOX_MODES, UNIX_SOCKET_MODES } from "./sandbox/types.js";
+import { RESOURCE_LIMIT_KEYS, RESOURCE_LIMIT_MAX, SANDBOX_MODES, UNIX_SOCKET_MODES } from "./sandbox/types.js";
 import {
 	describe,
 	expectBoolean,
@@ -125,6 +125,55 @@ function readSandboxOptions(issues: Issues, safety: Record<string, unknown>, set
 	if ("sandboxUnixSockets" in safety) {
 		const parsed = expectEnum(issues, "safety.sandboxUnixSockets", safety.sandboxUnixSockets, UNIX_SOCKET_MODES);
 		if (parsed !== undefined) settings.safety.sandboxUnixSockets = parsed;
+	}
+}
+
+function validateSafetyResources(issues: Issues, raw: unknown, settings: PancodeSettings): void {
+	if (!isRecord(raw)) {
+		issues.add("safety.resources", `expected a map, got ${describe(raw)}`);
+		return;
+	}
+	issues.unknownKeys("safety.resources", raw, ["main", "workers"]);
+	for (const scope of ["main", "workers"] as const) {
+		if (!(scope in raw)) continue;
+		const block = raw[scope];
+		const path = `safety.resources.${scope}`;
+		if (!isRecord(block)) {
+			issues.add(path, `expected a map, got ${describe(block)}`);
+			continue;
+		}
+		issues.unknownKeys(path, block, RESOURCE_LIMIT_KEYS);
+		for (const key of RESOURCE_LIMIT_KEYS) {
+			if (!(key in block)) continue;
+			if (block[key] === null) {
+				settings.safety.resources[scope][key] = null;
+				continue;
+			}
+			const parsed = expectInteger(issues, `${path}.${key}`, block[key], { min: 1, max: RESOURCE_LIMIT_MAX[key] });
+			if (parsed !== undefined) settings.safety.resources[scope][key] = parsed;
+		}
+	}
+}
+
+function validateSafetyReview(issues: Issues, review: unknown, settings: PancodeSettings): void {
+	if (!isRecord(review)) {
+		issues.add("safety.review", `expected a map, got ${describe(review)}`);
+		return;
+	}
+	issues.unknownKeys("safety.review", review, ["enabled", "target", "cadenceToolCalls"]);
+	if ("enabled" in review) {
+		const parsed = expectBoolean(issues, "safety.review.enabled", review.enabled);
+		if (parsed !== undefined) settings.safety.review.enabled = parsed;
+	}
+	if ("target" in review && review.target !== null) {
+		const parsed = expectString(issues, "safety.review.target", review.target);
+		if (parsed !== undefined && settings.targets.some((target) => target.id === parsed))
+			settings.safety.review.target = parsed;
+		else if (parsed !== undefined) issues.add("safety.review.target", `unknown target '${parsed}'`);
+	}
+	if ("cadenceToolCalls" in review && review.cadenceToolCalls !== null) {
+		const parsed = expectInteger(issues, "safety.review.cadenceToolCalls", review.cadenceToolCalls, { min: 1 });
+		if (parsed !== undefined) settings.safety.review.cadenceToolCalls = parsed;
 	}
 }
 
@@ -989,6 +1038,7 @@ export function validateSettings(raw: unknown): SettingsValidationResult {
 				"autonomy",
 				"limits",
 				"review",
+				"resources",
 				"sandbox",
 				"egress",
 				"scratchRoots",
@@ -1149,27 +1199,8 @@ export function validateSettings(raw: unknown): SettingsValidationResult {
 					}
 				}
 			}
-			if ("review" in safety) {
-				if (!isRecord(safety.review)) issues.add("safety.review", `expected a map, got ${describe(safety.review)}`);
-				else {
-					const review = safety.review;
-					issues.unknownKeys("safety.review", review, ["enabled", "target", "cadenceToolCalls"]);
-					if ("enabled" in review) {
-						const parsed = expectBoolean(issues, "safety.review.enabled", review.enabled);
-						if (parsed !== undefined) settings.safety.review.enabled = parsed;
-					}
-					if ("target" in review && review.target !== null) {
-						const parsed = expectString(issues, "safety.review.target", review.target);
-						if (parsed !== undefined && settings.targets.some((target) => target.id === parsed))
-							settings.safety.review.target = parsed;
-						else if (parsed !== undefined) issues.add("safety.review.target", `unknown target '${parsed}'`);
-					}
-					if ("cadenceToolCalls" in review && review.cadenceToolCalls !== null) {
-						const parsed = expectInteger(issues, "safety.review.cadenceToolCalls", review.cadenceToolCalls, { min: 1 });
-						if (parsed !== undefined) settings.safety.review.cadenceToolCalls = parsed;
-					}
-				}
-			}
+			if ("resources" in safety) validateSafetyResources(issues, safety.resources, settings);
+			if ("review" in safety) validateSafetyReview(issues, safety.review, settings);
 		}
 	}
 

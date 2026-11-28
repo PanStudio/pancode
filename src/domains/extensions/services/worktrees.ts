@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 /**
  * `services.worktrees`: detached git worktrees of the workspace's repository that the host creates for an extension
- * under the project's `.pancode/worktrees/ext-<id>/`, beside task and research worktrees, the few writes an experiment needs in them (checkout, clean, copy, commit), refs under the
+ * under the project's `.pancode/worktrees/ext-<id>/`, beside task worktrees, the few writes an experiment needs in them (checkout, clean, copy, commit), refs under the
  * extension's own `refs/heads/pancode/<id>/` namespace, and read-only git anywhere it may look. Every call goes through
  * the internal git argv, so repository configuration never runs a program, and a worktree the request did not keep is
  * removed when the request ends.

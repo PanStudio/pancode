@@ -14,7 +14,7 @@ export const RESEARCH_PANEL: PanelCopy = {
 	eyebrow: eyebrow("Research campaigns", "this workspace", "hill climb"),
 	title: "Research",
 	boundary:
-		"Campaigns, raw samples and verdicts live under .pancode/research in this workspace. Candidates run in isolated worktrees; only the research branch moves, never your checkout.",
+		"Campaigns, raw samples and verdicts live under .pancode/data/research in this workspace. Candidates run in isolated worktrees; only the research branch moves, never your checkout.",
 };
 
 const signed = (value: number) => `${value >= 0 ? "+" : ""}${(value * 100).toFixed(2)}%`;
@@ -24,7 +24,7 @@ export const shortSha = (sha: string | null) => (sha ? sha.slice(0, 12) : "none"
 type GradeObjective = Pick<ResearchCampaign["campaign"]["objective"], "direction" | "minImprovement">;
 
 /**
- * The same words `research status` prints for a grade (`src/domains/research/format.ts`). Given the objective, an
+ * The same words `research status` prints for a grade (`hub/packs/extensions/research/runtime/format.ts`). Given the objective, an
  * `unchanged` verdict whose interval excludes zero is named for what it is: a real move smaller than the minimum
  * improvement, toward better or worse.
  */
@@ -231,7 +231,7 @@ export function regradeLines(report: ResearchReport): RegradeLine[] {
 	}));
 }
 
-const CAMPAIGN_LINE = /^research (r[0-9]{8}-[0-9]{6}-[0-9a-f]{4}): /;
+const CAMPAIGN_LINE = /^pancode research: (r[0-9]{8}-[0-9]{6}-[0-9a-f]{4}): /;
 
 /** The campaign a running start opened, from its first progress line. */
 export function campaignFromProgress(messages: readonly string[]): string | null {

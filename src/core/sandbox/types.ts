@@ -119,9 +119,9 @@ export const SANDBOX_LAUNCH_WHYS = [
 export type SandboxLaunchWhy = (typeof SANDBOX_LAUNCH_WHYS)[number];
 
 /**
- * How a launch ended as the sandbox saw it. `refused`: the planner refused it and nothing ran. `launch-failed`: the
- * spawn or the sandbox's own network setup failed before the command ran. `ran`: the command started; its exit code
- * says how it went.
+ * How a launch ended as the sandbox saw it. `refused`: the planner, or a resource ceiling the host cannot enforce,
+ * refused it and nothing ran. `launch-failed`: the spawn, its resource scope or the sandbox's own network setup failed
+ * before the command ran. `ran`: the command started; its exit code says how it went.
  */
 export const SANDBOX_LAUNCH_OUTCOMES = ["ran", "refused", "launch-failed"] as const;
 export type SandboxLaunchOutcome = (typeof SANDBOX_LAUNCH_OUTCOMES)[number];
@@ -339,4 +339,31 @@ export interface SandboxAvailability {
 	 * Absent when no usable binary exists at all.
 	 */
 	found?: string;
+}
+
+export const RESOURCE_LIMIT_KEYS = ["memoryMiB", "tasks", "cpuPercent"] as const;
+export type ResourceLimitKey = (typeof RESOURCE_LIMIT_KEYS)[number];
+/** The largest value each ceiling takes: 16 TiB of memory, the kernel's pid ceiling, a thousand CPUs. */
+export const RESOURCE_LIMIT_MAX: Readonly<Record<ResourceLimitKey, number>> = {
+	memoryMiB: 16 * 1024 * 1024,
+	tasks: 4_194_304,
+	cpuPercent: 100_000,
+};
+
+/**
+ * Opt-in ceilings on one launch's whole process tree (`safety.resources`, P9). Each is aggregate over every process
+ * the command starts: `memoryMiB` bounds resident memory with no swap, `tasks` counts processes and threads, and
+ * `cpuPercent` is CPU time per wall second, 100 being one core. An absent field is no ceiling. None is a disk quota.
+ */
+export interface ResourceLimits {
+	memoryMiB?: number;
+	tasks?: number;
+	cpuPercent?: number;
+}
+
+/** One caller's block of `safety.resources`: each ceiling a positive integer, or null for none. */
+export interface ResourceLimitSettings {
+	memoryMiB: number | null;
+	tasks: number | null;
+	cpuPercent: number | null;
 }

@@ -4,6 +4,7 @@ import { CONTEXT_OPERATION_CUSTOM_TYPE, createContextOperation } from "../core/c
 import { writeDiagnostic } from "../core/diagnostics.js";
 import { enterAutonomousCommitScope } from "../core/git-commit-attribution.js";
 import { continuationCountsAgainstCap, JobClockExpired, TURN_CONTINUATION_CAP } from "../core/job-types.js";
+import { resourceLimitsFromSettings } from "../core/sandbox/resource-limits.js";
 import type { SandboxAvailability } from "../core/sandbox/types.js";
 import { observedToolCallOrigin, ownerTelemetryContext, toolCallBatch } from "../core/telemetry/context.js";
 import { routeCallsPerRound, turnBudgetWidthScale } from "../core/turn-budget-width.js";
@@ -1306,9 +1307,7 @@ export function createChatLoop(deps: CreateChatLoopDeps): ChatLoop {
 			toolResultMaxBytes: deps.getSettings().context.toolResultMaxBytes,
 			abortCause: () => state.activeInterruptReason ?? state.toolProseAbortReason,
 			steerInterrupt: steerInterrupter,
-			...(deps.getSettings().safety.limits.bashIdleSeconds > 0
-				? { bashIdleMs: deps.getSettings().safety.limits.bashIdleSeconds * 1000 }
-				: {}),
+			...toolLimitOptions(deps.getSettings().safety),
 			...observedToolCallOrigin(state.runtime?.agent.state.messages ?? [], toolCallId),
 		};
 		const batch = toolCallBatch(state.runtime?.agent.state.messages ?? [], toolCallId);
@@ -2593,4 +2592,13 @@ export function createChatLoop(deps: CreateChatLoopDeps): ChatLoop {
 		}
 	};
 	return api;
+}
+
+/** The per-call bounds settings put on every tool invocation: the bash idle timeout and the main session's resource ceilings. */
+function toolLimitOptions(safety: PancodeSettings["safety"]): Pick<ToolInvokeOptions, "bashIdleMs" | "resourceLimits"> {
+	const resourceLimits = resourceLimitsFromSettings(safety.resources.main);
+	return {
+		...(safety.limits.bashIdleSeconds > 0 ? { bashIdleMs: safety.limits.bashIdleSeconds * 1000 } : {}),
+		...(resourceLimits === undefined ? {} : { resourceLimits }),
+	};
 }

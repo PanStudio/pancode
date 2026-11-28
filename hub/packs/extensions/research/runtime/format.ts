@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
-import { renderUsdLimit, renderUsdSpend } from "../../core/telemetry/render.js";
-import { aaLabel } from "./grader.js";
-import type { ResearchCampaignView } from "./report.js";
-import type { ResearchAgentAutonomy, ResearchCost, ResearchDirection } from "./types.js";
+
+import { aaLabel } from "./grader.ts";
+import { renderUsdLimit, renderUsdSpend } from "./render.ts";
+import type { ResearchCampaignView } from "./report.ts";
+import type { ResearchAgentAutonomy, ResearchCost, ResearchDirection } from "./types.ts";
 
 /**
  * One line for a grade. Given the objective, an `unchanged` verdict whose interval excludes zero is named for what

@@ -6,13 +6,12 @@
  * unenforceable: the campaign then stops with `budget-unenforceable` unless `allowUnpriced` was given. Unknown spend is
  * never counted as zero, and a report says when spend was not measured.
  */
-import type { FactSum } from "../../core/telemetry/fact.js";
-import { renderUsdLimit, renderUsdSpend } from "../../core/telemetry/render.js";
-import type { ResearchBudget, ResearchCost, ResearchStopReason } from "./types.js";
+import { renderUsdLimit, renderUsdSpend } from "./render.ts";
+import type { ResearchBudget, ResearchCost, ResearchStopReason } from "./types.ts";
 
 /** The `usage.cost` a `run --json` `agent_end` frame carries, as far as this reader trusts it. */
 export interface PricingSumLike {
-	usd: Pick<FactSum, "measured" | "estimated" | "unknownCount">;
+	usd: { measured: number; estimated: number; unknownCount: number };
 	free: boolean;
 }
 

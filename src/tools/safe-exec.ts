@@ -23,6 +23,7 @@ import {
 	mainSandboxWriteHint,
 	optInLaunch,
 } from "../core/sandbox/main-session.js";
+import type { ResourceLimits } from "../core/sandbox/types.js";
 import { workerSandboxApplies, workerSandboxConfigured } from "../core/sandbox/worker-process.js";
 import { layeredConfineList } from "../core/settings-layers.js";
 import { ToolNames } from "../core/tool-names.js";
@@ -107,6 +108,8 @@ export async function runVectorTool(
 		typedGitWritablePaths?: ReadonlyArray<string>;
 		/** The main-session sandbox a contained call runs in (verify's checks). */
 		shellSandbox?: MainSandboxPolicy;
+		/** `safety.resources.main` ceilings for a verify check's command. */
+		resourceLimits?: ResourceLimits;
 		/** The root `cwd` must stay inside; the process working directory when absent. */
 		workspaceRoot?: string;
 		/** Where the program runs (P8); its settled launch record rides on `details.sandbox`. */
@@ -131,6 +134,7 @@ export async function runVectorTool(
 		if (options?.env !== undefined) runOptions.env = options.env;
 		if (options?.typedGitWritablePaths !== undefined) runOptions.typedGitWritablePaths = options.typedGitWritablePaths;
 		if (options?.shellSandbox !== undefined) runOptions.shellSandbox = options.shellSandbox;
+		if (options?.resourceLimits !== undefined) runOptions.resourceLimits = options.resourceLimits;
 		if (options?.workspaceRoot !== undefined) runOptions.workspaceRoot = options.workspaceRoot;
 		const label = options?.launchLabel;
 		if (label !== undefined) runOptions.launchLabel = seamLaunchLabel(label);
@@ -167,9 +171,10 @@ export async function runVectorTool(
 		if (result.exitCode !== 0) {
 			const sandboxHint =
 				options?.shellSandbox === undefined ? null : mainSandboxWriteHint(combined, options.shellSandbox);
+			const hints = [result.resourceNote ?? null, sandboxHint].filter((hint): hint is string => hint !== null);
 			return {
 				kind: "error",
-				message: `${action}: exited with code ${result.exitCode ?? "?"}: ${output.trim()}${sandboxHint === null ? "" : `\n${sandboxHint}`}`,
+				message: `${action}: exited with code ${result.exitCode ?? "?"}: ${output.trim()}${hints.map((hint) => `\n${hint}`).join("")}`,
 				details,
 			};
 		}

@@ -69,6 +69,9 @@ const HOT_RELOAD_FIELDS = new Set<string>([
 	// Read the same way: per contained call in the main session, into each
 	// new WorkerSpec for workers.
 	"safety.sandboxUnixSockets",
+	// Main-session commands read `main` per call; dispatch seals `workers` into each new WorkerSpec, so a running
+	// worker keeps the ceilings it started with.
+	"safety.resources",
 	// Read at every dispatch admission, so the next dispatch observes a change; a running worker keeps its spec.
 	"safety.sandboxUnconfinedLocalWorkers",
 	// Read at each host launch: an MCP server or pane already running keeps the confinement it started with.

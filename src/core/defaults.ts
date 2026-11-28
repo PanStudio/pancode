@@ -21,6 +21,7 @@ import type {
 	EgressPresetName,
 	HomeReadMode,
 	HomeReadToolchain,
+	ResourceLimitSettings,
 	SandboxMode,
 	UnixSocketMode,
 } from "./sandbox/types.js";
@@ -811,6 +812,12 @@ export interface SafetySettings {
 	 */
 	egress: EgressSettings;
 	/**
+	 * Strict per-command ceilings on Linux (D13): memory, process count and CPU for the main session's agent
+	 * commands and for a dispatched worker's. Each runs in its own systemd user scope; a set limit this host cannot
+	 * enforce refuses the command, and all null bounds nothing. A project may only lower them.
+	 */
+	resources: { main: ResourceLimitSettings; workers: ResourceLimitSettings };
+	/**
 	 * Absolute trees the main session's sandbox may write and its deletes may
 	 * clean as it does in the workspace, beside the built-in temp roots ($TMPDIR,
 	 * /tmp, /var/tmp, and /var/folders on macOS) (#419). Read only from the
@@ -1127,6 +1134,10 @@ export const DEFAULT_SETTINGS = {
 			workers: { mode: "off", allow: [] as string[], presets: [] as EgressPresetName[] },
 			upstreamProxy: null,
 		} as EgressSettings,
+		resources: {
+			main: { memoryMiB: null, tasks: null, cpuPercent: null },
+			workers: { memoryMiB: null, tasks: null, cpuPercent: null },
+		},
 		scratchRoots: [] as string[],
 		sandboxPassEnv: [] as string[],
 		liveCheckTargets: [] as string[],

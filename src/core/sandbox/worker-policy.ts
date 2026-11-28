@@ -8,6 +8,7 @@ import type { SandboxLaunchTally } from "./launch-record.js";
 import {
 	type EgressMode,
 	type HomeReadList,
+	type ResourceLimits,
 	type SandboxAvailability,
 	type SandboxBackend,
 	type SandboxEnvPolicy,
@@ -130,6 +131,8 @@ export interface WorkerSandboxReceipt {
 	egress?: EgressMode;
 	/** What the run's own launch records said happened (sandbox P6); absent on receipts sealed before them. */
 	observed?: SandboxLaunchTally;
+	/** The sealed `safety.resources.workers` ceilings each command ran under, or was refused for (D13). */
+	resources?: { mechanism: "systemd-scope" } & ResourceLimits;
 }
 
 /**
@@ -146,7 +149,9 @@ export function workerEgressMode(spec: WorkerSandboxSpec, availability: SandboxA
 export function workerSandboxReceipt(
 	spec: WorkerSandboxSpec | undefined,
 	availability: SandboxAvailability,
+	resources?: ResourceLimits,
 ): WorkerSandboxReceipt {
+	const ceilings = resources === undefined ? {} : { resources: { mechanism: "systemd-scope" as const, ...resources } };
 	if (spec === undefined) {
 		return {
 			mode: "off",
@@ -156,6 +161,7 @@ export function workerSandboxReceipt(
 			gitWritablePaths: [],
 			network: true,
 			egress: "open",
+			...ceilings,
 		};
 	}
 	const usable = sandboxUsable(spec.mode, availability);
@@ -170,6 +176,7 @@ export function workerSandboxReceipt(
 		gitWritablePaths: [...spec.gitWritablePaths],
 		network: spec.network || (!usable && spec.unconfined === true),
 		egress: workerEgressMode(spec, availability),
+		...ceilings,
 	};
 }
 
