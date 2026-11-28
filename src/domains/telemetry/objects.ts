@@ -15,10 +15,10 @@ import { EvidenceFindingsObjectSchema } from "../../core/telemetry/evidence-sche
 import { RunResultObjectSchema } from "../../core/telemetry/run-schemas.js";
 import type { ObjectRef } from "../../core/telemetry/schemas.js";
 import { ObjectRefSchema } from "../../core/telemetry/schemas.js";
+import { PROJECT_PRELOAD_MODES } from "../../core/telemetry/session-vocabulary.js";
 import { matchesTrace, traceValue } from "../../core/value-trace.js";
 import type { RedactionTally } from "../evidence/redact.js";
 import { createRedactionTally, secretRedactingReplacer } from "../evidence/redact.js";
-import { PROJECT_PRELOAD_MODES } from "../prompts/preload.js";
 import { redactSecretString } from "../safety/redaction.js";
 import type { SessionPromptCompileRecord } from "../session/prompt-manifest.js";
 import { telemetryObjectsDirectory } from "./paths.js";

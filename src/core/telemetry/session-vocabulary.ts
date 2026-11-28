@@ -104,3 +104,7 @@ export const RETRY_STATUS_PHASES = [
 	"recovered",
 ] as const;
 export type RetryStatusPhase = (typeof RETRY_STATUS_PHASES)[number];
+
+/** How much of PANCODE.md a session preloads into its prompt. */
+export const PROJECT_PRELOAD_MODES = ["full", "partial", "synopsis", "none"] as const;
+export type ProjectPreloadMode = (typeof PROJECT_PRELOAD_MODES)[number];
