@@ -396,10 +396,12 @@ export function uncollectedFleetRootViews(
 	return (fleetRuns?.uncollected() ?? []).map((root) => ({ id: root.rootId, total: 1, terminal: root.sealed ? 1 : 0 }));
 }
 
+/** Finished detached batches, and sealed model-started fleet roots nothing has collected. */
 export function finishedDetachedBatchIds(
 	dispatch: Pick<DispatchContract, "detached" | "getRun" | "owner" | "assignments">,
+	fleetRuns?: Pick<FleetRunLauncher, "uncollected"> | null,
 ): ReadonlyArray<string> {
-	return openDetachedBatchViews(dispatch)
+	return [...openDetachedBatchViews(dispatch), ...uncollectedFleetRootViews(fleetRuns)]
 		.filter((view) => view.total > 0 && view.terminal >= view.total)
 		.map((view) => view.id);
 }
