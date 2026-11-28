@@ -444,26 +444,35 @@ Check \${pluginRoot}/assets/nonexistent-file.txt
 			.reduce((sum, count) => sum + count, 0);
 		const local = hubRegistry.entries.filter((entry) => entry.sourceUrl !== undefined);
 		ok(local.length > 0, "PanHub index must list the local packs");
-		for (const entry of local) {
-			ok(
-				statSync(join(REPO_ROOT, "hub", entry.sourceUrl ?? "")).isDirectory(),
-				`local entry '${entry.name}' must name a pack directory, got '${entry.sourceUrl}'`,
-			);
+		const diskPacks: string[] = [];
+		const collectPacks = (dir: string, manifest: string): void => {
+			if (existsSync(join(dir, manifest))) {
+				diskPacks.push(dir);
+				return;
+			}
+			for (const entry of readdirSync(dir, { withFileTypes: true })) {
+				if (entry.isDirectory() && !entry.name.startsWith(".") && entry.name !== "_authoring") {
+					collectPacks(join(dir, entry.name), manifest);
+				}
+			}
+		};
+		for (const [kind, manifest] of [
+			["plugins", "plugin.json"],
+			["skills", "plugin.json"],
+			["extensions", "pancode-extension.yaml"],
+		] as const) {
+			collectPacks(join(REPO_ROOT, "hub", "packs", kind), manifest);
 		}
+		deepStrictEqual(
+			local.map((entry) => join(REPO_ROOT, "hub", entry.sourceUrl ?? "")).sort(),
+			diskPacks.sort(),
+			"PanHub index local rows must match every curated plugin, skill and extension pack on disk",
+		);
 		equal(
 			hubRegistry.entries.length,
 			local.length + communityRows,
 			`PanHub index must contain its ${local.length} local packs and the ${communityRows} community rows`,
 		);
-		const localSources = new Set(local.map((entry) => join(REPO_ROOT, "hub", entry.sourceUrl ?? "")));
-		for (const kind of ["plugins", "skills"]) {
-			const root = join(REPO_ROOT, "hub", "packs", kind);
-			for (const dir of readdirSync(root, { recursive: true, withFileTypes: true })) {
-				if (dir.isFile() && dir.name === "plugin.json" && !dir.parentPath.includes("_authoring")) {
-					ok(localSources.has(dir.parentPath), `curated pack '${dir.parentPath}' has no PanHub index row`);
-				}
-			}
-		}
 
 		// None of the entries should reference _authoring or templates
 		for (const entry of hubRegistry.entries) {
