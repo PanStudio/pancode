@@ -159,7 +159,7 @@ export function toolStatuses(): ToolStatus[] {
 
 /** The one command that fixes a tool PanCode cannot resolve. */
 export function installRemedy(id: string): string {
-	return `pancode tools install ${id}`;
+	return `pancode programs install ${id}`;
 }
 
 /**
@@ -184,7 +184,7 @@ export function describeFloorRejection(status: ToolStatus): string | null {
 
 /**
  * One sentence describing where a tool resolved and how its version compares to
- * the pin. Shared by `pancode tools status` and the doctor rows so the two
+ * the pin. Shared by `pancode programs status` and the doctor rows so the two
  * cannot drift into describing the same machine differently.
  */
 export function describeResolution(status: ToolStatus): string {

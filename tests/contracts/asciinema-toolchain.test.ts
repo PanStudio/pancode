@@ -103,7 +103,7 @@ it("previews explicit user-level SSH provisioning and rejects changed connection
 		});
 	});
 	const plan = prepareFleetToolInstall("seven", "asciinema");
-	match(plan.command, /tools install asciinema --json/);
+	match(plan.command, /programs install asciinema --json/);
 	match(plan.command, /TMPDIR=/);
 	equal(plan.command.includes("sudo"), false);
 	match(describeFleetToolInstall(plan), /GPL-3.0-or-later/);

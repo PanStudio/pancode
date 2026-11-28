@@ -270,7 +270,7 @@ export function inspectCurrentYaziProfile(): YaziProfileInspection {
 	return inspectYaziProfile({ yaPath: resolveToolBinary("ya").binaryPath ?? "(unresolved)" });
 }
 
-/** One shared sentence for `tools status yazi` and the doctor profile row. */
+/** One shared sentence for `programs status yazi` and the doctor profile row. */
 export function describeYaziProfile(inspection: Readonly<YaziProfileInspection>): string {
 	return `${inspection.dir} (${inspection.state === "generation-failed" ? "generation failed" : inspection.state}); user config ${inspection.userConfigDir} is separate and untouched`;
 }

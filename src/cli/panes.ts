@@ -4,13 +4,13 @@ import { dirname } from "node:path";
 import { renderHerdrThemeBlock } from "../domains/mux/yazi/theme.js";
 import { writeCliFailure } from "./kit/json-out.js";
 import type { ErrorSlug } from "./kit/slugs.js";
-import { runToolsCommand } from "./tools.js";
+import { runProgramsCommand } from "./programs.js";
 
 const HELP = `pancode panes install [--if-missing] [--force] [--json]
 pancode panes theme
 
 install  Install the pane host PanCode runs its panes in (herdr, Apache-2.0).
-         This is an alias for \`pancode tools install herdr\`; the toolchain
+         This is an alias for \`pancode programs install herdr\`; the toolchain
          command is where every pinned external program is managed. The
          installer provisions it, and PanCode installs a new pin on launch
          after an upgrade. Run this when the installer could not fetch it or
@@ -18,7 +18,7 @@ install  Install the pane host PanCode runs its panes in (herdr, Apache-2.0).
          --if-missing nothing is downloaded when PanCode's own pinned copy is
          already installed. A herdr of your own on PATH is never used to host
          PanCode's panes and is never touched. --json prints one document,
-         the tools install --json shape, whether or not anything was downloaded.
+         the programs install --json shape, whether or not anything was downloaded.
 theme    Print PanCode's theme tokens as a herdr [theme.custom] block for
          your own herdr config. PanCode already themes its own private pane
          host.
@@ -100,5 +100,5 @@ export async function runPanesCommand(argv: ReadonlyArray<string> = []): Promise
 			return 0;
 		}
 	}
-	return runToolsCommand(["install", "herdr", ...rest.filter((arg) => arg !== "--if-missing")]);
+	return runProgramsCommand(["install", "herdr", ...rest.filter((arg) => arg !== "--if-missing")]);
 }

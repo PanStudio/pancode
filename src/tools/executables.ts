@@ -19,7 +19,7 @@ export function resolveRgBinary(): string | null {
  * `resolveRgBinary` above already do for the two search tools PanCode never
  * vendors.
  *
- * Callers that need to explain the answer (doctor, `pancode tools status`)
+ * Callers that need to explain the answer (doctor, `pancode programs status`)
  * want `resolveToolBinary` instead: this returns only the path to run.
  */
 export function resolveBinary(name: string): string | null {

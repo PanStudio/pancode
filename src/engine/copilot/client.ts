@@ -68,7 +68,7 @@ class CopilotRuntimeMismatchError extends Error {
 	readonly code = "COPILOT_RUNTIME_MISMATCH";
 	constructor(detail: string) {
 		super(
-			`The GitHub Copilot runtime that started speaks a different protocol version than PanCode's pinned @github/copilot-sdk, so it is not the runtime bundled with that SDK. The likely cause is an inherited or foreign Copilot CLI runtime, such as another Copilot CLI install the SDK resolved in place of its own. Reinstall the component with \`pancode tools install copilot-sdk\` and retry. (${detail})`,
+			`The GitHub Copilot runtime that started speaks a different protocol version than PanCode's pinned @github/copilot-sdk, so it is not the runtime bundled with that SDK. The likely cause is an inherited or foreign Copilot CLI runtime, such as another Copilot CLI install the SDK resolved in place of its own. Reinstall the component with \`pancode programs install copilot-sdk\` and retry. (${detail})`,
 		);
 		this.name = "CopilotRuntimeMismatchError";
 	}

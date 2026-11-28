@@ -30,11 +30,11 @@ export function promptAdmissionDetail(reason: unknown): string {
 	}
 }
 
-/** The runtime components `pancode tools install` provides; any other value is not named to the operator. */
+/** The runtime components `pancode programs install` provides; any other value is not named to the operator. */
 const RUNTIME_COMPONENTS = new Set(["copilot-sdk", "claude-sdk"]);
 
 /** The install remedy for a runtime component PanCode reported missing, or null for an unknown id. */
 export function missingComponentRemedy(component: unknown): string | null {
 	if (typeof component !== "string" || !RUNTIME_COMPONENTS.has(component)) return null;
-	return `its runtime needs the ${component} component, which is not installed on this machine. Run pancode tools install ${component} in a terminal`;
+	return `its runtime needs the ${component} component, which is not installed on this machine. Run pancode programs install ${component} in a terminal`;
 }

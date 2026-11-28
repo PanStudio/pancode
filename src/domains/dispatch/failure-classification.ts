@@ -77,7 +77,7 @@ const WORKERSPEC_REJECTION = /\[worker\] fatal: workerspec/;
 
 /** CopilotSdkUnavailableError and ClaudeAgentSdkUnavailableError wording, lowercased. */
 const MISSING_RUNTIME_COMPONENT =
-	/the (?:copilot-sdk|claude sdk) runtime needs \S+\. run: pancode tools install (?:copilot-sdk|claude-sdk)\b|no @anthropic-ai\/claude-agent-sdk in prepared prefix\b/;
+	/the (?:copilot-sdk|claude sdk) runtime needs \S+\. run: pancode programs install (?:copilot-sdk|claude-sdk)\b|no @anthropic-ai\/claude-agent-sdk in prepared prefix\b/;
 
 /** The Copilot runtime's not-signed-in refusal, lowercased; only an operator sign-in changes it. */
 const COPILOT_NOT_SIGNED_IN = /github copilot is not signed in\b/;
@@ -143,7 +143,7 @@ export function honestWorkerSpecSkewText(text: string): string {
 
 // The worker words this remedy for its own machine: the client command it names does not reach the node.
 const COMPONENT_REMEDY =
-	/Run: pancode tools install (copilot-sdk|claude-sdk)\. This installs a separate component at ([^;]+);/g;
+	/Run: pancode programs install (copilot-sdk|claude-sdk)\. This installs a separate component at ([^;]+);/g;
 
 /** A remote worker's missing-component remedy, reworded to the client command that installs it on that node. */
 export function nodeComponentRemedy(text: string, nodeId: string): string {
@@ -164,7 +164,7 @@ export function nodeComponentRemedyEvent<T>(event: T, nodeId: string): T {
 		}
 		return value;
 	};
-	return JSON.stringify(event)?.includes("pancode tools install") === true ? (rewrite(event) as T) : event;
+	return JSON.stringify(event)?.includes("pancode programs install") === true ? (rewrite(event) as T) : event;
 }
 
 /**

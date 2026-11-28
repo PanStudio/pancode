@@ -66,7 +66,7 @@ function pancodeArgv(): string[] {
 	return script === undefined ? [process.execPath, ...args] : [process.execPath, relaunchScript(script), ...args];
 }
 
-/** A launch waits this long for the download; the installers and `tools install` keep the full timeout. */
+/** A launch waits this long for the download; the installers and `programs install` keep the full timeout. */
 const LAUNCH_INSTALL_TIMEOUT_MS = 30_000;
 /** After a failed launch-time install, launches skip the retry this long for the same pin. */
 const INSTALL_RETRY_AFTER_MS = 24 * 60 * 60 * 1000;

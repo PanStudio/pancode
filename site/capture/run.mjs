@@ -23,7 +23,7 @@
 // copilot-sdk runtime on GitHub Copilot. A scenario with `login` starts with no
 // target and finds that login itself. Both copy the operator's Copilot login
 // (copilot-login.mjs) into the scratch home and need --components, the PanCode
-// components directory a scratch `pancode tools install copilot-sdk` filled; it
+// components directory a scratch `pancode programs install copilot-sdk` filled; it
 // is bound read-only, so the SDK is installed once and never into a real home.
 // privateNet isolates the sandbox to its own loopback. peers lists host agent
 // CLIs bound read-only into ~/.local/bin for interop screens.
@@ -188,11 +188,11 @@ const components = copilot ? resolveComponents(values.components) : null;
 function resolveComponents(path) {
 	if (!path)
 		throw new Error(
-			"--components <dir> is required: the components directory of a scratch home after pancode tools install copilot-sdk.",
+			"--components <dir> is required: the components directory of a scratch home after pancode programs install copilot-sdk.",
 		);
 	const dir = resolve(path);
 	if (!existsSync(join(dir, "copilot-sdk")))
-		throw new Error(`${dir} has no copilot-sdk; run pancode tools install copilot-sdk in a scratch home first.`);
+		throw new Error(`${dir} has no copilot-sdk; run pancode programs install copilot-sdk in a scratch home first.`);
 	return dir;
 }
 

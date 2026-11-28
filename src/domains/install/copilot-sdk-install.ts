@@ -23,7 +23,7 @@ import { inspectInstallation } from "./install-method.js";
  */
 export const COPILOT_SDK_PACKAGE = "@github/copilot-sdk";
 export const COPILOT_SDK_VERSION = "1.0.26";
-export const COPILOT_SDK_INSTALL_COMMAND = "pancode tools install copilot-sdk";
+export const COPILOT_SDK_INSTALL_COMMAND = "pancode programs install copilot-sdk";
 
 export interface CopilotSdkInstallOptions {
 	confirm?: (question: string) => Promise<boolean>;

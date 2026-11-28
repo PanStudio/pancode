@@ -32,7 +32,7 @@ export const PANES_PRESETS = [
 		binary: "yazi",
 		summary: "file view rooted at the workspace; picks land in the composer",
 		/** Printed verbatim when the probe finds nothing. */
-		installHint: "pancode tools install yazi",
+		installHint: "pancode programs install yazi",
 	},
 	{
 		id: "logs",

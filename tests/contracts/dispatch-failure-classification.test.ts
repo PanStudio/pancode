@@ -314,7 +314,7 @@ describe("dispatch failure classification", () => {
 
 	it("does not retry a missing runtime SDK component and names the node-side install", () => {
 		const message =
-			"The copilot-sdk runtime needs @github/copilot-sdk@1.0.26. Run: pancode tools install copilot-sdk. This installs a separate component at /home/u/.local/share/pancode/components/copilot-sdk/1.0.26; it does not change PanCode's installation.";
+			"The copilot-sdk runtime needs @github/copilot-sdk@1.0.26. Run: pancode programs install copilot-sdk. This installs a separate component at /home/u/.local/share/pancode/components/copilot-sdk/1.0.26; it does not change PanCode's installation.";
 		const failureClass = classifyTail(`[worker] agent ended with stopReason=error: ${message}`);
 		strictEqual(failureClass, "deterministic-task");
 		strictEqual(decideRetry(failureClass, 0, 2).retry, false);

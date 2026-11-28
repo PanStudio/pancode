@@ -936,7 +936,7 @@ describe("extension binaries service", () => {
 		const pinned = binary(sha256Hex(script));
 		const missing = packBinaryPath("fixture", pinned);
 		strictEqual("reason" in missing && /pancode hub install extension:fixture/u.test(missing.reason), true);
-		strictEqual("reason" in missing && /pancode tools install/u.test(missing.reason), false);
+		strictEqual("reason" in missing && /pancode programs install/u.test(missing.reason), false);
 		const [installed] = await installPackBinaries("fixture", [pinned], { fetch: async () => script, mirror: null });
 		strictEqual(installed?.ok, true);
 		strictEqual(resolvePackBinary("fixture", pinned).source, "vendored");

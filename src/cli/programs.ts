@@ -36,7 +36,7 @@ import { formatColumns, printError, printOk } from "./argv.js";
 import { writeCliFailure } from "./kit/json-out.js";
 import type { ErrorSlug } from "./kit/slugs.js";
 
-const HELP = `pancode tools <command>
+const HELP = `pancode programs <command>
 
 Manage the external terminal programs PanCode can drive. Every one of them is
 optional: PanCode works without them and only uses one when it is present.
@@ -44,15 +44,15 @@ Each is pinned to an exact upstream version and checksum, and a copy already on
 PATH wins over PanCode's own as long as it clears the pinned minimum.
 
 Commands:
-  pancode tools list [--json]           the pinned table, the components, and where each resolves
-  pancode tools status <id> [--json]    one tool or component in detail
-  pancode tools reset-profile <id> [--json]  regenerate a tool's PanCode profile on next
-                                           open (yazi)
-  pancode tools install claude-sdk      provision the separate Claude SDK component
-  pancode tools install copilot-sdk     provision the separate GitHub Copilot SDK component
-  pancode tools install browser         provision the browser tool's playwright-core and headless shell
-  pancode tools install <id> [--force] [--json]  download, verify, and vendor a tool
-  pancode tools remove <id>|--all [--json]  delete every vendored version of a tool
+  pancode programs list [--json]           the pinned table, the components, and where each resolves
+  pancode programs status <id> [--json]    one tool or component in detail
+  pancode programs reset-profile <id> [--json]  regenerate a tool's PanCode profile on next
+                                              open (yazi)
+  pancode programs install claude-sdk      provision the separate Claude SDK component
+  pancode programs install copilot-sdk     provision the separate GitHub Copilot SDK component
+  pancode programs install browser         provision the browser tool's playwright-core and headless shell
+  pancode programs install <id> [--force] [--json]  download, verify, and vendor a tool
+  pancode programs remove <id>|--all [--json]  delete every vendored version of a tool
 
 Downloads happen only here. Nothing on a startup path fetches anything.
 
@@ -64,7 +64,7 @@ checksum-pinned registry. "remove --all" sweeps every tool in the table.
 `;
 
 /**
- * What `tools install` provisions besides the pinned programs: an npm package kept apart from PanCode's own
+ * What `programs install` provisions besides the pinned programs: an npm package kept apart from PanCode's own
  * dependencies, in one directory per pinned version. `resolve` answers the path a session would load, null when
  * nothing is provisioned, and throws on an install that is present and broken.
  */
@@ -86,7 +86,7 @@ const COMPONENTS = [
 
 function componentStatus(component: (typeof COMPONENTS)[number]) {
 	const base = { id: component.id, kind: "component", package: component.package, version: component.version };
-	const remedy = `pancode tools install ${component.id}`;
+	const remedy = `pancode programs install ${component.id}`;
 	try {
 		const path = component.resolve();
 		return path === null
@@ -112,11 +112,11 @@ interface Parsed {
  * failure document on stdout. Every caller returns exit 2, as before.
  */
 function usageFailure(command: string | undefined, slug: ErrorSlug, message: string, json: boolean): number {
-	writeCliFailure({ path: command === undefined ? ["tools"] : ["tools", command], slug, message, json });
+	writeCliFailure({ path: command === undefined ? ["programs"] : ["programs", command], slug, message, json });
 	return 2;
 }
 
-export async function runToolsCommand(argv: ReadonlyArray<string> = []): Promise<number> {
+export async function runProgramsCommand(argv: ReadonlyArray<string> = []): Promise<number> {
 	let parsed: Parsed;
 	try {
 		parsed = parse(argv);
@@ -133,9 +133,9 @@ export async function runToolsCommand(argv: ReadonlyArray<string> = []): Promise
 	}
 
 	// `--all` belongs to `remove` alone. Silently ignoring it elsewhere would let
-	// `tools install --all` read as a request that was honored.
+	// `programs install --all` read as a request that was honored.
 	if (parsed.all && parsed.command !== "remove") {
-		return usageFailure(parsed.command, "flag_conflict", "--all is only valid with `tools remove`", parsed.json);
+		return usageFailure(parsed.command, "flag_conflict", "--all is only valid with `programs remove`", parsed.json);
 	}
 
 	switch (parsed.command) {
@@ -217,17 +217,17 @@ export async function runToolsCommand(argv: ReadonlyArray<string> = []): Promise
 }
 
 /**
- * `tools reset-profile <id>`: the state change `tools status --reset-profile`
+ * `programs reset-profile <id>`: the state change `programs status --reset-profile`
  * used to make from a read verb (A-06). A new leaf, so it follows C7 from the
  * start: an id the registry does not know is `not_found`, exit 1.
  */
 function resetProfile(positional: ReadonlyArray<string>, json: boolean): number {
 	const [id, extra] = positional;
-	if (id === undefined) return usageFailure("reset-profile", "usage", "name a tool: tools reset-profile <id>", json);
+	if (id === undefined) return usageFailure("reset-profile", "usage", "name a tool: programs reset-profile <id>", json);
 	if (extra !== undefined) return usageFailure("reset-profile", "usage", `unexpected argument: ${extra}`, json);
 	if (findPinnedTool(id) === null) {
 		writeCliFailure({
-			path: ["tools", "reset-profile"],
+			path: ["programs", "reset-profile"],
 			slug: "not_found",
 			message: `unknown tool: ${id} (known: ${PINNED_TOOLS.map((row) => row.id).join(", ")})`,
 			json,
@@ -304,7 +304,7 @@ function listTools(json: boolean): number {
  * The one refusal an unknown id gets, from every verb.
  *
  * It names the tools that do exist, because the whole error an operator makes
- * here is a name: `tools remove herd` and `tools remove tmux` want different
+ * here is a name: `programs remove herd` and `programs remove tmux` want different
  * answers, and the registry list gives both of them one. The slug is
  * not_found, but the existing verbs keep exit 2 (v1 kept; C7's exit 1 needs a
  * versioned opt-in).
@@ -313,7 +313,7 @@ function unknownTool(command: string, id: string, json: boolean): number {
 	// Only the verbs that take a component name it among the ids that exist.
 	const known = [...PINNED_TOOLS, ...(command === "remove" ? [] : COMPONENTS)].map((row) => row.id);
 	writeCliFailure({
-		path: ["tools", command],
+		path: ["programs", command],
 		slug: "not_found",
 		message: `unknown tool: ${id} (known: ${known.join(", ")})`,
 		json,
@@ -322,7 +322,7 @@ function unknownTool(command: string, id: string, json: boolean): number {
 }
 
 function statusTool(id: string | undefined, json: boolean): number {
-	if (id === undefined) return usageFailure("status", "usage", "name a tool: tools status <id>", json);
+	if (id === undefined) return usageFailure("status", "usage", "name a tool: programs status <id>", json);
 	const entry = findPinnedTool(id);
 	if (entry === null) {
 		const component = COMPONENTS.find((row) => row.id === id);
@@ -369,7 +369,7 @@ function statusTool(id: string | undefined, json: boolean): number {
 }
 
 async function installOne(id: string | undefined, force: boolean, json: boolean): Promise<number> {
-	if (id === undefined) return usageFailure("install", "usage", "name a tool: tools install <id>", json);
+	if (id === undefined) return usageFailure("install", "usage", "name a tool: programs install <id>", json);
 	if (findPinnedTool(id) === null) {
 		return unknownTool("install", id, json);
 	}
@@ -399,12 +399,12 @@ async function installOne(id: string | undefined, force: boolean, json: boolean)
  * because that is the one case where nothing was inspected at all.
  */
 function removeOne(id: string | undefined, json: boolean): number {
-	if (id === undefined) return usageFailure("remove", "usage", "name a tool: tools remove <id>, or --all", json);
+	if (id === undefined) return usageFailure("remove", "usage", "name a tool: programs remove <id>, or --all", json);
 	if (COMPONENTS.some((row) => row.id === id))
 		return usageFailure(
 			"remove",
 			"usage",
-			`${id} is a component under <data>/components; tools remove deletes vendored programs only`,
+			`${id} is a component under <data>/components; programs remove deletes vendored programs only`,
 			json,
 		);
 	if (findPinnedTool(id) === null) return unknownTool("remove", id, json);
@@ -438,7 +438,7 @@ function removeAll(id: string | undefined, json: boolean): number {
 		return usageFailure(
 			"remove",
 			"flag_conflict",
-			"`tools remove --all` takes no tool id; drop the id or drop --all",
+			"`programs remove --all` takes no tool id; drop the id or drop --all",
 			json,
 		);
 	}
@@ -454,7 +454,7 @@ function removeAll(id: string | undefined, json: boolean): number {
 	const touched = results.filter((result) => result.ok && result.removed.length > 0);
 	const untouched = results.filter((result) => result.ok && result.removed.length === 0);
 	if (touched.length > 0) {
-		process.stdout.write(`  reinstall with \`pancode tools install <id>\`\n`);
+		process.stdout.write(`  reinstall with \`pancode programs install <id>\`\n`);
 	}
 	if (untouched.length > 0) {
 		process.stdout.write(`  ${untouched.length} of ${results.length} had nothing vendored\n`);

@@ -43,7 +43,7 @@ function borrowedToolchainRoot(): string | null {
 	return dir && isAbsolute(dir) ? dir : null;
 }
 
-/** The toolchain root the operator's `pancode tools install` fills. */
+/** The toolchain root the operator's `pancode programs install` fills. */
 export function operatorToolchainRoot(): string {
 	return borrowedToolchainRoot() ?? toolchainRoot();
 }

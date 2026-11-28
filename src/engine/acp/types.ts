@@ -454,7 +454,7 @@ export type AcpWire<T> =
 
 export const noControls = "^[^\\u0000-\\u001f\\u007f]+$";
 
-/** A separately installed runtime component, named by its `pancode tools install` id. */
+/** A separately installed runtime component, named by its `pancode programs install` id. */
 export const AcpRuntimeComponent = Type.Union([Type.Literal("copilot-sdk"), Type.Literal("claude-sdk")]);
 
 /** `_meta["pancode/session"]` on a `session/new`, `session/load`, `session/resume`, fork or handoff result. */
@@ -479,7 +479,7 @@ export type AcpEmptyResult = Static<typeof AcpEmptyResult>;
 export interface AcpErrorDetail {
 	code: string;
 	reason?: string;
-	/** With reason `component-missing`: the `pancode tools install` id the turn's runtime needs. */
+	/** With reason `component-missing`: the `pancode programs install` id the turn's runtime needs. */
 	component?: Static<typeof AcpRuntimeComponent>;
 	supported?: number[];
 	modelSelection?: {

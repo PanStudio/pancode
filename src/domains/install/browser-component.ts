@@ -12,13 +12,13 @@ import { inspectInstallation } from "./install-method.js";
 /**
  * The browser tool's managed component: `playwright-core`, pinned exactly, and the Chromium headless shell its
  * installer fetches for that pin (about 110 MiB on Linux x64). Both land in one versioned prefix under PanCode's data
- * directory, installed on first use after one confirmation or by `pancode tools install browser`, never at
+ * directory, installed on first use after one confirmation or by `pancode programs install browser`, never at
  * install time and never into the operator's own Playwright cache. On Windows the installed Edge is used and no
  * shell is downloaded.
  */
 export const PLAYWRIGHT_CORE_PACKAGE = "playwright-core";
 export const PLAYWRIGHT_CORE_VERSION = "1.65.1";
-export const BROWSER_INSTALL_COMMAND = "pancode tools install browser";
+export const BROWSER_INSTALL_COMMAND = "pancode programs install browser";
 
 const COMPONENT_ID = "browser";
 

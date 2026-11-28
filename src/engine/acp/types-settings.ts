@@ -118,7 +118,7 @@ export const AcpTargetProbe = Type.Object(
 			Type.Literal("probe-failed"),
 			Type.Literal("component-missing"),
 		]),
-		/** With `component-missing`: the `pancode tools install` id the target's runtime needs. */
+		/** With `component-missing`: the `pancode programs install` id the target's runtime needs. */
 		component: Type.Optional(AcpRuntimeComponent),
 	},
 	closed,

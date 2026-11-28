@@ -20,12 +20,12 @@ export function usesOperatorComponents(): boolean {
 	return borrowedComponentsDir() !== null;
 }
 
-/** The components directory the operator's `pancode tools install` fills. */
+/** The components directory the operator's `pancode programs install` fills. */
 export function operatorComponentsDir(): string {
 	return borrowedComponentsDir() ?? join(resolvePancodeDirs().data, "components");
 }
 
-/** Where this process's own `tools install` puts a component version. */
+/** Where this process's own `programs install` puts a component version. */
 export function componentInstallDir(id: string, version: string): string {
 	return join(resolvePancodeDirs().data, "components", id, version);
 }
@@ -58,12 +58,12 @@ export function componentNpmEnv(node: string): Record<string, string> {
 	};
 }
 
-/** The separately installed runtime components `pancode tools install` provides. */
+/** The separately installed runtime components `pancode programs install` provides. */
 export type RuntimeComponentId = "copilot-sdk" | "claude-sdk";
 
 /** CopilotSdkUnavailableError and ClaudeAgentSdkUnavailableError wording, which names the install command. */
 const MISSING_COMPONENT =
-	/\bthe (?:copilot-sdk|claude sdk) runtime needs \S+\. run: pancode tools install (copilot-sdk|claude-sdk)\b/iu;
+	/\bthe (?:copilot-sdk|claude sdk) runtime needs \S+\. run: pancode programs install (copilot-sdk|claude-sdk)\b/iu;
 
 /**
  * The component a failure text says is not installed, or null. A surface that may not copy provider prose
