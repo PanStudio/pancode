@@ -2,10 +2,10 @@
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import { realpathSync } from "node:fs";
 import path from "node:path";
+import { createStdioServerTransport } from "../acp/transport.js";
 import { MAX_TIMER_DELAY_MS } from "../core/timers.js";
 import type { SessionToolLimits } from "../core/tool-limit-flags.js";
 import { parseToolLimitList, toolLimitConflict, toolLimitConstraints } from "../core/tool-limit-flags.js";
-import { createStdioServerTransport } from "../engine/acp/transport.js";
 import { printError } from "./argv.js";
 import { restoreStdout, takeOverStdout, writeRawStdout } from "./output-guard.js";
 import { runPancodeCommand } from "./pancode.js";
@@ -150,9 +150,9 @@ export async function runAcpCommand(
 		try {
 			const [{ ACP_COMMANDS_CAPABILITY }, { serveDeferredAcp }, { createAcpHandshake }, { readPancodeVersionLabel }] =
 				await Promise.all([
-					import("../engine/acp/commands.js"),
-					import("../engine/acp/deferred-boot.js"),
-					import("../engine/acp/server-handshake.js"),
+					import("../acp/commands.js"),
+					import("../acp/deferred-boot.js"),
+					import("../acp/server-handshake.js"),
 					import("../core/build-info.js"),
 				]);
 			const handshake = createAcpHandshake({

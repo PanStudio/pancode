@@ -5,11 +5,11 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
+import { type AcpCommandHost, acpCommandControl } from "../../src/acp/commands.js";
 import type { TelemetryContext } from "../../src/core/telemetry/context.js";
 import { consentText, createReportTextHost, readReportBundle } from "../../src/domains/report/index.js";
 import { openCallJournal } from "../../src/domains/telemetry/call-journal.js";
 import { telemetrySessionDirectory } from "../../src/domains/telemetry/index.js";
-import { type AcpCommandHost, acpCommandControl } from "../../src/engine/acp/commands.js";
 
 const SESSION = "acp-report-session";
 

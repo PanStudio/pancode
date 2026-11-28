@@ -17,6 +17,7 @@ import { invalidateWorkspaceSecretScans } from "../core/sandbox/secret-files.js"
 import type { HomeReadList, SandboxEnvPolicy, SandboxLaunchWhy, UnixSocketMode } from "../core/sandbox/types.js";
 import type { ToolName } from "../core/tool-names.js";
 import { isMcpToolName, ToolNames } from "../core/tool-names.js";
+import { effectiveToolCall, toolSpecPlacement } from "../core/tool-surface.js";
 import type { TurnConstraints } from "../core/turn-constraints.js";
 import { toolSurfaceSources, turnAllowsTool } from "../core/turn-constraints.js";
 import { SESSION_CODE_CONSENT_RULE_ID } from "../core/views/approval-words.js";
@@ -162,7 +163,6 @@ import {
 } from "./registry-verdicts.js";
 import type { ToolResultDigest } from "./result-disposition.js";
 import { shapeToolResult, toolResultDigestFor } from "./result-shaping.js";
-import { effectiveToolCall, toolSpecPlacement } from "./surface.js";
 import type { ToolResult, ToolSpec } from "./tool-spec.js";
 
 /**

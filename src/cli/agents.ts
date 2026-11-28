@@ -4,7 +4,7 @@ import { loadDomains } from "../core/domain-loader.js";
 import { AgentsDomainModule } from "../domains/agents/module.js";
 import { type AgentSpec, isUserVisibleAgent } from "../domains/agents/spec.js";
 import { ConfigDomainModule } from "../domains/config/module.js";
-import { ensurePancodeState } from "../domains/lifecycle/index.js";
+import { ensurePancodeState } from "../domains/install/index.js";
 import { SafetyDomainModule } from "../domains/safety/module.js";
 import { writeCliFailure } from "./kit/json-out.js";
 

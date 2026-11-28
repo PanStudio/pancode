@@ -23,8 +23,8 @@ import { openStoreBackend } from "../../src/domains/store/index.js";
 import { createClaudeWorkerBudgetGate } from "../../src/engine/claude/sdk-runtime.js";
 import { createLoopGuardRegistration } from "../../src/engine/loop-guard.js";
 import { createWorkerSafety } from "../../src/engine/worker-tools.js";
+import { parseWorkerSpec } from "../../src/lib/worker-wire/spec-contract.js";
 import { finishedRun, PRODUCER_INTEGRITY, runEvidenceLabels } from "../../src/tools/worker-evidence.js";
-import { parseWorkerSpec } from "../../src/worker/spec-contract.js";
 import { isolateDispatchState, makeDispatchBundle, restoreDispatchState } from "../harness/dispatch.js";
 import { dispatchStubContext } from "../harness/dispatch-stub-context.js";
 

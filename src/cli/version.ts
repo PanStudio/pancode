@@ -83,14 +83,14 @@ export async function runVersionCommand(args: ReadonlyArray<string> = []): Promi
 		return 0;
 	}
 	if (flags["worker-specs"]) {
-		const { WORKER_SPEC_VERSIONS } = await import("../worker/spec-contract.js");
+		const { WORKER_SPEC_VERSIONS } = await import("../lib/worker-wire/spec-contract.js");
 		process.stdout.write(`${WORKER_SPEC_VERSIONS.join(" ")}\n`);
 		return 0;
 	}
-	const { findPinnedTool } = await import("../domains/toolchain/registry.js");
+	const { findPinnedTool } = await import("../lib/programs/registry.js");
 	const herdr = findPinnedTool("herdr");
 	if (flags.json) {
-		const { WORKER_SPEC_VERSIONS } = await import("../worker/spec-contract.js");
+		const { WORKER_SPEC_VERSIONS } = await import("../lib/worker-wire/spec-contract.js");
 		const build = readBuildProvenance();
 		writeJson(
 			process.stdout,

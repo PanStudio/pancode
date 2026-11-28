@@ -35,6 +35,7 @@ import type {
 } from "../core/telemetry/live-events.js";
 import { stripDeadToolCallMarkup } from "../core/tool-call-markup.js";
 import { isHarnessExtensionToolName, ToolNames } from "../core/tool-names.js";
+import { effectiveToolCall } from "../core/tool-surface.js";
 import type { AgentProduct } from "../domains/agents/spec.js";
 import { dispatchMutatedParentWorkspace } from "../domains/dispatch/workspace-mutation.js";
 import type { MiddlewareHookRegistration } from "../domains/middleware/runtime.js";
@@ -44,7 +45,6 @@ import { hashToolCall } from "../domains/safety/loop-detector.js";
 import { isGatewayChain } from "../tools/gateway-display.js";
 import { gitCallIdentity } from "../tools/git-inspect.js";
 import { resolveReadPath } from "../tools/path-utils.js";
-import { effectiveToolCall } from "../tools/surface.js";
 import { resolveVerifyCall } from "../tools/verify/resolve.js";
 import {
 	clipFailure,

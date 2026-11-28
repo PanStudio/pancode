@@ -5,6 +5,7 @@ import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
 import { DEFAULT_WORKING_SET_SETTINGS } from "../../src/core/defaults.js";
+import { expandChainMessages, gatewayChainReceipts } from "../../src/core/tool-surface.js";
 import { EMPTY_WORKING_SET_VIEW, type PolicyInput } from "../../src/domains/context/working-set/contract.js";
 import { buildEvictionFields, planEviction } from "../../src/domains/context/working-set/engine.js";
 import { foldWorkingSet } from "../../src/domains/context/working-set/fold.js";
@@ -23,7 +24,6 @@ import { registerAllTools } from "../../src/tools/bootstrap.js";
 import { runGatewayChain } from "../../src/tools/gateway/chain.js";
 import { gatewayChainSteps } from "../../src/tools/gateway-display.js";
 import { createRegistry } from "../../src/tools/registry.js";
-import { expandChainMessages, gatewayChainReceipts } from "../../src/tools/surface.js";
 import type { ToolResult } from "../../src/tools/tool-spec.js";
 import { type IsolatedPancodeEnv, isolatePancodeEnv } from "../harness/scratch-env.js";
 

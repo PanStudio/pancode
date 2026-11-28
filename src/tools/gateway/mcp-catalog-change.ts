@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
-import type { McpServerCatalog, McpToolListing } from "../../domains/gateway/mcp/index.js";
+import type { McpServerCatalog, McpToolListing } from "../../domains/mcp/index.js";
 import type { ToolResult } from "../tool-spec.js";
 import type { ServerState } from "./mcp-capability-types.js";
 

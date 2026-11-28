@@ -15,7 +15,7 @@ import {
 	type McpClient,
 	mcpSurface,
 	trustMcpServer,
-} from "../../src/domains/gateway/mcp/index.js";
+} from "../../src/domains/mcp/index.js";
 import { classify } from "../../src/domains/safety/action-classifier.js";
 import { openStoreBackend } from "../../src/domains/store/index.js";
 import { createWorkerSafety } from "../../src/engine/worker-tools.js";

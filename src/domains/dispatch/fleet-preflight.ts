@@ -25,8 +25,12 @@ import type { SandboxAvailability, SandboxBackend } from "../../core/sandbox/typ
 import { shellQuote } from "../../core/shell-quote.js";
 import { withStateFileLockSync } from "../../core/state-file-lock.js";
 import { resolvePancodeDirs } from "../../core/xdg.js";
-import { endpointIdentityHash } from "../../worker/protocol.js";
-import { WORKER_SPEC_HOOKLESS_VERSION, WORKER_SPEC_VERSION, WORKER_SPEC_VERSIONS } from "../../worker/spec-contract.js";
+import { endpointIdentityHash } from "../../lib/worker-wire/protocol.js";
+import {
+	WORKER_SPEC_HOOKLESS_VERSION,
+	WORKER_SPEC_VERSION,
+	WORKER_SPEC_VERSIONS,
+} from "../../lib/worker-wire/spec-contract.js";
 import type { FleetProjectVerification } from "./fleet-project-verification.js";
 import {
 	evaluateRouteFacts,

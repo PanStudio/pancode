@@ -2,6 +2,10 @@
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import { type AcpCommandHost, acpCommandControl } from "../../src/acp/commands.js";
+import { AcpRequestError } from "../../src/acp/errors.js";
+import { servePancodeAcpAgent } from "../../src/acp/server.js";
+import type { AcpJsonRpcPeerTransport } from "../../src/acp/transport.js";
 import { DEFAULT_SETTINGS } from "../../src/core/defaults.js";
 import { createTelemetryHub } from "../../src/core/telemetry/hub.js";
 import {
@@ -14,10 +18,6 @@ import type { FleetRunPreviewResult } from "../../src/domains/dispatch/index.js"
 import type { ProvidersContract } from "../../src/domains/providers/index.js";
 import { evaluateAdmission } from "../../src/domains/safety/admission.js";
 import type { SessionContract, SessionMeta } from "../../src/domains/session/contract.js";
-import { type AcpCommandHost, acpCommandControl } from "../../src/engine/acp/commands.js";
-import { AcpRequestError } from "../../src/engine/acp/errors.js";
-import { servePancodeAcpAgent } from "../../src/engine/acp/server.js";
-import type { AcpJsonRpcPeerTransport } from "../../src/engine/acp/transport.js";
 import { createWorkerSafety } from "../../src/engine/worker-tools.js";
 import { type CreateChatLoopDeps, createChatLoop } from "../../src/session-control/chat-loop.js";
 import { dispatchStubContext } from "../harness/dispatch-stub-context.js";

@@ -7,7 +7,7 @@ import { expandedShellSegments } from "./shell-segments.js";
 /** Recognizable operator CLI installation paths invoked through a model shell.
  * This is command inspection, not confinement of arbitrary scripts or aliases.
  * `excludeHub` keeps only the hard-blocked verbs. Without it the result also
- * covers the verbs that ask the operator under the default posture: PanHub,
+ * covers the verbs that ask the operator under the default posture: the hub,
  * a share import and the extension authoring verbs that execute package code.
  */
 export function invokesPancodeSkillMutation(command: string, excludeHub = false): boolean {
@@ -103,7 +103,7 @@ function resourceCliMutatesSkills(
 	return HUB_MUTATION_VERBS.includes(verb ?? "");
 }
 
-/** PanHub verbs that implement --dry-run (src/cli/hub.ts, src/cli/hub-import.ts). */
+/** The hub verbs that implement --dry-run (src/cli/hub.ts, src/cli/hub-import.ts). */
 const HUB_DRY_RUN_VERBS = ["install", "import", "update", "enable", "disable", "remove", "package"];
 
 const HUB_MUTATION_VERBS = [

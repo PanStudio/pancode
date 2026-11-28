@@ -332,7 +332,7 @@ function PlanDialog({
 	return (
 		<Dialog
 			title={title}
-			eyebrow={applying.data ? "PanHub · what happened" : "PanHub · review before applying"}
+			eyebrow={applying.data ? "Hub · what happened" : "Hub · review before applying"}
 			size="wide"
 			onClose={close}
 			initialFocus={cancel}

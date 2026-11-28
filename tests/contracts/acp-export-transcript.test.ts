@@ -6,6 +6,7 @@ import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
+import { type AcpCommandHost, acpCommandControl } from "../../src/acp/commands.js";
 import type { DomainContext } from "../../src/core/domain-loader.js";
 import { createTelemetryHub } from "../../src/core/telemetry/hub.js";
 import { collectSessionEntries } from "../../src/domains/session/compaction/session-entries.js";
@@ -13,7 +14,6 @@ import type { SessionContract } from "../../src/domains/session/contract.js";
 import type { SessionEntry } from "../../src/domains/session/entries.js";
 import { createSessionBundle } from "../../src/domains/session/extension.js";
 import { renderTranscriptMarkdown, writeTranscriptExport } from "../../src/domains/session/transcript-export.js";
-import { type AcpCommandHost, acpCommandControl } from "../../src/engine/acp/commands.js";
 import { openSession, sessionPaths } from "../../src/engine/session.js";
 import { isolatePancodeEnv } from "../harness/scratch-env.js";
 

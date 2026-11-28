@@ -105,7 +105,7 @@ import {
 import { readTelemetryScopeFiles, verifyTelemetryScope } from "../../src/domains/telemetry/seal.js";
 import { createSessionJournals } from "../../src/domains/telemetry/session-journals.js";
 import { usageWindow } from "../../src/domains/telemetry/usage-window.js";
-import { isReceiptBearingFrame } from "../../src/worker/protocol.js";
+import { isReceiptBearingFrame } from "../../src/lib/worker-wire/protocol.js";
 import { checkTelemetryProducer, checkTelemetryWrites } from "../boundaries/check-boundaries.js";
 import { fixtureEnvelope, measuredRunSpend } from "../harness/receipt.js";
 import { isolatePancodeEnv, scratchPancodeEnvVars } from "../harness/scratch-env.js";

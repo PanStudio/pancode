@@ -120,7 +120,7 @@ export const ExtensionBinaryRanSchema = Type.Object(
 	},
 	closed,
 );
-/** One PanHub lifecycle operation on a pack: what changed, at which digests, and who confirmed it (#434). */
+/** One hub lifecycle operation on a pack: what changed, at which digests, and who confirmed it (#434). */
 export const HubLifecycleSchema = Type.Object(
 	{
 		operationId: ExistingId,

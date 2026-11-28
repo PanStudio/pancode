@@ -15,7 +15,7 @@ import type { ConfigContract } from "../../src/domains/config/index.js";
 import { ConfigDomainModule } from "../../src/domains/config/module.js";
 import { createDispatchDomainModule } from "../../src/domains/dispatch/module.js";
 import { type Ledger, openLedger } from "../../src/domains/dispatch/state.js";
-import { ensurePancodeState } from "../../src/domains/lifecycle/index.js";
+import { ensurePancodeState } from "../../src/domains/install/index.js";
 import { createMiddlewareDomain } from "../../src/domains/middleware/module.js";
 import { createPromptsDomainModule } from "../../src/domains/prompts/module.js";
 import { ProvidersDomainModule } from "../../src/domains/providers/module.js";

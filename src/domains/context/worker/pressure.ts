@@ -3,8 +3,8 @@
 import { assistantMessageNeverSent } from "../../../core/assistant-model.js";
 import { DEFAULT_WORKING_SET_SETTINGS } from "../../../core/defaults.js";
 import type { ContextFoldPayload } from "../../../core/telemetry/live-events.js";
+import { effectiveToolCall } from "../../../core/tool-surface.js";
 import type { AgentMessage } from "../../../engine/types.js";
-import { effectiveToolCall } from "../../../tools/surface.js";
 import { estimateAgentContextBreakdown, estimateAgentMessageTokens } from "../../session/context-accounting.js";
 import type { EvictedItem } from "../../session/entries.js";
 import type { FoldCheckpoint } from "../fold/contract.js";

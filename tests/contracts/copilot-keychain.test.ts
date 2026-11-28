@@ -9,7 +9,7 @@ import { copilotSignInFinding } from "../../src/cli/doctor-copilot.js";
 import { runPancodeCommand } from "../../src/cli/pancode.js";
 import { COPILOT_HEADLESS_LOGIN_FIX, copilotKeychainAllowed } from "../../src/core/copilot-keychain.js";
 import { resolvePancodeDirs } from "../../src/core/xdg.js";
-import { runDoctorModelChecks } from "../../src/domains/lifecycle/doctor.js";
+import { runDoctorModelChecks } from "../../src/domains/install/doctor.js";
 import { CopilotLoginRequiredError, createCopilotClient } from "../../src/engine/copilot/client.js";
 import type { CopilotSdkModule } from "../../src/engine/copilot/sdk-module.js";
 import { type IsolatedPancodeEnv, isolatePancodeEnv } from "../harness/scratch-env.js";

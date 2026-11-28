@@ -4,16 +4,13 @@ import type { WorkerRosters } from "../core/defaults.js";
 import type { TelemetryHub } from "../core/telemetry/hub.js";
 import type { getTerminationCoordinator } from "../core/termination.js";
 import { ToolNames } from "../core/tool-names.js";
+import { coordinatorToolPlacement } from "../core/tool-surface.js";
 import type { AgentSpec } from "../domains/agents/spec.js";
 import type { WorkerContextSnapshot } from "../domains/context/worker/contract.js";
 import type { DispatchContract } from "../domains/dispatch/contract.js";
 import type { AgentRoleFactsResolver } from "../domains/dispatch/execution-role.js";
 import { FLEET_PLACEMENT_HEADER, rememberSessionFleetNode } from "../domains/dispatch/fleet-placement-preference.js";
-import {
-	DEFAULT_KILL_GRACE_MS,
-	DEFAULT_TEARDOWN_BOUND_MS,
-	type McpElicitationHost,
-} from "../domains/gateway/mcp/index.js";
+import { DEFAULT_KILL_GRACE_MS, DEFAULT_TEARDOWN_BOUND_MS, type McpElicitationHost } from "../domains/mcp/index.js";
 import type { PanesOperations } from "../domains/mux/operations.js";
 import type { DecisionLedgerEntry } from "../domains/session/entries.js";
 import type { AutonomyLevel } from "../lib/autonomy/autonomy.js";
@@ -45,7 +42,6 @@ import type { ReportToolDeps } from "./report.js";
 import { reportToolSurface } from "./report-surface.js";
 import { createSelfCompactTool, type RequestSelfCompact } from "./self-compact.js";
 import { steerToolSurface } from "./steer-surface.js";
-import { coordinatorToolPlacement } from "./surface.js";
 import type { ToolSpec } from "./tool-spec.js";
 
 export { toolPromptHintsForNames };

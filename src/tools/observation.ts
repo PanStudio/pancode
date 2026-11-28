@@ -72,7 +72,7 @@ export const OBSERVE_SELF_CAPS = {
 	contextDocs: 16 * 1024,
 	contextSkills: 50 * 1024,
 	contextWorkspace: 50 * 1024,
-	// PanHub rows are metadata: name, owner, origin, availability, invocation.
+	// The hub rows are metadata: name, owner, origin, availability, invocation.
 	// A full page of 50 stays well inside this, and a smaller cap than the
 	// skills catalog is what keeps a catalog read from crowding out the turn.
 	contextHub: 16 * 1024,

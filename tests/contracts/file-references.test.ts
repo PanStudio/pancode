@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it } from "node:test";
 import { buildInitialMessage } from "../../src/cli/initial-message.js";
-import { expandInlineFileReferencesAsync, INLINE_TEXT_MAX_BYTES } from "../../src/core/file-references.js";
+import { expandInlineFileReferencesAsync, INLINE_TEXT_MAX_BYTES } from "../../src/tools/file-references.js";
 
 /** One-member ustar archive with a valid header checksum. */
 function tarOf(name: string, content: string): Buffer {

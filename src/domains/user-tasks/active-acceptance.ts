@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
-import { effectiveToolCall, expandChainMessages } from "../../tools/surface.js";
+import { effectiveToolCall, expandChainMessages } from "../../core/tool-surface.js";
 import { isSessionEntry } from "../session/entries.js";
 import type { TaskBoardSnapshot } from "../session/task-board.js";
 import type { UserTaskAcceptance } from "./acceptance.js";

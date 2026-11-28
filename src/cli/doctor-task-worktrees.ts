@@ -4,7 +4,7 @@ import { existsSync } from "node:fs";
 import { readSettings } from "../core/config.js";
 import { shellQuote } from "../core/shell-quote.js";
 import { rawDurationMs } from "../core/timers.js";
-import type { DoctorFinding } from "../domains/lifecycle/doctor.js";
+import type { DoctorFinding } from "../domains/install/doctor.js";
 import { gitCheckoutRoot, type PreservedTaskWorktree } from "../tools/task-worktree.js";
 import { clearStaleTaskClaim, listPreservedTaskWorktrees } from "../tools/task-worktree-claims.js";
 import {

@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import type { OutputStyle } from "../../core/defaults.js";
 import { tierPolicy } from "../../core/presentation-tier.js";
-import type { DoctorFinding } from "../../domains/lifecycle/doctor.js";
+import type { DoctorFinding } from "../../domains/install/doctor.js";
 import { GLYPH } from "../theme/index.js";
 import { renderTranscriptReport } from "./report.js";
 

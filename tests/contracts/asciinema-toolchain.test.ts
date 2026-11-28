@@ -12,8 +12,8 @@ import {
 	executeFleetToolInstall,
 	prepareFleetToolInstall,
 } from "../../src/domains/dispatch/fleet-tool-install.js";
-import { installPinnedTool } from "../../src/domains/toolchain/install.js";
-import { findPinnedTool } from "../../src/domains/toolchain/registry.js";
+import { installPinnedTool } from "../../src/lib/programs/install.js";
+import { findPinnedTool } from "../../src/lib/programs/registry.js";
 import { isolatePancodeEnv } from "../harness/scratch-env.js";
 
 let env: Awaited<ReturnType<typeof isolatePancodeEnv>>;
@@ -103,7 +103,7 @@ it("previews explicit user-level SSH provisioning and rejects changed connection
 		});
 	});
 	const plan = prepareFleetToolInstall("seven", "asciinema");
-	match(plan.command, /tools install asciinema --json/);
+	match(plan.command, /programs install asciinema --json/);
 	match(plan.command, /TMPDIR=/);
 	equal(plan.command.includes("sudo"), false);
 	match(describeFleetToolInstall(plan), /GPL-3.0-or-later/);

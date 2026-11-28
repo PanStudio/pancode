@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 /**
- * PanHub's review and outcome surface.
+ * The hub's review and outcome surface.
  *
  * One overlay covers both halves of a managed change, because they are the same
  * question asked twice: what would this do, and then what did it actually do.
@@ -169,7 +169,7 @@ function stepFacts(step: HubPlanStep, review: HubStepReview | undefined, detail:
 	if (step.content?.resources.length)
 		facts.push({
 			label: "Adds",
-			// Detailed names every component a step adds, as PanHub pane does; the paths key names them at any tier.
+			// Detailed names every component a step adds, as the hub pane does; the paths key names them at any tier.
 			value: resourceSummary(
 				step.content.resources.map((item) => ({ kind: item.kind, name: `${item.name}${item.valid ? "" : " (invalid)"}` })),
 				detail || tierPolicy().pickerDetail === "pane",
@@ -237,7 +237,7 @@ function reviewChoices(applicable: boolean, verb: string, consequence: string, d
 		// The rows say what Esc does now: with the paths open it hides them, the way the rail says.
 		detail
 			? { key: "Esc", verb: "back to review", consequence: "closes the paths; nothing changes" }
-			: { key: "Esc", verb: "cancel", consequence: "changes nothing and returns to PanHub" },
+			: { key: "Esc", verb: "cancel", consequence: "changes nothing and returns to the hub" },
 		{
 			key: "Tab",
 			verb: detail ? "hide paths" : "paths",
@@ -321,13 +321,13 @@ export function formatHubPlanReview(
 const EXTENSION_REFRESH_TEXT = {
 	reloading: "Extensions are restarting now; a notice says when they are ready.",
 	queued:
-		"Extensions restart once you close PanHub and PanCode is idle; until then the ones already running stay as they are.",
+		"Extensions restart once you close the hub and PanCode is idle; until then the ones already running stay as they are.",
 	unavailable: "This session has no extension host, so extensions were not restarted; restart PanCode to load them.",
 } as const;
 
 /** The refresh as one sentence for a notice, in what the operator will see next. */
 export function hubRefreshSummary(refresh: HubRefreshResult): string {
-	if (refresh.status === "failed") return `The session refresh failed (${refresh.error}); reopen PanHub and press r.`;
+	if (refresh.status === "failed") return `The session refresh failed (${refresh.error}); reopen the hub and press r.`;
 	if (refresh.status === "not-applicable") return "";
 	if (refresh.extensions) return EXTENSION_REFRESH_TEXT[refresh.extensions];
 	return "This session already sees the change.";
@@ -380,7 +380,7 @@ function refreshChip(refresh: HubRefreshResult): string {
  */
 function evidenceLabel(evidence: "pre-refresh" | "post-refresh", refresh: HubRefreshResult): string {
 	if (evidence === "post-refresh") return "";
-	if (refresh.status === "refreshed") return "read before this session reloaded; reopen PanHub to see what loads now";
+	if (refresh.status === "refreshed") return "read before this session reloaded; reopen the hub to see what loads now";
 	if (refresh.status === "failed") return "read before the reload, which failed, so what loads now is unverified";
 	return "read from disk; no reload was needed";
 }
@@ -518,7 +518,7 @@ export function formatHubOutcome(rawResult: HubApplyResult, width: number): stri
 				{
 					key: "Esc",
 					verb: "close",
-					consequence: result.committed > 0 ? "returns to PanHub; the change stands" : "returns to PanHub",
+					consequence: result.committed > 0 ? "returns to the hub; the change stands" : "returns to the hub",
 				},
 			],
 			width,
@@ -842,7 +842,7 @@ function openReviewOverlay(tui: TUI, spec: ReviewOverlaySpec): OverlayHandle {
 		anchor: "center",
 		width: hubReviewWidth(spec.columns),
 		markerId: "hub-review",
-		title: () => (body.outcome ? "PanHub outcome" : spec.title),
+		title: () => (body.outcome ? "Hub outcome" : spec.title),
 		footerHint: (innerWidth: number) =>
 			body.outcome
 				? buildResponsiveHint(spec.refreshFailed() ? [{ key: "R", verb: "retry refresh" }] : [], {
@@ -883,7 +883,7 @@ export interface OpenHubReviewOptions {
 export function openHubReviewOverlay(tui: TUI, options: OpenHubReviewOptions): OverlayHandle {
 	let applied: HubApplyResult | null = null;
 	return openReviewOverlay(tui, {
-		title: `PanHub ${options.plan.request.operation}`,
+		title: `Hub ${options.plan.request.operation}`,
 		verb: options.plan.request.operation,
 		columns: options.columns,
 		applicable: options.plan.applicable,
@@ -927,7 +927,7 @@ export interface OpenHubImportOptions {
 export function openHubImportOverlay(tui: TUI, options: OpenHubImportOptions): OverlayHandle {
 	let applied: HubApplyResult | null = null;
 	return openReviewOverlay(tui, {
-		title: "PanHub import",
+		title: "Hub import",
 		verb: "import",
 		columns: options.columns,
 		applicable: options.plan.action === "install",

@@ -10,7 +10,7 @@ import { readHubInventory } from "../../../../../src/domains/resources/hub-inven
  * `os.homedir()` inside a worker thread reads the process's real environment, not the environment the
  * worker was started with, so a worker whose own `HOME` differs (the scratch home under test) pins it.
  * A pinned home bypasses PANCODE_INTEROP_HOME and each agent's own home variable, so it is pinned only then:
- * in normal use the two homes agree and `PANCODE_INTEROP_HOME=none` keeps the host's skills out of PanHub.
+ * in normal use the two homes agree and `PANCODE_INTEROP_HOME=none` keeps the host's skills out of the hub.
  */
 function workerHome(): string | undefined {
 	const home = process.env.HOME || process.env.USERPROFILE || undefined;

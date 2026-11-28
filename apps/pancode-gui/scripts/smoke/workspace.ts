@@ -372,7 +372,7 @@ export async function workspaceSteps(run: SmokeRun) {
 			await page.screenshot({ path: join(output, `usage-${width}.png`), fullPage: true });
 	});
 	await step("hub", async () => {
-		await navigate("PanHub");
+		await navigate("Hub");
 		// The catalog is the landing collection: plan, review, apply, then remove, all against the bundled index.
 		const offer = page.locator("main").getByRole("listitem", { name: "skill:map-codebase", exact: true });
 		await offer.waitFor();
@@ -417,7 +417,7 @@ export async function workspaceSteps(run: SmokeRun) {
 		assert.equal(await page.locator("main .hub-packages > li").count(), 1);
 		await page
 			.locator("main")
-			.getByRole("tablist", { name: "PanHub collections" })
+			.getByRole("tablist", { name: "Hub collections" })
 			.getByRole("tab", { name: /^Skills · [1-9]/ })
 			.click();
 		await page.locator("main").getByRole("heading", { name: "fixture-skill", exact: true }).waitFor();

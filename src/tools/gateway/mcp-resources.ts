@@ -24,7 +24,7 @@ import type {
 	McpResourceListing,
 	McpServerCatalog,
 	McpToolCallResult,
-} from "../../domains/gateway/mcp/index.js";
+} from "../../domains/mcp/index.js";
 import {
 	DEFAULT_RESULT_TEXT_BYTES,
 	isMcpAppResource,
@@ -33,7 +33,7 @@ import {
 	mcpToolActionClass,
 	renderMcpContent,
 	resourceLinkLine,
-} from "../../domains/gateway/mcp/index.js";
+} from "../../domains/mcp/index.js";
 import { acceptsImageInput } from "../../domains/providers/image-input.js";
 import type { WorkerMcpAttestation } from "../../domains/safety/worker-permit.js";
 import { readMaxBytes } from "../read.js";

@@ -12,6 +12,7 @@ import type {
 	ToolBudgetExceededPayload,
 } from "../core/telemetry/live-events.js";
 import { ToolNames } from "../core/tool-names.js";
+import { effectiveToolCall, gatewayChainReceipts } from "../core/tool-surface.js";
 import type { NoticeLevel, NotificationLevel } from "../core/views/notice-words.js";
 import type { ChatCancelOptions, ChatLoopEvent, QueuedChatMessage } from "../session-control/chat-loop.js";
 import { COMPACTION_LINE_LEAD } from "../session-control/compaction-lines.js";
@@ -24,7 +25,6 @@ import {
 import type { NoticeSource } from "../session-control/notice-source.js";
 import { subscribeSessionNotices } from "../session-control/session-notices.js";
 import { chainStepToolCallId, displayToolCall, gatewayChainSteps } from "../tools/gateway-display.js";
-import { effectiveToolCall, gatewayChainReceipts } from "../tools/surface.js";
 import { budgetAlertNotice, safetyBlockedNotice } from "./bus-notices.js";
 import { classifyNoticeLevel } from "./footer/notifications.js";
 import type { AgentStatus, TurnSummary } from "./status/index.js";

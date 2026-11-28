@@ -3,11 +3,11 @@
 import { deepStrictEqual, ok, rejects, strictEqual } from "node:assert/strict";
 import { resolve } from "node:path";
 import { test } from "node:test";
+import { AcpRequestError } from "../../src/acp/errors.js";
+import { servePancodeAcpAgent } from "../../src/acp/server.js";
+import type { AcpJsonRpcPeerTransport } from "../../src/acp/transport.js";
 import { ToolNames } from "../../src/core/tool-names.js";
 import type { SessionContract } from "../../src/domains/session/contract.js";
-import { AcpRequestError } from "../../src/engine/acp/errors.js";
-import { servePancodeAcpAgent } from "../../src/engine/acp/server.js";
-import type { AcpJsonRpcPeerTransport } from "../../src/engine/acp/transport.js";
 import { createWorkerSafety } from "../../src/engine/worker-tools.js";
 import { createGatewayTool } from "../../src/tools/gateway/index.js";
 import { createMcpCapabilitySource } from "../../src/tools/gateway/mcp-capabilities.js";

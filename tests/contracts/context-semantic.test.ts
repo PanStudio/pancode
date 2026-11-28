@@ -10,9 +10,9 @@ import { sha256Hex } from "../../src/core/hash.js";
 import { ToolNames } from "../../src/core/tool-names.js";
 import type { PromptsContract } from "../../src/domains/prompts/contract.js";
 import type { ProvidersContract } from "../../src/domains/providers/index.js";
+import { createSemanticBackgroundRefresh } from "../../src/domains/semantic/background.js";
 import type { SemanticHit, SemanticRecord, SemanticSearchResult } from "../../src/domains/semantic/index.js";
 import { SemanticIndex } from "../../src/domains/semantic/index.js";
-import { createSemanticBackgroundRefresh } from "../../src/domains/semantic-app/background.js";
 import { createWorkerSafety } from "../../src/engine/worker-tools.js";
 import { createTurnContext } from "../../src/session-control/turn-context.js";
 import type { TurnMiddleware } from "../../src/session-control/turn-middleware.js";
@@ -57,7 +57,7 @@ function hit(id: string): SemanticHit {
 test("background failures before checkpoint report diagnostics, coalesce work and retain the generation", {
 	timeout: 5000,
 }, async (t) => {
-	const { openSemanticApp, statusSemantic } = await import("../../src/domains/semantic-app/index.js");
+	const { openSemanticApp, statusSemantic } = await import("../../src/domains/semantic/index.js");
 	const settings = structuredClone(DEFAULT_SETTINGS);
 	settings.targets = [{ id: "embedding", runtime: "litellm", url: "http://fixture.invalid" }];
 	Object.assign(settings.context.semantic, {

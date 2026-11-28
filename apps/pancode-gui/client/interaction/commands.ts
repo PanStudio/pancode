@@ -67,7 +67,7 @@ export const DESTINATIONS: readonly Destination[] = [
 	{ label: "Arena", path: "/arena", keywords: ["compare", "models", "vote", "bench"] },
 	{ label: "Research", path: "/research", keywords: ["hill", "climb", "optimize", "metric", "campaign", "ratchet"] },
 	{ label: "Skills", path: "/skills", keywords: ["instructions", "components", "capabilities"] },
-	{ label: "PanHub", path: "/hub", keywords: ["packs", "skills", "components", "agents", "extensions"] },
+	{ label: "Hub", path: "/hub", keywords: ["packs", "skills", "components", "agents", "extensions"] },
 	{ label: "System", path: "/system", keywords: ["doctor", "health", "paths"] },
 	{ label: "Usage", path: "/usage", keywords: ["tokens", "cost", "spend", "report"] },
 	{ label: "Targets", path: "/settings/targets", keywords: ["providers", "models"] },

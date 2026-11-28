@@ -2,10 +2,10 @@
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import { type AcpCommandHost, acpCommandControl } from "../../src/acp/commands.js";
 import { createTelemetryHub } from "../../src/core/telemetry/hub.js";
 import type { DispatchRequest } from "../../src/domains/dispatch/index.js";
 import { classifyVerifiability, verifiabilityRoute } from "../../src/domains/evidence/verifiability.js";
-import { type AcpCommandHost, acpCommandControl } from "../../src/engine/acp/commands.js";
 import type { AutonomyLevel } from "../../src/lib/autonomy/autonomy.js";
 
 test("a step a check settles is executable, numeric or reproducible; anything else is a judgment", () => {

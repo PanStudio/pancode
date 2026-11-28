@@ -2,8 +2,8 @@
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import { performance } from "node:perf_hooks";
 import { resolvePancodeDirs } from "../core/xdg.js";
-import { inspectInstallation } from "../domains/lifecycle/install-method.js";
-import { createUpdateCheck, type UpdateNotice } from "../domains/lifecycle/update-check.js";
+import { inspectInstallation } from "../domains/install/install-method.js";
+import { createUpdateCheck, type UpdateNotice } from "../domains/install/update-check.js";
 
 export interface UpdateMonitorOptions {
 	runningVersion: string;

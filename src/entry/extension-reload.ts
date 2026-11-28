@@ -58,18 +58,18 @@ import {
 	type UserHookCommandRunner,
 } from "../domains/middleware/index.js";
 import {
-	buildExtensionRuntimeToolSpecs,
-	ensureDetailLedger,
-	promotedRuntimeTools,
-} from "../tools/extension-runtime-tools.js";
-import type { ToolRegistry } from "../tools/registry-contract.js";
-import {
 	WORKER_EXTENSION_HOOKS_MAX,
 	type WorkerExtensionHook,
 	type WorkerHookEffect,
 	type WorkerHookRequest,
 	type WorkerHookRun,
-} from "../worker/protocol.js";
+} from "../lib/worker-wire/protocol.js";
+import {
+	buildExtensionRuntimeToolSpecs,
+	ensureDetailLedger,
+	promotedRuntimeTools,
+} from "../tools/extension-runtime-tools.js";
+import type { ToolRegistry } from "../tools/registry-contract.js";
 import { capturedHookSourcesFor } from "./extension-hook-sources.js";
 import {
 	buildExtensionPromptGate,

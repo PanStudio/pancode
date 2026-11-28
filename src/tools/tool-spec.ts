@@ -3,6 +3,7 @@
 import type { TSchema } from "typebox";
 import { normalizePromptHint } from "../core/prompt-hint.js";
 import type { ToolName } from "../core/tool-names.js";
+import type { ToolPlacement } from "../core/tool-surface.js";
 import type { ToolCallLanding } from "../domains/middleware/types.js";
 import type { ActionClass, ClassifierCall } from "../domains/safety/action-classifier.js";
 import type { ImageContent } from "../engine/types.js";
@@ -10,7 +11,6 @@ import type { DispatchPlanView } from "./dispatch-plan.js";
 import type { ToolPresentationPolicy } from "./presentation.js";
 import type { HostEffectCall, OutboundFile, ToolInvokeOptions } from "./registry-contract.js";
 import type { ToolResultDisposition } from "./result-disposition.js";
-import type { ToolPlacement } from "./surface.js";
 
 export type ToolExecutionMode = "sequential" | "parallel";
 
@@ -121,7 +121,7 @@ export interface ToolSpec {
 	/**
 	 * Which surface carries this tool: `direct` attaches its schema on every
 	 * turn, `gateway` hides it behind `gateway` find/describe/call. Absent means
-	 * the name's placement in src/tools/surface.ts. Placement changes what the
+	 * the name's placement in src/core/tool-surface.ts. Placement changes what the
 	 * model sees, never admission: `invoke` runs any registered spec by name.
 	 */
 	placement?: ToolPlacement;

@@ -10,9 +10,9 @@ import {
 	inactiveInstallerRecord,
 	inspectInstallation,
 	launcherPathFor,
-} from "../domains/lifecycle/install-method.js";
-import { describeTracking } from "../domains/lifecycle/install-plan.js";
-import { nativeAutoUpdatePolicy } from "../domains/lifecycle/native-update.js";
+} from "../domains/install/install-method.js";
+import { describeTracking } from "../domains/install/install-plan.js";
+import { nativeAutoUpdatePolicy } from "../domains/install/native-update.js";
 import { writeCliFailure } from "./kit/json-out.js";
 
 const HELP = `pancode paths [--json]

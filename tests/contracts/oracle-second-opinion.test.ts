@@ -2,6 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import { type AcpCommandHost, acpCommandControl } from "../../src/acp/commands.js";
 import { createTelemetryHub } from "../../src/core/telemetry/hub.js";
 import type { DispatchRequest } from "../../src/domains/dispatch/index.js";
 import {
@@ -9,7 +10,6 @@ import {
 	modelLineage,
 	secondOpinionIndependence,
 } from "../../src/domains/providers/model-lineage.js";
-import { type AcpCommandHost, acpCommandControl } from "../../src/engine/acp/commands.js";
 
 test("model ids resolve to their training family through gateway prefixes and aliases", () => {
 	const cases: Array<[string, string]> = [

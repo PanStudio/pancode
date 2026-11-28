@@ -13,12 +13,12 @@ import {
 	removablePancodeRootProblem,
 	xdgBaseDir,
 } from "../../src/core/xdg.js";
-import type { Installation } from "../../src/domains/lifecycle/install-method.js";
+import type { Installation } from "../../src/domains/install/install-method.js";
 import {
 	planSelfUpgrade,
 	runApprovedSelfUpgrade,
 	type SelfUpgradePlan,
-} from "../../src/domains/lifecycle/self-upgrade.js";
+} from "../../src/domains/install/self-upgrade.js";
 import { createInteractiveUpgradeFlow } from "../../src/interactive/interactive-upgrade.js";
 import type { AskUserHandler } from "../../src/tools/ask-user.js";
 

@@ -179,7 +179,7 @@ describe("hub import of foreign plugin packages", () => {
 		strictEqual(output.split("skills/second").length - 1, 1, output);
 	});
 
-	it("keeps a PanHub plugin, foreign recipe imports and real harness runtimes independently owned across reloads", async () => {
+	it("keeps a hub plugin, foreign recipe imports and real harness runtimes independently owned across reloads", async () => {
 		for (const name of ["lab-status", "measurements"]) {
 			const installed = installExtension(path.resolve("examples/extensions", name), { cwd, scope: "project" });
 			ok(installed.extension, JSON.stringify(installed.diagnostics));

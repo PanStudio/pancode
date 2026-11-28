@@ -15,8 +15,8 @@ import { PROJECT_SKILL_TRUST_REMEDY } from "./availability.js";
 import { loadSkills, type Skill } from "./loader.js";
 
 /**
- * Skill-facing adapter for the canonical PanHub, plus explicit authoring probes
- * of unmanaged source trees. Runtime offers and activation use PanHub;
+ * Skill-facing adapter for the canonical hub, plus explicit authoring probes
+ * of unmanaged source trees. Runtime offers and activation use the hub;
  * only an explicit catalogDir/indexPath request invokes a raw source audit.
  */
 
@@ -269,7 +269,7 @@ function catalogSkills(dir: string, diagnostics: string[]): MarketplaceSkill[] {
 }
 
 export function discoverMarketplaceSkills(options: DiscoverMarketplaceOptions = {}): MarketplaceDiscoveryResult {
-	// Automatic promotion and /skill consume the same pinned PanHub as the CLI.
+	// Automatic promotion and /skill consume the same pinned hub as the CLI.
 	// Explicit source probes below support authoring audits of unmanaged skill trees.
 	if (options.indexPath === undefined && options.catalogDir === undefined) {
 		const hub = discoverHub(options.cwd ? { cwd: options.cwd } : {});
@@ -341,7 +341,7 @@ export interface InstallSkillResult {
 	warnings: string[];
 }
 
-/** Skill-offer adapter: resolve a package and commit through the shared PanHub engine. */
+/** Skill-offer adapter: resolve a package and commit through the shared hub engine. */
 export function installSkill(input: InstallSkillInput): InstallSkillResult {
 	const source = input.source.trim();
 	const cwd = input.cwd ?? process.cwd();

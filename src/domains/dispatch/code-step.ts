@@ -41,13 +41,13 @@ import { type MainSandboxPolicy, planMainSandboxSpawn } from "../../core/sandbox
 import { signalSandboxPayload } from "../../core/sandbox/signal.js";
 import { pancodeStateDir } from "../../core/xdg.js";
 import { redactCommandOutputSecrets } from "../../lib/secrets/redact.js";
-import { type CheckoutSnapshot, changedCheckoutPaths, snapshotCheckout } from "../../tools/checkout-changes.js";
 import {
 	PLAYBOOK_COMMAND_BASE_ENV,
 	type PlaybookCommand,
 	validatePlaybookCommandArgs,
 } from "../agents/playbook-commands.js";
 import type { CodeReportCheck, CodeReportResult } from "../agents/result-contract-code-report.js";
+import { type CheckoutSnapshot, changedCheckoutPaths, snapshotCheckout } from "./checkout-changes.js";
 import { writeCodeStepCommands } from "./code-step-commands.js";
 
 /** Bytes of command output retained for the artifact log. */
@@ -720,7 +720,7 @@ export async function runCodeStep(input: CodeStepRunInput): Promise<CodeStepOutc
 	];
 	const commandRuns = [{ argv: [...argv], cwd, exitCode: spawned.exitCode, durationMs: primaryDurationMs }];
 	const testFiles = input.mutatedPaths?.length
-		? (await import("../../tools/verify/test-files.js")).resolveTestFileChecks(input.workspaceRoot, input.mutatedPaths)
+		? (await import("./verify-test-files.js")).resolveTestFileChecks(input.workspaceRoot, input.mutatedPaths)
 		: { checks: [], notes: [], refusals: [], unavailable: [] };
 	// A changed test that cannot be run fails the step so the loop repairs or reports it, never a silent pass.
 	for (const refusal of testFiles.refusals) {

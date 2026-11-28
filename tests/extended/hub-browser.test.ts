@@ -123,7 +123,7 @@ function plain(value: string): string {
 	return stripVTControlCharacters(value);
 }
 
-describe("PanHub browser projection", () => {
+describe("The hub browser projection", () => {
 	it("keeps origin, format, trust and availability as separate facts", (t) => {
 		// Format and the source address are detailed facts.
 		setPresentationTier("detailed");
@@ -284,7 +284,7 @@ describe("PanHub browser projection", () => {
 	});
 });
 
-describe("PanHub review and outcome wording", () => {
+describe("The hub review and outcome wording", () => {
 	it("states operation, scope, dependencies, reverse dependencies, fallback and recovery", () => {
 		const plan = hubPlanFixture({
 			operation: "remove",
@@ -372,7 +372,7 @@ describe("PanHub review and outcome wording", () => {
 				90,
 			).join("\n"),
 		);
-		match(body, /reopen PanHub\s+to\s+see\s+what\s+loads\s+now/);
+		match(body, /reopen the hub\s+to\s+see\s+what\s+loads\s+now/);
 		// A package can be on disk while one resource is still unavailable.
 		match(body, /not available: skill:ship \(untrusted project import\)/);
 		match(body, /This session already sees the change/);
@@ -639,7 +639,7 @@ function harness(
 	};
 }
 
-describe("PanHub browser behavior", () => {
+describe("The hub browser behavior", () => {
 	it("reads the inventory once and projects it across the six categories", () => {
 		const state = harness();
 		equal(state.inventoryReads, 1);
@@ -751,7 +751,7 @@ describe("PanHub browser behavior", () => {
 		);
 		state.options.onBack?.back();
 		equal(state.options.onBack?.active(), false);
-		equal(state.closed, 0, "leaving the members never closes PanHub");
+		equal(state.closed, 0, "leaving the members never closes the hub");
 	});
 
 	it("keeps the tab bar at the catalog count while a package's members are listed", () => {
@@ -888,7 +888,7 @@ describe("PanHub browser behavior", () => {
 		});
 		equal(state.review, null);
 		match(state.notices.map(([, text]) => text).join(" "), /import \/nonexistent: unsupported plugin source/);
-		equal(state.closed, 1, "a failed import does not leave PanHub covering its error");
+		equal(state.closed, 1, "a failed import does not leave the hub covering its error");
 	});
 
 	it("releases the staged vendor tree when an import review is cancelled", () => {

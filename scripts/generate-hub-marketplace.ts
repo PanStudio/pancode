@@ -42,7 +42,7 @@ import { biomeJson } from "./build-plugin-servers.js";
 /** Public-facing marketplace id: users type `<plugin>@pancode` to install. */
 const MARKETPLACE_NAME = "pancode";
 const MARKETPLACE_DESCRIPTION =
-	"PanHub, the PanCode packs: curated skills for planning, research, git and scientific software work, plus domain plugins.";
+	"The PanCode hub: curated skills for planning, research, git and scientific software work, plus domain plugins.";
 const OWNER_NAME = "PanCode";
 
 /** A registry source URL, as opposed to a path relative to `hub/`. */
@@ -85,7 +85,7 @@ interface PortableManifest {
  * PanCode strict-v1 recipe: `claude plugin details` reported `Agents (1)
  * data-curator`, and `claude plugin validate --strict` did not object.
  *
- * PanHub accepts agent-, prompt- and playbook-only packages and its composite
+ * The hub accepts agent-, prompt- and playbook-only packages and its composite
  * template uses ordinary top-level `agents/` and `prompts/` directories. Those
  * are first-class packs; they simply have no vendor projection here.
  * PanCode `prompts/` and `playbooks/` are inert to Claude Code, but a root `agents/`
@@ -219,7 +219,7 @@ interface Exclusion {
  * Code would default-scan into a host-native component.
  *
  * Returning a reason rather than throwing is deliberate. A future native-only
- * pack is a normal PanHub contribution, not a pinning failure, so it is
+ * pack is a normal hub contribution, not a pinning failure, so it is
  * reported and skipped instead of breaking `hub:pin` for everything else.
  */
 function portabilityVerdict(directory: string, manifest: PortableManifest): { publish: boolean; reason?: string } {
@@ -230,7 +230,7 @@ function portabilityVerdict(directory: string, manifest: PortableManifest): { pu
 		if (existsSync(path.join(directory, scanned))) {
 			return {
 				publish: false,
-				reason: `a root ${scanned} would be default-scanned by Claude Code as a host-native component; the pack stays a valid PanHub pack, and to publish it too, declare its PanCode resource roots at a path no host scans, such as native/agents`,
+				reason: `a root ${scanned} would be default-scanned by Claude Code as a host-native component; the pack stays a valid hub pack, and to publish it too, declare its PanCode resource roots at a path no host scans, such as native/agents`,
 			};
 		}
 	}
@@ -404,13 +404,13 @@ function describeDrift(current: string, expected: ReadonlyArray<MarketplaceEntry
 	const expectedByName = new Map(expected.map((entry) => [entry.name, entry]));
 	for (const entry of expected) {
 		const found = actualByName.get(entry.name);
-		if (!found) lines.push(`${entry.name}: pinned in PanHub but missing from the marketplace`);
+		if (!found) lines.push(`${entry.name}: pinned in the hub but missing from the marketplace`);
 		else if (found.version !== entry.version || found.source !== entry.source) {
 			lines.push(`${entry.name}: marketplace entry is stale`);
 		}
 	}
 	for (const entry of actual) {
-		if (!expectedByName.has(entry.name)) lines.push(`${entry.name}: in the marketplace but not a pinned PanHub pack`);
+		if (!expectedByName.has(entry.name)) lines.push(`${entry.name}: in the marketplace but not a pinned hub pack`);
 	}
 	return lines;
 }

@@ -4,12 +4,12 @@
 import { type RunCountBuckets, type RunFacts, type RunOutcome, runCountBuckets } from "../../core/run-row.js";
 import { isSkillLoadRefusal, type SkillLoadRefusal } from "../../core/skill-activation.js";
 import { ToolNames } from "../../core/tool-names.js";
+import { effectiveToolCall } from "../../core/tool-surface.js";
 import { isRecord } from "../../core/type-guards.js";
 import { formatSize } from "../../core/views/tool-words.js";
 import { sanitizeCallTargetText } from "../../lib/call-target/call-target.js";
 import { isGatewayChain } from "../../tools/gateway-display.js";
 import type { ResolvedToolRow } from "../../tools/presentation.js";
-import { effectiveToolCall } from "../../tools/surface.js";
 /** The fact ledger a settled tool row carries: class facts, sizes, offload, skill loads, and the output meta and footer. */
 import { cardRows } from "../card.js";
 import { holdFact, joinFacts } from "../theme/index.js";

@@ -6,7 +6,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync }
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, describe, it } from "node:test";
-import { parseElicitationRequest } from "../../src/domains/gateway/mcp/elicitation.js";
+import { parseElicitationRequest } from "../../src/domains/mcp/elicitation.js";
 import {
 	classifyJsonRpcMessage,
 	createLineFramer,
@@ -21,7 +21,7 @@ import {
 	type McpTransportEvents,
 	parseJsonRpcLine,
 	renderMcpContent,
-} from "../../src/domains/gateway/mcp/index.js";
+} from "../../src/domains/mcp/index.js";
 import { askUserElicitationHost } from "../../src/tools/gateway/mcp-elicitation-prompt.js";
 
 const FIXTURE = resolve("tests/fixtures/mcp-fake-server.mjs");

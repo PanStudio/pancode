@@ -43,7 +43,7 @@ export const SETTINGS_AREAS = [
 	{
 		id: "workspace",
 		label: "Workspace",
-		description: "Panes, files, Git, task copies, PanHub, external agents, and plugins.",
+		description: "Panes, files, Git, task copies, the hub, external agents, and plugins.",
 	},
 	{
 		id: "advanced",
@@ -79,7 +79,7 @@ export const SETTINGS_AREA_GROUPS: Readonly<Record<SettingsAreaId, readonly stri
 	],
 	context: ["Compaction", "Context cleanup", "Proactive memory", "Semantic search"],
 	safety: ["Autonomy", "Safety judge", "Worker approvals", "Sandbox", "Review", "Spending & tool limits"],
-	workspace: ["Files pane", "Panes", "Git", "Task copies", "Store", "PanHub", "External agents", "Plugins"],
+	workspace: ["Files pane", "Panes", "Git", "Task copies", "Store", "Hub", "External agents", "Plugins"],
 	advanced: [
 		"Maintenance",
 		"Retry timing",
@@ -265,8 +265,8 @@ export function settingsPlacementForRow(id: string, path: string): SettingsPlace
 	if (under(path, "interface.panes")) return place("workspace", "Panes");
 	if (under(path, "integrations.git")) return place("workspace", "Git");
 	if (under(path, "store")) return place("workspace", "Store");
-	if (under(path, "integrations.projectResources")) return place("workspace", "PanHub");
-	if (under(path, "integrations.hub")) return place("workspace", "PanHub");
+	if (under(path, "integrations.projectResources")) return place("workspace", "Hub");
+	if (under(path, "integrations.hub")) return place("workspace", "Hub");
 	if (under(path, "turnControl")) return place("workers", "Before PanCode answers");
 	if (under(path, "fleet.agentProfiles")) return place("workers", "Agent routes");
 	if (under(path, "fleet.default")) return place("workers", "Default worker");

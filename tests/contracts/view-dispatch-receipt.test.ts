@@ -4,6 +4,7 @@ import { deepStrictEqual, ok } from "node:assert/strict";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
+import { readAcpArtifact } from "../../src/acp/artifacts.js";
 import type { RunEnvelope, RunResultDraft } from "../../src/domains/dispatch/types.js";
 import type { SessionMeta } from "../../src/domains/session/contract.js";
 import type { MessageEntry } from "../../src/domains/session/entries.js";
@@ -12,7 +13,6 @@ import {
 	RunRecordArtifactProvider,
 	ScreenshotArtifactProvider,
 } from "../../src/domains/session/view-artifacts.js";
-import { readAcpArtifact } from "../../src/engine/acp/artifacts.js";
 import { recordedRunAnswerLines } from "../../src/interactive/fleet-run-history.js";
 import { fixtureEnvelope, fixtureReceiptDraft } from "../harness/receipt.js";
 import { isolatePancodeEnv } from "../harness/scratch-env.js";

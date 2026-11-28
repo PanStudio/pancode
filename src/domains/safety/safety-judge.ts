@@ -85,7 +85,7 @@ const REASON_MAX_CHARS = 300;
 /**
  * Asks the judge never sees. Each is a decision only the operator can make:
  * the session's consent to run repository code, project settings and
- * persistent fleet routing, PanCode's own PanHub packs and state, and a git command
+ * persistent fleet routing, PanCode's own hub packs and state, and a git command
  * that would run hook files changed since the operator's baseline, and the
  * approval of a skill an MCP server serves. Dispatch plan
  * approvals, worker escalations, ask_user and configure_pancode are excluded by

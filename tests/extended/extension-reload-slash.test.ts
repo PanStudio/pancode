@@ -50,7 +50,7 @@ function context(overrides: Partial<SlashCommandContext>): {
 }
 
 describe("/extensions", () => {
-	it("uses the canonical harness route and refuses retired PanHub spellings", () => {
+	it("uses the canonical harness route and refuses retired hub spellings", () => {
 		deepStrictEqual(parseSlashCommand("/extensions"), { kind: "resources", family: "extensions" });
 		deepStrictEqual(parseSlashCommand("/extensions leave"), {
 			kind: "resources",

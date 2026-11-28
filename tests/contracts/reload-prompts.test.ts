@@ -5,8 +5,8 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
+import { createAcpRuntimeNoticeRelay, subscribeAcpNotices } from "../../src/acp/runtime-notice.js";
 import { createTelemetryHub } from "../../src/core/telemetry/hub.js";
-import { createAcpRuntimeNoticeRelay, subscribeAcpNotices } from "../../src/engine/acp/runtime-notice.js";
 import { createReloadClasses } from "../../src/entry/reload-classes.js";
 import { createSessionExtensionHosting } from "../../src/entry/session-extension-hosting.js";
 

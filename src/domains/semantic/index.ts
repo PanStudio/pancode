@@ -1,5 +1,17 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
+
+export {
+	embedForExtension,
+	openSemanticApp,
+	previewSemanticInbox,
+	qualifySemantic,
+	reembedSemantic,
+	reembedSemanticFrom,
+	refreshSemantic,
+	searchSemantic,
+	statusSemantic,
+} from "./app.js";
 export type {
 	ExtractionResult,
 	InboxRegistration,

@@ -1,6 +1,6 @@
 # Community packs
 
-A community pack enters PanHub as one row file, `hub/community/<publisher>/<name>.yaml`. The publisher is your
+A community pack enters the hub as one row file, `hub/community/<publisher>/<name>.yaml`. The publisher is your
 lowercase GitHub owner name and the name is the pack id. The file holds one row, or a plugin row and the row for
 the extension that serves it:
 

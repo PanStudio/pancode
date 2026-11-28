@@ -4,7 +4,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { resolvePackageRoot } from "../../core/package-root.js";
 import { safeResourceWrite } from "../../core/safe-resource-write.js";
-import { resolveToolBinary } from "../toolchain/index.js";
+import { resolveToolBinary } from "../../lib/programs/index.js";
 import { type ReportCommandRunner, runReportCommand } from "./command.js";
 import { type OutboxEntry, readOutbox, updateOutbox } from "./outbox.js";
 import { reportsDirectory } from "./store.js";

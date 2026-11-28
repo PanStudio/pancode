@@ -6,7 +6,6 @@ import { extname, join, relative, resolve } from "node:path";
 import { createInterface } from "node:readline";
 import { Readable } from "node:stream";
 import { Type } from "typebox";
-import { detectDocumentKind, detectSupportedImageMimeType, prepareBoundedImage } from "../core/file-references.js";
 import { GUARDRAIL_DEFAULTS, resolveGuardrail } from "../core/guardrails.js";
 import { sha256Hex } from "../core/hash.js";
 import { resolvePackageRoot } from "../core/package-root.js";
@@ -18,6 +17,7 @@ import { acceptsImageInput } from "../domains/providers/image-input.js";
 import { ceilChars } from "../domains/session/context-accounting.js";
 import type { DocsHeadingState } from "./docs-headings.js";
 import { docsHeading } from "./docs-headings.js";
+import { detectDocumentKind, detectSupportedImageMimeType, prepareBoundedImage } from "./file-references.js";
 import {
 	commitObservationReservation,
 	finalizeObservation,

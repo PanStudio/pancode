@@ -18,7 +18,7 @@ import {
 } from "../../core/sandbox/main-session.js";
 import { workerSandboxApplies } from "../../core/sandbox/worker-process.js";
 import { layeredConfineList, layeredMainHomeReads } from "../../core/settings-layers.js";
-import { type McpClientOptions, McpError } from "../../domains/gateway/mcp/index.js";
+import { type McpClientOptions, McpError } from "../../domains/mcp/index.js";
 import { effectiveScratchRoots } from "../../lib/scratch-roots/scratch-roots.js";
 import type { GatewayMcpServer, McpCapabilitySourceOptions, ServerState } from "./mcp-capability-types.js";
 

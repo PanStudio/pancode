@@ -1,13 +1,13 @@
 ---
 name: pancode-dev
-description: "Develop PanCode inside its own repository: orient on the running build versus the workspace, trace owners, avoid the checks that fail landings, apply each edit the right way and hand the work back. Use before changing PanCode source, prompts, tools or PanHub; pair with pancode-test for validation."
+description: "Develop PanCode inside its own repository: orient on the running build versus the workspace, trace owners, avoid the checks that fail landings, apply each edit the right way and hand the work back. Use before changing PanCode source, prompts, tools or the hub; pair with pancode-test for validation."
 triggers:
   - develop PanCode in its own repository
   - implement a PanCode sprint packet
   - change PanCode context or session lifecycle
   - edit PanCode skills tools or prompts
   - work a PanCode lane brief or spec
-version: 0.7.3
+version: 0.7.5
 license: LicenseRef-PanCode-1.0
 pancode:
   registry-id: PanStudio/pancode
@@ -71,7 +71,7 @@ the repository handbook are enforced by `pnpm run lint`.
 - Export hygiene: an `export function` whose name appears in one file fails
   lint. Remove the keyword, then `pnpm exec biome check --write <file>`.
 - GUI contract: after editing `src/core/telemetry/dto.ts` or a schema module
-  it imports, `src/engine/acp/types.ts` or a `types-*.ts` module beside it,
+  it imports, `src/acp/types.ts` or a `types-*.ts` module beside it,
   or `apps/pancode-gui/contracts/*.ts`,
   run `pnpm --filter pancode-gui run openapi` and commit
   `apps/pancode-gui/contracts/openapi.json`. Only `test:gui` catches a
@@ -85,7 +85,7 @@ the repository handbook are enforced by `pnpm run lint`.
 - A new test file runs in no gate until `scripts/ci-tests.mjs` lists it.
 - Strict types: optional properties are spread in, never assigned
   `undefined`; relative imports end in `.js`; type imports use `import type`.
-- PanHub edits: bump the version in `SKILL.md` and `plugin.json`, then
+- Hub edits: bump the version in `SKILL.md` and `plugin.json`, then
   `pnpm run skills:pin` and `pnpm run hub:pin`.
 
 ## Flywheel

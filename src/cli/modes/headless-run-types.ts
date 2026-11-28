@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
+
+import type { TurnAnswerEntry } from "../../core/answer-segments.js";
 import type { CompletionDeclaration } from "../../core/completion.js";
 import type { ModelRouteRefusal } from "../../core/response-model-id.js";
 import type { PendingSkillRequest, SkillActivation } from "../../core/skill-activation.js";
@@ -21,7 +23,6 @@ import type { AgentMessage, ImageContent, ToolRoundRecord } from "../../engine/t
 import type { HeadlessRunDeadline } from "../../entry/boot-options.js";
 import type { ReloadReport, ReloadTarget } from "../../session-control/reload-report.js";
 import type { ScriptedAnswers } from "../run-answers.js";
-import type { TurnAnswerEntry } from "./answer-segments.js";
 
 import type { RunJsonMainSessionFrame, RunJsonSegmentUsage } from "./run-json-schema.js";
 import type { HeadlessVerifyOptions } from "./run-verify.js";

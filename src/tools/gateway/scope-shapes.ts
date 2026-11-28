@@ -2,9 +2,9 @@
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import { neutralizeFraming } from "../../core/reminder-framing.js";
 import type { ToolName } from "../../core/tool-names.js";
+import { gatewayCapabilityKind, surfaceSpecPlacement } from "../../core/tool-surface.js";
 import { isRecord } from "../../core/type-guards.js";
 import type { ToolRegistry } from "../registry-contract.js";
-import { gatewayCapabilityKind, surfaceSpecPlacement } from "../surface.js";
 import type { ToolSpec } from "../tool-spec.js";
 
 /** UTF-8 bytes the whole block may take, header and overflow line included; past it the rest are counted for describe. */

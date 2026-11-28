@@ -42,7 +42,7 @@ import { isOpenRunRow, sealRowFromSettledRun } from "../domains/dispatch/orphan-
 import { runStatusForOutcome } from "../domains/dispatch/outcome.js";
 import { type Ledger, openLedger } from "../domains/dispatch/state.js";
 import type { RunEnvelope } from "../domains/dispatch/types.js";
-import { ensurePancodeState } from "../domains/lifecycle/index.js";
+import { ensurePancodeState } from "../domains/install/index.js";
 import { EXIT_CODES } from "./kit/exit-codes.js";
 import { jsonDocument, writeCliFailure, writeJson } from "./kit/json-out.js";
 import type { ErrorSlug } from "./kit/slugs.js";

@@ -20,7 +20,7 @@ import { join, resolve } from "node:path";
 import { afterEach, describe, it } from "node:test";
 import { mcpCommandOutput } from "../../src/cli/mcp.js";
 import { withStateFileLock } from "../../src/core/state-file-lock.js";
-import { mcpToolActionClass } from "../../src/domains/gateway/mcp/action-classes.js";
+import { mcpToolActionClass } from "../../src/domains/mcp/action-classes.js";
 import {
 	approveMcpSkill,
 	canonicalProjectRoot,
@@ -39,7 +39,7 @@ import {
 	resolveMcpServers,
 	trustMcpServer,
 	untrustMcpServer,
-} from "../../src/domains/gateway/mcp/index.js";
+} from "../../src/domains/mcp/index.js";
 import {
 	clearPluginSnapshots,
 	disablePlugin,
@@ -562,7 +562,7 @@ describe("mcp server trust", () => {
 						"--input-type=module",
 						"-e",
 						`
-					import { untrustMcpServer } from ${JSON.stringify(resolve("src/domains/gateway/mcp/trust.ts"))};
+					import { untrustMcpServer } from ${JSON.stringify(resolve("src/domains/mcp/trust.ts"))};
 					process.stdout.write('attempt\\n');
 					const result = untrustMcpServer(${JSON.stringify({ cwd: project, configDir, id: "files" })});
 					if (!result.ok || !result.removed) process.exitCode = 1;
@@ -1080,7 +1080,7 @@ describe("plugin mcp.json declarations", () => {
 					onListChanged: () => () => {},
 					listChanged: () => false,
 					close: async () => {},
-				} as unknown as ReturnType<typeof import("../../src/domains/gateway/mcp/index.js").createMcpClient>;
+				} as unknown as ReturnType<typeof import("../../src/domains/mcp/index.js").createMcpClient>;
 			},
 		});
 		await mcp.refresh("stateful");

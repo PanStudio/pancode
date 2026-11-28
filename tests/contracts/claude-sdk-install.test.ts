@@ -16,7 +16,7 @@ import {
 	claudeSdkNpmCommand,
 	ensureClaudeAgentSdk,
 	installClaudeAgentSdk,
-} from "../../src/domains/lifecycle/claude-sdk-install.js";
+} from "../../src/domains/install/claude-sdk-install.js";
 import {
 	isBuiltinClaudeAcp,
 	openAuthStorage,

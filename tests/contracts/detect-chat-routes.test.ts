@@ -15,7 +15,7 @@ import {
 } from "../../src/cli/detect-chat-routes.js";
 import { readSettings, settingsPath, updateSettings } from "../../src/core/config.js";
 import { initializePancodeHome } from "../../src/core/init.js";
-import { COPILOT_SDK_PACKAGE, COPILOT_SDK_VERSION } from "../../src/domains/lifecycle/copilot-sdk-install.js";
+import { COPILOT_SDK_PACKAGE, COPILOT_SDK_VERSION } from "../../src/domains/install/copilot-sdk-install.js";
 import { openAuthStorage } from "../../src/domains/providers/auth/index.js";
 import { getRuntimeRegistry } from "../../src/domains/providers/registry.js";
 import { registerBuiltinRuntimes } from "../../src/domains/providers/runtimes/builtins.js";

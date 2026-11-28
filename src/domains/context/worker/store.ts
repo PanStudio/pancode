@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { safeResourceWrite } from "../../../core/safe-resource-write.js";
 import { unlinkedStateDirectory } from "../../../core/state-boundary.js";
 import { pancodeStateDir } from "../../../core/xdg.js";
-import { parseWorkerContextSeed } from "../../../worker/context-seed.js";
+import { parseWorkerContextSeed } from "../../../lib/worker-wire/context-seed.js";
 import type { WorkerContextSeed } from "./contract.js";
 
 const SEEDS_DIRECTORY = "context-seeds";

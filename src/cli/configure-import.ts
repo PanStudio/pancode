@@ -13,7 +13,7 @@ import { readSettings, updateSettings } from "../core/config.js";
 import { isLoopbackUrl } from "../core/project-target-urls.js";
 import { validateSettings } from "../core/settings-validate.js";
 import { isRecord } from "../core/type-guards.js";
-import { describeMissing } from "../domains/lifecycle/setup-status.js";
+import { describeMissing } from "../domains/install/setup-status.js";
 import { getRuntimeRegistry } from "../domains/providers/registry.js";
 import type { TargetDescriptor } from "../domains/providers/types/target-descriptor.js";
 import { applyTarget, setOrchestratorPointer, setWorkerDefaultPointer } from "./configure-target.js";

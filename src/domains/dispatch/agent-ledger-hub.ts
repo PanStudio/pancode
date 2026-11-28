@@ -11,7 +11,7 @@
  * the durable board; the hub only knows which live subscribers to notify.
  */
 
-import type { AgentLedgerEntry } from "../../worker/protocol.js";
+import type { AgentLedgerEntry } from "../../lib/worker-wire/protocol.js";
 import { readAgentLedger } from "./agent-ledger-store.js";
 
 /** Returns false when the worker is unreachable, which retires the subscriber. */

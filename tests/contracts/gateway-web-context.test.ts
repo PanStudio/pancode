@@ -280,18 +280,18 @@ describe("pancode_docs and pancode_hub", () => {
 		strictEqual(firstDuplicateResult?.anchor, "#context");
 	});
 
-	it("refuses PanHub read on a worker registry exactly as the context scope did", async () => {
+	it("refuses the hub read on a worker registry exactly as the context scope did", async () => {
 		const worker = createPancodeHubTool({ getCwd: () => env.dir, skillMarketplace: false });
 		const result = await worker.run({}, {});
 		strictEqual(result.kind, "error");
 		if (result.kind === "error") ok(result.message.includes("unavailable"), result.message);
 	});
 
-	it("keeps docs and PanHub reads out of the context schema", () => {
+	it("keeps docs and the hub reads out of the context schema", () => {
 		const context = createContextTool({ getCwd: () => env.dir });
 		const schema = (context.parameters as { properties: { scope: { enum?: string[]; anyOf?: unknown[] } } }).properties;
 		const scopes = JSON.stringify(schema.scope);
 		ok(!scopes.includes('"docs"') && !scopes.includes('"library"'), scopes);
-		ok(!("kind" in schema), "PanHub kind argument left the context schema");
+		ok(!("kind" in schema), "The hub kind argument left the context schema");
 	});
 });

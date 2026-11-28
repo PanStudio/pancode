@@ -1,7 +1,7 @@
-# PanHub listing terms
+# Hub listing terms
 
-These terms say what a PanHub listing promises, which licenses a listed pack may carry, what a pack owner agrees to,
-and how a listing is taken down or a pack revoked. They apply to every community listing in PanHub and to the
+These terms say what a hub listing promises, which licenses a listed pack may carry, what a pack owner agrees to,
+and how a listing is taken down or a pack revoked. They apply to every community listing in the hub and to the
 first-party packs that ship with PanCode.
 
 ## What a listing is
@@ -10,7 +10,7 @@ A listing is a short record that points PanCode at a pack in its owner's own pub
 exact commit, the directory inside it, and a cryptographic digest of that directory's contents.
 
 - **Pinned, after the owner pushed it.** A listing names a commit that its owner has already pushed to the public
-  repository it names. PanHub never lists a branch, a tag or an unpublished commit. PanCode installs exactly that
+  repository it names. The hub never lists a branch, a tag or an unpublished commit. PanCode installs exactly that
   commit and refuses the pack when its contents do not match the listed digest, so a later push to the same
   repository changes nothing until a new listing is reviewed and accepted.
 - **Released.** Listings reach PanCode in the index bundled with each release after the change is accepted. A signed
@@ -70,7 +70,7 @@ A pack moves from listed to verified only through a new review. The maintainer m
 
 ## Takedown
 
-A listing is taken down by removing it from PanHub. Copies already installed keep working unless the pack is also
+A listing is taken down by removing it from the hub. Copies already installed keep working unless the pack is also
 revoked. The maintainer takes a listing down when its owner asks, when its repository or commit can no longer be
 reached, or when it stops passing the checks for its tier.
 

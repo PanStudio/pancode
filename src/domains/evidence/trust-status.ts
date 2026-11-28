@@ -13,7 +13,7 @@ import {
 	type TrustStatusAxis,
 } from "../../core/telemetry/trust-vocabulary.js";
 import { isRecord } from "../../core/type-guards.js";
-import { parseWorkerContextProvenance } from "../../worker/context-seed.js";
+import { parseWorkerContextProvenance } from "../../lib/worker-wire/context-seed.js";
 import type { GateDecisionVerification } from "../dispatch/gate-decisions.js";
 import { OBSERVED_COMMAND_PREFIX } from "../dispatch/run-findings.js";
 import type { RunBriefingProvenance, RunProjectContextProvenance, RunResult } from "../dispatch/types.js";

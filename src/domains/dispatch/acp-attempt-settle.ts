@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 
+import type { AcpDelegationRunHandle } from "../../acp/adapter.js";
 import { boundedExternalDiagnostic } from "../../core/external-diagnostic.js";
 import { readPancodeVersion } from "../../core/package-root.js";
 import { spendSumsOf } from "../../core/telemetry/pricing.js";
-import type { AcpDelegationRunHandle } from "../../engine/acp/adapter.js";
 import { readPiMonoVersion } from "../../engine/pi-mono-names.js";
 import { applyTaskWorktree, discardIdleTaskWorktree, settleTaskWorktree } from "../../tools/task-worktree.js";
 import type { TaskWorktreePreview } from "../../tools/task-worktree-preview.js";

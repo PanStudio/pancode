@@ -2,10 +2,10 @@
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { AcpRequestError } from "../../src/engine/acp/errors.js";
-import { servePancodeAcpAgent } from "../../src/engine/acp/server.js";
-import type { AcpPromptExpansion, PancodeAcpServerOptions } from "../../src/engine/acp/server-options.js";
-import type { AcpJsonRpcPeerTransport } from "../../src/engine/acp/transport.js";
+import { AcpRequestError } from "../../src/acp/errors.js";
+import { servePancodeAcpAgent } from "../../src/acp/server.js";
+import type { AcpPromptExpansion, PancodeAcpServerOptions } from "../../src/acp/server-options.js";
+import type { AcpJsonRpcPeerTransport } from "../../src/acp/transport.js";
 
 // ACP prompts reached chat.submit as raw text: `@path` references, prompt templates and `/skill`
 // requests meant one thing in the terminal and another in the GUI, and image blocks were dropped.

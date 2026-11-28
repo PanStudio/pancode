@@ -28,7 +28,7 @@ import type {
 	McpToolListing,
 	McpTrustActionClass,
 	ResolvedMcpServer,
-} from "../../domains/gateway/mcp/index.js";
+} from "../../domains/mcp/index.js";
 import type { AuthStorage } from "../../domains/providers/auth/index.js";
 import type { ActionClass } from "../../domains/safety/action-classifier.js";
 import type { WorkerMcpAttestation } from "../../domains/safety/worker-permit.js";

@@ -20,12 +20,12 @@ import {
 	removeExtension,
 } from "../../src/domains/extensions/state.js";
 import { attestedToolSignature, createWorkerSafety, createWorkerToolRegistry } from "../../src/engine/worker-tools.js";
+import { toolSignatureOf } from "../../src/lib/worker-wire/protocol.js";
 import { registerAllTools } from "../../src/tools/bootstrap.js";
 import { createGatewayTool } from "../../src/tools/gateway/index.js";
 import { registerHarnessExtensionTools } from "../../src/tools/harness-extensions.js";
 import { applyToolProfile } from "../../src/tools/profiles.js";
 import { createRegistry } from "../../src/tools/registry.js";
-import { toolSignatureOf } from "../../src/worker/protocol.js";
 import { makeDispatchBundle } from "../harness/dispatch.js";
 import { dispatchStubContext } from "../harness/dispatch-stub-context.js";
 import { trustProjectPackages } from "../harness/project-trust.js";

@@ -35,7 +35,7 @@ export async function fixedViewportSteps(run: SmokeRun) {
 			for (const size of sizes) {
 				await page.setViewportSize(size);
 				const at = `${size.width}x${size.height}`;
-				// PanHub: the tab row clears the heading, "Show" clears the search row, and a clamped description
+				// The hub: the tab row clears the heading, "Show" clears the search row, and a clamped description
 				// carries its whole text.
 				await page.goto(`${origin}/hub`);
 				await page.locator("main .hub-packages > li").first().waitFor();
@@ -56,9 +56,9 @@ export async function fixedViewportSteps(run: SmokeRun) {
 						untitled,
 					};
 				});
-				assert.ok((hubLayout.tabsGap ?? -1) >= 16, `PanHub tabs touch the heading at ${at}: ${hubLayout.tabsGap}`);
+				assert.ok((hubLayout.tabsGap ?? -1) >= 16, `The hub tabs touch the heading at ${at}: ${hubLayout.tabsGap}`);
 				assert.ok((hubLayout.showGap ?? -1) >= 12, `"Show" hugs the search row at ${at}: ${hubLayout.showGap}`);
-				assert.deepEqual(hubLayout.untitled, [], `a clamped PanHub description has no title at ${at}`);
+				assert.deepEqual(hubLayout.untitled, [], `a clamped hub description has no title at ${at}`);
 				// Home: the hero stays put while the starters leave and Task settings opens.
 				await page.goto(`${origin}/`);
 				const hero = page.locator(".newtask__title");

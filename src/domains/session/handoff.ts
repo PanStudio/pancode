@@ -25,8 +25,8 @@
 
 import { isAbsolute, normalize, relative, resolve } from "node:path";
 import { relativePathEscapes } from "../../core/path-containment.js";
+import { effectiveToolCall, expandChainMessages } from "../../core/tool-surface.js";
 import { isRecord } from "../../core/type-guards.js";
-import { effectiveToolCall, expandChainMessages } from "../../tools/surface.js";
 import { decisionRationale } from "./decision-board.js";
 import type { DecisionLedgerEntry, SessionEntry } from "./entries.js";
 import { filterEntriesToActivePath } from "./tree/active-path.js";

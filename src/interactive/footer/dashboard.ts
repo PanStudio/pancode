@@ -22,7 +22,6 @@ import type { WorkspaceSnapshot } from "../../domains/session/workspace/index.js
 import type { TelemetryView } from "../../domains/telemetry/contract.js";
 import type { TokenThroughputSnapshot } from "../../domains/telemetry/index.js";
 import { type Component, Text } from "../../engine/tui.js";
-import { getCurrentBranch } from "../../utils/git.js";
 import type { BackgroundCall } from "../background-calls.js";
 import type { DispatchBoardRow } from "../dispatch-row-model.js";
 import { ACTIVE_DISPATCH_STATUSES, type FooterPanel } from "../footer-panel.js";
@@ -42,6 +41,7 @@ import type { ThinkingRailFacts } from "./context-rail.js";
 import { renderDeckDrawer } from "./deck-drawer.js";
 import { type ExtensionFact, extensionFactsKey } from "./extension-facts.js";
 import type { FleetBand } from "./fleet-band.js";
+import { getCurrentBranch } from "./git.js";
 import type { ComposerKeyContext, KeyHintFacts } from "./key-hints.js";
 import type { Notification, NotificationCenter } from "./notifications.js";
 import type { FooterTelemetry } from "./spend.js";

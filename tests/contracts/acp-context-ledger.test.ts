@@ -2,15 +2,15 @@
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import { projectContextLedger } from "../../src/acp/context-ledger.js";
+import { AcpRequestError } from "../../src/acp/errors.js";
+import { servePancodeAcpAgent } from "../../src/acp/server.js";
+import type { AcpJsonRpcPeerTransport } from "../../src/acp/transport.js";
+import type { AcpUsageMeta } from "../../src/acp/types.js";
 import { rememberMessageCalls } from "../../src/core/message-accounting.js";
 import type { TelemetryRecord } from "../../src/core/telemetry/envelope.js";
 import type { ContextLedger } from "../../src/domains/session/context-ledger.js";
 import type { TelemetryReadModel } from "../../src/domains/telemetry/contract.js";
-import { projectContextLedger } from "../../src/engine/acp/context-ledger.js";
-import { AcpRequestError } from "../../src/engine/acp/errors.js";
-import { servePancodeAcpAgent } from "../../src/engine/acp/server.js";
-import type { AcpJsonRpcPeerTransport } from "../../src/engine/acp/transport.js";
-import type { AcpUsageMeta } from "../../src/engine/acp/types.js";
 import { readModelOf, telemetryCall } from "../harness/telemetry-view.js";
 
 const LEDGER: ContextLedger = {

@@ -14,7 +14,7 @@ import type { ContextActivityPayload } from "../../core/telemetry/live-events.js
 import { pancodeDataDir, pancodeStateDir } from "../../core/xdg.js";
 import { loadMemoryRecordsSync } from "../memory/index.js";
 import { describeValidationContract, loadValidationContract } from "../safety/index.js";
-import { createSemanticBackgroundRefresh } from "../semantic-app/background.js";
+import { createSemanticBackgroundRefresh } from "../semantic/background.js";
 import { readSessionEntriesForId } from "../session/archive-readers.js";
 import { foldDecisionBoard } from "../session/decision-board.js";
 import { filterEntriesToActivePath } from "../session/tree/active-path.js";

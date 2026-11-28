@@ -18,7 +18,7 @@ import {
 	mcpFileInput,
 	mcpNamedFiles,
 	withMcpFileInputs,
-} from "../../domains/gateway/mcp/index.js";
+} from "../../domains/mcp/index.js";
 import { resolveToCwd } from "../path-utils.js";
 import type { HostEffectCall, OutboundFile, ToolInvokeOptions } from "../registry-contract.js";
 import { formatSize } from "../truncate.js";

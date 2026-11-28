@@ -15,6 +15,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, before, beforeEach, describe, it } from "node:test";
+import { AcpToolMediator } from "../../src/acp/tool-mediator.js";
 import { runBashCommand } from "../../src/core/bash-exec.js";
 import { ToolNames } from "../../src/core/tool-names.js";
 import { recordProjectSurfaceTrust, safetySurfaceTrustHash } from "../../src/core/workspace-trust.js";
@@ -33,7 +34,6 @@ import { loadProjectSafetyPolicy } from "../../src/domains/safety/project-policy
 import { protectedArtifactMutationBlockReason } from "../../src/domains/safety/protected-artifacts.js";
 import { createRunEffectsRecorder } from "../../src/domains/safety/run-effects.js";
 import { scanShellLike } from "../../src/domains/safety/shell-scan.js";
-import { AcpToolMediator } from "../../src/engine/acp/tool-mediator.js";
 import { emitClaudeToolPermissionDecision } from "../../src/engine/claude/tool-safety.js";
 import { createWorkerSafety } from "../../src/engine/worker-tools.js";
 import { mapAutonomy } from "../../src/lib/autonomy/autonomy.js";
@@ -1015,7 +1015,7 @@ describe("safety gate boundary", () => {
 			strictEqual(policy.evaluate({ tool: ToolNames.Bash, args: { command } }).kind, "allow", command);
 	});
 
-	it("guards canonical PanHub mutations and approved interop adoption through wrappers", () => {
+	it("guards canonical hub mutations and approved interop adoption through wrappers", () => {
 		for (const policy of [engine(), createWorkerSafety({ cwd: scratch })]) {
 			for (const wrapper of [
 				"pancode",
@@ -1105,7 +1105,7 @@ describe("safety gate boundary", () => {
 		}
 	});
 
-	it("requires approval for PanHub installs and their dependencies, then accepts confirmation", () => {
+	it("requires approval for the hub installs and their dependencies, then accepts confirmation", () => {
 		for (const policy of [engine(), createWorkerSafety({ cwd: scratch })]) {
 			for (const command of [
 				"pancode hub install skill:example --yes",
@@ -1176,7 +1176,7 @@ describe("safety gate boundary", () => {
 		}
 	});
 
-	it("preserves PanHub discovery and dry-run plans through the same CLI wrappers", () => {
+	it("preserves the hub discovery and dry-run plans through the same CLI wrappers", () => {
 		const policy = engine();
 		for (const command of [
 			"pancode --help skills sync --force",

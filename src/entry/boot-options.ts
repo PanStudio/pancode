@@ -2,6 +2,8 @@
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 /** Type-only boot contract kept outside the heavyweight orchestrator graph. */
 
+import type { AcpHandshake } from "../acp/server-options.js";
+import type { AcpJsonRpcPeerTransport, StdioServerTransportOptions } from "../acp/transport.js";
 import type { ScriptedAnswers } from "../cli/run-answers.js";
 import type { PancodeSettings } from "../core/config.js";
 import type { SessionToolLimits } from "../core/tool-limit-flags.js";
@@ -9,8 +11,6 @@ import type { TurnConstraints } from "../core/turn-constraints.js";
 import type { ThinkingLevel } from "../domains/providers/index.js";
 import type { SessionVerifier } from "../domains/safety/finish-contract.js";
 import type { HeadlessCompactionRequest } from "../domains/session/headless-compact.js";
-import type { AcpHandshake } from "../engine/acp/server-options.js";
-import type { AcpJsonRpcPeerTransport, StdioServerTransportOptions } from "../engine/acp/transport.js";
 import type { ImageContent } from "../engine/types.js";
 import type { TerminalLease } from "../interactive/terminal-lease.js";
 import type { AutonomyLevel } from "../lib/autonomy/autonomy.js";

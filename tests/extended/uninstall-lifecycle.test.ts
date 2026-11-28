@@ -21,8 +21,8 @@ import { installRootFinding } from "../../src/cli/doctor-state-size.js";
 import { runGuiCommand } from "../../src/cli/gui.js";
 import { runUninstallCommand } from "../../src/cli/uninstall.js";
 import { resolvePackageRoot } from "../../src/core/package-root.js";
-import { inactiveInstallerRecord, inspectInstallation } from "../../src/domains/lifecycle/install-method.js";
-import { installRootHolders } from "../../src/domains/lifecycle/install-plan.js";
+import { inactiveInstallerRecord, inspectInstallation } from "../../src/domains/install/install-method.js";
+import { installRootHolders } from "../../src/domains/install/install-plan.js";
 import { createLifecycleHome, type LifecycleHome, runInHome, writeLiveSession } from "../harness/lifecycle-home.js";
 
 const home = () => createLifecycleHome("pancode-test-uninstall-");

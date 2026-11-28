@@ -48,7 +48,7 @@ function packagesWithTests(parent: string): string[] {
 		);
 }
 
-test("the PanHub extension packs, examples and scaffold templates pass their own tests", {
+test("the hub extension packs, examples and scaffold templates pass their own tests", {
 	concurrency: true,
 }, async (t) => {
 	const env = await isolatePancodeEnv("pancode-extension-package-tests-");

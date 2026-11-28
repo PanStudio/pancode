@@ -26,13 +26,9 @@ import {
 	resolveMcpServers,
 	trustMcpServer,
 	untrustMcpServer,
-} from "../../src/domains/gateway/mcp/index.js";
-import {
-	mcpCatalogPath,
-	readMcpServerCatalog,
-	writeMcpServerCatalog,
-} from "../../src/domains/gateway/mcp/metadata-cache.js";
-import { mcpSkillFrontmatterMismatch, parseMcpSkillEntry } from "../../src/domains/gateway/mcp/skills.js";
+} from "../../src/domains/mcp/index.js";
+import { mcpCatalogPath, readMcpServerCatalog, writeMcpServerCatalog } from "../../src/domains/mcp/metadata-cache.js";
+import { mcpSkillFrontmatterMismatch, parseMcpSkillEntry } from "../../src/domains/mcp/skills.js";
 import { createMiddlewareBundle } from "../../src/domains/middleware/extension.js";
 import type { MiddlewareHookRegistration } from "../../src/domains/middleware/runtime.js";
 import { buildSkillCatalogView, loadSkills } from "../../src/domains/resources/index.js";
@@ -703,7 +699,7 @@ describe("gateway MCP capabilities", () => {
 			import { createRegistry } from ${moduleUrl("src/tools/registry.ts")};
 			import { registerAllTools } from ${moduleUrl("src/tools/bootstrap.ts")};
 			import { createMcpCapabilitySource } from ${moduleUrl("src/tools/gateway/mcp-capabilities.ts")};
-			import { createMcpClient } from ${moduleUrl("src/domains/gateway/mcp/index.ts")};
+			import { createMcpClient } from ${moduleUrl("src/domains/mcp/index.ts")};
 			const registry = createRegistry({ safety: createWorkerSafety({cwd: ${JSON.stringify(scene.project)}}), autonomy: () => "yolo" });
 			let client;
 			const source = createMcpCapabilitySource({cwd: ${JSON.stringify(scene.project)}, configDir: ${JSON.stringify(scene.configDir)}, registry, clientFactory: (spec, opts) => client = createMcpClient(spec, opts)});

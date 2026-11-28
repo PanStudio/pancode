@@ -3,6 +3,10 @@
 import { deepStrictEqual, ok, strictEqual } from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
+import { projectAsideAnswer, projectDraftOutcome } from "../../src/acp/aside.js";
+import { servePancodeAcpAgent } from "../../src/acp/server.js";
+import type { AcpJsonRpcPeerTransport } from "../../src/acp/transport.js";
+import { ACP_MAX_STRING_BYTES } from "../../src/acp/types.js";
 import { prefixHeadlessFailure } from "../../src/cli/modes/headless-run-verdict.js";
 import {
 	createHeadlessJsonProjector,
@@ -16,10 +20,6 @@ import { pancodeStateDir } from "../../src/core/xdg.js";
 import { drainDeferredWritesSync } from "../../src/domains/dispatch/deferred-writes.js";
 import type { RunEventJournalBody } from "../../src/domains/dispatch/run-event-journal.js";
 import { appendRunFeed, holdBack, runFeedPath } from "../../src/domains/dispatch/run-feed.js";
-import { projectAsideAnswer, projectDraftOutcome } from "../../src/engine/acp/aside.js";
-import { servePancodeAcpAgent } from "../../src/engine/acp/server.js";
-import type { AcpJsonRpcPeerTransport } from "../../src/engine/acp/transport.js";
-import { ACP_MAX_STRING_BYTES } from "../../src/engine/acp/types.js";
 import { describeWorkerRefusal } from "../../src/engine/worker-refusals.js";
 import { formatDraftOverlayBody } from "../../src/interactive/overlays/draft.js";
 import { SideQuestionOverlayBody } from "../../src/interactive/overlays/side-question.js";
