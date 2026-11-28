@@ -9,6 +9,7 @@ import { mainShellContained } from "../../core/sandbox/main-session.js";
 import { routingChangeNotices } from "../../core/session-routing.js";
 import type { PluginsReloadedPayload } from "../../core/telemetry/live-events.js";
 import { pancodeDataDir, pancodeStateDir } from "../../core/xdg.js";
+import { createFleetRunLauncher } from "../../domains/dispatch/fleet-run-launcher.js";
 import { expandSubmitText } from "../../domains/resources/submit-expansion.js";
 import type { SessionEntry } from "../../domains/session/entries.js";
 import { resumedSessionRoute } from "../../domains/session/resumed-route.js";
@@ -157,10 +158,17 @@ export async function runAcpSurface(
 		});
 		return acpQuotaRead;
 	};
-	// The fleet this ACP agent started and has not seen settle. A second start
-	// is refused while one runs, as the terminal's /fleet run refuses it, since
-	// two fleets would race over one workspace.
-	let acpFleetInFlight: { name: string; fleetRootId: string } | null = null;
+	// The fleets this ACP agent starts. A second start is refused while one runs, as the terminal's /fleet run refuses
+	// it, since two fleets would race over one workspace.
+	const fleetRuns = agents
+		? createFleetRunLauncher({
+				dispatch,
+				agents: { getSpec: (agentId) => agents.getSpec(agentId) },
+				workspaceRoot: () => process.cwd(),
+				getSettings: getCurrentSettings,
+				getDecisionBoard: () => decisionBoard.snapshot(),
+			})
+		: null;
 	const [{ acpCommandControl }, { servePancodeAcpAgent }] = await Promise.all([
 		seams.loadAcpCommands(),
 		seams.loadAcpServer(),
@@ -220,21 +228,7 @@ export async function runAcpSurface(
 				: {}),
 			// /fleet run's approval, split across preview and run. Both compile
 			// through the dispatch domain exactly as the terminal overlay does.
-			...(agents
-				? {
-						fleet: acpFleetControl(
-							{ agents, chat, decisionBoard, dispatch, getCurrentSettings, result },
-							{
-								get acpFleetInFlight() {
-									return acpFleetInFlight;
-								},
-								set acpFleetInFlight(value) {
-									acpFleetInFlight = value;
-								},
-							},
-						),
-					}
-				: {}),
+			...(agents && fleetRuns ? { fleet: acpFleetControl({ agents, chat, dispatch, launcher: fleetRuns, result }) } : {}),
 			// /handoff runs the lifecycle the terminal runs. The successor is minted
 			// the way session/new mints one, so its route matches a fresh session.
 			...(session
