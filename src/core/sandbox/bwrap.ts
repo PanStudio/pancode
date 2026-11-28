@@ -53,40 +53,53 @@ function uniquePaths(entries: ReadonlyArray<string> | undefined): string[] {
  * Whether a read-only path or a mask sits where a read restriction already hides it: under a hidden directory and
  * outside every root that shows back. Binding it would show it again; masking it would create its name.
  */
-function hiddenByRestriction(spec: SandboxInvocationSpec): (entry: string) => boolean {
-	const restriction = spec.readRestriction;
-	if (restriction === undefined) return () => false;
-	const hidden = uniquePaths(restriction.hidden);
+function restrictionVisibility(
+	spec: SandboxInvocationSpec,
+	hidden: ReadonlyArray<string>,
+): { unseen: (entry: string) => boolean; maskKept: (mask: SandboxMaskedPath) => boolean } {
+	if (hidden.length === 0) return { unseen: () => false, maskKept: () => true };
 	const shown = uniquePaths([
 		spec.cwd,
-		...restriction.exposed,
+		...(spec.readRestriction?.exposed ?? []),
 		...spec.writableRoots,
 		...(spec.gitWritablePaths ?? []),
 		...(spec.readableRoots ?? []),
 	]);
-	return (entry) => {
+	const linkPaths = uniquePaths((spec.readRestriction?.links ?? []).map((link) => link.path));
+	const underHidden = (target: string) => hidden.some((dir) => isSameOrDescendant(target, dir));
+	const unseen = (entry: string) => {
 		const target = bindPath(entry);
-		return (
-			hidden.some((dir) => isSameOrDescendant(target, dir)) && !shown.some((root) => isSameOrDescendant(target, root))
-		);
+		return underHidden(target) && !shown.some((root) => isSameOrDescendant(target, root));
 	};
-}
-
-/** A directory mask that shows subtrees back stays, since they are PanCode's own paths the command needs. */
-function maskKept(mask: SandboxMaskedPath, hidden: (entry: string) => boolean): boolean {
-	return !hidden(mask.path) || (mask.kind === "directory" && (mask.reveal ?? []).length > 0);
+	const maskKept = (mask: SandboxMaskedPath) => {
+		const target = bindPath(mask.path);
+		if (!underHidden(target)) return true;
+		// A directory mask that shows subtrees back stays, since they are PanCode's own paths the command needs.
+		if (mask.kind === "directory" && (mask.reveal ?? []).length > 0) return true;
+		if (shown.some((root) => isSameOrDescendant(target, root))) return true;
+		// A listed subpath or symlink inside a masked directory (such as ~/.ssh/id_rsa under ~/.ssh) still needs
+		// the directory mask to shadow it.
+		if (
+			mask.kind === "directory" &&
+			(shown.some((root) => isStrictDescendant(root, target)) ||
+				linkPaths.some((link) => isSameOrDescendant(link, target)))
+		)
+			return true;
+		return false;
+	};
+	return { unseen, maskKept };
 }
 
 /**
  * Pure bubblewrap argv for one sandboxed command. Mount order is the policy:
  * later mounts shadow earlier ones, so the sequence is read-only root, fresh
- * /dev, /proc and private /tmp (unless `privateTmp` is false), then writable roots, then read-only
- * re-protection inside them, then the Git metadata the run may write, then
- * masks over secrets, each directory mask followed by the subtrees it reveals.
- * A read restriction hides its directories under empty tmpfs mounts right
- * after /proc and binds back what it shows, so every later bind shadows it;
- * the hidden directories are remounted read-only last, so nothing a command
- * writes there lands anywhere.
+ * /dev, /proc and private /tmp (unless `privateTmp` is false), then any read
+ * restriction, then writable roots, then read-only re-protection inside them,
+ * then the Git metadata the run may write, then masks over secrets, each
+ * directory mask followed by the subtrees it reveals. A read restriction hides
+ * its directories under empty tmpfs mounts and binds back what it shows, so
+ * every later bind shadows it; the hidden directories are remounted read-only
+ * last, so nothing a command writes there lands anywhere.
  *
  * `-try` binds skip a missing source instead of failing the whole command, so
  * a write root that does not exist yet stays unwritable rather than breaking
@@ -103,16 +116,6 @@ export function buildBwrapInvocation(
 	const args: string[] = ["--die-with-parent", "--new-session", "--unshare-pid", "--unshare-ipc", "--unshare-uts"];
 	if (!spec.network) args.push("--unshare-net");
 	args.push("--ro-bind", "/", "/", "--dev", "/dev", "--proc", "/proc");
-	// A directory a whole-directory mask already covers, such as /mnt/wslg/distro under WSL2's /mnt/wslg, would be
-	// buried by that mask and its read-only remount would find no mount point.
-	const blanket = spec.maskedPaths.filter((mask) => mask.kind === "directory" && (mask.reveal ?? []).length === 0);
-	const hidden = uniquePaths(spec.readRestriction?.hidden).filter(
-		(dir) => !blanket.some((mask) => isSameOrDescendant(dir, bindPath(mask.path))),
-	);
-	for (const dir of hidden) args.push("--tmpfs", dir);
-	for (const entry of uniquePaths(spec.readRestriction?.exposed)) args.push("--ro-bind-try", entry, entry);
-	for (const link of spec.readRestriction?.links ?? []) args.push("--symlink", link.target, bindPath(link.path));
-	const unseen = hiddenByRestriction(spec);
 	if (spec.privateTmp !== false) {
 		args.push("--tmpfs", SANDBOX_TMP);
 		const readable = uniquePaths([spec.cwd, ...(spec.readableRoots ?? [])]);
@@ -120,10 +123,28 @@ export function buildBwrapInvocation(
 			if (isStrictDescendant(entry, SANDBOX_TMP)) args.push("--ro-bind-try", entry, entry);
 		}
 	}
+	// A directory strictly inside a whole-directory mask that sits outside the hidden trees (such as /mnt/wslg/distro
+	// under WSL2's /mnt/wslg) would be buried by that mask and its read-only remount would find no mount point.
+	// An equal-path mask (such as a second mount of / that aliases both secrets and home) stays in `hidden` instead
+	// so the two do not cancel each other out.
+	const rawHidden = uniquePaths(spec.readRestriction?.hidden);
+	const topHidden = rawHidden.filter((dir) => !rawHidden.some((other) => isStrictDescendant(dir, other)));
+	const blanket = spec.maskedPaths.filter((mask) => mask.kind === "directory" && (mask.reveal ?? []).length === 0);
+	const hidden = topHidden.filter(
+		(dir) =>
+			!blanket.some((mask) => {
+				const maskPath = bindPath(mask.path);
+				return isStrictDescendant(dir, maskPath) && !topHidden.some((other) => isSameOrDescendant(maskPath, other));
+			}),
+	);
+	for (const dir of hidden) args.push("--tmpfs", dir);
+	for (const entry of uniquePaths(spec.readRestriction?.exposed)) args.push("--ro-bind-try", entry, entry);
+	for (const link of spec.readRestriction?.links ?? []) args.push("--symlink", link.target, bindPath(link.path));
+	const { unseen, maskKept } = restrictionVisibility(spec, hidden);
 	for (const entry of uniquePaths(spec.writableRoots)) args.push("--bind-try", entry, entry);
 	for (const entry of uniquePaths(spec.readOnlyPaths)) if (!unseen(entry)) args.push("--ro-bind-try", entry, entry);
 	for (const entry of uniquePaths(spec.gitWritablePaths)) args.push("--bind-try", entry, entry);
-	for (const mask of spec.maskedPaths.filter((entry) => maskKept(entry, unseen))) {
+	for (const mask of spec.maskedPaths.filter(maskKept)) {
 		if (mask.kind === "directory") {
 			args.push("--tmpfs", bindPath(mask.path));
 			for (const entry of mask.reveal ?? [])

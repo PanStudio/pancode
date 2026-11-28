@@ -180,7 +180,7 @@ export function windowsDriveMounts(mountinfo: string = MOUNTINFO): string[] | Er
 		const [fsType, source] = tail.split(" ");
 		if (mountPoint === undefined || fsType === undefined || source === undefined) continue;
 		if (!["9p", "drvfs", "virtiofs"].includes(fsType)) continue;
-		if (/^[A-Za-z]:\\/u.test(decodeMountField(source))) drives.add(decodeMountField(mountPoint));
+		if (/^[A-Za-z]:(?:[\\/]|$)/u.test(decodeMountField(source))) drives.add(decodeMountField(mountPoint));
 	}
 	return [...drives];
 }

@@ -79,13 +79,16 @@ export interface HomeReadPlan {
  */
 export function planHomeReads(input: HomeReadPlanInput): HomeReadPlan | Error {
 	const home = input.home ?? homedir();
+	const realHome = realOrNull(home);
+	if (realHome === null || realHome === "/")
+		return new Error(`could not resolve the home directory ${home} to hide it; the command was not run`);
 	const linux = input.backend === "bwrap";
 	const wsl = linux && (input.wsl ?? wslKind() !== null);
 	const drives = wsl ? windowsDriveMounts(input.mountinfo) : [];
 	if (drives instanceof Error) return drives;
-	const candidates = [home, ...drives]
-		.map(realOrNull)
-		.filter((entry): entry is string => entry !== null && entry !== "/");
+	const candidates = [realHome, ...drives.map(realOrNull)].filter(
+		(entry): entry is string => entry !== null && entry !== "/",
+	);
 	const primary = [...new Set(candidates)].filter(
 		(entry) => !candidates.some((other) => other !== entry && isStrictDescendant(entry, other)),
 	);
@@ -115,16 +118,27 @@ export function planHomeReads(input: HomeReadPlanInput): HomeReadPlan | Error {
 		if (parent !== null) named.push({ spelled: path.join(parent, path.basename(entry)), physical });
 	}
 	const shown = [...exposed].filter((entry) => ![...exposed].some((other) => isStrictDescendant(entry, other)));
-	const links = named.filter(
-		({ spelled, physical }) =>
-			spelled !== physical && insideHidden(spelled) && !shown.some((root) => isSameOrDescendant(spelled, root)),
-	);
+	const seenLinks = new Set<string>();
+	const links = named.filter(({ spelled, physical }) => {
+		if (spelled === physical || !insideHidden(spelled) || shown.some((root) => isSameOrDescendant(spelled, root)))
+			return false;
+		if (seenLinks.has(spelled)) return false;
+		seenLinks.add(spelled);
+		return true;
+	});
+	const cwdHeld = holdingHidden(input.cwd);
+	if (cwdHeld !== undefined)
+		return new Error(
+			`the working directory ${input.cwd} holds ${cwdHeld}, which safety.homeReads hides; the command was not run`,
+		);
 	if (insideHidden(input.cwd) && !shown.some((root) => isSameOrDescendant(input.cwd, root)))
 		return new Error(
 			`the working directory ${input.cwd} is under a directory safety.homeReads hides and outside every root it shows; the command was not run`,
 		);
 	const hiddenDirs = primary.map((dir) => ({ path: dir, kind: "directory" as const }));
-	const aliased = linux ? withMountAliases(hiddenDirs, input.mountinfo, [input.cwd, ...shown]) : hiddenDirs;
+	const aliased = linux
+		? withMountAliases(hiddenDirs, input.mountinfo, [input.cwd, ...input.admitted, ...shown])
+		: hiddenDirs;
 	if (aliased instanceof Error) return aliased;
 	return {
 		restriction: {

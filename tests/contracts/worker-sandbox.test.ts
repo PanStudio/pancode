@@ -32,6 +32,7 @@ import { createEgressProxy } from "../../src/core/sandbox/egress/proxy.js";
 import { EGRESS_UNGRANTED } from "../../src/core/sandbox/egress/setup.js";
 import { planHomeReads } from "../../src/core/sandbox/home-reads.js";
 import { mainLaunchEgress, mainSandboxPolicy, planMainSandboxSpawn } from "../../src/core/sandbox/main-session.js";
+import { buildSeatbeltInvocation } from "../../src/core/sandbox/seatbelt.js";
 import { WORKER_SANDBOX_SPEC_VERSION, type WorkerSandboxSpec } from "../../src/core/sandbox/types.js";
 import { resolveWorkerSandboxSpec } from "../../src/core/sandbox/worker-policy.js";
 import {
@@ -472,8 +473,14 @@ test("under bwrap listed home reads hide the home but for the run's roots and th
 	}
 	const { scratch, home, project, tool } = fakeHome();
 	t.after(() => rmSync(scratch, { recursive: true, force: true }));
+	const sshDir = join(home, ".ssh");
+	mkdirSync(sshDir, { recursive: true });
+	writeFileSync(join(sshDir, "id_rsa"), "SSH_PRIVATE_KEY\n");
+	const altroot = join(scratch, "altroot");
+	mkdirSync(altroot, { recursive: true });
+	writeFileSync(join(altroot, "secret.txt"), "ALTROOT_SECRET\n");
 	const plan = planHomeReads({
-		list: { roots: ["~/linked", "~/absent"], toolchains: [] },
+		list: { roots: ["~/linked", "~/.ssh/id_rsa", "~/absent"], toolchains: [] },
 		backend: "bwrap",
 		admitted: [project],
 		cwd: project,
@@ -482,7 +489,7 @@ test("under bwrap listed home reads hide the home but for the run's roots and th
 	});
 	assert.ok(!(plan instanceof Error), String(plan));
 	assert.deepEqual(plan.restriction.links, [{ path: join(home, "linked"), target: tool }]);
-	// WSL2's /mnt/wslg/distro shape: a hidden directory inside one a whole-directory mask already covers.
+	// WSL2's /mnt/wslg/distro shape (hidden strictly under a blanket mask) and a second mount of / (equal path).
 	const interop = join(scratch, "wslg");
 	mkdirSync(join(interop, "distro"), { recursive: true });
 	const invocation = buildBwrapInvocation(
@@ -494,7 +501,7 @@ test("under bwrap listed home reads hide the home but for the run's roots and th
 					"--norc",
 					"-c",
 					[
-						"cat ~/notes.txt ~/src/sibling/a.txt ~/.gitconfig 2>/dev/null",
+						`cat ~/notes.txt ~/src/sibling/a.txt ~/.gitconfig ~/.ssh/id_rsa ${join(altroot, "secret.txt")} 2>/dev/null`,
 						"ls ~/src",
 						"cat ~/linked/t.txt",
 						"echo w > written && cat written",
@@ -509,9 +516,14 @@ test("under bwrap listed home reads hide the home but for the run's roots and th
 			network: false,
 			maskedPaths: [
 				{ path: join(home, ".gitconfig"), kind: "file" },
+				{ path: sshDir, kind: "directory" },
 				{ path: interop, kind: "directory" },
+				{ path: altroot, kind: "directory" },
 			],
-			readRestriction: { ...plan.restriction, hidden: [...plan.restriction.hidden, join(interop, "distro")] },
+			readRestriction: {
+				...plan.restriction,
+				hidden: [...plan.restriction.hidden, join(interop, "distro"), altroot],
+			},
 			setEnv: { HOME: home },
 		},
 		availability.executable ?? "bwrap",
@@ -524,7 +536,7 @@ test("under bwrap listed home reads hide the home but for the run's roots and th
 	assert.equal(args.includes("/dev/null"), false);
 	const result = await run(invocation.file, args);
 	assert.equal(result.code, 0, result.output);
-	assert.doesNotMatch(result.output, /HOME_NOTE|SIBLING_FILE|GIT_IDENTITY|sibling/u);
+	assert.doesNotMatch(result.output, /HOME_NOTE|SIBLING_FILE|GIT_IDENTITY|SSH_PRIVATE_KEY|ALTROOT_SECRET|sibling/u);
 	assert.match(result.output, /^project$/mu);
 	assert.match(result.output, /LISTED_FILE/u);
 	assert.match(result.output, /^w$/mu);
@@ -533,7 +545,7 @@ test("under bwrap listed home reads hide the home but for the run's roots and th
 });
 
 test("listed home reads refuse a plan that would show a hidden tree or run outside every shown root", (t) => {
-	const { scratch, home, project, sibling } = fakeHome();
+	const { scratch, home, project, sibling, tool } = fakeHome();
 	t.after(() => rmSync(scratch, { recursive: true, force: true }));
 	symlinkSync(scratch, join(home, "up"));
 	const plan = (input: Partial<Parameters<typeof planHomeReads>[0]>) =>
@@ -550,7 +562,24 @@ test("listed home reads refuse a plan that would show a hidden tree or run outsi
 	assert.match(String(plan({ admitted: [scratch] })), /holds .*home/u);
 	assert.match(String(plan({ list: { roots: ["~/up"], toolchains: [] } })), /resolves to .* which holds/u);
 	assert.match(String(plan({ cwd: sibling })), /working directory/u);
+	assert.match(String(plan({ cwd: home })), /working directory .* holds/u);
+	assert.match(String(plan({ cwd: scratch })), /working directory .* holds/u);
+	assert.match(String(plan({ home: join(scratch, "missing-home") })), /home directory/u);
 	assert.match(String(plan({ wsl: true, mountinfo: join(scratch, "no-mountinfo") })), /mount table|no-mountinfo/u);
+	// Seatbelt grants traversal metadata for nested listed symlink ancestors.
+	const seatbelt = buildSeatbeltInvocation({
+		command: { argv: ["/bin/true"] },
+		cwd: project,
+		writableRoots: [project],
+		network: false,
+		maskedPaths: [],
+		readRestriction: {
+			hidden: [home],
+			exposed: [project, tool],
+			links: [{ path: join(home, "nested", "link"), target: tool }],
+		},
+	});
+	assert.ok(seatbelt.args.some((arg) => arg.endsWith(`=${join(home, "nested")}`)));
 });
 
 test("safety.homeReads validates its roots, keeps roots user-only and lets a project only hide more", (t) => {
@@ -588,6 +617,20 @@ test("safety.homeReads validates its roots, keeps roots user-only and lets a pro
 	assert.deepEqual(layered.settings.safety.homeReads, { main: "listed", workers: "open", roots: [], toolchains: [] });
 	for (const path of ["safety.homeReads.roots", "safety.homeReads.toolchains"])
 		assert.match(layered.issues.find((issue) => issue.path === path)?.message ?? "", /user settings/u, path);
+	// A non-map project value (such as null) must not reset the operator's listed mode back to open.
+	writeFileSync(userFile, "version: 2\nsafety:\n  homeReads:\n    main: listed\n    workers: listed\n");
+	writeFileSync(join(workspace, ".pancode", "settings.local.yaml"), "safety:\n  homeReads: null\n");
+	const nullSnapshot = captureProjectSurface(workspace, "settings");
+	assert.ok(nullSnapshot.contentHash);
+	recordProjectSurfaceTrust(workspace, "settings", nullSnapshot.contentHash);
+	const layeredNull = readLayeredSettings(workspace);
+	assert.deepEqual(layeredNull.settings.safety.homeReads, {
+		main: "listed",
+		workers: "listed",
+		roots: [],
+		toolchains: [],
+	});
+	assert.match(layeredNull.issues.find((issue) => issue.path === "safety.homeReads")?.message ?? "", /ignored/u);
 	assert.equal(settingsChangeKind("safety.homeReads.main"), "nextTurn");
 	const spec = resolveWorkerSandboxSpec({
 		mode: "auto",

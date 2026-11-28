@@ -1025,12 +1025,12 @@ export function planMainSandboxSpawn(
 			message: `sandbox: the main-session sandbox is unavailable (${aliased.message}); the command was not run`,
 		};
 	}
-	const homeReads = mainHomeReadPlan(policy, physicalPolicy, cwd, availability.backend);
-	if (homeReads instanceof Error) return { kind: "refused", message: `sandbox: ${homeReads.message}` };
 	const npmUserConfig =
 		policy.readOnly !== true && physicalPolicy.sandboxCache !== undefined
 			? mainSandboxNpmUserConfig(physicalPolicy.sandboxCache, aliased, homedir(), physicalPolicy)
 			: undefined;
+	const homeReads = mainHomeReadPlan(policy, physicalPolicy, cwd, availability.backend, npmUserConfig);
+	if (homeReads instanceof Error) return { kind: "refused", message: `sandbox: ${homeReads.message}` };
 	// Editor and agent startup files in the workspace and scratch roots stay read-only, present or not. A read-only
 	// run writes only its own fresh scratch directory, which no editor opens.
 	const startup =
@@ -1086,14 +1086,18 @@ function mainHomeReadPlan(
 	physicalPolicy: MainSandboxPolicy,
 	cwd: string,
 	backend: SandboxBackend,
+	npmUserConfig: string | undefined,
 ): HomeReadPlan | Error | undefined {
 	if (policy.homeReads === undefined) return undefined;
 	const workspace = policy.secretRoots.workspace;
 	const readGitDirs = policy.readOnly === true ? (mainSandboxGitLayout(workspace)?.mountDirs ?? []) : [];
+	const ownFiles = npmUserConfig !== undefined ? [npmUserConfig] : [];
 	return planHomeReads({
 		list: policy.homeReads,
 		backend,
-		admitted: [...new Set([workspace, ...readGitDirs].map(physicalSandboxPath).concat(physicalPolicy.writableRoots))],
+		admitted: [
+			...new Set([workspace, ...readGitDirs, ...ownFiles].map(physicalSandboxPath).concat(physicalPolicy.writableRoots)),
+		],
 		cwd: physicalSandboxPath(cwd),
 	});
 }

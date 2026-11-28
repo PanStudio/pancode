@@ -94,13 +94,11 @@ function buildSeatbeltProfile(spec: SandboxInvocationSpec): { profile: string; p
 	const shownRoots = restriction === undefined ? [] : seatbeltShownRoots(spec);
 	const hidden = define("HIDDEN_DIR", restriction?.hidden ?? []);
 	const shown = define("SHOWN_ROOT", shownRoots);
-	const shownLinks = define(
-		"SHOWN_LINK",
-		(restriction?.links ?? []).map((link) => link.path),
-	);
+	const shownLinkPaths = (restriction?.links ?? []).map((link) => link.path);
+	const shownLinks = define("SHOWN_LINK", shownLinkPaths);
 	const shownAncestors = define(
 		"SHOWN_ANCESTOR",
-		restriction === undefined ? [] : ancestorsUnder(shownRoots, restriction.hidden),
+		restriction === undefined ? [] : ancestorsUnder([...shownRoots, ...shownLinkPaths], restriction.hidden),
 	);
 	const lines = [...SEATBELT_BASE_POLICY];
 	// Temporary directories: macOS resolves /tmp to /private/tmp and gives each

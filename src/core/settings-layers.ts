@@ -682,7 +682,10 @@ function stripProjectOperatorSafety(
  * dropped, since each would widen what the operator's own settings hide.
  */
 function projectHomeReads(raw: unknown, drop: (path: string, message: string) => void): unknown {
-	if (!isRecord(raw)) return raw;
+	if (!isRecord(raw)) {
+		drop("safety.homeReads", "a project may only set listed home reads, as a map; project value ignored");
+		return undefined;
+	}
 	const kept: Record<string, unknown> = { ...raw };
 	for (const caller of ["main", "workers"]) {
 		if (!Object.hasOwn(kept, caller) || kept[caller] === "listed") continue;
