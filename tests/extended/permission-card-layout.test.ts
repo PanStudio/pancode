@@ -10,7 +10,6 @@ import { createTelemetryHub } from "../../src/core/telemetry/hub.js";
 import type { PermissionResolvedPayload } from "../../src/core/telemetry/live-events.js";
 import { ToolNames } from "../../src/core/tool-names.js";
 import { type MainCallReach, mainCallReach } from "../../src/domains/safety/call-consequence.js";
-import { CALL_TARGET_MAX_CHARS, describeCallTarget } from "../../src/domains/safety/call-target.js";
 import type { SafetyDecision } from "../../src/domains/safety/contract.js";
 import {
 	classifyDecisionPresentation,
@@ -46,6 +45,7 @@ import {
 	widthClass,
 } from "../../src/interactive/theme/primitives.js";
 import type { UnattendedTimers } from "../../src/interactive/unattended-countdown.js";
+import { CALL_TARGET_MAX_CHARS, describeCallTarget } from "../../src/lib/call-target/call-target.js";
 import { createRegistry } from "../../src/tools/registry.js";
 import { writeTool } from "../../src/tools/write.js";
 

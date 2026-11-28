@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
-import type { ActionClass } from "./action-classifier.js";
-import type { RejectionMessage } from "./rejection-feedback.js";
+import type { ActionClass } from "../../domains/safety/action-classifier.js";
+import type { RejectionMessage } from "../../domains/safety/rejection-feedback.js";
 
 /**
  * The autonomy axis (sd-01 §2.2/§2.3). An ordered operator-set dial that

@@ -2,11 +2,10 @@
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import { mkdir, readdir, readFile, stat, writeFile } from "node:fs/promises";
 import { basename, dirname, join, resolve } from "node:path";
-import { WORKING_SET_PROFILE_IDS, type WorkingSetProfileId } from "../core/defaults.js";
+import { DEFAULT_WORKING_SET_SETTINGS, WORKING_SET_PROFILE_IDS, type WorkingSetProfileId } from "../core/defaults.js";
 import { gitExecFileSync } from "../core/internal-git-run.js";
 import { assertSafeId } from "../core/safe-id.js";
 import { pancodeStatePath } from "../core/xdg.js";
-import { DEFAULT_WORKING_SET_SETTINGS } from "../domains/context/working-set/defaults.js";
 import { foldWorkingSet } from "../domains/context/working-set/fold.js";
 import { buildPathIndex } from "../domains/context/working-set/path-index.js";
 import { resolveReplayPolicy } from "../domains/context/working-set/policies/index.js";

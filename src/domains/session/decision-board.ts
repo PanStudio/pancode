@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import { randomUUID } from "node:crypto";
+import type { AutonomyExposure } from "../../lib/autonomy/autonomy.js";
 import type { AskUserToolPolicy } from "../../tools/registry-contract.js";
-import type { AutonomyExposure } from "../safety/autonomy.js";
 import { type DecisionLedgerEntry, type DecisionRecord, type DecisionSource, decisionRef } from "./entries.js";
 import { isOperatorTypedUserPayload, operatorTextOfUserPayload } from "./history.js";
 

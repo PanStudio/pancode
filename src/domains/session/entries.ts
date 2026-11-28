@@ -30,7 +30,7 @@ import { isProviderCheckpointHandle } from "../../core/provider-checkpoint-handl
 import { isSkillActivation, type PendingSkillToolPolicy, type SkillActivation } from "../../core/skill-activation.js";
 import type { PancodeTurnRecord } from "../../engine/session.js";
 import type { AgentMessage, ProviderCheckpointHandle } from "../../engine/types.js";
-import { AUTONOMY_EXPOSURES, type AutonomyExposure } from "../safety/autonomy.js";
+import { AUTONOMY_EXPOSURES, type AutonomyExposure } from "../../lib/autonomy/autonomy.js";
 import type {
 	ContinuityCheckpointPayload,
 	ContinuityCommitEntry,

@@ -26,7 +26,7 @@ import {
 	URL_USERINFO_PATTERNS,
 	URL_USERNAME_TOKEN_RE,
 	urlUserinfoHoldsSecret,
-} from "../safety/redaction.js";
+} from "./redaction.js";
 
 export interface RedactionTally {
 	count: number;
@@ -333,7 +333,7 @@ const EXISTING_MARKER_RE = /\[redacted:[a-z-]+\]/gu;
 /**
  * {@link redactSecretsText} for text that may already hold `[redacted:…]` markers, which it keeps byte for byte instead of
  * re-redacting `TOKEN=[redacted:sk-key]` as `[redacted:assignment]` and counting it twice. Each marker is masked as
- * `\uE000` plus one private-use codepoint from `\uE100`, the shape `REDACTED_USERINFO_RE` in `safety/redaction.ts` accepts.
+ * `\uE000` plus one private-use codepoint from `\uE100`, the shape `REDACTED_USERINFO_RE` in `lib/secrets/redaction.ts` accepts.
  */
 export function redactSecretsPreservingMarkers(text: string, tally: RedactionTally): string {
 	const markers: string[] = [];

@@ -6,7 +6,7 @@
  */
 
 import { formatCount } from "../../core/format-time.js";
-import type { YoloConfinement } from "./autonomy.js";
+import type { YoloConfinement } from "../../lib/autonomy/autonomy.js";
 import type { AutonomyStatus } from "./autonomy-window.js";
 
 export interface AutonomyModeReadout {

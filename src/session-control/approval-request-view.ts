@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import type { ActionClass } from "../domains/safety/action-classifier.js";
-import type { AutonomyExposure } from "../domains/safety/autonomy.js";
 import type { MainCallReach } from "../domains/safety/call-consequence.js";
+import type { AutonomyExposure } from "../lib/autonomy/autonomy.js";
 
 /**
  * Facts about a parked mutation that may cross every process boundary: what

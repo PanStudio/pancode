@@ -3,8 +3,8 @@
 import { GLYPH } from "../../core/glyphs.js";
 import { onPresentationTierChange, tierPolicy } from "../../core/presentation-tier.js";
 import type { ExtensionCommandRow } from "../../domains/extensions/operator-commands.js";
-import { sanitizeCallTargetText } from "../../domains/safety/call-target.js";
 import type { Keybinding, OverlayHandle, TUI } from "../../engine/tui.js";
+import { sanitizeCallTargetText } from "../../lib/call-target/call-target.js";
 import { commandReference } from "../../session-control/slash-reference.js";
 import { CLOSED_ACTION_ORDER, GLOBAL_ACTION_ORDER } from "../application-controller.js";
 import { displaySafe } from "../display-safe.js";

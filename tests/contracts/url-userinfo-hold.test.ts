@@ -11,17 +11,6 @@ import { drainDeferredWritesSync } from "../../src/domains/dispatch/deferred-wri
 import type { RunEventJournalBody } from "../../src/domains/dispatch/run-event-journal.js";
 import { attachRunEventJournalBridge } from "../../src/domains/dispatch/run-event-journal-bridge.js";
 import { appendRunFeed, runFeedPath } from "../../src/domains/dispatch/run-feed.js";
-import { createRedactionTally, redactSecretSegments, redactSecretsText } from "../../src/domains/evidence/redact.js";
-import {
-	cutHeadGuard,
-	dropShortCutHead,
-	holdUnresolvedStrings,
-	RedactedStringProjection,
-	redactSecretString,
-	redactStreamingSecretString,
-	redactUrlCredentials,
-	UrlCredentialStreamFilter,
-} from "../../src/domains/safety/redaction.js";
 import {
 	createWorkerProgressFold,
 	WORKER_LIVE_TAIL_MAX_BYTES,
@@ -44,6 +33,17 @@ import {
 	WorkerAnswerProjection,
 } from "../../src/interactive/renderers/worker-answer.js";
 import { renderWorkerEntryLines } from "../../src/interactive/renderers/worker-entry.js";
+import { createRedactionTally, redactSecretSegments, redactSecretsText } from "../../src/lib/secrets/redact.js";
+import {
+	cutHeadGuard,
+	dropShortCutHead,
+	holdUnresolvedStrings,
+	RedactedStringProjection,
+	redactSecretString,
+	redactStreamingSecretString,
+	redactUrlCredentials,
+	UrlCredentialStreamFilter,
+} from "../../src/lib/secrets/redaction.js";
 import { createWorkerStream } from "../../src/session-control/worker-stream.js";
 import {
 	BASH_DEFAULT_RESULT_DISPOSITION,

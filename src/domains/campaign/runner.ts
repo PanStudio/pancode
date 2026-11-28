@@ -6,8 +6,8 @@ import { isSameOrDescendant } from "../../core/path-containment.js";
 import { runCommandVector, type SafeCommandResult } from "../../core/safe-exec.js";
 import { safeResourceWrite } from "../../core/safe-resource-write.js";
 import { isRecord } from "../../core/type-guards.js";
+import { withContainedYoloPin } from "../../lib/autonomy/autonomy.js";
 import { type PancodeLaunch, type RunEnvPolicy, runEnv } from "../extensions/services/run-env.js";
-import { withContainedYoloPin } from "../safety/autonomy.js";
 import { type CampaignMetrics, entryRootEnv, entryRoots, foldCampaignMetrics, loadCampaignMetrics } from "./fold.js";
 import type { RosterEntry } from "./roster.js";
 

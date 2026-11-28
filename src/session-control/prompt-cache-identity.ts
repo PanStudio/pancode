@@ -4,7 +4,7 @@ import { canonicalJsonStrict } from "../core/canonical-json.js";
 import { sha256Hex } from "../core/hash.js";
 import type { SessionPromptInputs } from "../domains/prompts/compiler.js";
 import type { ContextWindowSource } from "../domains/providers/index.js";
-import type { AutonomyLevel } from "../domains/safety/autonomy.js";
+import type { AutonomyLevel } from "../lib/autonomy/autonomy.js";
 
 /** The exact schema bytes pi attaches to a provider request for one tool. */
 export interface AttachedToolSchema {

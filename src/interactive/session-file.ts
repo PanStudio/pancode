@@ -6,7 +6,7 @@ import { readBuildProvenance, runningBuildId } from "../core/build-info.js";
 import { safeResourceWrite } from "../core/safe-resource-write.js";
 import type { Quantity } from "../core/telemetry/dto.js";
 import type { PermissionRequestedPayload } from "../core/telemetry/live-events.js";
-import { redactSecretString } from "../domains/safety/redaction.js";
+import { redactSecretString } from "../lib/secrets/redaction.js";
 import type { ChatLoopEvent } from "../session-control/chat-loop.js";
 import type { ExitSummarySnapshot } from "./exit-summary-collector.js";
 

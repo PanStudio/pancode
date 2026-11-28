@@ -3,9 +3,9 @@
 import { Type } from "typebox";
 import { ToolNames } from "../core/tool-names.js";
 import type { TargetDescriptor } from "../domains/providers/types/target-descriptor.js";
-import type { AutonomyLevel } from "../domains/safety/autonomy.js";
 import { isFleetRoutingPath, PANCODE_SETTINGS_RULE_ID, ROUTING_PIN_HINT } from "../domains/safety/routing-settings.js";
 import { StringEnum } from "../engine/ai.js";
+import type { AutonomyLevel } from "../lib/autonomy/autonomy.js";
 import { lazyTool, type ToolSurface } from "./lazy-tool.js";
 import type { ToolConfirmation, ToolSpec } from "./tool-spec.js";
 

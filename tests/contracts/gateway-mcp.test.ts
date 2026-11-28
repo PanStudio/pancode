@@ -38,12 +38,12 @@ import type { MiddlewareHookRegistration } from "../../src/domains/middleware/ru
 import { buildSkillCatalogView, loadSkills } from "../../src/domains/resources/index.js";
 import { expandSubmitText, type McpSubmitReader } from "../../src/domains/resources/submit-expansion.js";
 import type { ActionClass } from "../../src/domains/safety/action-classifier.js";
-import type { AutonomyLevel } from "../../src/domains/safety/autonomy.js";
 import type { SafetyContract } from "../../src/domains/safety/contract.js";
 import { createLoopGuardRegistration } from "../../src/engine/loop-guard.js";
 import { parseCommandArgs } from "../../src/engine/prompt-templates.js";
 import { createWorkerSafety } from "../../src/engine/worker-tools.js";
 import { mcpPromptArgumentSource, mcpReferenceSource } from "../../src/interactive/mcp-completion.js";
+import type { AutonomyLevel } from "../../src/lib/autonomy/autonomy.js";
 import { resolveAgentTools } from "../../src/tools/agent-tools.js";
 import { registerCoreTools } from "../../src/tools/core-bootstrap.js";
 import type { McpCapabilitySource } from "../../src/tools/gateway/index.js";

@@ -19,8 +19,8 @@ import {
 	createRedactionTally,
 	redactCommandOutputSecrets,
 	redactSecretsText,
-} from "../evidence/redact.js";
-import { isSecretArgKey, redactSecretString } from "./redaction.js";
+} from "../secrets/redact.js";
+import { isSecretArgKey, redactSecretString } from "../secrets/redaction.js";
 
 const ESC_CHAR = String.fromCharCode(27);
 const BEL_CHAR = String.fromCharCode(7);

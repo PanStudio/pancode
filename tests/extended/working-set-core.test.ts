@@ -2,9 +2,9 @@
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import { deepStrictEqual, doesNotMatch, match, ok, strictEqual } from "node:assert/strict";
 import { describe, it } from "node:test";
+import { DEFAULT_WORKING_SET_SETTINGS } from "../../src/core/defaults.js";
 import type { LiveBudgetView } from "../../src/domains/context/budget/live-view.js";
 import { EMPTY_WORKING_SET_VIEW } from "../../src/domains/context/working-set/contract.js";
-import { DEFAULT_WORKING_SET_SETTINGS } from "../../src/domains/context/working-set/defaults.js";
 import { planEviction } from "../../src/domains/context/working-set/engine.js";
 import { foldWorkingSet } from "../../src/domains/context/working-set/fold.js";
 import { structuralV2Policy } from "../../src/domains/context/working-set/policies/index.js";

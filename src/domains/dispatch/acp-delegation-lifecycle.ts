@@ -8,12 +8,12 @@
  */
 
 import { sha256Hex } from "../../core/hash.js";
+import type { AutonomyLevel } from "../../lib/autonomy/autonomy.js";
 import type { WorkerPromptMessage } from "../../worker/spec-contract.js";
 import type { AgentsContract } from "../agents/contract.js";
 import type { AgentProjectContextTier } from "../agents/spec.js";
 import type { ConfigContract } from "../config/contract.js";
 import type { ContextContract } from "../context/contract.js";
-import type { AutonomyLevel } from "../safety/autonomy.js";
 import type { SafetyContract } from "../safety/contract.js";
 import { type DispatchAdmissionStage, requestOriginFor, resolveDelegationAdmissionStage } from "./admission-scope.js";
 import type { LedgerAssignment } from "./agent-ledger.js";

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0 AND MIT
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 // Split from slash-commands.ts, which adapts pi-coding-agent's BUILTIN_SLASH_COMMANDS registry.
-import { bundleRequest } from "../../cli/report-bundle.js";
+import { bundleRequest } from "../../domains/report/bundle-flow.js";
 import type { ReportTextHost } from "../../domains/report/text-flow.js";
 import type { BuiltinSlashCommand, SlashReportKind } from "../slash-command-types.js";
 import { fromArgsOrUsage, usageError } from "./usage-error.js";

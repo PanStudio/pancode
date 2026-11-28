@@ -44,9 +44,9 @@ import { type ColorDepth, colorDepth } from "../core/terminal-preferences.js";
 import { resolveRole, roleDimsWithoutColor, type SemanticRole } from "../core/theme-roles.js";
 import { sgrFor } from "../core/theme-sgr.js";
 import { plainOutcomeLabel } from "../domains/dispatch/failure-headline.js";
-import { sanitizeCallTargetText } from "../domains/safety/call-target.js";
-import { redactSecretString } from "../domains/safety/redaction.js";
 import { truncateToWidth, visibleWidth, wrapTextWithAnsi } from "../engine/tui-primitives.js";
+import { sanitizeCallTargetText } from "../lib/call-target/call-target.js";
+import { redactSecretString } from "../lib/secrets/redaction.js";
 import {
 	type BoardModel,
 	type BoardSource,

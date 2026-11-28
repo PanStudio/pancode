@@ -12,15 +12,15 @@ import {
 	SEALED_CHECK_REPORT_KEYS_MAX,
 	type SealedCheckReport,
 } from "../../core/telemetry/run-schemas.js";
+import { createRedactionTally, redactSecretsDeep } from "../../lib/secrets/redact.js";
+import { redactSecretString } from "../../lib/secrets/redaction.js";
 import { type NumericDeviation, widestSpread } from "../../tools/verify/numeric.js";
 import type { DeclaredCheckReport } from "../../tools/verify/scripts.js";
 import { RESULT_CONTRACT_REPAIR_LIMIT } from "../agents/result-contract-repair.js";
 import type { RunAssessmentContext } from "../evidence/assessment.js";
-import { createRedactionTally, redactSecretsDeep } from "../evidence/redact.js";
 import { type RunAssuranceFacts, runResultAssurance, type TrustVerdict } from "../evidence/trust-projection.js";
 import { runContextProvenance } from "../evidence/trust-status.js";
 import { runtimeResolutionWarnings } from "../providers/runtime-resolution.js";
-import { redactSecretString } from "../safety/redaction.js";
 import { settledRunEconomics } from "../telemetry/economy-settlement.js";
 import { telemetryObjectRef } from "../telemetry/objects.js";
 import { runSettledDigest } from "../telemetry/run-digest.js";

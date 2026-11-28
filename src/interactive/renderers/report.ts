@@ -2,9 +2,9 @@
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import type { OutputStyle } from "../../core/defaults.js";
 import { tierPolicy } from "../../core/presentation-tier.js";
-import { sanitizeCallTargetText, sanitizeMultilineDisplayText } from "../../domains/safety/call-target.js";
-import { redactUrlCredentials } from "../../domains/safety/redaction.js";
 import { truncateToWidth, visibleWidth } from "../../engine/tui.js";
+import { sanitizeCallTargetText, sanitizeMultilineDisplayText } from "../../lib/call-target/call-target.js";
+import { redactUrlCredentials } from "../../lib/secrets/redaction.js";
 import type { NoticeLevel } from "../../session-control/notice-source.js";
 import { cardHead, cardRows } from "../card.js";
 import { GLYPH, pancodeTheme } from "../theme/index.js";

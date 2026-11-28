@@ -11,9 +11,9 @@ import type { MainSandboxPolicy } from "../core/sandbox/main-session.js";
 import type { SandboxEnvPolicy } from "../core/sandbox/types.js";
 import { shellQuote } from "../core/shell-quote.js";
 import { ToolNames } from "../core/tool-names.js";
-import type { AutonomyLevel } from "../domains/safety/autonomy.js";
 import { JOB_CONDITION_LIMIT, type JobConditionEvidence, projectJobPredicate } from "../domains/scheduling/index.js";
 import type { JobExecutionContext, JobRunResult } from "../domains/scheduling/job-types.js";
+import type { AutonomyLevel } from "../lib/autonomy/autonomy.js";
 import type { HostEffectCall } from "./registry-contract.js";
 
 const EXECUTABLE_HASH_LIMIT = 128 * 1024 * 1024;

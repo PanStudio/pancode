@@ -33,8 +33,8 @@ import {
 	sweepRunRecords,
 } from "../../src/core/run-records.js";
 import { buildSafeToolEnv, type SafeCommandResult } from "../../src/core/safe-exec.js";
-import { withContainedYoloPin } from "../../src/domains/safety/autonomy.js";
 import { findExecutableOnPath } from "../../src/domains/toolchain/resolve.js";
+import { withContainedYoloPin } from "../../src/lib/autonomy/autonomy.js";
 import {
 	createRunScriptProgressController,
 	createRunScriptTool,

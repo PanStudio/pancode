@@ -9,7 +9,7 @@ import {
 } from "../../core/path-boundary.js";
 import { ToolNames } from "../../core/tool-names.js";
 import { isRecord } from "../../core/type-guards.js";
-import type { AutonomyLevel } from "../safety/autonomy.js";
+import type { AutonomyLevel } from "../../lib/autonomy/autonomy.js";
 import type { DispatchRequest, MainGrantOutcome } from "./contract.js";
 import { mainGrantBelowYolo } from "./grant-authority.js";
 import type { GrantBroker, GrantDecision, GrantRecord } from "./grant-broker.js";

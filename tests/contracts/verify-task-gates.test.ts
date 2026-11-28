@@ -12,7 +12,6 @@ import { configureWorkerProcessSandbox } from "../../src/core/sandbox/worker-pro
 import { ToolNames } from "../../src/core/tool-names.js";
 import { pancodeStatePath } from "../../src/core/xdg.js";
 import { evaluateAdmission } from "../../src/domains/safety/admission.js";
-import { mapAutonomy } from "../../src/domains/safety/autonomy.js";
 import {
 	createSafetyPolicyEngine,
 	TASK_GATE_REFUSED_RULE_ID,
@@ -22,6 +21,7 @@ import { stripTerminalSequences } from "../../src/engine/tui.js";
 import { createWorkerSafety } from "../../src/engine/worker-tools.js";
 import { renderToolPreview } from "../../src/interactive/renderers/tool-execution.js";
 import { transcriptDetail } from "../../src/interactive/transcript-detail.js";
+import { mapAutonomy } from "../../src/lib/autonomy/autonomy.js";
 import { createRegistry } from "../../src/tools/registry.js";
 import { discoverDeclaredChecks } from "../../src/tools/verify/discovery.js";
 import { verifyTool } from "../../src/tools/verify/index.js";

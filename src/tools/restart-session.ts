@@ -7,7 +7,7 @@ import { RESTART_CONTINUATION_MAX } from "../core/restart-intent.js";
 import { requestModelRestart, restartRequestUnavailable } from "../core/restart-request.js";
 import { runningPackageRoot } from "../core/running-build.js";
 import { ToolNames } from "../core/tool-names.js";
-import type { AutonomyLevel } from "../domains/safety/autonomy.js";
+import type { AutonomyLevel } from "../lib/autonomy/autonomy.js";
 import type { ToolConfirmation, ToolSpec } from "./tool-spec.js";
 
 /** Rule id of the approval card a model-requested restart opens. */

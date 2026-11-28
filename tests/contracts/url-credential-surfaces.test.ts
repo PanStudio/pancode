@@ -16,12 +16,20 @@ import { pancodeStateDir } from "../../src/core/xdg.js";
 import { drainDeferredWritesSync } from "../../src/domains/dispatch/deferred-writes.js";
 import type { RunEventJournalBody } from "../../src/domains/dispatch/run-event-journal.js";
 import { appendRunFeed, holdBack, runFeedPath } from "../../src/domains/dispatch/run-feed.js";
+import { projectAsideAnswer, projectDraftOutcome } from "../../src/engine/acp/aside.js";
+import { servePancodeAcpAgent } from "../../src/engine/acp/server.js";
+import type { AcpJsonRpcPeerTransport } from "../../src/engine/acp/transport.js";
+import { ACP_MAX_STRING_BYTES } from "../../src/engine/acp/types.js";
+import { describeWorkerRefusal } from "../../src/engine/worker-refusals.js";
+import { formatDraftOverlayBody } from "../../src/interactive/overlays/draft.js";
+import { SideQuestionOverlayBody } from "../../src/interactive/overlays/side-question.js";
+import { renderNoticeRow } from "../../src/interactive/renderers/notice.js";
 import {
 	createRedactionTally,
 	redactCommandOutputSecrets,
 	redactSecretSegments,
 	redactSecretsText,
-} from "../../src/domains/evidence/redact.js";
+} from "../../src/lib/secrets/redact.js";
 import {
 	endsInOpenCredential,
 	headGuardAfter,
@@ -32,15 +40,7 @@ import {
 	redactStreamingUrlCredentials,
 	redactUrlCredentials,
 	UrlCredentialStreamFilter,
-} from "../../src/domains/safety/redaction.js";
-import { projectAsideAnswer, projectDraftOutcome } from "../../src/engine/acp/aside.js";
-import { servePancodeAcpAgent } from "../../src/engine/acp/server.js";
-import type { AcpJsonRpcPeerTransport } from "../../src/engine/acp/transport.js";
-import { ACP_MAX_STRING_BYTES } from "../../src/engine/acp/types.js";
-import { describeWorkerRefusal } from "../../src/engine/worker-refusals.js";
-import { formatDraftOverlayBody } from "../../src/interactive/overlays/draft.js";
-import { SideQuestionOverlayBody } from "../../src/interactive/overlays/side-question.js";
-import { renderNoticeRow } from "../../src/interactive/renderers/notice.js";
+} from "../../src/lib/secrets/redaction.js";
 import { isolatePancodeEnv } from "../harness/scratch-env.js";
 
 // Secrets draw on letters nothing else here uses, so one leaked character is enough to fail.

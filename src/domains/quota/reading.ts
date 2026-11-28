@@ -9,7 +9,7 @@ import type { Fact } from "../../core/telemetry/fact.js";
 import { telemetryHub } from "../../core/telemetry/hub.js";
 import { type CopilotQuotaObservation, onCopilotSdkQuotaObservations } from "../../engine/ai.js";
 import type { AnthropicResponseObservation, CodexQuotaObservation } from "../../engine/types.js";
-import { redactSecretString } from "../safety/redaction.js";
+import { redactSecretString } from "../../lib/secrets/redaction.js";
 import { parseAnthropicHeaders } from "./anthropic-headers.js";
 import { copilotStreamSnapshot } from "./copilot-provider.js";
 import { codexStreamSnapshot, STREAM_QUOTA_TTL_MS } from "./observed.js";

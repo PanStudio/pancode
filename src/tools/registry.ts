@@ -32,7 +32,6 @@ import {
 	evaluateAdmission,
 } from "../domains/safety/admission.js";
 import { approvalAxisId } from "../domains/safety/approval-axis.js";
-import { type AutonomyLevel, DEFAULT_AUTONOMY_LEVEL } from "../domains/safety/autonomy.js";
 import type { OpenDecisionKind } from "../domains/safety/autonomy-window.js";
 import { mainCallExposure } from "../domains/safety/call-consequence.js";
 import { GIT_CONTROL_FILE_RULE_ID } from "../domains/safety/containment.js";
@@ -67,6 +66,7 @@ import { UNATTENDED_ALLOWED_BY } from "../domains/safety/unattended.js";
 import { YOLO_FLOOR_REASON_PREFIX } from "../domains/safety/yolo-floor.js";
 import type { WorkspaceSnapshotOutcome } from "../domains/workspace-snapshots/store.js";
 import { type WorkspaceSnapshotTrigger, workspaceSnapshotTrigger } from "../domains/workspace-snapshots/trigger.js";
+import { type AutonomyLevel, DEFAULT_AUTONOMY_LEVEL } from "../lib/autonomy/autonomy.js";
 import { approvalGiver, withApprovalNote } from "./approval-note.js";
 import { type DispatchPlanView, describeDispatchPlan } from "./dispatch-plan.js";
 import { settleObservationCharge } from "./observation.js";

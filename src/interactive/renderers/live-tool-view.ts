@@ -18,9 +18,10 @@
  * the newest lines, so the transcript does not jump while text streams. Rows
  * are cut to the width rather than wrapped for the same reason.
  */
-import { sanitizeMultilineDisplayText } from "../../domains/safety/call-target.js";
-import { holdUnresolvedUserinfo, redactSecretString } from "../../domains/safety/redaction.js";
+
 import { truncateToWidth } from "../../engine/tui.js";
+import { sanitizeMultilineDisplayText } from "../../lib/call-target/call-target.js";
+import { holdUnresolvedUserinfo, redactSecretString } from "../../lib/secrets/redaction.js";
 import { GLYPH, pancodeTheme } from "../theme/index.js";
 import { skinEpoch } from "../theme/tokens.js";
 import { type CodeInkCarry, type CodeInkLexer, codeInkLangForPath, codeInkLexer } from "./code-ink.js";

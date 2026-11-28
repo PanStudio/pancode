@@ -26,7 +26,6 @@ import {
 	loadSkills,
 	parsePendingSkillRequests,
 } from "../../src/domains/resources/skills/loader.js";
-import { modelMayActivateSkills } from "../../src/domains/safety/autonomy.js";
 import { assessFinishContract } from "../../src/domains/safety/finish-contract.js";
 import { READONLY_SCOPE, WORKSPACE_SCOPE } from "../../src/domains/safety/scope.js";
 import { createSessionBundle } from "../../src/domains/session/extension.js";
@@ -40,6 +39,7 @@ import {
 	createInteractiveSlashRuntime,
 	type InteractiveSlashRuntimeDeps,
 } from "../../src/interactive/interactive-slash-runtime.js";
+import { modelMayActivateSkills } from "../../src/lib/autonomy/autonomy.js";
 import { type ChatLoopEvent, type CreateChatLoopDeps, createChatLoop } from "../../src/session-control/chat-loop.js";
 import { createPendingSkillToolPolicy } from "../../src/session-control/chat-loop-messages.js";
 import { parseSlashCommand } from "../../src/session-control/slash-commands.js";

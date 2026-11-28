@@ -38,13 +38,6 @@ import { isRecord } from "../../core/type-guards.js";
 import { missingRuntimeComponent } from "../../domains/lifecycle/components.js";
 import { PROVIDER_PROBE_TIMEOUT_MS } from "../../domains/providers/contract.js";
 import { resolveRuntimeTarget } from "../../domains/providers/runtime-resolution.js";
-import type { AutonomyLevel } from "../../domains/safety/autonomy.js";
-import { DEFAULT_AUTONOMY_LEVEL, isAutonomyLevel } from "../../domains/safety/autonomy.js";
-import {
-	redactFinalUrlCredentials,
-	redactStreamingUrlCredentials,
-	redactUrlCredentials,
-} from "../../domains/safety/redaction.js";
 import { jobIsComplete } from "../../domains/scheduling/index.js";
 import type { SessionContract, SessionMeta } from "../../domains/session/contract.js";
 import type { SessionEntry } from "../../domains/session/entries.js";
@@ -52,6 +45,13 @@ import { liveSessionOwner } from "../../domains/session/live-owner.js";
 import { runOperatorShellLine } from "../../domains/session/operator-shell.js";
 import { resumedSessionRoute } from "../../domains/session/resumed-route.js";
 import type { TelemetryView } from "../../domains/telemetry/contract.js";
+import type { AutonomyLevel } from "../../lib/autonomy/autonomy.js";
+import { DEFAULT_AUTONOMY_LEVEL, isAutonomyLevel } from "../../lib/autonomy/autonomy.js";
+import {
+	redactFinalUrlCredentials,
+	redactStreamingUrlCredentials,
+	redactUrlCredentials,
+} from "../../lib/secrets/redaction.js";
 import { RATE_MIN_WINDOW_MS } from "../../session-control/assistant-generation-timing.js";
 import {
 	clampThinkingLevel,

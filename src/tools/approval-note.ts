@@ -34,7 +34,7 @@
 
 import { isRecord } from "../core/type-guards.js";
 import { SESSION_CODE_CONSENT_RULE_ID } from "../core/views/approval-words.js";
-import { sanitizeCallTargetText } from "../domains/safety/call-target.js";
+import { sanitizeCallTargetText } from "../lib/call-target/call-target.js";
 
 /** Prefix for a grant a person gave. */
 export const OPERATOR_APPROVAL_NOTE_PREFIX = "[operator approval]";

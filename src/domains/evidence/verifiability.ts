@@ -16,7 +16,7 @@
  * Pure: no I/O.
  */
 
-import type { AutonomyLevel } from "../safety/autonomy.js";
+import type { AutonomyLevel } from "../../lib/autonomy/autonomy.js";
 
 export type VerifiabilityKind = "executable" | "numeric" | "reproducible" | "judgment";
 

@@ -5,7 +5,6 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { it } from "node:test";
-import { createRedactionTally, headForRedaction, redactSecretsText } from "../../src/domains/evidence/redact.js";
 import { completedLessonSource } from "../../src/domains/memory/history-review.js";
 import { createMemoryInterventionRegistration } from "../../src/domains/memory/intervention.js";
 import { reflectionRequest } from "../../src/domains/memory/observations.js";
@@ -15,9 +14,10 @@ import { memoryRouteJson, redactForMemoryRoute } from "../../src/domains/memory/
 import { TaskMemoryBank } from "../../src/domains/memory/task-bank.js";
 import type { TaskMemoryModelRequest } from "../../src/domains/memory/task-memory-policy.js";
 import { runTaskMemoryPolicy } from "../../src/domains/memory/task-memory-policy.js";
-import { RedactedStringProjection } from "../../src/domains/safety/redaction.js";
 import type { SessionEntry } from "../../src/domains/session/index.js";
 import { observationSourceUnits } from "../../src/domains/session/memory-source.js";
+import { createRedactionTally, headForRedaction, redactSecretsText } from "../../src/lib/secrets/redact.js";
+import { RedactedStringProjection } from "../../src/lib/secrets/redaction.js";
 
 // Built from parts so secret scanners do not read the AWS documentation example key as a leak.
 const AWS_KEY = ["AKIA", "IOSFODNN7EXAMPLE"].join("");

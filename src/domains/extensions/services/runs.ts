@@ -20,7 +20,7 @@ import {
 	MAX_EXTENSION_RUN_DEPTH,
 	parseExtensionRunDepth,
 } from "../../../core/tool-env-controls.js";
-import { withContainedYoloPin } from "../../safety/autonomy.js";
+import { withContainedYoloPin } from "../../../lib/autonomy/autonomy.js";
 import { type PancodeLaunch, type RunEnvPolicy, runEnv } from "./run-env.js";
 import type { ExtensionRequestScope } from "./scope.js";
 

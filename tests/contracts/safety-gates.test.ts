@@ -21,8 +21,6 @@ import { recordProjectSurfaceTrust, safetySurfaceTrustHash } from "../../src/cor
 import { pancodeConfigDir } from "../../src/core/xdg.js";
 import { classify } from "../../src/domains/safety/action-classifier.js";
 import { evaluateAdmission } from "../../src/domains/safety/admission.js";
-import { mapAutonomy } from "../../src/domains/safety/autonomy.js";
-import { describeCallTarget } from "../../src/domains/safety/call-target.js";
 import {
 	extractCommandDeleteTargets,
 	extractCommandWriteTargets,
@@ -33,12 +31,14 @@ import { EMPTY_INFORMATION_FLOW_INPUT } from "../../src/domains/safety/informati
 import { createSafetyPolicyEngine, type SafetyPolicyEngine } from "../../src/domains/safety/policy-engine.js";
 import { loadProjectSafetyPolicy } from "../../src/domains/safety/project-policy.js";
 import { protectedArtifactMutationBlockReason } from "../../src/domains/safety/protected-artifacts.js";
-import { redactSecretString } from "../../src/domains/safety/redaction.js";
 import { createRunEffectsRecorder } from "../../src/domains/safety/run-effects.js";
 import { scanShellLike } from "../../src/domains/safety/shell-scan.js";
 import { AcpToolMediator } from "../../src/engine/acp/tool-mediator.js";
 import { emitClaudeToolPermissionDecision } from "../../src/engine/claude/tool-safety.js";
 import { createWorkerSafety } from "../../src/engine/worker-tools.js";
+import { mapAutonomy } from "../../src/lib/autonomy/autonomy.js";
+import { describeCallTarget } from "../../src/lib/call-target/call-target.js";
+import { redactSecretString } from "../../src/lib/secrets/redaction.js";
 import { bashTool } from "../../src/tools/bash.js";
 import { readTool } from "../../src/tools/read.js";
 import { createRegistry } from "../../src/tools/registry.js";

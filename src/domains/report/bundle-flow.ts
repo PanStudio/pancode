@@ -4,17 +4,17 @@ import {
 	type BuiltBundle,
 	buildBundle,
 	type ConsentScopes,
-	composeReportDraft,
 	consentText,
-	type LocalIdentity,
-	observeSession,
 	previewBundle,
-	type ReportDraft,
 	readReportBundle,
 	renderBundlePreview,
 	TRANSCRIPT_TURNS_DEFAULT,
 	TRANSCRIPT_TURNS_MAX,
-} from "../domains/report/index.js";
+} from "./bundle.js";
+import type { ReportDraft } from "./draft.js";
+import { observeSession } from "./observe.js";
+import { composeReportDraft } from "./plan.js";
+import type { LocalIdentity } from "./scrub.js";
 
 /** What `report` needs to build and show a bundle; the TUI and tests supply their own. */
 export interface ReportBundleIo {
@@ -178,7 +178,7 @@ export async function runReportSelftest(
 	let id = args.session;
 	let facts: { model?: string } = {};
 	if (id === null) {
-		const { listSessionsForCwd } = await import("../domains/session/history.js");
+		const { listSessionsForCwd } = await import("../session/history.js");
 		const meta = listSessionsForCwd(io.cwd)[0];
 		if (meta === undefined) {
 			io.err("error: no session in this directory; run pancode here first or pass --session <id>\n");

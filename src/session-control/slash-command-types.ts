@@ -2,7 +2,6 @@
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 // Split from slash-commands.ts, which adapts pi-coding-agent's BUILTIN_SLASH_COMMANDS registry.
 import type { ExtensionOutputV2 } from "@pancode/sdk/extension";
-import type { BundleRequest } from "../cli/report-bundle.js";
 import type { SettingsAreaId } from "../core/settings-areas.js";
 import type { TelemetryHub } from "../core/telemetry/hub.js";
 import type { TurnConstraints } from "../core/turn-constraints.js";
@@ -19,14 +18,15 @@ import type { DoctorFinding } from "../domains/lifecycle/doctor.js";
 import type { OperatorMemoryScope } from "../domains/memory/operator-statement.js";
 import type { PanePeerId, PanesOperations, PanesPresetId } from "../domains/mux/operations.js";
 import type { ProvidersContract, ResolvedModelRef } from "../domains/providers/index.js";
+import type { BundleRequest } from "../domains/report/bundle-flow.js";
 import type { ReportTextDuplicate, ReportTextHost } from "../domains/report/text-flow.js";
 import type { HubCategory, PromptTemplate, PromptTemplateExpansion, ResourceList } from "../domains/resources/index.js";
-import type { AutonomyLevel } from "../domains/safety/autonomy.js";
 import type { DecisionLedgerEntry } from "../domains/session/entries.js";
 import type { ShareImportPlan } from "../domains/share/index.js";
 import type { UserTaskAcceptance } from "../domains/user-tasks/acceptance.js";
 import type { UserTask } from "../domains/user-tasks/store.js";
 import type { ExtensionReloadOutcome } from "../entry/extension-reload.js";
+import type { AutonomyLevel } from "../lib/autonomy/autonomy.js";
 import type { JobOperations } from "../tools/job-types.js";
 import type { ToolProfileName } from "../tools/profiles.js";
 import type { CouncilCommandOptions, CouncilRosters } from "./council.js";

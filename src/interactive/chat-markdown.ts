@@ -10,11 +10,6 @@ import { AssistantProseProjection, sanitizeAssistantProse } from "../core/assist
 import { MARKER } from "../core/glyphs.js";
 import { escapeTerminalControls } from "../core/terminal-controls.js";
 import {
-	RedactedStringProjection,
-	redactStreamingUrlCredentials,
-	redactUrlCredentials,
-} from "../domains/safety/redaction.js";
-import {
 	COPY_JOIN_MARK,
 	COPY_TIGHT_MARK,
 	copyMark,
@@ -26,6 +21,11 @@ import {
 	visibleWidth,
 	wrapTextWithAnsi,
 } from "../engine/tui.js";
+import {
+	RedactedStringProjection,
+	redactStreamingUrlCredentials,
+	redactUrlCredentials,
+} from "../lib/secrets/redaction.js";
 import { SECONDARY } from "./chat-ink.js";
 import type { OpenFence, RowMemo, SettledBlocks, TextSegment } from "./chat-transcript-model.js";
 import { keepRows, keptRows } from "./kept-rows.js";

@@ -43,11 +43,6 @@ import { compileWorker } from "../../src/domains/prompts/compiler.js";
 import { loadFragments } from "../../src/domains/prompts/fragment-loader.js";
 import { type ClassifierCall, resolveScratchDeleteOperands } from "../../src/domains/safety/action-classifier.js";
 import { evaluateAdmission } from "../../src/domains/safety/admission.js";
-import {
-	admissionAutonomy,
-	effectiveYoloConfinement,
-	YOLO_CONFINEMENT_PIN_ENV,
-} from "../../src/domains/safety/autonomy.js";
 import { setValidationWrappers } from "../../src/domains/safety/check-prefix.js";
 import { type OutwardPlaces, outwardLineLeaves } from "../../src/domains/safety/containment.js";
 import type { SafetyContract } from "../../src/domains/safety/contract.js";
@@ -62,6 +57,11 @@ import { loadProjectSafetyPolicy } from "../../src/domains/safety/project-policy
 import { createWorkerSafety } from "../../src/engine/worker-tools.js";
 import { jobAuthorityRefusal } from "../../src/entry/job-runtime.js";
 import { createYoloActivation, YOLO_ACCEPT_LABEL, YOLO_DECLINE_LABEL } from "../../src/interactive/yolo-activation.js";
+import {
+	admissionAutonomy,
+	effectiveYoloConfinement,
+	YOLO_CONFINEMENT_PIN_ENV,
+} from "../../src/lib/autonomy/autonomy.js";
 import { invokeRegisteredTool, type ToolFinishEvent } from "../../src/tools/agent-tools.js";
 import { bashTool } from "../../src/tools/bash.js";
 import { createGatewayTool } from "../../src/tools/gateway/index.js";
@@ -2824,7 +2824,7 @@ test("a contained-yolo session's bash pins every pancode it starts, and a nested
 		child,
 		[
 			`import { readSettings } from ${JSON.stringify(join(root, "src/core/config.ts"))};`,
-			`import { effectiveYoloConfinement } from ${JSON.stringify(join(root, "src/domains/safety/autonomy.ts"))};`,
+			`import { effectiveYoloConfinement } from ${JSON.stringify(join(root, "src/lib/autonomy/autonomy.ts"))};`,
 			"process.stdout.write(effectiveYoloConfinement(readSettings().safety));",
 		].join("\n"),
 	);

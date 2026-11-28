@@ -18,15 +18,15 @@ import { UNICODE_GLYPH } from "../../core/glyphs.js";
 import { tierPolicy } from "../../core/presentation-tier.js";
 import { ToolNames } from "../../core/tool-names.js";
 import { isRecord } from "../../core/type-guards.js";
-import { sanitizeCallTargetText } from "../../domains/safety/call-target.js";
+import { withoutModelRejectionAdvice } from "../../domains/safety/rejection-feedback.js";
+import { stripTerminalSequences, truncateToWidth, visibleWidth } from "../../engine/tui.js";
+import { sanitizeCallTargetText } from "../../lib/call-target/call-target.js";
 import {
 	holdUnresolvedUserinfo,
 	redactSecretString,
 	redactStreamingSecretString,
 	redactToolArgs,
-} from "../../domains/safety/redaction.js";
-import { withoutModelRejectionAdvice } from "../../domains/safety/rejection-feedback.js";
-import { stripTerminalSequences, truncateToWidth, visibleWidth } from "../../engine/tui.js";
+} from "../../lib/secrets/redaction.js";
 import { classifyResourceRead, workspaceRelative } from "../../tools/presentation.js";
 import { cardHead, cardRows } from "../card.js";
 import { collapseHomePath, formatElapsed, formatWaitClock, GLYPH } from "../theme/index.js";

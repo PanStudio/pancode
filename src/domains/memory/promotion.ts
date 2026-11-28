@@ -6,7 +6,7 @@ import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { sha256Hex } from "../../core/hash.js";
 import { isStrictDescendant } from "../../core/path-containment.js";
 import { repositoryRoot as enclosingRepository } from "../../core/project-root.js";
-import { createRedactionTally, redactSecretsPreservingMarkers } from "../evidence/redact.js";
+import { createRedactionTally, redactSecretsPreservingMarkers } from "../../lib/secrets/redact.js";
 import {
 	COMMAND_CLAIM_REF_PREFIX,
 	COMMAND_EVIDENCE_REF_PREFIX,

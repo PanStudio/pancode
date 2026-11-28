@@ -88,7 +88,6 @@ import {
 import { createProfileKnowledgeBase } from "../domains/providers/profile-knowledge.js";
 import type { KnowledgeBase } from "../domains/providers/types/knowledge-base.js";
 import type { ApprovalAuthority } from "../domains/safety/admission.js";
-import { describeCallTarget, WORKER_CALL_TARGET_MAX_CHARS } from "../domains/safety/call-target.js";
 import { setValidationWrappers } from "../domains/safety/check-prefix.js";
 import { describeBashCallConsequences } from "../domains/safety/command-consequence.js";
 import { confirmationRuleOf } from "../domains/safety/decision-events.js";
@@ -108,6 +107,7 @@ import {
 } from "../domains/safety/run-effects.js";
 import { estimateAgentMessageTokens } from "../domains/session/context-accounting.js";
 import { abortReasonCause } from "../domains/telemetry/call-facts.js";
+import { describeCallTarget, WORKER_CALL_TARGET_MAX_CHARS } from "../lib/call-target/call-target.js";
 import { resolveAgentTools, type ToolTelemetry } from "../tools/agent-tools.js";
 import type { McpCapabilitySource } from "../tools/gateway/index.js";
 import { createWorkerGitContext } from "../tools/git-exec.js";

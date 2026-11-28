@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
+
 export { gatherRunAssessment } from "./assessment.js";
 export { admitRunProvenance, provenanceTranscriptLines } from "./provenance.js";
-export { createRedactionTally, redactKnownSecrets, redactSecretSegments, redactSecretsText } from "./redact.js";
 export { inspectRunEvidence, inspectRunFlowProvenance, listRunEvidence } from "./run-evidence.js";
 export { readRunGateIndex } from "./run-trust.js";
 export {

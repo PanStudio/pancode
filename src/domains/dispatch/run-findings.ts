@@ -7,9 +7,9 @@
 
 import { canonicalJsonStrict } from "../../core/canonical-json.js";
 import { sha256Hex } from "../../core/hash.js";
+import { sanitizeCallTargetText } from "../../lib/call-target/call-target.js";
+import { createRedactionTally, redactSecretsText } from "../../lib/secrets/redact.js";
 import { isVerifyListing } from "../../tools/verify/surface.js";
-import { createRedactionTally, redactSecretsText } from "../evidence/redact.js";
-import { sanitizeCallTargetText } from "../safety/call-target.js";
 import type { CheckFreshness, RunEffects } from "../safety/run-effects.js";
 import type {
 	RunHostVerification,

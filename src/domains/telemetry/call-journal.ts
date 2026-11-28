@@ -38,7 +38,7 @@ import {
 	scanTelemetrySegment,
 	telemetryChainHead,
 } from "../../core/telemetry/segment.js";
-import { createRedactionTally, redactSecretsDeep } from "../evidence/redact.js";
+import { createRedactionTally, redactSecretsDeep } from "../../lib/secrets/redact.js";
 import { createTelemetryPreimages, storeTelemetryObject } from "./objects.js";
 import {
 	TELEMETRY_JOURNAL_FILE,

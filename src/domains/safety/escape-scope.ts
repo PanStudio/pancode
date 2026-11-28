@@ -21,11 +21,11 @@ import { sha256Hex } from "../../core/hash.js";
 import { canonicalizePath } from "../../core/path-canonical.js";
 import { isSameOrDescendant } from "../../core/path-containment.js";
 import { ToolNames } from "../../core/tool-names.js";
+import { redactSecretString } from "../../lib/secrets/redaction.js";
 import type { ClassifierCall } from "./action-classifier.js";
 import { stepScriptOperand } from "./call-consequence.js";
 import { shellCommandSteps } from "./command-path-walks.js";
 import type { SafetyDecision } from "./contract.js";
-import { redactSecretString } from "./redaction.js";
 import { asksToLeaveSandbox, SANDBOX_ESCAPE_REASON, SANDBOX_ESCAPE_RULE_ID } from "./sandbox-escape.js";
 
 /** Ledger entry type of one session escape scope grant. */

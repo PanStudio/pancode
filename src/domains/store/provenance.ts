@@ -29,7 +29,7 @@ import {
 	workspaceRelativePath,
 } from "../../core/run-records.js";
 import { validateBlobName, validateTagName } from "../../core/store-paths.js";
-import { isSecretArgKey, redactSecretString } from "../safety/redaction.js";
+import { isSecretArgKey, redactSecretString } from "../../lib/secrets/redaction.js";
 
 const PRODUCING_RUN_SCAN_LIMIT = 100;
 

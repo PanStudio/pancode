@@ -9,6 +9,8 @@ import { isSameOrDescendant } from "../../core/path-containment.js";
 import { STORE_REPLACES_ARG } from "../../core/store-paths.js";
 import { ToolNames } from "../../core/tool-names.js";
 import { MCP_SKILL_APPROVAL_RULE_ID, SESSION_CODE_CONSENT_RULE_ID } from "../../core/views/approval-words.js";
+import { effectiveScratchRoots } from "../../lib/scratch-roots/scratch-roots.js";
+import { redactSecretString, redactToolArgs } from "../../lib/secrets/redaction.js";
 import type { ClassifierCall } from "./action-classifier.js";
 import type { AdmissionAskSource, ApprovalAuthority } from "./admission.js";
 import {
@@ -24,7 +26,6 @@ import type { SafetyDecision } from "./contract.js";
 import type { SafetyJudgementInput } from "./decision-events.js";
 import { GIT_HOOKS_CHANGED_RULE_ID } from "./hook-drift.js";
 import { TOOL_CALL_RUNGS } from "./reach-ladder.js";
-import { redactSecretString, redactToolArgs } from "./redaction.js";
 import { PANCODE_SETTINGS_RULE_ID } from "./routing-settings.js";
 import {
 	type AskedApproval,
@@ -35,7 +36,6 @@ import {
 	operatorMentionsSandbox,
 	operatorNamedOutsideTargets,
 } from "./sandbox-escape.js";
-import { effectiveScratchRoots } from "./scratch-roots.js";
 
 /**
  * The safety judge: the model-based reviewer at the heart of the `default`

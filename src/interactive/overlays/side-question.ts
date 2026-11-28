@@ -9,12 +9,12 @@
  */
 
 import { AssistantProseProjection } from "../../core/assistant-prose.js";
+import { type Component, type OverlayHandle, type TUI, truncateToWidth, wrapTextWithAnsi } from "../../engine/tui.js";
 import {
 	redactFinalUrlCredentials,
 	redactStreamingUrlCredentials,
 	redactUrlCredentials,
-} from "../../domains/safety/redaction.js";
-import { type Component, type OverlayHandle, type TUI, truncateToWidth, wrapTextWithAnsi } from "../../engine/tui.js";
+} from "../../lib/secrets/redaction.js";
 import { buildResponsiveHint, showPancodeOverlayFrame } from "../overlay-frame.js";
 import { activityCue, formatWaitClock, GLYPH, pancodeTheme, rule } from "../theme/index.js";
 

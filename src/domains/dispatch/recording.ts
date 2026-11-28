@@ -8,7 +8,7 @@ import { sha256Hex } from "../../core/hash.js";
 import { assertSafeId } from "../../core/safe-id.js";
 import { safeResourceWrite } from "../../core/safe-resource-write.js";
 import { resolvePancodeDirs, stateRootRemoved } from "../../core/xdg.js";
-import { createRedactionTally, redactSecretSegments } from "../evidence/index.js";
+import { createRedactionTally, redactSecretSegments } from "../../lib/secrets/redact.js";
 import type { RunEventJournalSink } from "./run-event-journal.js";
 import type { RunNodeIdentity } from "./types.js";
 

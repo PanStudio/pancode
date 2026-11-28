@@ -2,8 +2,8 @@
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import { strictEqual } from "node:assert/strict";
 import { test } from "node:test";
+import { DEFAULT_WORKING_SET_SETTINGS } from "../../src/core/defaults.js";
 import { EMPTY_WORKING_SET_VIEW, type PolicyInput } from "../../src/domains/context/working-set/contract.js";
-import { DEFAULT_WORKING_SET_SETTINGS } from "../../src/domains/context/working-set/defaults.js";
 import type { PathIndex } from "../../src/domains/context/working-set/path-index.js";
 import { isProtected } from "../../src/domains/context/working-set/protect.js";
 import type { SessionEntry } from "../../src/domains/session/entries.js";

@@ -3,7 +3,7 @@
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { isRecord } from "../../core/type-guards.js";
-import { createRedactionTally, redactSecretsPreservingMarkers } from "../evidence/redact.js";
+import { createRedactionTally, redactSecretsPreservingMarkers } from "../../lib/secrets/redact.js";
 import {
 	TASK_MEMORY_CONTENT_MAX_CHARS,
 	TASK_MEMORY_DEFAULT_KNOWLEDGE_CAP,

@@ -23,6 +23,7 @@ import { noCallRunUsageFacts, pricingBasisFields, unobservedRunUsageFacts } from
 import type { CallUsage } from "../../core/telemetry/schemas.js";
 import { completeEngineText, type EngineTextCompletionResult } from "../../engine/ai.js";
 import { declareRuntimeNoticeProducer } from "../../engine/apis/residency.js";
+import { redactSecretString } from "../../lib/secrets/redaction.js";
 import { endpointCapacityUsage } from "../dispatch/capacity-lease.js";
 import { announceMemoryStepEndpoint } from "../middleware/memory-step-endpoint.js";
 import { prepareBackgroundModelMetadata } from "../providers/background-model-metadata.js";
@@ -48,7 +49,6 @@ import { LOCAL_API_KEY_FALLBACK, resolveSideCallAuth } from "../providers/side-c
 import { observedAnthropicQuota, observedCodexQuota } from "../quota/index.js";
 import { observedQuota } from "../quota/observed.js";
 import { quotaProviderIdForRuntime } from "../quota/registry.js";
-import { redactSecretString } from "../safety/redaction.js";
 import { ceilChars, estimateAgentContextTokens } from "../session/context-accounting.js";
 import { callSettlementFromMessage } from "../telemetry/call-facts.js";
 import type { CallJournalOptions } from "../telemetry/call-scope.js";

@@ -18,7 +18,7 @@ import {
 	type McpFieldOption,
 	type McpFormField,
 } from "../../../core/views/elicitation-values.js";
-import { isSecretArgKey } from "../../safety/redaction.js";
+import { isSecretArgKey } from "../../../lib/secrets/redaction.js";
 
 export type McpElicitAction = "accept" | "decline" | "cancel";
 export type McpElicitValue = string | number | boolean | string[];

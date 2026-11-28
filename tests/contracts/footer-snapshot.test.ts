@@ -5,7 +5,6 @@ import { it, test } from "node:test";
 import { DEFAULT_SETTINGS } from "../../src/core/defaults.js";
 import { presentationTier, setPresentationTier } from "../../src/core/presentation-tier.js";
 import { EMPTY_CAPABILITIES } from "../../src/domains/providers/types/capability-flags.js";
-import { redactSecretString } from "../../src/domains/safety/redaction.js";
 import type { TelemetryView } from "../../src/domains/telemetry/contract.js";
 import { getKeybindings, setKeybindings, stripTerminalSequences, visibleWidth } from "../../src/engine/tui.js";
 import { createFollowUpQueuePanel } from "../../src/interactive/follow-up-queue-panel.js";
@@ -18,6 +17,7 @@ import { dashboardPageViewport, renderCompactDashboard } from "../../src/interac
 import { dispatchSegment } from "../../src/interactive/footer-panel.js";
 import { createKeybindingManager } from "../../src/interactive/keybinding-manager.js";
 import { GLYPH } from "../../src/interactive/theme/index.js";
+import { redactSecretString } from "../../src/lib/secrets/redaction.js";
 import { footerState } from "../harness/footer-fixture.js";
 import { goldenTelemetryRecords, telemetryViewOf } from "../harness/telemetry-view.js";
 

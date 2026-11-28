@@ -8,11 +8,11 @@ import { resultNotExecuted } from "../../domains/dispatch/tool-stats.js";
 import type { SafetyBlockedAttempt, ToolCallStat } from "../../domains/dispatch/types.js";
 import { describeMissing, missingFromFailedCall } from "../../domains/lifecycle/setup-status.js";
 import { CITATION_CHECK_PREFIX } from "../../domains/safety/citation-grounding.js";
-import { redactUrlCredentials } from "../../domains/safety/redaction.js";
 import { type RunEffectsRecorder, recordToolExecutionEffects } from "../../domains/safety/run-effects.js";
 import { SAFETY_JUDGE_ALLOW_REASON_CODE } from "../../domains/safety/safety-judge.js";
 import { callRepeatsAsRead } from "../../engine/loop-guard.js";
 import type { AgentMessage } from "../../engine/types.js";
+import { redactUrlCredentials } from "../../lib/secrets/redaction.js";
 import type { ChatLoopEvent } from "../../session-control/chat-loop.js";
 import {
 	CONTEXT_OVERFLOW_STOP_NOTICE_KEY,

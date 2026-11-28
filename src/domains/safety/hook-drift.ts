@@ -11,8 +11,8 @@ import {
 	gitHookEntryId,
 } from "../../core/sandbox/git-hooks-fingerprint.js";
 import { ToolNames } from "../../core/tool-names.js";
+import { sanitizeCallTargetText } from "../../lib/call-target/call-target.js";
 import type { ClassifierCall } from "./action-classifier.js";
-import { sanitizeCallTargetText } from "./call-target.js";
 
 /**
  * The git hook drift guard. A hook runs with the full privileges of whoever

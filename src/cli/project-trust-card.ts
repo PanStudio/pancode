@@ -14,8 +14,8 @@ import {
 } from "../core/workspace-trust.js";
 import { describeMissing } from "../domains/lifecycle/setup-status.js";
 import { loadUserHooks, type UserHookDeclarationBatch } from "../domains/middleware/hooks.js";
-import { sanitizeCallTargetText } from "../domains/safety/call-target.js";
 import { loadProjectSafetyPolicy } from "../domains/safety/project-policy.js";
+import { sanitizeCallTargetText } from "../lib/call-target/call-target.js";
 import { credentialMissing } from "./default-target.js";
 import { canSelect, promptSelect, type SelectResult } from "./select.js";
 

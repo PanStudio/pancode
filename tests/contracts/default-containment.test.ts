@@ -46,13 +46,13 @@ import {
 	type SafetyJudgeSubject,
 } from "../../src/domains/safety/safety-judge.js";
 import { asksToLeaveSandbox } from "../../src/domains/safety/sandbox-escape.js";
-import { effectiveScratchRoots } from "../../src/domains/safety/scratch-roots.js";
 import {
 	createWorkspaceSnapshots,
 	type WorkspaceSnapshotOutcome,
 } from "../../src/domains/workspace-snapshots/store.js";
 import { createLoopGuardRegistration } from "../../src/engine/loop-guard.js";
 import { createWorkerSafety } from "../../src/engine/worker-tools.js";
+import { effectiveScratchRoots } from "../../src/lib/scratch-roots/scratch-roots.js";
 import { createAskUserTool } from "../../src/tools/ask-user.js";
 import { bashTool } from "../../src/tools/bash.js";
 import { createBrowserTool } from "../../src/tools/browser/index.js";

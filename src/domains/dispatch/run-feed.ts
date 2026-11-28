@@ -29,9 +29,8 @@ import { dirname, join } from "node:path";
 import { unlinkedStateDirectory } from "../../core/state-boundary.js";
 import { isRecord } from "../../core/type-guards.js";
 import { pancodeStateDir, stateRootRemoved } from "../../core/xdg.js";
-import type { ToolCallFacts } from "../../tools/agent-tools.js";
-import { createRedactionTally, redactSecretsDeep } from "../evidence/redact.js";
-import type { CutHeadGuard } from "../safety/redaction.js";
+import { createRedactionTally, redactSecretsDeep } from "../../lib/secrets/redact.js";
+import type { CutHeadGuard } from "../../lib/secrets/redaction.js";
 import {
 	cutHeadGuard,
 	dropCutHead,
@@ -45,7 +44,8 @@ import {
 	namesSecret,
 	openNameStart,
 	SCHEME_CHAR_RE,
-} from "../safety/redaction.js";
+} from "../../lib/secrets/redaction.js";
+import type { ToolCallFacts } from "../../tools/agent-tools.js";
 import { deferAppend, deferredWritePending, dropDeferredWrite, flushDeferredWrite } from "./deferred-writes.js";
 import type { RunEventJournalBody } from "./run-event-journal.js";
 

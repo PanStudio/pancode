@@ -7,11 +7,11 @@ import { ToolNames } from "../../core/tool-names.js";
 import type { TurnConstraints } from "../../core/turn-constraints.js";
 import { turnAllowsTool } from "../../core/turn-constraints.js";
 import { SESSION_CODE_CONSENT_RULE_ID } from "../../core/views/approval-words.js";
+import type { AutonomyExposure, AutonomyLevel } from "../../lib/autonomy/autonomy.js";
+import { autonomyAskRejection, DEFAULT_AUTONOMY_LEVEL, mapAutonomy } from "../../lib/autonomy/autonomy.js";
 import { isTaskGateCall } from "../../tools/verify/task-gates.js";
 import type { ActionClass, ClassifierCall } from "./action-classifier.js";
 import { STEER_CANCEL_REASON } from "./action-classifier.js";
-import type { AutonomyExposure, AutonomyLevel } from "./autonomy.js";
-import { autonomyAskRejection, DEFAULT_AUTONOMY_LEVEL, mapAutonomy } from "./autonomy.js";
 import { autonomyCallInputs } from "./autonomy-inputs.js";
 import {
 	GIT_CONTROL_FILE_RULE_ID,

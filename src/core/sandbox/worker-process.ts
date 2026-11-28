@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import { closeSync, constants, mkdirSync, openSync, readdirSync, readFileSync, realpathSync, statSync } from "node:fs";
 import path from "node:path";
-import { workerSecretPaths } from "../../domains/safety/secret-paths.js";
+import { workerSecretPaths } from "../../lib/secrets/secret-paths.js";
 import { PANCODE_ARTIFACT_DIR, PANCODE_PROJECT_DIR } from "../artifact-paths.js";
 import { canonicalizePath } from "../path-canonical.js";
 import { isSameOrDescendant, relativePathEscapes } from "../path-containment.js";

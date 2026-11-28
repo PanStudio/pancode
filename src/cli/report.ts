@@ -6,6 +6,16 @@ import { editTextExternally, resolveExternalEditor } from "../core/external-edit
 import { canOpenBrowser, openBrowser } from "../core/open-browser.js";
 import { pancodeStateDir } from "../core/xdg.js";
 import {
+	attachBundle,
+	type BundleRequest,
+	bundleRequest,
+	consentSentences,
+	formatBundleSummary,
+	printReportBundle,
+	type ReportBundleIo,
+	runReportSelftest,
+} from "../domains/report/bundle-flow.js";
+import {
 	applyReportEdit,
 	type BuiltBundle,
 	checkLastAttempt,
@@ -48,16 +58,6 @@ import {
 } from "../domains/report/index.js";
 import { parseCommandFlags } from "./kit/flags.js";
 import { jsonDocument, writeCliFailure } from "./kit/json-out.js";
-import {
-	attachBundle,
-	type BundleRequest,
-	bundleRequest,
-	consentSentences,
-	formatBundleSummary,
-	printReportBundle,
-	type ReportBundleIo,
-	runReportSelftest,
-} from "./report-bundle.js";
 import { canSelect, promptSelect } from "./select.js";
 
 export const REPORT_HELP = `pancode report [bug|feature|question] [--title <t>] [--body-file <f> | -] [--session <id> | --last]

@@ -10,7 +10,7 @@
 
 import { pancodeStateDir } from "../../core/xdg.js";
 import { truncateToWidth } from "../../engine/tui-primitives.js";
-import { sanitizeCallTargetText } from "../safety/call-target.js";
+import { sanitizeCallTargetText } from "../../lib/call-target/call-target.js";
 import { listRunEvidence } from "./run-evidence.js";
 import { type TrustVerdict, trustVerdict } from "./trust-projection.js";
 import { EVIDENCE_TAGS, type EvidenceTag, type RunEvidence } from "./types.js";

@@ -19,10 +19,10 @@ import { presentationTier, type TierPolicy, tierPolicy, tierRevision } from "../
 import { asciiOnly, motionEnabled } from "../../core/terminal-preferences.js";
 import { ToolNames } from "../../core/tool-names.js";
 import { autonomyModeReadout, autonomyWindowReadout } from "../../domains/safety/autonomy-readout.js";
-import { sanitizeCallTargetText } from "../../domains/safety/call-target.js";
-import { redactSecretString } from "../../domains/safety/redaction.js";
 import { taskBoardCounts } from "../../domains/session/task-board.js";
 import { getKeybindings, truncateToWidth, visibleWidth } from "../../engine/tui.js";
+import { sanitizeCallTargetText } from "../../lib/call-target/call-target.js";
+import { redactSecretString } from "../../lib/secrets/redaction.js";
 import { tokensPerSecondText } from "../../session-control/assistant-generation-timing.js";
 import type { DispatchBoardRow } from "../dispatch-row-model.js";
 import { ACTIVE_DISPATCH_STATUSES, loopSegment } from "../footer-panel.js";

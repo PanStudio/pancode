@@ -7,8 +7,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
-import { acceptanceFromTaskFlags } from "../../src/cli/tasks.js";
 import { normalizeDispatchIntent } from "../../src/domains/dispatch/intent.js";
+import { acceptanceFromTaskFlags } from "../../src/domains/dispatch/task-acceptance.js";
 import { assessFinishContract } from "../../src/domains/safety/finish-contract.js";
 import { createFinishContractRegistration } from "../../src/domains/safety/finish-contract-registration.js";
 import {

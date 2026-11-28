@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
-import { cutHeadGuard, dropCutHead, dropShortCutHead, headGuardAfter } from "../domains/safety/redaction.js";
+
 import {
 	formatSize,
 	GREP_MAX_LINE_LENGTH,
@@ -11,6 +11,7 @@ import {
 	truncateHead as truncatePiHead,
 	truncateTail as truncatePiTail,
 } from "../engine/truncate.js";
+import { cutHeadGuard, dropCutHead, dropShortCutHead, headGuardAfter } from "../lib/secrets/redaction.js";
 
 // Per-observation source cap. The engine copy defaults to 50 KiB; PanCode allows
 // 64 KiB while its default 192 KiB turn pool remains authoritative across

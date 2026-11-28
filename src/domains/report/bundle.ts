@@ -8,7 +8,7 @@ import { sha256Hex } from "../../core/hash.js";
 import { resolvePackageRoot } from "../../core/package-root.js";
 import { safeResourceWrite } from "../../core/safe-resource-write.js";
 import { FailureCause, vocabulary } from "../../core/telemetry/enums.js";
-import { createRedactionTally, redactSecretsText } from "../evidence/index.js";
+import { createRedactionTally, redactSecretsText } from "../../lib/secrets/redact.js";
 import {
 	filterEntriesToActivePath,
 	type MessageEntry,

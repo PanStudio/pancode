@@ -16,11 +16,11 @@
 
 import { formatCount } from "../../core/format-time.js";
 import type { EventPayload } from "../../core/telemetry/events.js";
-import { createRedactionTally, redactSecretsText } from "../evidence/redact.js";
+import { describeCallTarget } from "../../lib/call-target/call-target.js";
+import { createRedactionTally, redactSecretsText } from "../../lib/secrets/redact.js";
+import { isSecretArgKey, redactQuotedSecrets, redactSecretString } from "../../lib/secrets/redaction.js";
 import type { ClassifierCall } from "./action-classifier.js";
-import { describeCallTarget } from "./call-target.js";
 import type { SafetyDecision } from "./contract.js";
-import { isSecretArgKey, redactQuotedSecrets, redactSecretString } from "./redaction.js";
 
 /** The `outcomeDetail` and abort reason prefix of a cap halt. */
 export const AUTONOMOUS_CAP_REASON = "autonomous-cap";

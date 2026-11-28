@@ -7,7 +7,7 @@ import {
 	redactStreamingUrlCredentials,
 	redactUrlCredentials,
 	UrlCredentialStreamFilter,
-} from "../../domains/safety/redaction.js";
+} from "../../lib/secrets/redaction.js";
 /**
  * Projection from chat-loop events to the headless `--json` wire stream.
  *

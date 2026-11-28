@@ -3,10 +3,11 @@
 import { resolve } from "node:path";
 import { isNonSourcePath, isProsePath } from "../../core/test-paths.js";
 import { ToolNames } from "../../core/tool-names.js";
+import { sanitizeCallTargetText } from "../../lib/call-target/call-target.js";
+import { redactSecretString } from "../../lib/secrets/redaction.js";
 import type { DeclaredCheckSourceRef } from "../../tools/verify/catalog.js";
 import { assessQualityPolicy, loadQualityPolicy, type QualityFinding } from "../../tools/verify/quality-policy.js";
 import type { UserTaskAcceptance } from "../user-tasks/acceptance.js";
-import { sanitizeCallTargetText } from "./call-target.js";
 import { callVerdict } from "./check-classifier.js";
 import type { DeclaredVerifierCommand } from "./declared-checks.js";
 import {
@@ -28,7 +29,6 @@ import { collectLimitationEvidence, verifyFoundNoChecks } from "./finish-limitat
 import { mutatingReceipts } from "./finish-mutations.js";
 import { collectValidationEvidence } from "./finish-validation-evidence.js";
 import { type RunCheckFacts, runCheckFacts } from "./observed-checks.js";
-import { redactSecretString } from "./redaction.js";
 import type { Rigor } from "./rigor.js";
 
 export const FINISH_CONTRACT_ADVISORY_MESSAGE =

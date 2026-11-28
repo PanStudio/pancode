@@ -12,6 +12,8 @@ import { renderCalls, renderCompactCount, renderPricing } from "../../core/telem
 import type { RunResultObject } from "../../core/telemetry/run-schemas.js";
 import { displayImageMimeType, toolResultShotPaths } from "../../core/tool-result-images.js";
 import { isRecord } from "../../core/type-guards.js";
+import { sanitizeCallTargetText } from "../../lib/call-target/call-target.js";
+import { redactSecretString } from "../../lib/secrets/redaction.js";
 import { displayToolCall } from "../../tools/gateway-display.js";
 import { expandChainMessages } from "../../tools/surface.js";
 import type { DispatchContract } from "../dispatch/contract.js";
@@ -26,8 +28,6 @@ import { formatTrustSummaryLine, trustStateWord, unexecutedHostChecksClause } fr
 import type { CanonicalTrustStatus, TrustStatusAxis } from "../evidence/trust-status.js";
 import { inspectRunTrustStatus, TRUST_STATUS_AXES } from "../evidence/trust-status.js";
 import type { RunEvidence } from "../evidence/types.js";
-import { sanitizeCallTargetText } from "../safety/call-target.js";
-import { redactSecretString } from "../safety/redaction.js";
 import { type DecisionRow, decisionRow } from "../telemetry/fact-folds.js";
 import type { AccountabilitySummary } from "../telemetry/index.js";
 import {

@@ -38,18 +38,18 @@ import { type TurnConstraints, turnAllowsTool } from "../core/turn-constraints.j
 import { isRecord } from "../core/type-guards.js";
 import { acceptsImageInput } from "../domains/providers/image-input.js";
 import type { ResolvedRuntimeTarget } from "../domains/providers/index.js";
+import type { SafetyDecision } from "../domains/safety/contract.js";
+import { denialLines, type ToolDenial } from "../domains/safety/denial.js";
+import { YOLO_ADMITTED_REASON_PREFIX } from "../domains/safety/policy-floor-scripts.js";
+import { formatModelRejection } from "../domains/safety/rejection-feedback.js";
+import { validateEngineToolArguments } from "../engine/ai.js";
+import type { AgentTool, AgentToolResult, AgentToolUpdateCallback } from "../engine/types.js";
 import {
 	type CallActionDescriptor,
 	describeCallAction,
 	sanitizeCallTargetText,
-} from "../domains/safety/call-target.js";
-import type { SafetyDecision } from "../domains/safety/contract.js";
-import { denialLines, type ToolDenial } from "../domains/safety/denial.js";
-import { YOLO_ADMITTED_REASON_PREFIX } from "../domains/safety/policy-floor-scripts.js";
-import { redactSecretString } from "../domains/safety/redaction.js";
-import { formatModelRejection } from "../domains/safety/rejection-feedback.js";
-import { validateEngineToolArguments } from "../engine/ai.js";
-import type { AgentTool, AgentToolResult, AgentToolUpdateCallback } from "../engine/types.js";
+} from "../lib/call-target/call-target.js";
+import { redactSecretString } from "../lib/secrets/redaction.js";
 import { OBSERVATION_BUDGET_NOT_EXECUTED } from "./observation.js";
 import { applyToolProfile, type ToolProfileName } from "./profiles.js";
 import { prepareToolArgs } from "./registry-call-prep.js";

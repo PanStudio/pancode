@@ -6,6 +6,7 @@ import ts from "typescript";
 import { stripLicenseHeader } from "../../scripts/license-headers.mjs";
 import { REPORT_BUNDLE_ENVELOPE_SCHEMA } from "../../src/domains/report/bundle.js";
 import { closedSchemaErrors, shareProjectionErrors } from "../../src/domains/telemetry/share-soundness.js";
+import { LAYER_EXEMPTIONS } from "./layer-exemptions.js";
 
 export interface BoundaryCheckResult {
 	violations: string[];
@@ -1908,6 +1909,200 @@ export function checkGitSpawns(file: string, source: string, usedExemptions?: Se
 	return violations;
 }
 
+/** One value import: a static, side-effect or re-export declaration, or a dynamic `import()`. */
+interface ValueImport {
+	specifier: string;
+	line: number;
+}
+
+/**
+ * The relative value imports of a file, read from its syntax tree. A declaration is type-only when it says
+ * `import type` or `export type`, or when every named binding it lists is marked `type`; esbuild erases those.
+ */
+function relativeValueImports(file: string, source: string): ValueImport[] {
+	const tree = parseTree(file, source);
+	const imports: ValueImport[] = [];
+	const add = (specifier: string, node: ts.Node): void => {
+		if (specifier.startsWith("."))
+			imports.push({ specifier, line: tree.getLineAndCharacterOfPosition(node.getStart(tree)).line + 1 });
+	};
+	const allTyped = (elements: ts.NodeArray<ts.ImportSpecifier | ts.ExportSpecifier>): boolean =>
+		elements.length > 0 && elements.every((element) => element.isTypeOnly);
+	const visit = (node: ts.Node): void => {
+		if (ts.isImportDeclaration(node) && ts.isStringLiteral(node.moduleSpecifier)) {
+			const clause = node.importClause;
+			const typeOnly =
+				clause !== undefined &&
+				(clause.isTypeOnly ||
+					(clause.name === undefined &&
+						clause.namedBindings !== undefined &&
+						ts.isNamedImports(clause.namedBindings) &&
+						allTyped(clause.namedBindings.elements)));
+			if (!typeOnly) add(node.moduleSpecifier.text, node);
+		} else if (ts.isExportDeclaration(node) && node.moduleSpecifier && ts.isStringLiteral(node.moduleSpecifier)) {
+			const typeOnly =
+				node.isTypeOnly ||
+				(node.exportClause !== undefined && ts.isNamedExports(node.exportClause) && allTyped(node.exportClause.elements));
+			if (!typeOnly) add(node.moduleSpecifier.text, node);
+		} else if (
+			ts.isCallExpression(node) &&
+			node.expression.kind === ts.SyntaxKind.ImportKeyword &&
+			node.arguments[0] !== undefined &&
+			ts.isStringLiteralLike(node.arguments[0])
+		) {
+			add(node.arguments[0].text, node);
+		}
+		ts.forEachChild(node, visit);
+	};
+	visit(tree);
+	return imports;
+}
+
+/**
+ * The lifecycle domains, each with its `dependsOn` taken transitively: a domain is one when its `manifest.ts` declares
+ * `dependsOn` as an array of names.
+ */
+function lifecycleDependencies(domainsRoot: string): Map<string, Set<string>> {
+	const declared = new Map<string, string[]>();
+	for (const name of readdirSync(domainsRoot)) {
+		const manifest = path.join(domainsRoot, name, "manifest.ts");
+		if (!statSync(manifest, { throwIfNoEntry: false })?.isFile()) continue;
+		const visit = (node: ts.Node): void => {
+			if (ts.isPropertyAssignment(node) && ts.isIdentifier(node.name) && node.name.text === "dependsOn") {
+				let value = node.initializer;
+				while (ts.isAsExpression(value) || ts.isSatisfiesExpression(value)) value = value.expression;
+				if (ts.isArrayLiteralExpression(value))
+					declared.set(
+						name,
+						value.elements.filter(ts.isStringLiteralLike).map((element) => element.text),
+					);
+				return;
+			}
+			ts.forEachChild(node, visit);
+		};
+		visit(parseTree(manifest, readFileSync(manifest, "utf8")));
+	}
+	const closure = new Map<string, Set<string>>();
+	for (const name of declared.keys()) {
+		const reached = new Set<string>();
+		const stack = [...(declared.get(name) ?? [])];
+		while (stack.length > 0) {
+			const next = stack.pop() as string;
+			if (reached.has(next)) continue;
+			reached.add(next);
+			stack.push(...(declared.get(next) ?? []));
+		}
+		closure.set(name, reached);
+	}
+	return closure;
+}
+
+/** The import sites behind each rule25 key, `file:line` each. */
+type LayerEdges = Map<string, string[]>;
+
+/**
+ * rule25 for one file. (a) A file under src/core or src/lib value-imports only src/core and src/lib, keyed
+ * `importer file -> target unit` (`src/domains/<name>` or `src/<layer>`). (b) A file under src/domains/<x>
+ * value-imports src/domains/<y> only as src/domains/<y>/index.ts, keyed `src/domains/<x> -> src/domains/<y>`. (c) A
+ * value import between two lifecycle domains needs the target in the importer's transitive `dependsOn`, keyed
+ * `<x> -> <y>`. The caller sums each part over the tree and holds it to LAYER_EXEMPTIONS.
+ */
+function collectLayerEdges(
+	projectRoot: string,
+	filePath: string,
+	source: string,
+	lifecycle: ReadonlyMap<string, ReadonlySet<string>>,
+	edges: { core: LayerEdges; barrel: LayerEdges; dependsOn: LayerEdges },
+): void {
+	const srcRoot = path.join(projectRoot, "src");
+	const display = (file: string): string => path.relative(projectRoot, file).split(path.sep).join("/");
+	const unitOf = (file: string): string | null => {
+		const parts = display(file).split("/");
+		if (parts[0] !== "src" || parts.length < 3) return null;
+		return parts[1] === "domains" || parts[1] === "lib" ? `src/${parts[1]}/${parts[2]}` : `src/${parts[1]}`;
+	};
+	const from = unitOf(filePath);
+	if (from === null) return;
+	const low = (unit: string): boolean => unit === "src/core" || unit.startsWith("src/lib/");
+	const fromDomain = from.startsWith("src/domains/") ? from.slice("src/domains/".length) : null;
+	if (!low(from) && fromDomain === null) return;
+	const record = (map: LayerEdges, key: string, site: string): void => {
+		const sites = map.get(key) ?? [];
+		sites.push(site);
+		map.set(key, sites);
+	};
+	for (const { specifier, line } of relativeValueImports(filePath, source)) {
+		const resolved = resolveRelativeImport(filePath, specifier);
+		if (!isWithin(resolved, srcRoot)) continue;
+		const to = unitOf(resolved);
+		if (to === null || to === from) continue;
+		const site = `${display(filePath)}:${line}`;
+		if (low(from) && !low(to)) record(edges.core, `${display(filePath)} -> ${to}`, site);
+		if (fromDomain === null || !to.startsWith("src/domains/")) continue;
+		const toDomain = to.slice("src/domains/".length);
+		if (display(resolved) !== `${to}/index.ts`) record(edges.barrel, `${from} -> ${to}`, site);
+		const declared = lifecycle.get(fromDomain);
+		if (declared !== undefined && lifecycle.has(toDomain) && !declared.has(toDomain))
+			record(edges.dependsOn, `${fromDomain} -> ${toDomain}`, site);
+	}
+}
+
+/**
+ * rule25 over the tree: each part's edges against its shrink-only LAYER_EXEMPTIONS map, the rule23 pattern. A key
+ * not listed fails, a count over its entry fails, a count under its entry fails until the entry is lowered, and an
+ * entry with no edge left fails until it is removed.
+ */
+function checkLayerEdges(edges: { core: LayerEdges; barrel: LayerEdges; dependsOn: LayerEdges }): string[] {
+	const parts = [
+		{
+			part: "25a",
+			found: edges.core,
+			allowed: LAYER_EXEMPTIONS.core,
+			name: "core",
+			rule:
+				"src/core and src/lib value-import only src/core and src/lib; move the imported value down into core or lib, or move the importer up to its owner",
+		},
+		{
+			part: "25b",
+			found: edges.barrel,
+			allowed: LAYER_EXEMPTIONS.barrel,
+			name: "barrel",
+			rule:
+				"a domain value-imports another domain only through that domain's index.ts; import it from the index, exporting it there if the domain means to publish it",
+		},
+		{
+			part: "25c",
+			found: edges.dependsOn,
+			allowed: LAYER_EXEMPTIONS.dependsOn,
+			name: "dependsOn",
+			rule:
+				"a lifecycle domain value-imports another only when its manifest's dependsOn reaches it; declare the dependency if the order allows it, or cut the import",
+		},
+	];
+	const violations: string[] = [];
+	for (const { part, found, allowed, name, rule } of parts) {
+		for (const [key, sites] of [...found.entries()].sort(([a], [b]) => a.localeCompare(b))) {
+			const limit = allowed.get(key);
+			if (limit === undefined)
+				violations.push(`rule${part}: ${key}: ${sites.length} value import(s) at ${sites.join(", ")}; ${rule}`);
+			else if (sites.length > limit)
+				violations.push(
+					`rule${part}: ${key} grew to ${sites.length} value imports, past the ${limit} LAYER_EXEMPTIONS.${name} allows (${sites.join(", ")}); an entry may only shrink: ${rule}`,
+				);
+			else if (sites.length < limit)
+				violations.push(
+					`rule${part}: LAYER_EXEMPTIONS.${name} allows ${key} ${limit} value imports and it now has ${sites.length}; lower the entry to ${sites.length} (tests/boundaries/layer-exemptions.ts)`,
+				);
+		}
+		for (const key of allowed.keys())
+			if (!found.has(key))
+				violations.push(
+					`rule${part}: LAYER_EXEMPTIONS.${name} lists ${key}, which has no value import left; remove the entry (tests/boundaries/layer-exemptions.ts)`,
+				);
+	}
+	return violations;
+}
+
 /**
  * Enforce the static isolation rules:
  *   1. Only src/engine/** may import @earendil-works/pi-* at all. Since the
@@ -1973,6 +2168,13 @@ export function checkGitSpawns(file: string, source: string, usedExemptions?: Se
  *      hardens every argv with internalGitArgv: no other call in src/ passes
  *      git as the program, and only the runner imports internalGitArgv, except
  *      the calls GIT_SPAWN_EXEMPTIONS names with a reason.
+ *  25. The layers, on value imports (static, dynamic, side-effect and
+ *      re-export; type-only erases): (a) src/core and src/lib import only
+ *      src/core and src/lib; (b) a domain imports another domain only through
+ *      its index.ts; (c) a lifecycle domain imports another lifecycle domain
+ *      only when its manifest's dependsOn reaches it. The edges each part had
+ *      when the rule landed are counted in LAYER_EXEMPTIONS, and a count only
+ *      falls.
  */
 export function runBoundaryCheck(projectRoot: string): BoundaryCheckResult {
 	const srcRoot = path.join(projectRoot, "src");
@@ -1996,9 +2198,14 @@ export function runBoundaryCheck(projectRoot: string): BoundaryCheckResult {
 	const usedCapabilityHolders = new Set<string>();
 	const seenFunctionExemptions = new Set<string>();
 	const usedGitSpawnExemptions = new Set<string>();
+	const lifecycle = lifecycleDependencies(domainsRoot);
+	const layerEdges = { core: new Map(), barrel: new Map(), dependsOn: new Map() } satisfies Parameters<
+		typeof checkLayerEdges
+	>[0];
 
 	for (const filePath of walk(srcRoot)) {
 		const source = readFileSync(filePath, "utf8");
+		collectLayerEdges(projectRoot, filePath, source, lifecycle, layerEdges);
 		violations.push(...checkCostRendering(path.relative(projectRoot, filePath).split(path.sep).join("/"), source));
 		violations.push(...checkLedgerUsageMutation(path.relative(projectRoot, filePath).split(path.sep).join("/"), source));
 		violations.push(...checkTelemetryWrites(path.relative(projectRoot, filePath).split(path.sep).join("/"), source));
@@ -2213,6 +2420,8 @@ export function runBoundaryCheck(projectRoot: string): BoundaryCheckResult {
 			violations.push(
 				`rule17: OWNER_CAPABILITY_HOLDERS lists ${holder}, which no longer names that domain's capability; remove the entry`,
 			);
+
+	violations.push(...checkLayerEdges(layerEdges));
 
 	for (const exemption of GIT_SPAWN_EXEMPTIONS)
 		if (!usedGitSpawnExemptions.has(`${exemption.file}#${exemption.callee}`))

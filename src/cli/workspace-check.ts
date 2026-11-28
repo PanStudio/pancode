@@ -3,7 +3,7 @@
 import { realpathSync } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
-import { sanitizeCallTargetText } from "../domains/safety/call-target.js";
+import { sanitizeCallTargetText } from "../lib/call-target/call-target.js";
 import { canSelect, promptSelect } from "./select.js";
 
 export type WorkspaceConcern = "home" | "system" | null;

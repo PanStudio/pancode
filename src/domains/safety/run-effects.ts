@@ -8,6 +8,7 @@ import { gitExecFileSync } from "../../core/internal-git-run.js";
 import { isSameOrDescendant } from "../../core/path-containment.js";
 import { shellJoin } from "../../core/shell-quote.js";
 import { ToolNames } from "../../core/tool-names.js";
+import { effectiveScratchRoots } from "../../lib/scratch-roots/scratch-roots.js";
 import { isRefusalToolResultError } from "../../tools/result-disposition.js";
 import { effectiveToolCall, gatewayChainReceipts } from "../../tools/surface.js";
 import { captureProofSnapshot, readObservedProof } from "../../tools/verify/proof.js";
@@ -25,7 +26,6 @@ import {
 import { declaredVerifierCommands } from "./declared-checks.js";
 import type { SessionVerifier } from "./finish-contract.js";
 import { observedValidationCommand } from "./protected-artifacts.js";
-import { effectiveScratchRoots } from "./scratch-roots.js";
 
 /**
  * What a run's own tool calls show it did to the workspace.

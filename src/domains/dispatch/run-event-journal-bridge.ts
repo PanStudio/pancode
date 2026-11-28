@@ -52,11 +52,11 @@ import type {
 } from "../../core/telemetry/live-events.js";
 import { normalizeCallUsage } from "../../core/token-split.js";
 import { isRecord } from "../../core/type-guards.js";
+import { sanitizeCallTargetText } from "../../lib/call-target/call-target.js";
+import { createRedactionTally, redactSecretsText } from "../../lib/secrets/redact.js";
+import { holdCutOffText, messageStopCompleted, redactSecretString } from "../../lib/secrets/redaction.js";
 import { runTailEntryFromEvent } from "../../tools/dispatch-run-events.js";
 import { truncateUtf8 } from "../../tools/truncate-utf8.js";
-import { createRedactionTally, redactSecretsText } from "../evidence/redact.js";
-import { sanitizeCallTargetText } from "../safety/call-target.js";
-import { holdCutOffText, messageStopCompleted, redactSecretString } from "../safety/redaction.js";
 import { isThinkingEvent, workerTextDelta } from "../telemetry/worker-progress.js";
 import { defaultRunEventJournal, type RunEventJournalEntry, type RunEventJournalSink } from "./run-event-journal.js";
 import { parseToolCallFacts } from "./run-feed.js";

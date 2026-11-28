@@ -5,9 +5,9 @@
 import { type RunFacts, runIdentityWidth, runRow } from "../core/run-row.js";
 import { rawDurationMs } from "../core/timers.js";
 import { ToolNames } from "../core/tool-names.js";
-import { sanitizeCallTargetText } from "../domains/safety/call-target.js";
-import { holdUnresolvedStrings, redactSecretString } from "../domains/safety/redaction.js";
 import { visibleWidth } from "../engine/tui.js";
+import { sanitizeCallTargetText } from "../lib/call-target/call-target.js";
+import { holdUnresolvedStrings, redactSecretString } from "../lib/secrets/redaction.js";
 import type { WorkerEntryState } from "../session-control/worker-stream.js";
 import { cardRail } from "./card.js";
 import type { AssistantSegment, ToolSegment, WorkerTranscriptEntry } from "./chat-transcript-model.js";

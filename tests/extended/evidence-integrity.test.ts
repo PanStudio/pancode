@@ -13,13 +13,13 @@ import { assessRun } from "../../src/domains/evidence/assessment.js";
 
 import { attributeEvidenceFailure, type EvidenceFailureFacts } from "../../src/domains/evidence/failure-attribution.js";
 import { admitRunProvenance } from "../../src/domains/evidence/provenance.js";
-import { createRedactionTally, redactSecretsDeep, secretRedactingReplacer } from "../../src/domains/evidence/redact.js";
 import { inspectRunEvidence } from "../../src/domains/evidence/run-evidence.js";
 import { readRunTrust } from "../../src/domains/evidence/run-trust.js";
 import { inspectRunTrustStatus } from "../../src/domains/evidence/trust-status.js";
 import { createProtectedArtifactsRegistration } from "../../src/domains/safety/protected-artifacts-registration.js";
 import { createRunEffectsRecorder } from "../../src/domains/safety/run-effects.js";
 import { telemetryObjectRef } from "../../src/domains/telemetry/objects.js";
+import { createRedactionTally, redactSecretsDeep, secretRedactingReplacer } from "../../src/lib/secrets/redact.js";
 import { finishedRun, PRODUCER_INTEGRITY, runEvidenceLabels } from "../../src/tools/worker-evidence.js";
 import { fixtureEnvelope, fixtureReceiptDraft } from "../harness/receipt.js";
 

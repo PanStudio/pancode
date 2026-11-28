@@ -7,7 +7,6 @@ import { AssistantProseProjection } from "../core/assistant-prose.js";
  * and receipt blocks under the prose gutter.
  */
 import { UNICODE_GLYPH } from "../core/glyphs.js";
-import { sanitizeCallTargetText, sanitizeMultilineDisplayText } from "../domains/safety/call-target.js";
 import {
 	COPY_TIGHT_MARK,
 	copyMark,
@@ -16,6 +15,7 @@ import {
 	visibleWidth,
 	wrapTextWithAnsi,
 } from "../engine/tui.js";
+import { sanitizeCallTargetText, sanitizeMultilineDisplayText } from "../lib/call-target/call-target.js";
 import {
 	AGENT_GLYPH,
 	dimLine,
