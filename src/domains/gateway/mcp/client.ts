@@ -51,21 +51,9 @@ import { containedCwd, createMcpStdioTransport, type McpStdioServerSpec } from "
 import type { McpToolCallResult, McpToolDescriptor } from "./tool-results.js";
 import type { McpTeardownOutcome, McpTransport, McpTransportEvents } from "./transport.js";
 
-export { MCP_INPUT_REQUIRED_ROUNDS } from "./client-elicitation.js";
 export { MCP_INSTRUCTIONS_BYTES } from "./client-init.js";
-export {
-	DEFAULT_CANCEL_GRACE_MS,
-	DEFAULT_INITIALIZE_TIMEOUT_MS,
-	DEFAULT_REQUEST_TIMEOUT_MS,
-	MCP_CLIENT_NAME,
-	mcpRequiredCapabilities,
-} from "./client-session.js";
-export {
-	DEFAULT_TASK_POLL_INTERVAL_MS,
-	MAX_TASK_POLL_INTERVAL_MS,
-	MCP_TOOL_LIST_CAP,
-	MIN_TASK_POLL_INTERVAL_MS,
-} from "./client-tools.js";
+export { MCP_CLIENT_NAME } from "./client-session.js";
+export { MCP_TOOL_LIST_CAP } from "./client-tools.js";
 
 export {
 	DEFAULT_RESULT_TEXT_BYTES,
@@ -76,7 +64,7 @@ export {
 	renderMcpContent,
 	resourceLinkLine,
 } from "./tool-results.js";
-export type { McpTeardownOutcome, McpTransport, McpTransportEvents } from "./transport.js";
+export type { McpTeardownOutcome, McpTransportEvents } from "./transport.js";
 
 export const DEFAULT_STDERR_TAIL_BYTES = 16 * 1024;
 export const DEFAULT_KILL_GRACE_MS = 3_000;
@@ -87,7 +75,6 @@ const MIN_OUTBOUND_BYTES = 4096;
 /** How long a teardown waits for a SIGKILLed group to disappear before it gives up and says so. */
 export const DEFAULT_TEARDOWN_BOUND_MS = 2_000;
 
-export type { McpHttpServerSpec } from "./http-transport.js";
 export type McpServerSpec = McpStdioServerSpec | McpHttpServerSpec;
 
 /**

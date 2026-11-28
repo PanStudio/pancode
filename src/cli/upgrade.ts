@@ -39,10 +39,10 @@ import {
 import { readStateInfo } from "../domains/lifecycle/state.js";
 import { updateFingerprint } from "../domains/lifecycle/update-check.js";
 import { getVersionInfo } from "../domains/lifecycle/version.js";
+import { printError } from "./argv.js";
 import { writeCliFailure } from "./kit/json-out.js";
 import type { LifecyclePresenter } from "./lifecycle-presenter.js";
 import { createLifecyclePresenter, formatBytes, measurePath, shortenPath } from "./lifecycle-presenter.js";
-import { printError } from "./shared.js";
 
 const CHANNELS = ["latest", "beta"] as const;
 type Channel = (typeof CHANNELS)[number];

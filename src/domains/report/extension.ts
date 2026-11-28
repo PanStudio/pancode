@@ -49,7 +49,6 @@ export interface ReportOfferWatcher {
 	dispose(): void;
 }
 
-export const REPORT_OFFER_KEY = "report-offer";
 /** How long a shown offer stays takeable: its notice stands 60 s, and `/report` typed soon after still inherits it. */
 export const REPORT_OFFER_TAKE_MS = 2 * 60_000;
 

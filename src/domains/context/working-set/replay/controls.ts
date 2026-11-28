@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import type { WorkingSetPolicyId } from "../../../../core/defaults.js";
 import type { SessionEntry } from "../../../session/entries.js";
-import type { EvictionCandidate, PolicyInput, WorkingSetPolicy, WorkingSetPolicyId } from "../contract.js";
+import type { EvictionCandidate, PolicyInput, WorkingSetPolicy } from "../contract.js";
 import { tokensFreedByEviction } from "../engine.js";
 import { protectionCutoffIndex } from "../horizon.js";
 import { buildPathIndex, callPathsByToolCallId } from "../path-index.js";

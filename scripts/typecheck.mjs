@@ -46,7 +46,7 @@ export function tsrsTypescriptVersion() {
 	return require("tsrs/package.json").tsrs.typescriptVersion;
 }
 
-export function runTsc(args, options = {}) {
+function runTsc(args, options = {}) {
 	return spawnSync(process.execPath, [resolveTsc(), ...args], { cwd: root, ...options });
 }
 

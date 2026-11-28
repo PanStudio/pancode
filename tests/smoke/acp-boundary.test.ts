@@ -267,7 +267,14 @@ async function provider(options: {
 										name: "gateway",
 										arguments: JSON.stringify({ op: "call", capability: next.tool.name, args: next.tool.args }),
 									}
-								: { name: "bash", arguments: '{"command":"printf \'from ACP\' > note.txt","unsandboxed":true}' },
+								: {
+										name: "bash",
+										arguments: JSON.stringify({
+											command: "printf 'from ACP' > note.txt",
+											unsandboxed: true,
+											unsandboxed_reason: "the sandbox makes the project read-only",
+										}),
+									},
 						},
 					],
 				}

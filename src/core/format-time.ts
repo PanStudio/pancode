@@ -20,8 +20,6 @@
  * the pane process, which cannot import `src/interactive`, prints them the same way.
  */
 
-import { asciiOnly } from "./terminal-preferences.js";
-
 /** Anything a caller already holds: an ISO string, epoch millis, or a Date. */
 export type Instant = Date | number | string;
 
@@ -251,26 +249,6 @@ export function formatCount(n: number): string {
 		if (rounded < 1000 || index === COUNT_UNITS.length - 1) return `${sign}${rounded}${unit.suffix}`;
 	}
 	return `${sign}${whole}`;
-}
-
-/** Where a context figure came from: a provider's count, PanCode's estimate, or a restored session's last count. */
-export type FillSource = "measured" | "estimated" | "saved";
-
-/**
- * Context fill as `used/window percent` with its source's qualifier: `16.8k/272k 6%`, `≈16.8k/272k 6%`,
- * `saved 16.8k/272k 6%`. Before anything is measured it is the window alone (`272k`).
- */
-export function formatFill(
-	used: number | null | undefined,
-	window: number | null | undefined,
-	source: FillSource,
-): string {
-	const hasWindow = typeof window === "number" && Number.isFinite(window) && window > 0;
-	if (typeof used !== "number" || !Number.isFinite(used)) return hasWindow ? formatCount(window) : MISSING;
-	const lead = source === "estimated" ? (asciiOnly() ? "~" : "≈") : source === "saved" ? "saved " : "";
-	if (!hasWindow) return `${lead}${formatCount(used)}`;
-	const percent = Math.round((Math.max(0, used) / window) * 100);
-	return `${lead}${formatCount(used)}/${formatCount(window)} ${percent}%`;
 }
 
 /** The operator's IANA zone: `TZ` when set, else the zone Intl resolves for this process. */

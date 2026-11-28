@@ -3,11 +3,11 @@
 
 import { actionClassWords, safetyNetRailText } from "../../core/views/approval-words.js";
 import { stripTerminalSequences } from "../../engine/tui.js";
+import type { ApprovalRequestView } from "../../session-control/approval-request-view.js";
 /** The approval and judge cards a held tool call shows, and the approval receipt rows it keeps afterwards. */
 import { cardRows } from "../card.js";
 import { approvedWorkers } from "../dispatch-plan-summary.js";
 import { mutationFactsLine, targetWithoutPayloadSize } from "../mutation-preview.js";
-import type { ApprovalRequestView } from "../permission-overlay.js";
 import { GLYPH } from "../theme/index.js";
 import {
 	presentedCall,

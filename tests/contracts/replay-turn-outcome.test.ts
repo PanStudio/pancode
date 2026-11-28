@@ -16,7 +16,7 @@ import type { SessionEntry } from "../../src/domains/session/entries.js";
 import type { TelemetryView } from "../../src/domains/telemetry/contract.js";
 import { stripTerminalSequences } from "../../src/engine/tui.js";
 import { createChatPanel } from "../../src/interactive/chat-panel.js";
-import { buildReplayAgentMessagesFromTurns, rehydrateChatPanelFromTurns } from "../../src/interactive/chat-renderer.js";
+import { rehydrateChatPanelFromTurns } from "../../src/interactive/chat-renderer.js";
 import { appendOperatorCommand, TURN_TIMING_ENTRY } from "../../src/interactive/command-output.js";
 import { renderSessionHtml } from "../../src/interactive/export-html/index.js";
 import {
@@ -29,6 +29,7 @@ import { turnSpend } from "../../src/interactive/turn-spend.js";
 import type { WorkerRunEntryFields, WorkerSettledFields } from "../../src/interactive/worker-replay.js";
 import { type ChatLoopEvent, type CreateChatLoopDeps, createChatLoop } from "../../src/session-control/chat-loop.js";
 import { toolResultSummary } from "../../src/session-control/chat-loop-messages.js";
+import { buildReplayAgentMessagesFromTurns } from "../../src/session-control/session-replay-messages.js";
 import { createTurnPersistence } from "../../src/session-control/turn-persistence.js";
 import type { ChatTurnState } from "../../src/session-control/turn-state.js";
 import type { WorkerEntryState, WorkerRunResultFacts } from "../../src/session-control/worker-stream.js";

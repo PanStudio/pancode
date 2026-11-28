@@ -17,10 +17,10 @@
  * PANCODE_TEST_TZ and PANCODE_TEST_LC_ALL choose another zone or locale for a sweep, such
  * as `PANCODE_TEST_TZ=Pacific/Kiritimati pnpm test`.
  */
-export const GATE_TZ = "UTC";
+const GATE_TZ = "UTC";
 
 /** glibc and musl both carry C.UTF-8; macOS has no such locale and Windows reads none from the environment. */
-export const GATE_LOCALE = { linux: "C.UTF-8", darwin: "en_US.UTF-8" };
+const GATE_LOCALE = { linux: "C.UTF-8", darwin: "en_US.UTF-8" };
 
 export function pinGateEnv(env = process.env, platform = process.platform) {
 	// Assigning process.env.TZ re-reads the zone in this process; children inherit it at start.

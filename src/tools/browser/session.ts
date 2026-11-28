@@ -276,6 +276,7 @@ function workerKey(sandbox: MainSandboxPolicy | undefined, workspace: string, he
 		writable: sandbox?.writableRoots ?? null,
 		network: sandbox?.network ?? null,
 		readOnly: sandbox?.readOnly ?? null,
+		homeReads: sandbox?.homeReads ?? null,
 		contained: sandbox !== undefined,
 		hermetic,
 	});

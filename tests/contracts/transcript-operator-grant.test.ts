@@ -12,7 +12,7 @@ import { createWorkerSafety } from "../../src/engine/worker-tools.js";
 import { createChatPanel } from "../../src/interactive/chat-panel.js";
 import { rehydrateChatPanelFromTurns } from "../../src/interactive/chat-renderer.js";
 import { createOverlayPermissionLifecycle } from "../../src/interactive/overlay-permission-lifecycle.js";
-import type { ApprovalRequestView } from "../../src/interactive/permission-overlay.js";
+import type { ApprovalRequestView } from "../../src/session-control/approval-request-view.js";
 import type { ChatLoopEvent } from "../../src/session-control/chat-loop.js";
 import { createRegistry } from "../../src/tools/registry.js";
 import type { ToolSpec } from "../../src/tools/tool-spec.js";

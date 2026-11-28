@@ -11,6 +11,7 @@ import { sandboxAvailability, sandboxNetworkIsolation, wslKind } from "./availab
 import type { EgressBridgePlan } from "./egress/bridge.js";
 import { egressGrants } from "./egress/policy.js";
 import { EGRESS_PROXY_PORT, egressProxyEnv } from "./egress/setup.js";
+import { planHomeReads } from "./home-reads.js";
 import { buildSandboxInvocation } from "./invocation.js";
 import { withMountAliases } from "./mount-aliases.js";
 import { missingBaselineLine } from "./seccomp.js";
@@ -356,6 +357,22 @@ export function composeWorkerSandboxInvocation(
 			: masks;
 	if (aliased instanceof Error)
 		throw new Error(`sandbox: no worker sandbox is available (${aliased.message}); the command was not run`);
+	const homeReads =
+		policy.homeReads === undefined
+			? undefined
+			: planHomeReads({
+					list: policy.homeReads,
+					backend: availability.backend,
+					admitted: [
+						...new Set([
+							...policy.readableRoots.map(physicalSandboxPath),
+							...writableRoots,
+							...policy.gitWritablePaths.map(physicalSandboxPath),
+						]),
+					],
+					cwd: physicalSandboxPath(cwd),
+				});
+	if (homeReads instanceof Error) throw new Error(`sandbox: ${homeReads.message}`);
 	const protectedStartup = startup?.(writableRoots, availability.backend) ?? { readOnlyPaths: [], masks: [] };
 	const spec: SandboxInvocationSpec = {
 		command,
@@ -365,8 +382,9 @@ export function composeWorkerSandboxInvocation(
 		gitWritablePaths: policy.gitWritablePaths.map(physicalSandboxPath),
 		readableRoots: policy.readableRoots.map(physicalSandboxPath),
 		network: policy.network,
-		maskedPaths: [...aliased, ...protectedStartup.masks],
+		maskedPaths: [...aliased, ...protectedStartup.masks, ...(homeReads?.masks ?? [])],
 		...sockets.fields,
+		...(homeReads !== undefined ? { readRestriction: homeReads.restriction } : {}),
 		unsetEnv: SANDBOX_UNSET_ENV,
 		...(egressBridge ? { egressBridge: { execPath: process.execPath, port: EGRESS_PROXY_PORT } } : {}),
 		// Under bubblewrap the private /tmp is the only scratch space outside the

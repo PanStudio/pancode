@@ -15,20 +15,9 @@
  * would turn a missing directory into a failure of the run journal.
  */
 
-import {
-	GATE_TOPOLOGY_MAX_DECISIONS,
-	GATE_TOPOLOGY_MAX_SUBJECTS,
-	type GateDecisionReason,
-	type GateTopologyDecision,
-	gateTopology,
-} from "../domains/dispatch/gate-topology.js";
+import { type GateTopologyDecision, gateTopology } from "../domains/dispatch/gate-topology.js";
 import { openLedger } from "../domains/dispatch/state.js";
 import { fleetInspectionScope } from "./fleet-project-scope.js";
-
-export {
-	GATE_TOPOLOGY_MAX_DECISIONS as FLEET_DECISIONS_MAX,
-	GATE_TOPOLOGY_MAX_SUBJECTS as FLEET_DECISIONS_MAX_SUBJECTS,
-};
 
 export interface FleetDecisionsSnapshot {
 	readonly version: 1;
@@ -38,8 +27,6 @@ export interface FleetDecisionsSnapshot {
 	readonly truncated: boolean;
 	readonly unverifiable: number;
 }
-
-export type { GateDecisionReason, GateTopologyDecision };
 
 /**
  * Pure command payload builder, exported so the fixed CLI contract is testable
