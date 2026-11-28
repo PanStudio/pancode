@@ -170,6 +170,25 @@ entries:
           associated worktrees through Git, deletes local branches safely, and
           audits surviving repository refs. Not for creating worktrees; use
           worktree-create. Not for integrating branches; use…
+  - kind: extension
+    publisher: pancode
+    name: campaign
+    description: Run one seeded project across a roster of models and report how
+      each run ended, its gates, refusals and tokens.
+    version: 0.1.0
+    sourceUrl: packs/extensions/campaign
+    sha256: ceab66b3bbfcee8708cc3be763baa81b92c470369ea0522e16d6463a49b891b7
+    license: LicenseRef-PanCode-1.0
+    tier: core
+    envelopeDigest: 46b05299328b2586ae874d54ca78a861cbde20a7508d0094beba52b1fee590b5
+    verbs:
+      - campaign
+    provides:
+      - kind: extension
+        name: campaign
+        description: Run one seeded project across a roster of models and report how
+          each run ended, its gates, refusals and tokens.
+    default: true
   - kind: plugin
     publisher: panstudio
     name: cite-nexus

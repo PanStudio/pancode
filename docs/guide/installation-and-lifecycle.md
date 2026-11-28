@@ -319,8 +319,8 @@ for it in this order:
 1. `PANCODE_CLAUDE_SDK_DIR`, an absolute administrator-prepared prefix holding
    `node_modules/@anthropic-ai/claude-agent-sdk`. It is never modified, and when
    it is set nothing else is consulted.
-2. The per-user component above, then, inside a `pancode campaign run`
-   entry, the operator's own copy, which the entry reads and never writes.
+2. The per-user component above, then, inside a run the extension runs service starts with its own home (a
+   `pancode campaign run` entry), the operator's own copy, which the entry reads and never writes.
 3. A package-local copy, such as the one in a development checkout.
 
 When none resolves:
