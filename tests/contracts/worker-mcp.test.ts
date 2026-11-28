@@ -430,7 +430,7 @@ describe("native worker MCP capabilities", () => {
 		}
 	});
 
-	it("names the server and safety.sandboxNetwork when a sandbox without network will start an admitted MCP server", async () => {
+	it("names the server and safety.egress.workers.mode when a sandbox without network will start an admitted MCP server", async () => {
 		ok(trust({ cwd: project, id: "fake", actionClass: "read" }).ok);
 		const settings = structuredClone(DEFAULT_SETTINGS);
 		settings.safety.sandbox = "required";
@@ -459,7 +459,7 @@ describe("native worker MCP capabilities", () => {
 		strictEqual(notices.length, confined ? 1 : 0, JSON.stringify(notices));
 		if (confined) {
 			strictEqual(notices[0]?.code, "mcp_sandbox_no_network");
-			match(notices[0]?.message ?? "", /MCP server 'fake' starts .*no network.*safety\.sandboxNetwork/);
+			match(notices[0]?.message ?? "", /MCP server 'fake' starts .*no network.*safety\.egress\.workers\.mode/);
 		}
 
 		const envelope = fixtureEnvelope("run-mcp");
@@ -502,14 +502,14 @@ describe("native worker MCP capabilities", () => {
 		const summary = { count: 0, types: [], lastAssistantText: "", terminalAttemptRunId: receipt.runId };
 		match(
 			formatDispatchOutput("single", [{ receipt, summary }], 16_384),
-			/MCP server 'fake' starts .*no network.*safety\.sandboxNetwork/,
+			/MCP server 'fake' starts .*no network.*safety\.egress\.workers\.mode/,
 		);
 		const networked = finishRunResult(
 			{ ...draft, safety: { ...safety, sandbox: { ...sandbox, network: true } } },
 			envelope,
 			{ terminal: { terminalReason: "completed" }, processExitCode: envelope.exitCode, frameType: null, usage: undefined },
 		).result;
-		ok(!formatDispatchOutput("single", [{ receipt: networked, summary }], 16_384).includes("safety.sandboxNetwork"));
+		ok(!formatDispatchOutput("single", [{ receipt: networked, summary }], 16_384).includes("safety.egress.workers.mode"));
 
 		// A grant the run's write roots voided reads back as withheld, not as never granted.
 		const reason = `this run's write root ${project} overlaps its launch cwd ${project}`;
@@ -703,7 +703,7 @@ describe("native worker MCP capabilities", () => {
 			notices[0]?.message ?? "",
 			/MCP server 'fake' starts without its network grant because this run's write root .* overlaps its launch cwd/,
 		);
-		doesNotMatch(notices[0]?.message ?? "", /safety\.sandboxNetwork/);
+		doesNotMatch(notices[0]?.message ?? "", /safety\.egress\.workers\.mode/);
 	});
 
 	it("withholds the grant when the dispatch cwd is a symlink and the write root names the link target", () => {

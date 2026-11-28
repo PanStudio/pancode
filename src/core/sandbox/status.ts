@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import { sandboxAvailability, sandboxNetworkIsolation, sandboxUsable, wslKind } from "./availability.js";
-import type { SandboxAvailability, SandboxBackend, SandboxMode, UnixSocketMode } from "./types.js";
+import type { EgressMode, SandboxAvailability, SandboxBackend, SandboxMode, UnixSocketMode } from "./types.js";
 
 /**
  * What the host's OS sandbox is, apart from what the setting asks of it.
@@ -45,7 +45,7 @@ export interface SandboxStatusInput {
 	unixSockets: UnixSocketMode;
 	wsl: "wsl1" | "wsl2" | null;
 	unconfinedLocalWorkers: boolean;
-	/** Worker commands keep the network (`safety.sandboxNetwork`), so they need no network isolation. */
+	/** Worker commands keep the open host network (`safety.egress.workers.mode: open`), so they need no network isolation. */
 	workerNetwork: boolean;
 }
 
@@ -96,7 +96,7 @@ export function hostSandboxStatus(safety: {
 	sandbox: SandboxMode;
 	sandboxUnixSockets: UnixSocketMode;
 	sandboxUnconfinedLocalWorkers: boolean;
-	sandboxNetwork: boolean;
+	egress: { workers: { mode: EgressMode } };
 }): SandboxStatus {
 	const availability = sandboxAvailability();
 	return sandboxStatus({
@@ -106,7 +106,7 @@ export function hostSandboxStatus(safety: {
 		unixSockets: safety.sandboxUnixSockets,
 		wsl: process.platform === "linux" ? wslKind() : null,
 		unconfinedLocalWorkers: safety.sandboxUnconfinedLocalWorkers,
-		workerNetwork: safety.sandboxNetwork,
+		workerNetwork: safety.egress.workers.mode === "open",
 	});
 }
 

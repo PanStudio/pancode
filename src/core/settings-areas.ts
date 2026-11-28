@@ -248,7 +248,6 @@ export function settingsPlacementForRow(id: string, path: string): SettingsPlace
 		case "safety.limits.bashIdleSeconds":
 			return place("safety", "Spending & tool limits");
 		case "safety.sandbox":
-		case "safety.sandboxNetwork":
 		case "safety.sandboxPassEnv":
 		case "safety.liveCheckTargets":
 		case "safety.sandboxUnixSockets":
@@ -277,6 +276,7 @@ export function settingsPlacementForRow(id: string, path: string): SettingsPlace
 	if (under(path, "fleet.permissions")) return place("safety", "Worker approvals");
 	if (under(path, "safety.review") || path === "safety.validationWrappers") return place("safety", "Review");
 	if (under(path, "safety.judge")) return place("safety", "Safety judge");
+	if (under(path, "safety.egress")) return place("safety", "Sandbox");
 	if (under(path, "systemOne") || under(path, "chat.steering")) return place("advanced", "Experimental");
 	if (under(path, "telemetry")) return place("advanced", "Telemetry");
 	if (under(path, "report")) return place("chat", "Guidance");

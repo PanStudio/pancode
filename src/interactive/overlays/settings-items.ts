@@ -7,6 +7,7 @@ import { getAtPath, resolveMemoryRoute } from "../../core/session-routing.js";
 /** buildSettingItems: every row the settings center lists, with the fleet profile, agent binding and System 1 rows. */
 import {
 	formatControlValue,
+	hasRedactedControlCredentials,
 	OFF_MENU_HAND_ROWS,
 	SETTING_CONTROLS,
 	settingControl,
@@ -538,9 +539,9 @@ export function buildSettingItems(
 				Object.assign(item, replacement, {
 					id: item.id,
 					section: item.section,
-					currentValue: formatControlValue(value),
+					currentValue: formatControlValue(value, control.path),
 					editValue:
-						value == null
+						value == null || hasRedactedControlCredentials(control.path, value)
 							? ""
 							: control.kind === "list"
 								? (value as string[]).join(", ")
@@ -560,9 +561,9 @@ export function buildSettingItems(
 		...SETTING_CONTROLS.filter((control) => control.menu === true && !paths.has(control.path)).map((control) => {
 			const item = commonControlItem(control, live);
 			const value = getAtPath(settings, control.path);
-			item.currentValue = formatControlValue(value);
+			item.currentValue = formatControlValue(value, control.path);
 			item.editValue =
-				value == null
+				value == null || hasRedactedControlCredentials(control.path, value)
 					? ""
 					: control.kind === "list"
 						? (value as string[]).join(", ")
