@@ -448,6 +448,66 @@ test("a run counts its workers' sandbox launch records, and a reopened journal c
 	}
 });
 
+test("sandbox.launched queues on the deferred call journal writer and attributes concurrent calls (P6)", async () => {
+	const { sandboxLaunch, sandboxLaunchRecord } = await import("../../src/core/sandbox/launch-record.js");
+	const { telemetryContexts } = await import("../../src/core/telemetry/hub.js");
+	const sessionDirectory = await mkdtemp(join(tmpdir(), "telemetry-sandbox-p6-"));
+	const sessionCtx = { sessionId: "ses_sbx_deferred", agent: { role: "main" as const, id: "ses_sbx_deferred" } };
+	const journal = await openCallJournal({ directory: sessionDirectory, context: sessionCtx, writer });
+	try {
+		const facts = {
+			caller: "main" as const,
+			launcher: "shell" as const,
+			confinement: "sandboxed" as const,
+			why: "main-policy" as const,
+			backend: "bwrap" as const,
+			network: "proxied" as const,
+		};
+		const callA = telemetryContexts.run({ ...sessionCtx, toolCallId: "call_concurrent_a" }, () => sandboxLaunch(facts));
+		const callB = telemetryContexts.run({ ...sessionCtx, toolCallId: "call_concurrent_b" }, () => sandboxLaunch(facts));
+		// Settling queues onto the async writer without synchronous disk writes on the emitter's stack.
+		callB.settle({
+			outcome: "ran",
+			exitCode: 0,
+			egress: {
+				receipts: [
+					{ host: `${"g".repeat(260)}.granted.test`, port: 443, decision: "allowed", source: "session", count: 1 },
+				],
+				listeningPorts: [],
+				setupFailed: false,
+				denyHint: "",
+			},
+		});
+		callA.settle({ outcome: "refused" });
+		deepStrictEqual([journal.health().queueDepth, journal.health().persisted], [2, 0]);
+		await journal.flush();
+		deepStrictEqual([journal.health().queueDepth, journal.health().persisted, journal.health().invalid], [0, 2, 0]);
+		const rows = (await readCallJournal(sessionDirectory)).records.map(({ record }) => record);
+		deepStrictEqual(
+			rows.map((row) => [row.k, row.ctx.toolCallId, row.k === "sandbox.launched" ? row.data.outcome : null]),
+			[
+				["sandbox.launched", "call_concurrent_b", "ran"],
+				["sandbox.launched", "call_concurrent_a", "refused"],
+			],
+		);
+		// Sanity: a direct record with an overlong granted host also stays schema-valid.
+		const clipped = sandboxLaunchRecord(facts, {
+			outcome: "ran",
+			exitCode: 0,
+			egress: {
+				receipts: [{ host: `${"z".repeat(300)}.example.test`, port: 443, decision: "allowed", source: "grant", count: 1 }],
+				listeningPorts: [],
+				setupFailed: false,
+				denyHint: "",
+			},
+		});
+		ok((clipped.destinations?.[0]?.host.length ?? 0) <= 64);
+	} finally {
+		await journal.close();
+		await rm(sessionDirectory, { recursive: true, force: true });
+	}
+});
+
 test("a standalone run shares one envelope writer for calls and bounded display history", async () => {
 	const directory = await mkdtemp(join(tmpdir(), "telemetry-run-"));
 	const run = { sessionId: null, runId: "standalone-run", agent: { role: "worker" as const, id: "standalone-run" } };

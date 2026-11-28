@@ -33,6 +33,7 @@ import { EGRESS_UNGRANTED } from "../../src/core/sandbox/egress/setup.js";
 import { planHomeReads } from "../../src/core/sandbox/home-reads.js";
 import {
 	emptySandboxLaunchTally,
+	launchFacts,
 	recordUncontainedShell,
 	type SandboxLaunchFacts,
 	sandboxLaunch,
@@ -895,6 +896,16 @@ test("the launch record keeps denials, completed connects and failed dials apart
 	// A granted host equals an operator's entry and stays whole.
 	assert.equal(record.destinations?.[1]?.host, `${"g".repeat(70)}.granted.test`);
 	assert.equal(JSON.stringify(record).includes("a".repeat(33)), false);
+	// The egress note appended to tool output applies the same host clip so long ungranted subdomains never leak there either.
+	const clippedNote =
+		egressResultNote({
+			receipts: [{ host: long, port: 443, decision: "denied", code: "ungranted", count: 1 }],
+			listeningPorts: [],
+			setupFailed: false,
+			denyHint: "",
+		}) ?? "";
+	assert.equal(clippedNote.includes("a".repeat(33)), false);
+	assert.match(clippedNote, new RegExp(`${"b".repeat(32)}\\.exfil\\.example:443`, "u"));
 
 	// An open network was not observed: no destination list, never an empty one.
 	const open = sandboxLaunchRecord({ ...facts, network: "open" }, { outcome: "ran", exitCode: 0 });
@@ -917,17 +928,63 @@ test("the launch record keeps denials, completed connects and failed dials apart
 	});
 	assert.equal(setup.outcome, "launch-failed");
 
+	// An overlong granted host is clipped to stay inside SandboxDestinationSchema's 255-char bound, a leading-dot
+	// clip boundary never starts with '.', operator approval matches session, and proxied without a report is unobserved.
+	const overlongGranted = `${"g".repeat(260)}.granted.test`;
+	const dotBoundary = `${"a".repeat(32)}.${"b".repeat(31)}.${"c".repeat(32)}`;
+	const edge = sandboxLaunchRecord(facts, {
+		outcome: "ran",
+		exitCode: 0,
+		egress: {
+			receipts: [
+				{ host: overlongGranted, port: 443, decision: "allowed", source: "session", count: 1 },
+				{ host: dotBoundary, port: 443, decision: "denied", code: "ungranted", count: 1 },
+				{ host: "a.b.c.d.operator.test", port: 443, decision: "allowed", source: "operator", count: 1 },
+			],
+			listeningPorts: [],
+			setupFailed: false,
+			denyHint: "",
+		},
+	});
+	assert.equal((edge.destinations?.[0]?.host.length ?? 0) <= 64, true);
+	assert.equal(edge.destinations?.[0]?.hostClipped, true);
+	assert.equal(edge.destinations?.[1]?.host.startsWith("."), false);
+	assert.equal(edge.destinations?.[1]?.hostClipped, true);
+	assert.equal(edge.destinations?.[2]?.host, "a.b.c.d.operator.test");
+	assert.equal(edge.destinations?.[2]?.hostClipped, undefined);
+	const noReport = sandboxLaunchRecord(facts, { outcome: "ran", exitCode: 0 });
+	assert.deepEqual(noReport.network, { mode: "proxied", observed: false });
+	assert.equal("destinations" in noReport, false);
+	// Seatbelt cannot isolate a proxied network, so its launch plan stays open and unobserved with no destinations.
+	const seatbeltPlan = planMainSandboxSpawn(
+		{
+			...mainSandboxPolicy({ workspace: tmpdir(), scratchRoots: [] }),
+			egress: { grants: egressGrants(["example.com:443"], []), denyHint: "" },
+		},
+		{ argv: ["/bin/sh", "-c", "true"] },
+		tmpdir(),
+		{ available: true, backend: "seatbelt", executable: "/usr/bin/sandbox-exec", reason: null },
+		{ bridge: true },
+	);
+	assert.equal(seatbeltPlan.launch.network, "open");
+	const seatbeltRecord = sandboxLaunchRecord(launchFacts(seatbeltPlan.launch, "shell", undefined), {
+		outcome: "ran",
+		exitCode: 0,
+	});
+	assert.deepEqual(seatbeltRecord.network, { mode: "open", observed: false });
+	assert.equal("destinations" in seatbeltRecord, false);
+
 	const tally = emptySandboxLaunchTally();
-	for (const each of [record, open, unconfined, refused, setup]) tallySandboxLaunch(tally, each);
+	for (const each of [record, open, unconfined, refused, setup, noReport]) tallySandboxLaunch(tally, each);
 	assert.deepEqual(tally, {
-		launches: 5,
+		launches: 6,
 		refused: 1,
 		launchFailed: 1,
 		allowed: 1,
 		denied: 61,
 		failed: 0,
 		dropped: 26,
-		unobserved: 2,
+		unobserved: 3,
 	});
 });
 
@@ -949,18 +1006,25 @@ test("a launch journals one record under the call that planned it, and an uncont
 		backend: "bwrap",
 		network: "off",
 	};
-	const call: TelemetryContext = { sessionId: "ses_p6", agent: { role: "main", id: "ses_p6" }, toolCallId: "call_a" };
-	// The context is captured when the launch is planned, so a settle outside it still names its call.
-	const launch = telemetryContexts.run(call, () => sandboxLaunch(facts));
-	const first = launch.settle({ outcome: "ran", exitCode: 0 });
-	assert.equal(launch.settle({ outcome: "launch-failed" }), first);
+	const callA: TelemetryContext = { sessionId: "ses_p6", agent: { role: "main", id: "ses_p6" }, toolCallId: "call_a" };
+	const callB: TelemetryContext = { sessionId: "ses_p6", agent: { role: "main", id: "ses_p6" }, toolCallId: "call_b" };
+	// Two concurrent launches capture their own call's context at plan time and attribute accurately even out of order.
+	const launchA = telemetryContexts.run(callA, () => sandboxLaunch(facts));
+	const launchB = telemetryContexts.run(callB, () => sandboxLaunch(facts));
+	const settledB = launchB.settle({ outcome: "ran", exitCode: 2 });
+	const settledA = launchA.settle({ outcome: "ran", exitCode: 0 });
+	assert.equal(launchA.settle({ outcome: "launch-failed" }), settledA);
 	assert.equal(sandboxLaunch(undefined).settle({ outcome: "ran", exitCode: 0 }), undefined);
 	assert.deepEqual(
-		journaled.map(({ name, ctx }) => [name, ctx?.toolCallId]),
-		[["sandbox.launched", "call_a"]],
+		journaled.map(({ name, ctx, payload }) => [name, ctx?.toolCallId, (payload as { exitCode?: number }).exitCode]),
+		[
+			["sandbox.launched", "call_b", 2],
+			["sandbox.launched", "call_a", 0],
+		],
 	);
-	assert.deepEqual(journaled[0]?.payload, first);
-	assert.deepEqual(first?.network, { mode: "off", observed: false });
+	assert.deepEqual(journaled[1]?.payload, settledA);
+	assert.deepEqual(journaled[0]?.payload, settledB);
+	assert.deepEqual(settledA?.network, { mode: "off", observed: false });
 
 	journaled.length = 0;
 	const session: TelemetryContext = { sessionId: "ses_p6_open", agent: { role: "main", id: "ses_p6_open" } };
@@ -1007,6 +1071,40 @@ test("allowed egress leaves through safety.egress.upstreamProxy by name with its
 	// The upstream proxy carries only what the grants admit.
 	assert.equal(await proxyConnect(port, "elsewhere.test:443"), 403);
 	assert.equal(requests.length, 1);
+
+	// Neither userinfo, query strings, headers nor the upstream proxy URL or credentials reach launch records or notes.
+	const plainHttp = await new Promise<number>((resolve, reject) => {
+		const socket = connect(port, "127.0.0.1", () => {
+			socket.write(
+				"GET http://alice:top-secret-pw@internal.corp.test:80/private/path?api_key=LEAKED_QUERY HTTP/1.1\r\n" +
+					"Host: internal.corp.test:80\r\nAuthorization: Bearer LEAKED_HEADER\r\nConnection: close\r\n\r\n",
+			);
+		});
+		let head = "";
+		socket.on("data", (chunk: Buffer) => {
+			head += chunk.toString("latin1");
+		});
+		socket.on("end", () => resolve(Number(/^HTTP\/1\.[01] (\d{3})/u.exec(head)?.[1] ?? 0)));
+		socket.on("error", reject);
+	});
+	assert.equal(plainHttp, 403);
+	const report = { receipts: proxy.receipts(), listeningPorts: [], setupFailed: false, denyHint: "" };
+	const record = sandboxLaunchRecord(
+		{
+			caller: "main",
+			launcher: "shell",
+			confinement: "sandboxed",
+			why: "main-policy",
+			backend: "bwrap",
+			network: "proxied",
+		},
+		{ outcome: "ran", exitCode: 0, egress: report },
+	);
+	const serialized = `${JSON.stringify(record)}\n${egressResultNote(report) ?? ""}`;
+	for (const secret of ["ops", "s3cr", "alice", "top-secret-pw", "LEAKED_QUERY", "LEAKED_HEADER", "/private/path"]) {
+		assert.equal(serialized.includes(secret), false, `leaked ${secret}`);
+	}
+	assert.equal(record.destinations?.find((d) => d.host === "internal.corp.test" && d.port === 443)?.viaUpstream, true);
 });
 
 test("under bwrap a proxied command reaches only its grants through the bridge and its own servers stay inside (P3)", async (t) => {

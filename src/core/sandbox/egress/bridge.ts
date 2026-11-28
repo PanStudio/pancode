@@ -3,6 +3,7 @@
 import type { ChildProcess, IOType, StdioOptions } from "node:child_process";
 import { readdirSync, readFileSync, readlinkSync } from "node:fs";
 import type net from "node:net";
+import { recordedEgressHost } from "../launch-record.js";
 import type { EgressReason } from "../types.js";
 import type { EgressGrants } from "./policy.js";
 import type { EgressAsk, EgressProxy, EgressReceipt } from "./proxy.js";
@@ -136,7 +137,8 @@ const NOTE_ORIGINS = 8;
 
 function listOrigins(receipts: ReadonlyArray<EgressReceipt>): string {
 	const shown = receipts.slice(0, NOTE_ORIGINS).map((receipt) => {
-		const host = receipt.host.includes(":") ? `[${receipt.host}]` : receipt.host;
+		const { host: bounded } = recordedEgressHost(receipt);
+		const host = bounded.includes(":") ? `[${bounded}]` : bounded;
 		return `${host}:${receipt.port}${receipt.count > 1 ? ` ×${receipt.count}` : ""}`;
 	});
 	const more = receipts.length - shown.length;
