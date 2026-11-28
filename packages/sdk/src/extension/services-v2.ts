@@ -172,13 +172,17 @@ export interface ExtensionVerify {
 	 * one (a package script, a toolchain check) through `pancode verifiers dry-run` in the place.
 	 */
 	check(id: string, place?: ExtensionWorkPlace): Promise<ExtensionCheckResult>;
-	/** Run a catalog check's command and read one finite number, `metric`, from its numeric payload. */
-	measure(
-		id: string,
-		metric: string,
-		place?: ExtensionWorkPlace,
-	): Promise<{ ok: true; value: number } | { ok: false; reason: string }>;
+	/**
+	 * Run a catalog check's command and read one finite number, `metric`, from its numeric payload. A result whose
+	 * command ran carries `receipt`, naming the run to `claims.finish` as `check` would; its execution is `succeeded`,
+	 * `failed`, `timed-out` or `aborted`, and a plain measurement never yields a claim.
+	 */
+	measure(id: string, metric: string, place?: ExtensionWorkPlace): Promise<ExtensionMeasureResult>;
 }
+
+export type ExtensionMeasureResult =
+	| { ok: true; value: number; receipt: string }
+	| { ok: false; reason: string; receipt?: string };
 
 export interface ExtensionClaims {
 	/**
@@ -190,11 +194,13 @@ export interface ExtensionClaims {
 	begin(run: string, checks: ReadonlyArray<string>): Promise<Record<string, string[]>>;
 	/**
 	 * Record the claims the run's checks were judged into and test the hypotheses `begin` bound. A hypothesis in
-	 * `withoutClaim` is tested on the run alone, never with the claim as its evidence. The claim id per check.
+	 * `withoutClaim` is tested on the run alone, never with the claim as its evidence. The claim id per check. An
+	 * outcome `{ check, execution: "aborted" }` names a check the run stopped before judging: its hypotheses are tested
+	 * as aborted, with no receipt and never a claim.
 	 */
 	finish(
 		run: string,
-		outcomes: ReadonlyArray<{ check: string; receipt: string }>,
+		outcomes: ReadonlyArray<{ check: string; receipt: string } | { check: string; execution: "aborted" }>,
 		options?: { withoutClaim?: ReadonlyArray<string> },
 	): Promise<Record<string, string>>;
 	/** The project's latest ledger records, newest last. */

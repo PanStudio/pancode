@@ -12,6 +12,7 @@ import type {
 	ExtensionCheck,
 	ExtensionCheckResolution,
 	ExtensionCheckResult,
+	ExtensionMeasureResult,
 	ExtensionWorkPlace,
 } from "@pancode/sdk/extension";
 import type { PancodeSettings } from "../../../core/config.js";
@@ -80,7 +81,7 @@ export interface ExtensionVerifyService {
 		metric: string,
 		place?: ExtensionWorkPlace,
 		scope?: ExtensionRequestScope,
-	): Promise<{ ok: true; value: number } | { ok: false; reason: string }>;
+	): Promise<ExtensionMeasureResult>;
 }
 
 const TEXT_TAIL_CHARS = 64 * 1024;
@@ -225,6 +226,11 @@ function objectiveFromOutput(
 	};
 }
 
+function measureTail(stdout: string, stderr: string): string {
+	const tail = `${stdout}${stderr}`.trim().slice(-400);
+	return tail.length > 0 ? `: ${tail}` : "";
+}
+
 function lastJsonLine(stdout: string): { ok?: unknown; output?: unknown; error?: unknown; judgement?: unknown } | null {
 	try {
 		const value: unknown = JSON.parse(stdout.trim().split("\n").at(-1) ?? "");
@@ -361,7 +367,7 @@ export function createExtensionVerifyService(deps: ExtensionVerifyServiceDeps): 
 			const name = checkId(id);
 			if (typeof metric !== "string" || metric.length === 0 || metric.length > 200)
 				return { ok: false, reason: "a metric is a non-empty key" };
-			const { cwd } = await deps.resolvePlace(place);
+			const { cwd, root } = await deps.resolvePlace(place);
 			const resolution = resolveVerifyCall(cwd, { check: name });
 			if (resolution.kind !== "catalog")
 				return {
@@ -382,17 +388,29 @@ export function createExtensionVerifyService(deps: ExtensionVerifyServiceDeps): 
 				...(scope !== undefined ? { signal: scope.signal } : {}),
 				...(shellSandbox !== undefined ? { shellSandbox } : {}),
 			});
-			if (result.aborted) return { ok: false, reason: "aborted" };
-			if (result.timedOut) return { ok: false, reason: `timed out after ${check.timeoutMs}ms` };
-			if (result.outputCapped) return { ok: false, reason: "output exceeded the judged-check ceiling" };
-			if (result.exitCode !== 0) {
-				const tail = `${result.stdout}${result.stderr}`.trim().slice(-400);
-				return {
-					ok: false,
-					reason: `exited with code ${result.exitCode ?? "?"}${tail.length > 0 ? `: ${tail}` : ""}`,
-				};
-			}
-			return objectiveFromOutput(check, metric, result.stdout, result.durationMs);
+			const measured: { ok: true; value: number } | { ok: false; reason: string } = result.aborted
+				? { ok: false, reason: "aborted" }
+				: result.timedOut
+					? { ok: false, reason: `timed out after ${check.timeoutMs}ms` }
+					: result.outputCapped
+						? { ok: false, reason: "output exceeded the judged-check ceiling" }
+						: result.exitCode !== 0
+							? {
+									ok: false,
+									reason: `exited with code ${result.exitCode ?? "?"}${measureTail(result.stdout, result.stderr)}`,
+								}
+							: objectiveFromOutput(check, metric, result.stdout, result.durationMs);
+			// The run itself is the evidence a hypothesis test cites: a plain measurement names its execution, never a claim.
+			const execution = result.aborted ? "aborted" : result.timedOut ? "timed-out" : measured.ok ? "succeeded" : "failed";
+			const receipt = deps.receipts.put({
+				check: name,
+				result: measured.ok
+					? { kind: "ok", output: String(measured.value), details: { checkKind: check.kind, judgement: { execution } } }
+					: { kind: "error", message: measured.reason, details: { checkKind: check.kind, judgement: { execution } } },
+				checkout: root,
+				at: new Date().toISOString(),
+			});
+			return { ...measured, receipt };
 		},
 	};
 }

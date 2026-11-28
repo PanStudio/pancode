@@ -171,21 +171,16 @@ export function createExtensionWorkHost(services: ExtensionWorkServices): Extens
 		begin: (service, request) => service.begin(request.text("run"), request.texts("checks")),
 		finish: (service, request) => {
 			const outcomes = request.value("outcomes");
-			if (
-				!Array.isArray(outcomes) ||
-				outcomes.some(
-					(entry) =>
-						entry === null ||
-						typeof entry !== "object" ||
-						typeof (entry as Record<string, unknown>).check !== "string" ||
-						typeof (entry as Record<string, unknown>).receipt !== "string",
-				)
-			)
-				throw new Error("claims.finish: outcomes must be a list of { check, receipt }");
-			const pairs = (outcomes as Array<{ check: string; receipt: string }>).map(({ check, receipt }) => ({
-				check,
-				receipt,
-			}));
+			if (!Array.isArray(outcomes))
+				throw new Error('claims.finish: outcomes must be a list of { check, receipt } or { check, execution: "aborted" }');
+			const pairs = outcomes.map((entry: unknown) => {
+				const record = entry !== null && typeof entry === "object" ? (entry as Record<string, unknown>) : {};
+				if (typeof record.check === "string" && typeof record.receipt === "string")
+					return { check: record.check, receipt: record.receipt };
+				if (typeof record.check === "string" && record.execution === "aborted")
+					return { check: record.check, execution: "aborted" as const };
+				throw new Error('claims.finish: outcomes must be a list of { check, receipt } or { check, execution: "aborted" }');
+			});
 			return service.finish(
 				request.text("run"),
 				pairs,
