@@ -3,11 +3,11 @@
 import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
 import path from "node:path";
 import { parseDocument } from "yaml";
+import { compareCodepoints } from "../../core/ordering.js";
 import { resolveSafeCwd } from "../../core/safe-exec.js";
 import { isRecord } from "../../core/type-guards.js";
 import { byteLength } from "../../tools/truncate-utf8.js";
 import { MAX_ULP_TOLERANCE } from "../../tools/verify/numeric.js";
-import { compareCodepoints } from "../evidence/ordering.js";
 
 /**
  * The one strict loader for the version-1 scientific validation contract.

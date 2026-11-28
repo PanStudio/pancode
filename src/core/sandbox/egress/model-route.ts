@@ -60,7 +60,6 @@ export interface ModelRouteOptions {
 	 * message reaches the worker as the 401 body.
 	 */
 	resolve(rejectedApiKey?: string): Promise<ModelRouteCredential>;
-	maxConnections?: number;
 }
 
 export interface ModelRouteReceipt {
@@ -368,7 +367,7 @@ export function createModelRoute(options: ModelRouteOptions): ModelRoute {
 
 	const server = http.createServer();
 	server.requestTimeout = 0;
-	server.maxConnections = options.maxConnections ?? DEFAULT_MAX_CONNECTIONS;
+	server.maxConnections = DEFAULT_MAX_CONNECTIONS;
 	server.on("request", onRequest);
 	server.on("upgrade", onUpgrade);
 	server.on("connect", (_req: http.IncomingMessage, socket: Duplex) => {

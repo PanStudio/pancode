@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
+
+import { UNMEDIATED_ENFORCEMENT } from "../../../../core/runtime-enforcement.js";
 import type { Api, Model } from "../../../../engine/types.js";
-import { UNMEDIATED_ENFORCEMENT } from "../../runtime-enforcement.js";
 import type { KnowledgeBaseHit } from "../../types/knowledge-base.js";
 import type { RuntimeDescriptor } from "../../types/runtime-descriptor.js";
 import type { TargetDescriptor } from "../../types/target-descriptor.js";

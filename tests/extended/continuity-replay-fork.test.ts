@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, it } from "node:test";
 import { stripVTControlCharacters } from "node:util";
 
 import type { DomainContext } from "../../src/core/domain-loader.js";
+import { telemetrySessionDirectory } from "../../src/core/telemetry/paths.js";
 import { pancodeStatePath } from "../../src/core/xdg.js";
 import type {
 	AcceptedNote,
@@ -24,7 +25,6 @@ import type { SessionContract, SessionEntryInput } from "../../src/domains/sessi
 import type { SessionEntry } from "../../src/domains/session/entries.js";
 import { createSessionBundle } from "../../src/domains/session/extension.js";
 import { readCallJournalSync } from "../../src/domains/telemetry/call-journal.js";
-import { telemetrySessionDirectory } from "../../src/domains/telemetry/paths.js";
 import { openSession, sessionPaths } from "../../src/engine/session.js";
 import { createChatPanel } from "../../src/interactive/chat-panel.js";
 import { rehydrateChatPanelFromTurns } from "../../src/interactive/chat-renderer.js";

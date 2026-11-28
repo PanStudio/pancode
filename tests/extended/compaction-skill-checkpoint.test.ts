@@ -6,14 +6,14 @@ import { DEFAULT_SETTINGS } from "../../src/core/defaults.js";
 import { withModelSkillActivation } from "../../src/core/skill-activation.js";
 import { foldWorkingSet } from "../../src/domains/context/working-set/fold.js";
 import { resolveRecall } from "../../src/domains/context/working-set/recall.js";
-import type { PromptsContract } from "../../src/domains/prompts/contract.js";
-import type { ProvidersContract } from "../../src/domains/providers/contract.js";
 import {
 	type CompactInput,
 	type CompactResult,
 	captureSkillContext,
 	compact,
-} from "../../src/domains/session/compaction/compact.js";
+} from "../../src/domains/memory/compaction/compact.js";
+import type { PromptsContract } from "../../src/domains/prompts/contract.js";
+import type { ProvidersContract } from "../../src/domains/providers/contract.js";
 import { findCutPoint } from "../../src/domains/session/compaction/cut-point.js";
 import { estimateTokens } from "../../src/domains/session/compaction/tokens.js";
 import { estimateAgentContextTokens } from "../../src/domains/session/context-accounting.js";

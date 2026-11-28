@@ -7,13 +7,13 @@ import { resolvePackageRoot } from "../../core/package-root.js";
 import type { TelemetryContext } from "../../core/telemetry/context.js";
 import type { EventPayload } from "../../core/telemetry/events.js";
 import { telemetryHub } from "../../core/telemetry/hub.js";
-import { openCallJournal, ownedCallJournal, readCallJournal } from "./call-journal.js";
 import {
 	telemetryBundlePath,
 	telemetryProcessDirectory,
 	telemetryRunDirectory,
 	telemetrySessionDirectory,
-} from "./paths.js";
+} from "../../core/telemetry/paths.js";
+import { openCallJournal, ownedCallJournal, readCallJournal } from "./call-journal.js";
 import { SEAL_EVENTS } from "./seal.js";
 
 const publications = new Map<string, Promise<void>>();

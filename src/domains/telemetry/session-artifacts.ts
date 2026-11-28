@@ -1,11 +1,12 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
+
+import { telemetrySessionDirectory } from "../../core/telemetry/paths.js";
 import type { ContextSnapshot } from "../session/context-accounting.js";
 import type { PromptManifestReadResult } from "../session/prompt-manifest.js";
 import { readCallJournalSync } from "./call-journal.js";
 import type { telemetryPromptStructure } from "./objects.js";
 import { readTelemetryObjectSync } from "./objects.js";
-import { telemetrySessionDirectory } from "./paths.js";
 import { contextSnapshots, promptCompiles } from "./read-model-side-surfaces.js";
 
 /** Cold session readers use the journal's checked records and verified structure preimages (#434). */

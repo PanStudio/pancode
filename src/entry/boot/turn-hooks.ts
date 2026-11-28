@@ -17,20 +17,17 @@ import {
 import { PANCODE_KEYBINDINGS, type PancodeKeybinding } from "../../domains/config/keybindings.js";
 import type { DispatchContract } from "../../domains/dispatch/contract.js";
 import { agentRoleFactsResolver } from "../../domains/dispatch/execution-role.js";
-import type { MiddlewareRegistrar } from "../../domains/middleware/contract.js";
 import {
 	createDetachedDispatchNudgeRegistration,
 	createUnbackedWorkerClaimRegistration,
 	finishedDetachedBatchIds,
 	openDetachedBatchViews,
-} from "../../domains/middleware/dispatch-nudge.js";
+} from "../../domains/dispatch/nudges/dispatch-nudge.js";
+import { createPlanCloseRegistration } from "../../domains/dispatch/nudges/plan-close.js";
+import { createExplorationNudgeRegistrations } from "../../domains/dispatch/nudges/scout-nudge.js";
+import type { MiddlewareRegistrar } from "../../domains/middleware/contract.js";
 import { createGuidanceRegistration } from "../../domains/middleware/guidance.js";
-import {
-	type CompletionFact,
-	createExplorationNudgeRegistrations,
-	createTurnPlanCueRegistration,
-} from "../../domains/middleware/index.js";
-import { createPlanCloseRegistration } from "../../domains/middleware/plan-close.js";
+import { type CompletionFact, createTurnPlanCueRegistration } from "../../domains/middleware/index.js";
 import { createTaskNudgeRegistration } from "../../domains/middleware/task-nudge.js";
 import { createWatchdogRegistration } from "../../domains/middleware/watchdog.js";
 import type { AutonomyWindow } from "../../domains/safety/autonomy-window.js";
@@ -154,7 +151,7 @@ export function registerBootTurnHooks(input: BootTurnHooksInput) {
 			cells.deferredWatchdogNoticeSink(notice);
 		} else if (options.acp !== undefined) {
 			// ACP has no advisory channel outside a prompt; record it where the
-			// routing notices already go (see the ConfigNextTurn subscriber below).
+			// routing notices already go (see the config.next_turn_scheduled subscriber in boot/acp-surface.ts).
 			try {
 				session?.appendEntry({
 					kind: "custom",

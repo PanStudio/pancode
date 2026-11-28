@@ -3,8 +3,8 @@
 import type { PancodeSettings } from "../core/config.js";
 import type { TurnConstraints } from "../core/turn-constraints.js";
 import type { DispatchContract } from "../domains/dispatch/contract.js";
+import { batchesCollectedElsewhere, collectedElsewhereLine } from "../domains/dispatch/nudges/dispatch-nudge.js";
 import { dispatchOwnerOf, dispatchOwnership } from "../domains/dispatch/ownership.js";
-import { batchesCollectedElsewhere, collectedElsewhereLine } from "../domains/middleware/index.js";
 import type { TurnControlRecord, TurnFacts } from "../lib/turn-control/index.js";
 import {
 	decide,
@@ -13,7 +13,6 @@ import {
 	renderCollectedBlock,
 	renderCollectedElsewhereBlock,
 } from "../lib/turn-control/index.js";
-import type { MonitorToolDeps } from "../tools/monitor.js";
 import { collectDetachedBatch } from "../tools/monitor-collect.js";
 import type { ToolInvokeOptions } from "../tools/registry-contract.js";
 
@@ -28,7 +27,6 @@ export interface TurnControlRunnerDeps {
 	getSettings(): Readonly<PancodeSettings>;
 	dispatch: DispatchContract | undefined;
 	getInvokeOptions?: () => ToolInvokeOptions;
-	monitorDeps?: MonitorToolDeps;
 	getTurnConstraints(): TurnConstraints | undefined;
 	finishedDetachedBatchIds(): ReadonlyArray<string>;
 	emitNotice(text: string): void;
@@ -41,7 +39,7 @@ export interface TurnControlRunnerDeps {
  */
 export function createTurnControlRunner(deps: TurnControlRunnerDeps): TurnControlRunner {
 	const tellCollectedElsewhere = async (): Promise<string | null> => {
-		const dispatch = deps.monitorDeps?.dispatch ?? deps.dispatch;
+		const dispatch = deps.dispatch;
 		if (!dispatch) return null;
 		let views: ReturnType<typeof batchesCollectedElsewhere>;
 		try {
@@ -81,8 +79,8 @@ export function createTurnControlRunner(deps: TurnControlRunnerDeps): TurnContro
 			const elsewhere = await tellCollectedElsewhere();
 			if (decision.kind !== "collect") return { block: elsewhere, record };
 			try {
-				const monitorDeps = deps.monitorDeps ?? (deps.dispatch ? { dispatch: deps.dispatch } : null);
-				if (monitorDeps === null) throw new Error("detached collection is unavailable");
+				if (!deps.dispatch) throw new Error("detached collection is unavailable");
+				const monitorDeps = { dispatch: deps.dispatch };
 				const ownership = dispatchOwnership(dispatchOwnerOf(monitorDeps.dispatch, deps.getInvokeOptions?.().sessionId));
 				const rendered: string[] = [];
 				const runIds: string[] = [];

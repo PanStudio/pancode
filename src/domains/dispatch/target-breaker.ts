@@ -51,7 +51,6 @@ export interface TargetBreakerOptions {
 	cooldownMs: () => number;
 	/** Consecutive breaker-affecting failures that open a closed route. */
 	threshold: () => number;
-	maxCooldownMs?: number;
 }
 
 export interface TargetBreaker {
@@ -77,7 +76,7 @@ interface RouteState {
 
 export function createTargetBreaker(options: TargetBreakerOptions): TargetBreaker {
 	const routes = new Map<string, RouteState>();
-	const maxCooldownMs = options.maxCooldownMs ?? MAX_TARGET_BREAKER_COOLDOWN_MS;
+	const maxCooldownMs = MAX_TARGET_BREAKER_COOLDOWN_MS;
 
 	function blockOf(state: RouteState | undefined, owner: string | null): TargetBreakerBlock | null {
 		const open = state?.open;

@@ -226,6 +226,12 @@ export function upstreamProxyProblem(value: string): string | null {
 	if (url.hostname.length === 0) return "the URL names no proxy host";
 	if ((url.pathname !== "/" && url.pathname !== "") || url.search !== "" || url.hash !== "")
 		return "a proxy URL takes no path, query or fragment";
+	try {
+		decodeURIComponent(url.username);
+		decodeURIComponent(url.password);
+	} catch {
+		return "proxy URL credentials contain invalid percent-encoding";
+	}
 	return null;
 }
 

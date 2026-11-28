@@ -1,9 +1,9 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { telemetrySessionDirectory } from "../../../../src/core/telemetry/paths.js";
 import { pancodeStateDir } from "../../../../src/core/xdg.js";
 import type { SessionEntry } from "../../../../src/domains/session/entries.js";
 import { openCallJournal } from "../../../../src/domains/telemetry/call-journal.js";
-import { telemetrySessionDirectory } from "../../../../src/domains/telemetry/paths.js";
 import { cwdHash } from "../../../../src/engine/session.js";
 import { telemetryCall } from "../../../../tests/harness/telemetry-view.js";
 

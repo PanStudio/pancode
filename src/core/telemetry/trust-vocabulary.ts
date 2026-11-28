@@ -97,3 +97,6 @@ const FAILURE_CAUSE_TAG_ORDER = [
 
 /** Fast membership test for the canonical failure-cause subset. */
 export const FAILURE_CAUSE_TAGS: ReadonlySet<EvidenceTag> = new Set(FAILURE_CAUSE_TAG_ORDER);
+
+/** Source id prefix of a validation fact observed from a command the worker ran, not one it reported. */
+export const OBSERVED_COMMAND_PREFIX = "command:";

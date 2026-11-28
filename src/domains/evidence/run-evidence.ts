@@ -6,15 +6,15 @@
  * reads the mutable run ledger.
  */
 
+import { compareCodepoints } from "../../core/ordering.js";
 import { listStateDirectory } from "../../core/state-boundary.js";
 import type { RunTelemetryV1 } from "../../core/telemetry/dto.js";
+import { telemetryRunsDirectory } from "../../core/telemetry/paths.js";
 import { sanitizeCallTargetText } from "../../lib/call-target/call-target.js";
 import { isBaselineValidation } from "../agents/result-contract-builder-report.js";
 import { reviewFindings } from "../agents/result-contract-gate.js";
 import { isDecisionRecord } from "../session/entries.js";
-import { telemetryRunsDirectory } from "../telemetry/paths.js";
 import { readRunRecordAsync } from "../telemetry/run-record.js";
-import { compareCodepoints } from "./ordering.js";
 import type { RunProvenanceView } from "./provenance.js";
 import { type GateReview, readRunGateIndex, readRunTrust } from "./run-trust.js";
 import { settledQualityFails, settledQualityValidates } from "./trust-status.js";
