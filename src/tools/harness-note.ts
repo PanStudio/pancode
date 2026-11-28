@@ -21,9 +21,10 @@ export async function harnessRecipeWriteNote(filePath: string, workspaceRoot = p
 	}
 	try {
 		const { formatHarnessIssues, validateHarnessAt } = await import("../domains/agents/harness-validate.js");
+		const { loadSkills } = await import("../domains/resources/skills/loader.js");
 		const id = path.basename(filePath, ".md");
 		const file = relative.split(path.sep).join("/");
-		const issues = validateHarnessAt(workspaceRoot, { recipeFile: filePath }).filter(
+		const issues = validateHarnessAt(workspaceRoot, { loadSkills, recipeFile: filePath }).filter(
 			(issue) => issue.file === relative || issue.file === file || issue.field === `fleet.agentProfiles.${id}`,
 		);
 		if (issues.length === 0) return null;

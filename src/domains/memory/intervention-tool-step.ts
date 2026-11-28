@@ -3,6 +3,7 @@
 
 import { sha256Hex } from "../../core/hash.js";
 import { isRecord } from "../../core/type-guards.js";
+import { redactForMemoryRoute } from "../../lib/secrets/memory-route.js";
 import {
 	DISPATCH_PLAN_PREPARATION_ERROR_ARGUMENT,
 	RESOLVED_DISPATCH_PLAN_ARGUMENT,
@@ -14,7 +15,6 @@ import {
 } from "../../tools/result-disposition.js";
 import type { MiddlewareHookInput } from "../middleware/types.js";
 import { hashToolCall } from "../safety/loop-detector.js";
-import { redactForMemoryRoute } from "./secret-text.js";
 import { shortText } from "./util.js";
 
 const CALL_DESCRIPTION_MAX_CHARS = 180;

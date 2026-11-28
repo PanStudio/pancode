@@ -2,13 +2,13 @@
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 
 import type { AcpDelegationRunHandle } from "../../acp/adapter.js";
+import type { detectRunIdentity } from "../../core/run-identity.js";
 import type { admitAcpDelegation } from "./acp-attempt-admit.js";
 import type { openAcpRun } from "./acp-attempt-run.js";
 import type { spawnAcpPeer } from "./acp-attempt-spawn.js";
 import type { DispatchAdmissionObserver, DispatchPreparationOptions, DispatchRequest } from "./contract.js";
 import type { ResolvedTerminalReason } from "./outcome.js";
 import type { RouteDecisionV1 } from "./route-decision.js";
-import type { detectRunIdentity } from "./run-identity.js";
 import type { RunTelemetryJournal } from "./run-telemetry.js";
 import type { RunEnvelope, RunLineage, RunOutcomeCode, RunPhaseMarks, RunResult } from "./types.js";
 

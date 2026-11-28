@@ -9,6 +9,7 @@ import {
 	OBSERVATION_MAX_BATCHES,
 } from "../../core/memory-receipt.js";
 import { isRecord } from "../../core/type-guards.js";
+import { type MemoryRouteText, memoryRouteJson } from "../../lib/secrets/memory-route.js";
 import type { MemoryContentStamp } from "./commit-state.js";
 import type {
 	MemoryCompactionOffer,
@@ -18,7 +19,6 @@ import type {
 	ObservationSourceUnit,
 	SessionObservation,
 } from "./contract.js";
-import { type MemoryRouteText, memoryRouteJson } from "./secret-text.js";
 import type { TaskMemoryRoute, TaskMemoryStepUsage } from "./task-memory-policy.js";
 
 export const observationDigest = (value: unknown): string => sha256Hex(JSON.stringify(value) ?? "null");

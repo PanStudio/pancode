@@ -31,6 +31,7 @@ import {
 	readLayeredSettings,
 	settingsSourceFor,
 } from "../core/settings-layers.js";
+import { withFrontmatterCacheReadOnly } from "../domains/agents/frontmatter-cache.js";
 import { reportInvalidInstallRecordsAsRows } from "../domains/extensions/index.js";
 import {
 	type DoctorFinding,
@@ -48,7 +49,6 @@ import { describeMissing } from "../domains/install/setup-status.js";
 import { resolveOnPath } from "../domains/interop/detect.js";
 import type { ProvidersContract } from "../domains/providers/contract.js";
 import { copilotContextTierLabel } from "../domains/providers/types/target-descriptor.js";
-import { withFrontmatterCacheReadOnly } from "../domains/resources/skills/frontmatter-cache.js";
 import { SCHEDULER_CLIS } from "../domains/safety/containment.js";
 import {
 	describeHostCapacity,

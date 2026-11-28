@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 
+import type { detectRunIdentity } from "../../core/run-identity.js";
 import type { WorkerHookResultFrame } from "../../lib/worker-wire/protocol.js";
 import type { CheckoutRootLookup } from "../../tools/task-worktree.js";
 import type { TaskWorktreeOverlay } from "../../tools/task-worktree-overlay.js";
@@ -31,7 +32,6 @@ import type { GradeVerdict } from "./grading.js";
 import type { BatchVerificationGate } from "./host-verification.js";
 import type { ResolvedTerminalReason } from "./outcome.js";
 import type { RouteObservationHandle } from "./route-observer.js";
-import type { detectRunIdentity } from "./run-identity.js";
 import type { RunTelemetryJournal } from "./run-telemetry.js";
 import type { InFlightCall } from "./tool-stats.js";
 import type {

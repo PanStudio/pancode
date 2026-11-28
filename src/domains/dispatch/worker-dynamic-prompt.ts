@@ -10,6 +10,7 @@ import { type Dirent, readdirSync } from "node:fs";
 import { relative, resolve as resolvePath } from "node:path";
 import type { DEFAULT_SETTINGS } from "../../core/defaults.js";
 import { sha256Hex } from "../../core/hash.js";
+import { INTEROP_AGENT_KINDS } from "../../core/interop-agents.js";
 import { relativePathEscapes } from "../../core/path-containment.js";
 import { type ToolName, ToolNames } from "../../core/tool-names.js";
 import { turnScopeGuidance } from "../../core/turn-constraints.js";
@@ -23,7 +24,6 @@ import { compileHandbook, selectWorkerHandbook, workerHandbookAudience } from ".
 import { renderProjectContextFragment } from "../context/pancode-md.js";
 import type { SisterRepositoryRules } from "../context/sister-repository.js";
 import { WORKER_CONTEXT_PREAMBLE } from "../context/worker/select.js";
-import { INTEROP_AGENT_KINDS } from "../interop/registry.js";
 import { workerPermitLine, workerSafetyOneLiner } from "../prompts/compiler.js";
 import { selectProjectPreload } from "../prompts/preload.js";
 import type { RuntimeDescriptor } from "../providers/index.js";

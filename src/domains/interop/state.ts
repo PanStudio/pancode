@@ -2,10 +2,10 @@
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
+import { INTEROP_AGENT_KINDS } from "../../core/interop-agents.js";
 import { safeResourceWrite } from "../../core/safe-resource-write.js";
 import { isRecord } from "../../core/type-guards.js";
 import { pancodeStateDir } from "../../core/xdg.js";
-import { INTEROP_AGENT_KINDS } from "./registry.js";
 import type { InteropAgentId, InteropAgentRecord, InteropDecision, InteropPresence, InteropReport } from "./types.js";
 
 const KNOWN_IDS = new Set<string>(INTEROP_AGENT_KINDS.map((kind) => kind.id));
