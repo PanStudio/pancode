@@ -544,7 +544,7 @@ export interface FleetNodeSettings {
 	allowUnsandboxed?: boolean;
 }
 
-/** One PanStore root: tags live under `<path>/projects/<projectKey>`. */
+/** One store root: tags live under `<path>/projects/<projectKey>`. */
 interface StoreRootSetting {
 	name: string;
 	/** Absolute. */
@@ -579,7 +579,7 @@ export interface StoreS3Setting {
 }
 
 /**
- * Where PanStore keeps tags. `backend` local keeps them under `roots`; empty `roots` keeps the one store under the
+ * Where the store keeps tags. `backend` local keeps them under `roots`; empty `roots` keeps the one store under the
  * data directory. The first root is the primary and holds records and locks. `placement` names the root a new tag
  * goes to; a tag never moves after. `backend` shared keeps them in the one folder `shared` names, which several
  * hosts mount, and `backend` s3 in the bucket `s3` names; neither has roots or placement. User settings only.
@@ -991,7 +991,7 @@ interface IntegrationsSettings {
 		remote: string | null;
 		confirmedRemote: string | null;
 		sync: boolean;
-		/** Base URL of the signed PanHub index release; "" turns remote index refresh off. */
+		/** Base URL of the signed hub index release; "" turns remote index refresh off. */
 		index: string;
 	};
 	git: GitIntegrationSettings;

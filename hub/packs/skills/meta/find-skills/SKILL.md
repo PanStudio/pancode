@@ -1,13 +1,13 @@
 ---
 name: find-skills
-description: Finds published skills and prepares their PanHub installation for the operator when the user asks whether a capability exists as a skill. Not for authoring a new skill; use skill-authoring.
+description: Finds published skills and prepares their hub installation for the operator when the user asks whether a capability exists as a skill. Not for authoring a new skill; use skill-authoring.
 triggers:
   - find a skill
   - is there a skill for this
   - install a skill
   - add an agent skill
   - search the skills marketplace
-version: 0.3.4
+version: 0.3.5
 license: LicenseRef-PanCode-1.0
 allowed-tools:
   - bash
@@ -24,14 +24,14 @@ pancode:
 
 # Find Skills
 
-Find reusable skills through PanCode's PanHub. Keep the package's origin,
-format, installation scope and actual component availability distinct. PanHub
+Find reusable skills through PanCode's hub. Keep the package's origin,
+format, installation scope and actual component availability distinct. The hub
 management is operator authority in PanCode; the agent discovers, inspects
 and recommends without trying to write protected active roots.
 
 ## Procedure
 
-1. **Search PanHub first.** Run `pancode hub search <query>`, where
+1. **Search the hub first.** Run `pancode hub search <query>`, where
    every word has to match, and inspect
    `pancode hub components --kind skill --json` for actual components.
    In a PanCode session, `gateway(op="call", capability="pancode_hub", args={kind: "skill", query: "..."})`
@@ -59,7 +59,7 @@ and recommends without trying to write protected active roots.
    `hub install <path>` installs it.
    Do not promise that every skill URL works as an install source.
 
-4. **Use the operator's PanHub controls.** Point to `/hub` or Alt+L for
+4. **Use the operator's hub controls.** Point to `/hub` or Alt+L for
    review and installation. Show the requested scope explicitly: `--project`
    uses `<cwd>/.pancode/plugins/<package-name>/`; `--user` uses
    `<configDir>/plugins/<package-name>/` and is the CLI default. Every kind
@@ -80,9 +80,9 @@ and recommends without trying to write protected active roots.
 
 ## Host boundaries
 
-For a PanCode installation, keep management in its PanHub. External
+For a PanCode installation, keep management in its hub. External
 installers such as `npx skills add` target another host's roots and do not
 update PanCode's package state. If the user explicitly wants a Claude Code or
 Codex installation instead, follow that host's documented marketplace or
-skill-installation route and name the destination clearly. A PanHub
+skill-installation route and name the destination clearly. A hub
 pack is portable; installing it for one host does not install it for all.

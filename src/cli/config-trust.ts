@@ -25,7 +25,7 @@ function fail(slug: ErrorSlug, message: string, json: boolean): void {
 
 const PACKAGE_RELOAD: Partial<Record<ProjectTrustSurface, string>> = {
 	extensions: "Reload extensions (/reload extensions) to apply it.",
-	plugins: "Reload PanHub (/reload hub) to apply it.",
+	plugins: "Reload the hub (/reload hub) to apply it.",
 	handbook: "Runs from another repository's session receive this handbook in full from their next dispatch.",
 };
 

@@ -77,7 +77,7 @@ export function TaskSidebar({
 	countRender("task-sidebar");
 	const location = useLocation();
 	const [exploring, setExploring] = useState(false);
-	// The settings rail lists PanHub, Fleet and the other inspection pages, so it stays up on them.
+	// The settings rail lists the hub, Fleet and the other inspection pages, so it stays up on them.
 	const inSettings = useRef<boolean | undefined>(undefined);
 	const settings = showsSettingsRail(location.pathname, inSettings.current);
 	inSettings.current = settings;

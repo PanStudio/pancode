@@ -39,7 +39,7 @@ export function readSettingsDocument(path: string): SettingsDocumentRead {
 	if (hit?.text === text) return { kind: "parsed", document: structuredClone(hit.document) };
 	let document: unknown;
 	try {
-		// PanHub default, stated because a settings file is untrusted input in a project layer.
+		// The hub default, stated because a settings file is untrusted input in a project layer.
 		document = parseYaml(text, { maxAliasCount: 100 });
 	} catch (error) {
 		return { kind: "invalid", error };

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 /**
- * PanHub trust: the exact-commit fetch, row parsing, the verified remote index,
+ * The hub trust: the exact-commit fetch, row parsing, the verified remote index,
  * publisher identity, revocation, tiers, the licence key, and the Git sync
  * remote checks.
  *

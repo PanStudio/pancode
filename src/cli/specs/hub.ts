@@ -139,13 +139,13 @@ export const leaves = [
 	}),
 	defineCommandSpec({
 		path: ["hub", "refresh"],
-		summary: "fetch the signed PanHub index and keep it only when its signatures verify",
+		summary: "fetch the signed hub index and keep it only when its signatures verify",
 		hidden: false,
 		usage: "hub refresh [--json]",
 	}),
 	defineCommandSpec({
 		path: ["hub", "status"],
-		summary: "show the kept PanHub index, its sequences, expiry and revocations",
+		summary: "show the kept hub index, its sequences, expiry and revocations",
 		hidden: false,
 		usage: "hub status [--json]",
 	}),

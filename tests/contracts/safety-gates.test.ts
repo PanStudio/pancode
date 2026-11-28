@@ -1015,7 +1015,7 @@ describe("safety gate boundary", () => {
 			strictEqual(policy.evaluate({ tool: ToolNames.Bash, args: { command } }).kind, "allow", command);
 	});
 
-	it("guards canonical PanHub mutations and approved interop adoption through wrappers", () => {
+	it("guards canonical hub mutations and approved interop adoption through wrappers", () => {
 		for (const policy of [engine(), createWorkerSafety({ cwd: scratch })]) {
 			for (const wrapper of [
 				"pancode",
@@ -1105,7 +1105,7 @@ describe("safety gate boundary", () => {
 		}
 	});
 
-	it("requires approval for PanHub installs and their dependencies, then accepts confirmation", () => {
+	it("requires approval for the hub installs and their dependencies, then accepts confirmation", () => {
 		for (const policy of [engine(), createWorkerSafety({ cwd: scratch })]) {
 			for (const command of [
 				"pancode hub install skill:example --yes",
@@ -1176,7 +1176,7 @@ describe("safety gate boundary", () => {
 		}
 	});
 
-	it("preserves PanHub discovery and dry-run plans through the same CLI wrappers", () => {
+	it("preserves the hub discovery and dry-run plans through the same CLI wrappers", () => {
 		const policy = engine();
 		for (const command of [
 			"pancode --help skills sync --force",

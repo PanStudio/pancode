@@ -1578,7 +1578,7 @@ export function createSafetyPolicyEngine(options: SafetyPolicyEngineOptions = {}
 			);
 		}
 
-		// Managed PanHub changes can be authorized by the operator. Direct
+		// Managed hub changes can be authorized by the operator. Direct
 		// mutations and all hard path/trust blocks above remain non-overridable.
 		if (
 			mutationCommand !== null &&
@@ -1590,10 +1590,10 @@ export function createSafetyPolicyEngine(options: SafetyPolicyEngineOptions = {}
 				reasonCode: "hub-confirm",
 				reasons: [
 					posture === "confirmed"
-						? "PanHub change confirmed by operator"
+						? "Hub change confirmed by operator"
 						: posture === "yolo"
-							? "PanHub change admitted by yolo"
-							: "PanHub changes require one-shot operator confirmation in default",
+							? "Hub change admitted by yolo"
+							: "Hub changes require one-shot operator confirmation in default",
 				],
 				policySource: "builtin-classifier" as const,
 			};

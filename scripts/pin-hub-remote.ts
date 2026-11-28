@@ -342,7 +342,7 @@ export function mergeCommunityRows(
 		for (const row of file.rows) {
 			const identity = `${row.kind === "extension" ? "extension" : "plugin"}:${row.name}`;
 			if (options.identities.has(identity)) {
-				result.errors.push(`${file.file}: duplicate PanHub pack identity: ${identity}`);
+				result.errors.push(`${file.file}: duplicate hub pack identity: ${identity}`);
 				continue;
 			}
 			options.identities.add(identity);

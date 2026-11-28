@@ -69,24 +69,24 @@ skills:
     sha256: 7e9a01e6514405506884cd2fa191a4a7139c3124126da52ee8f53ff0929d2cd3
   - name: extension-authoring
     path: meta/extension-authoring
-    version: 0.1.8
-    sha256: b1e0ceb9007063372be33ecb0fcb6ff40c20cdd0e3d794eaa7ff402796543852
+    version: 0.1.9
+    sha256: 704874dc8be94fdbd6969dc1bf2caa47f748cd176589cf3541242b6274306e37
   - name: find-skills
     path: meta/find-skills
-    version: 0.3.4
-    sha256: 861480c69ea9ee9ee8ce5e10066d0102a4c5cf0cfe394aa74abdb2d752ece900
+    version: 0.3.5
+    sha256: 63ccbd912d652bdf9a787d1b3911abf1d3d2233f8e8f3db835c615b3a0906faa
   - name: pancode-dev
     path: meta/pancode-dev
     version: 0.7.4
-    sha256: 78591e2fc0c6822e05399cb0cae9e25689fa0cf0e09048da16119786ea747ecf
+    sha256: 76ad8ea5844a4570106c64bf3a000955aebda70eee6ba3ccbf13d08e632e9089
   - name: pancode-test
     path: meta/pancode-test
-    version: 0.5.2
-    sha256: 9159699f371f667caf60fbd44bae2cf19e408ee1e96138817cb4bf0053c80024
+    version: 0.5.3
+    sha256: 576bbb0573c9f7a3d96eaf4ca69e45c01fd7b9562ea01ed3c615aeed03bcf864
   - name: skill-authoring
     path: meta/skill-authoring
-    version: 0.4.3
-    sha256: c3ed364ae1947ab2895d37e34914a8ebb1ff23cc3173144c671a07542d93a6ff
+    version: 0.4.4
+    sha256: 78e69ec0b4afdf02916a3d7d3704b3e42d939f1c153468437bfeabeb9f22c967
   # ── planning ──
   - name: architecture
     path: planning/architecture
@@ -144,5 +144,5 @@ skills:
     sha256: d4c02236ace16c11a0c090273bdaeb95afba154e1687c8c10218c9e8b978026b
   - name: workflow-capture
     path: workflow/workflow-capture
-    version: 0.4.8
-    sha256: f0ce5444f458e6df284085b208e548985369609f2a5d9879dfa26a9021ade475
+    version: 0.4.9
+    sha256: 5b2483b4a9798ac3bab0ad943f66719d0363f229e96159d5b972b491469eb839

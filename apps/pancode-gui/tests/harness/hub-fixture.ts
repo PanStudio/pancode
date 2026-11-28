@@ -48,7 +48,7 @@ export async function seedSettings(cwd: string, env: NodeJS.ProcessEnv, targetId
 }
 
 /**
- * The CLI both sides of a PanHub comparison run: the server through `PANCODE_WEB_CLI`, the oracle directly.
+ * The CLI both sides of a hub comparison run: the server through `PANCODE_WEB_CLI`, the oracle directly.
  * It is the checkout's source, so a missing or stale `dist/` cannot make the server answer with a problem or
  * agree with old code.
  */

@@ -6,7 +6,7 @@ triggers:
   - add an extension hook
   - create an extension workspace
   - debug extension reload
-version: 0.1.8
+version: 0.1.9
 license: LicenseRef-PanCode-1.0
 allowed-tools:
   - read
@@ -63,4 +63,4 @@ package bytes. Use a draft or `.pancode/dev/extensions/<id>/`.
 When working in the PanCode repository, inspect `examples/extensions/git-pulse/`
 for Git ticks, watches and snapshots, `examples/extensions/peer-guard/` for
 shared expiring path claims, or `hub/packs/extensions/local-status/` for a
-packaged PanHub extension. These are examples to adapt, not capabilities granted by this skill.
+packaged the hub extension. These are examples to adapt, not capabilities granted by this skill.

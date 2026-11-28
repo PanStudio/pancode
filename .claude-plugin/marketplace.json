@@ -4,7 +4,7 @@
 		"name": "PanCode",
 		"url": "https://pancode.dev"
 	},
-	"description": "PanHub, the PanCode packs: curated skills for planning, research, git and scientific software work, plus domain plugins.",
+	"description": "The PanCode hub: curated skills for planning, research, git and scientific software work, plus domain plugins.",
 	"plugins": [
 		{
 			"name": "architecture",
@@ -98,7 +98,7 @@
 			"name": "extension-authoring",
 			"source": "./hub/packs/skills/meta/extension-authoring",
 			"description": "Builds, tests, and debugs PanCode api 2 extensions with declared capabilities and host-rendered views. Not for instruction-only skills; use skill-authoring.",
-			"version": "0.1.8",
+			"version": "0.1.9",
 			"category": "meta",
 			"license": "LicenseRef-PanCode-1.0"
 		},
@@ -113,8 +113,8 @@
 		{
 			"name": "find-skills",
 			"source": "./hub/packs/skills/meta/find-skills",
-			"description": "Finds published skills and prepares their PanHub installation for the operator when the user asks whether a capability exists as a skill. Not for authoring a new skill; use skill-authoring.",
-			"version": "0.3.4",
+			"description": "Finds published skills and prepares their hub installation for the operator when the user asks whether a capability exists as a skill. Not for authoring a new skill; use skill-authoring.",
+			"version": "0.3.5",
 			"category": "meta",
 			"license": "LicenseRef-PanCode-1.0"
 		},
@@ -167,7 +167,7 @@
 		{
 			"name": "pancode-dev",
 			"source": "./hub/packs/skills/meta/pancode-dev",
-			"description": "Develop PanCode inside its own repository: orient on the running build versus the workspace, trace owners, avoid the checks that fail landings, apply each edit the right way and hand the work back. Use before changing PanCode source, prompts, tools or PanHub; pair with pancode-test for validation.",
+			"description": "Develop PanCode inside its own repository: orient on the running build versus the workspace, trace owners, avoid the checks that fail landings, apply each edit the right way and hand the work back. Use before changing PanCode source, prompts, tools or the hub; pair with pancode-test for validation.",
 			"version": "0.7.4",
 			"category": "meta",
 			"license": "LicenseRef-PanCode-1.0"
@@ -176,7 +176,7 @@
 			"name": "pancode-test",
 			"source": "./hub/packs/skills/meta/pancode-test",
 			"description": "Validate PanCode changes: pick checks from the diff, know what each test tier proves, keep runs isolated, verify behaviour live in a candidate build and report evidence without claiming unrun coverage. Use when developing or diagnosing PanCode itself.",
-			"version": "0.5.2",
+			"version": "0.5.3",
 			"category": "meta",
 			"license": "LicenseRef-PanCode-1.0"
 		},
@@ -258,7 +258,7 @@
 			"name": "skill-authoring",
 			"source": "./hub/packs/skills/meta/skill-authoring",
 			"description": "Writes, reviews, or prunes a SKILL.md, judging whether its description, body, and length earn their cost. Not for packaging a workflow that just happened; use workflow-capture.",
-			"version": "0.4.3",
+			"version": "0.4.4",
 			"category": "meta",
 			"license": "LicenseRef-PanCode-1.0"
 		},
@@ -298,7 +298,7 @@
 			"name": "workflow-capture",
 			"source": "./hub/packs/skills/workflow/workflow-capture",
 			"description": "Packages a workflow that just happened into a reusable SKILL.md: reconstructs it from the session record, checks overlap with installed skills, gates on approval, then writes it following skill-authoring. Not for authoring a skill with no prior workflow; use skill-authoring.",
-			"version": "0.4.8",
+			"version": "0.4.9",
 			"category": "workflow",
 			"license": "LicenseRef-PanCode-1.0"
 		},

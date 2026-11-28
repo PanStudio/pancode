@@ -299,7 +299,7 @@ export function HubPage({
 				ref={collectionBar}
 				className="settings-tabs"
 				role="tablist"
-				aria-label="PanHub collections"
+				aria-label="Hub collections"
 				onKeyDown={onTabKey}
 			>
 				{collections.map((name) => (
@@ -427,7 +427,7 @@ export function HubPage({
 				)}
 				{!!inventory.data?.diagnostics.length && (
 					<details className="trace-panel">
-						<summary>PanHub discovery notes</summary>
+						<summary>the hub discovery notes</summary>
 						<ul>
 							{inventory.data.diagnostics.map((message) => (
 								<li key={message}>{message}</li>

@@ -137,11 +137,11 @@ export const SETTINGS_LABELS_BY_ID = {
 	funding: "Funding pools",
 	"interface.keybindings": "Keybinding overrides",
 	"integrations.externalAgents.entries": "Available agents",
-	"integrations.hub.catalog": "PanHub catalog path",
-	"integrations.hub.remote": "PanHub remote",
+	"integrations.hub.catalog": "Hub catalog path",
+	"integrations.hub.remote": "Hub remote",
 	"integrations.hub.confirmedRemote": "Confirmed hub remote",
-	"integrations.hub.sync": "PanHub remote sync",
-	"integrations.hub.index": "PanHub signed index",
+	"integrations.hub.sync": "Hub remote sync",
+	"integrations.hub.index": "Hub signed index",
 } as const;
 
 export const SETTINGS_DESCRIPTIONS_BY_ID = {
@@ -253,10 +253,10 @@ export const SETTINGS_DESCRIPTIONS_BY_ID = {
 	"interface.keybindings": "Custom key overrides layered on the defaults.",
 	"integrations.externalAgents.entries": "Other coding agents you can call through /run.",
 	"integrations.hub.catalog": "Path to the private resource catalog; blank uses the one in your config directory.",
-	"integrations.hub.remote": "Git remote the catalog syncs with; blank keeps PanHub entirely local.",
+	"integrations.hub.remote": "Git remote the catalog syncs with; blank keeps the hub entirely local.",
 	"integrations.hub.confirmedRemote": "The remote you approved. Syncing waits until it matches the current hub remote.",
 	"integrations.hub.sync": "Whether `pancode hub sync` and `push` may talk to the remote at all.",
-	"integrations.hub.index": "Where PanCode fetches the signed PanHub index; blank turns remote refresh off.",
+	"integrations.hub.index": "Where PanCode fetches the signed hub index; blank turns remote refresh off.",
 } as const satisfies Record<keyof typeof SETTINGS_LABELS_BY_ID, string>;
 
 /** Longer, optional guidance shown beneath the one-line description when there is room. */
@@ -305,7 +305,7 @@ export const SETTINGS_HELP_BY_ID: Partial<Record<string, string>> = {
 	"integrations.hub.catalog":
 		"Absolute path, or blank for the catalog in your config directory. The catalog is the index `pancode hub` reads; installed resources land in the usual skill and resource roots either way. Default: blank.",
 	"integrations.hub.remote":
-		"Enter a Git remote URL, or leave blank to keep PanHub local. Confirm the remote and turn on syncing before PanCode uses it.",
+		"Enter a Git remote URL, or leave blank to keep the hub local. Confirm the remote and turn on syncing before PanCode uses it.",
 	"integrations.hub.confirmedRemote":
 		"PanCode records this after you confirm the hub remote. It must match the selected remote before syncing is allowed.",
 	"integrations.hub.sync": "When off, hub sync and push stop before contacting the remote, even if one is configured.",
@@ -392,7 +392,7 @@ export const SETTINGS_VALUE_HELP_BY_ID: Partial<Record<string, Record<string, st
 	},
 	"integrations.hub.sync": {
 		true: "allow `pancode hub sync` and `push` to reach the confirmed remote",
-		false: "refuse every PanHub network operation",
+		false: "refuse every hub network operation",
 	},
 	"integrations.externalAgents.defaults.toolGovernance": {
 		"pancode-policy": "PanCode's safety policy gates the delegated agent's tools",
@@ -977,7 +977,7 @@ const EXTRA_HELP: Record<string, [string, string]> = {
 	],
 	"store.backend": [
 		"Store backend",
-		"Where PanStore keeps tags, user settings only: local keeps them in directories on this host (store.roots), shared in the folder store.shared names that several hosts mount, s3 in the S3-compatible bucket store.s3 names. Applies on the next start.",
+		"Where the store keeps tags, user settings only: local keeps them in directories on this host (store.roots), shared in the folder store.shared names that several hosts mount, s3 in the S3-compatible bucket store.s3 names. Applies on the next start.",
 	],
 	"store.shared": [
 		"Shared store folder",
@@ -989,7 +989,7 @@ const EXTRA_HELP: Record<string, [string, string]> = {
 	],
 	"store.roots": [
 		"Store roots",
-		"Directories PanStore keeps tags in, user settings only. Edit the JSON list of { name, path, durable, purge }; the first holds records and must be durable. Empty keeps the one store under the data directory.",
+		"Directories the store keeps tags in, user settings only. Edit the JSON list of { name, path, durable, purge }; the first holds records and must be durable. Empty keeps the one store under the data directory.",
 	],
 	"store.placement.byTag": [
 		"Store placement by tag",

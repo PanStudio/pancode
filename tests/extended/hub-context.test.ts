@@ -19,7 +19,7 @@ import { trustProjectPackages } from "../harness/project-trust.js";
  * is a bounded, body-free READ over the shared inventory. These contracts hold
  * it to that: real sample-kit identities, honest ownership and origin, stable
  * pages, budget reserved before any discovery, no mutation, no source fetch,
- * no internal agents, and no PanHub at all for a native worker. The last
+ * no internal agents, and no hub at all for a native worker. The last
  * contract pins the context tool's own refusal of the moved scope.
  */
 
@@ -187,7 +187,7 @@ describe("pancode_hub (the former context library scope)", () => {
 		const realFetch = globalThis.fetch;
 		globalThis.fetch = ((input: unknown) => {
 			fetched.push(String(input));
-			throw new Error("a PanHub read must never fetch a pack source");
+			throw new Error("a hub read must never fetch a pack source");
 		}) as typeof globalThis.fetch;
 		try {
 			const rows = await collect(project, { kind: "skill" });
@@ -211,7 +211,7 @@ describe("pancode_hub (the former context library scope)", () => {
 		} finally {
 			globalThis.fetch = realFetch;
 		}
-		strictEqual(fetched.length, 0, `PanHub read fetched ${fetched.join(", ")}`);
+		strictEqual(fetched.length, 0, `The hub read fetched ${fetched.join(", ")}`);
 	});
 
 	it("drops a hint once its real resource is on the page and never claims an unknown member is uninstalled", async () => {
@@ -380,8 +380,8 @@ describe("pancode_hub (the former context library scope)", () => {
 		const rendered = JSON.stringify(rows);
 		// A phrase from the sample-kit skill body. Descriptions are metadata; bodies
 		// are not, and this projection must never carry one.
-		ok(!rendered.includes("A written argument is not a machine-checked proof"), "a PanHub row leaked a skill body");
-		ok(!rendered.includes("${component:"), "a PanHub row leaked an unresolved pack reference");
+		ok(!rendered.includes("A written argument is not a machine-checked proof"), "a hub row leaked a skill body");
+		ok(!rendered.includes("${component:"), "a hub row leaked an unresolved pack reference");
 		const after = listTree(path.join(project, ".pancode"));
 		strictEqual(after.join("|"), before.join("|"), "a read-only scope changed installed state");
 	});
@@ -391,7 +391,7 @@ describe("pancode_hub (the former context library scope)", () => {
 		const rows = await collect(project, { kind: "agent" });
 		const names = new Set(rows.filter((row) => row.row === "resource").map((row) => row.name));
 		for (const internal of ["scout", "provenance", "researcher", "world-knowledge"]) {
-			ok(!names.has(internal), `internal agent ${internal} must stay out of the model's PanHub view`);
+			ok(!names.has(internal), `internal agent ${internal} must stay out of the model's hub view`);
 		}
 		const inventory = readHubInventory({ cwd: project, audience: "operator", all: true, kinds: ["agent"] });
 		ok(
@@ -407,7 +407,7 @@ describe("pancode_hub (the former context library scope)", () => {
 		strictEqual(result.kind, "error");
 		if (result.kind !== "error") throw new Error("unreachable");
 		ok(result.message.includes("unavailable"), result.message);
-		ok(!result.message.includes("plugin:sample-kit"), "the refusal must not leak PanHub it refuses");
+		ok(!result.message.includes("plugin:sample-kit"), "the refusal must not leak the hub it refuses");
 	});
 
 	it("omits skill rows when the run has skill discovery switched off", async () => {

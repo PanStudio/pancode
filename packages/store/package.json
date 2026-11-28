@@ -2,7 +2,7 @@
 	"name": "@pancode/store",
 	"version": "0.9.2-dev",
 	"private": true,
-	"description": "PanStore, the project store, usable as a library without the harness.",
+	"description": "The PanCode project store, usable as a library without the harness.",
 	"type": "module",
 	"license": "SEE LICENSE IN LICENSE",
 	"repository": {

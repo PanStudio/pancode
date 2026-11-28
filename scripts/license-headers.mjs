@@ -84,7 +84,7 @@ const EXCLUDED = [
 	{ test: (path) => GENERATED.has(path), reason: "generated file" },
 	{
 		test: (path) => path.startsWith("hub/"),
-		reason: "PanHub pack, pinned by sha256 and licensed in its own plugin.json or SKILL.md",
+		reason: "A hub pack, pinned by sha256 and licensed in its own plugin.json or SKILL.md",
 	},
 	{ test: (path) => path.startsWith("patches/"), reason: "dependency patch, applied byte for byte" },
 	{

@@ -52,7 +52,7 @@ export const HARNESS_SLASH_COMMANDS: ReadonlyArray<BuiltinSlashCommand> = [
 		name: "reload",
 		rank: 3,
 		acp: { readOnlyRefuses: true },
-		description: "Reload settings, PanHub packs, extension runtimes, prompts and MCP servers with one report",
+		description: "Reload settings, the hub packs, extension runtimes, prompts and MCP servers with one report",
 		group: "PanCode",
 		kinds: ["reload"],
 		args: {
@@ -195,7 +195,7 @@ export const HARNESS_SLASH_COMMANDS: ReadonlyArray<BuiltinSlashCommand> = [
 		kinds: ["resources", "agents"],
 		// The same verbs as `pancode hub`; each opens the review that command would apply.
 		subcommandDescriptions: {
-			inspect: "Open PanHub on one package or component",
+			inspect: "Open the hub on one package or component",
 			install: "Review installing one package, then apply it",
 			update: "Review updating one installed package, then apply it",
 			enable: "Review enabling one installed package, then apply it",

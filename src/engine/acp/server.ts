@@ -2406,7 +2406,7 @@ export async function servePancodeAcpAgent(options: PancodeAcpServerOptions): Pr
 		return outcome;
 	});
 
-	// /reload hub, so a PanHub change made outside this session reaches it.
+	// /reload hub, so a hub change made outside this session reaches it.
 	// A failed reload is reported as failed; the previous resources stay live.
 	options.transport.onRequest(ACP_HUB_RELOAD_METHOD, (params) => {
 		requireInitialized();
@@ -2415,7 +2415,7 @@ export async function servePancodeAcpAgent(options: PancodeAcpServerOptions): Pr
 			throw new AcpRequestError(-32601, "method not found", { code: "method_not_found" });
 		}
 		const session = getSession(request);
-		requireIdle(session, "reload PanHub");
+		requireIdle(session, "reload the hub");
 		try {
 			const refreshed = { status: "refreshed" as const, ...options.hubReload() };
 			announceCommands(session.id);

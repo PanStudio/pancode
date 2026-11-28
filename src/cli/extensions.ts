@@ -486,7 +486,7 @@ export async function runPackVerb(
 
 /**
  * Why a verb a known extension declares does not run: its installed copy is disabled or does not load, or the bundled
- * PanHub index lists it and it is not installed. Null when no extension PanCode knows declares the verb.
+ * The hub index lists it and it is not installed. Null when no extension PanCode knows declares the verb.
  */
 function absentPackVerb(verb: string, workspace: string): string | null {
 	const installed = listInstalledExtensions(workspace, { all: true }).find((entry) =>

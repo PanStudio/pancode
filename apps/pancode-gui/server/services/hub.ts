@@ -17,7 +17,7 @@ import type { WorkspaceService } from "./workspaces.js";
 
 function checked<S extends TSchema>(schema: S, raw: unknown): Static<S> {
 	const value = Value.Clean(schema, raw);
-	if (!Value.Check(schema, value)) throw new AppProblem("unavailable", "PanHub returned an invalid projection.");
+	if (!Value.Check(schema, value)) throw new AppProblem("unavailable", "The hub returned an invalid projection.");
 	return value;
 }
 export class HubService {
@@ -28,13 +28,13 @@ export class HubService {
 		private readonly ops: WorkerHost,
 	) {}
 	/** Staging may clone a pinned GitHub tree, which the root transport bounds at 120 s. */
-	/** With no workspace open (`null`) PanHub reads from a neutral folder, so only user and built-in layers apply. */
+	/** With no workspace open (`null`) the hub reads from a neutral folder, so only user and built-in layers apply. */
 	private async cwd(workspaceId: string | null) {
 		return workspaceId === null ? this.workspaces.installationPath() : (await this.workspaces.get(workspaceId)).path;
 	}
 	async plan(workspaceId: string | null, request: Static<typeof HubPlanRequest>) {
 		if (workspaceId === null && request.scope !== "user")
-			throw new AppProblem("validation", "With no workspace open, PanHub can change only your user copies.");
+			throw new AppProblem("validation", "With no workspace open, the hub can change only your user copies.");
 		const cwd = await this.cwd(workspaceId);
 		return checked(HubPlan, await this.ops.call("hub.plan", { cwd, request }, { deadlineMs: 150_000 }));
 	}

@@ -297,7 +297,7 @@ export interface PancodeAcpServerOptions {
 	/** Bind the domain projection and its live read model to the hosted session (#434). */
 	bindTelemetrySession?: (sessionId: string) => void;
 	/**
-	 * The plugin-resource reload /reload hub runs, so a PanHub change made
+	 * The plugin-resource reload /reload hub runs, so a hub change made
 	 * elsewhere reaches this open session. Absent means the method refuses.
 	 */
 	hubReload?: AcpHubReload;

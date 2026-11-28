@@ -98,7 +98,7 @@ Setup:
   pancode paths|reset|uninstall|upgrade  directories, state recovery, removal, upgrade
   pancode gui                  open the alpha graphical application
 
-Project and PanHub:
+Project and hub:
   pancode context <verb>       PANCODE.md, codemap, wiki and working set for this project
   pancode agents|tasks|verifiers|memory|claims|store  recipes, tasks, checks, memory, claims, store
   pancode hub|extensions|mcp|share  packs, extension authoring, MCP servers, archives

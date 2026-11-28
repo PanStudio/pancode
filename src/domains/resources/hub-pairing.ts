@@ -104,16 +104,16 @@ export function describeHubPair(self: Pick<HubEntry, "kind" | "name">, pair: Hub
 		if (pair.copies.length > 0)
 			return `Served by extension ${pair.name}, installed (${where(pair)}). It answers /${self.name}:* prompts locally while both are in effect.`;
 		return pair.inCatalog
-			? `Served by extension ${pair.name}, available in PanHub and not installed. Installing a plugin never installs its extension; install ${pair.ref} separately to add its commands and workspace.`
-			: `Served by extension ${pair.name}, which is neither installed nor in PanHub.`;
+			? `Served by extension ${pair.name}, available in the hub and not installed. Installing a plugin never installs its extension; install ${pair.ref} separately to add its commands and workspace.`
+			: `Served by extension ${pair.name}, which is neither installed nor in the hub.`;
 	}
 	if (pair.inEffect)
 		return `Serves plugin ${pair.name}, installed and in effect (${where(pair)}); this extension answers /${pair.name}:* prompts locally.`;
 	if (pair.copies.length > 0)
 		return `Serves plugin ${pair.name}, installed but not in effect (${where(pair)}). No /${pair.name}:* takeover applies until that plugin is enabled and effective; the extension's own /ext:${self.name}:* commands still work.`;
 	return pair.inCatalog
-		? `Serves plugin ${pair.name}, available in PanHub and not installed. No /${pair.name}:* takeover applies until it is installed; the extension's own /ext:${self.name}:* commands still work.`
-		: `Serves plugin ${pair.name}, which is not installed and not in PanHub. No takeover applies; the extension's own /ext:${self.name}:* commands still work.`;
+		? `Serves plugin ${pair.name}, available in the hub and not installed. No /${pair.name}:* takeover applies until it is installed; the extension's own /ext:${self.name}:* commands still work.`
+		: `Serves plugin ${pair.name}, which is not installed and not in the hub. No takeover applies; the extension's own /ext:${self.name}:* commands still work.`;
 }
 
 export { hubEntryRef };

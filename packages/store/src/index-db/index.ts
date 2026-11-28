@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 /**
- * PanStore's host-local index (N8): `<cache>/store/index/<projectKey>.db`, a node:sqlite cache of what listing and
+ * The store's host-local index (N8): `<cache>/store/index/<projectKey>.db`, a node:sqlite cache of what listing and
  * lineage display read, so they need not read every record file again. It is only a cache. Before every answer
  * each scope it answers from is fingerprinted by stat (entry count, newest mtime and ctime, and a digest of every
  * entry's stat), and a scope whose fingerprint differs from the indexed one is rescanned through the backend.

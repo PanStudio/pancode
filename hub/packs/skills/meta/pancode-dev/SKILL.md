@@ -1,6 +1,6 @@
 ---
 name: pancode-dev
-description: "Develop PanCode inside its own repository: orient on the running build versus the workspace, trace owners, avoid the checks that fail landings, apply each edit the right way and hand the work back. Use before changing PanCode source, prompts, tools or PanHub; pair with pancode-test for validation."
+description: "Develop PanCode inside its own repository: orient on the running build versus the workspace, trace owners, avoid the checks that fail landings, apply each edit the right way and hand the work back. Use before changing PanCode source, prompts, tools or the hub; pair with pancode-test for validation."
 triggers:
   - develop PanCode in its own repository
   - implement a PanCode sprint packet
@@ -85,7 +85,7 @@ the repository handbook are enforced by `pnpm run lint`.
 - A new test file runs in no gate until `scripts/ci-tests.mjs` lists it.
 - Strict types: optional properties are spread in, never assigned
   `undefined`; relative imports end in `.js`; type imports use `import type`.
-- PanHub edits: bump the version in `SKILL.md` and `plugin.json`, then
+- The hub edits: bump the version in `SKILL.md` and `plugin.json`, then
   `pnpm run skills:pin` and `pnpm run hub:pin`.
 
 ## Flywheel

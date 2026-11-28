@@ -16,7 +16,7 @@ import {
 } from "../domains/resources/index.js";
 import { formatColumns } from "./argv.js";
 
-/** Runtime discovery is a read surface of PanHub; pack mutations live in hub.ts. */
+/** Runtime discovery is a read surface of the hub; pack mutations live in hub.ts. */
 export function runSkillsRead(args: ReadonlyArray<string>): number {
 	const command = args[0];
 	const positional = args.slice(1).filter((arg) => !arg.startsWith("-"));

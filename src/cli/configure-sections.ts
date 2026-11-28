@@ -677,7 +677,7 @@ const CONTENT_PARTS = {
 				["Trust project imports", settings.integrations.projectResources.trustProjectImports ? "trusted" : "untrusted"],
 				["External ACP agents", String(settings.integrations.externalAgents.entries.length)],
 				["Runtime plugins", listOr(settings.integrations.runtimePlugins)],
-				["PanHub remote sync", onOff(settings.integrations.hub.sync)],
+				["Hub remote sync", onOff(settings.integrations.hub.sync)],
 				["Git commit attribution", onOff(settings.integrations.git.commitAttribution)],
 				["Autonomous commit author", settings.integrations.git.commitAuthor],
 			];
@@ -729,7 +729,7 @@ const CONTENT_PARTS = {
 				},
 			},
 			{
-				label: "PanHub remote sync",
+				label: "Hub remote sync",
 				controlPath: "integrations.hub.sync",
 				hint: "toggle",
 				run: async (io) => {
@@ -738,7 +738,7 @@ const CONTENT_PARTS = {
 						draft.integrations.hub.sync = !draft.integrations.hub.sync;
 						next = draft.integrations.hub.sync;
 					});
-					io.ok(`PanHub remote sync ${onOff(next)}`);
+					io.ok(`Hub remote sync ${onOff(next)}`);
 				},
 			},
 		],

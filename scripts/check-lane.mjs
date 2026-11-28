@@ -3,7 +3,7 @@
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 // `pnpm run check:lane`: one pre-READY command for a lane branch. Runs the
 // gates a landing fails on most, in order, for the diff against the lane's
-// base: environment guards, typecheck and lint (which holds the PanHub pins),
+// base: environment guards, typecheck and lint (which holds the hub pins),
 // the GUI check, OpenAPI freshness, the test files the diff adds or directly
 // imports, and the gate-list check for new test files. It runs no suite, no build and no
 // browser. Summary lines read `check: <step> pass|fail ...` or

@@ -58,8 +58,7 @@ export async function validateExtensionPackage(
 	if (candidate.manifest && candidate.manifest.license === undefined)
 		report.diagnostics.push({
 			type: "warning",
-			message:
-				"extension_license_missing: declare license: <SPDX expression>; a PanHub row without a licence fails review",
+			message: "extension_license_missing: declare license: <SPDX expression>; a hub row without a licence fails review",
 			...(candidate.manifestPath ? { path: candidate.manifestPath } : {}),
 		});
 	if (!candidate.valid || !candidate.manifest || !candidate.manifestPath || !declaration) return report;

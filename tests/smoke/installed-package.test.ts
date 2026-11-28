@@ -825,7 +825,7 @@ describe("smoke/installed package", { concurrency: false }, () => {
 
 			// One package, one command: npm links the pancode bin from the tarball alone.
 			ok(existsSync(join(prefix, "node_modules", ".bin", "pancode")), "npm must link the pancode bin");
-			ok(!existsSync(join(prefix, "node_modules", ".bin", "panstore")), "pancode store is PanStore's one command");
+			ok(!existsSync(join(prefix, "node_modules", ".bin", "panstore")), "pancode store is the store's one command");
 			ok(!existsSync(join(prefix, "node_modules", "@pancode")), "the package installs with no @pancode/* package");
 			const storeHelp = await run(bin, ["store", "--help"], foreign, isolatedEnv(home));
 			strictEqual(storeHelp.code, 0, storeHelp.stderr);
@@ -1089,7 +1089,7 @@ describe("smoke/installed package", { concurrency: false }, () => {
 				return JSON.parse(result.stdout);
 			};
 
-			// 1. Pristine isolated home/project check BEFORE installing any PanHub pack:
+			// 1. Pristine isolated home/project check BEFORE installing any hub pack:
 			// The pristine agents CLI before install is the decisive packaged-runtime assertion.
 			// It verifies the packaged binary in an isolated child environment, ensuring that
 			// the packaged runtime discovers all 16 built-in agent recipes and resolves their

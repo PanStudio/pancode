@@ -77,7 +77,7 @@ export type SlashReportRequest =
 export type HubBrowseIntent = HubOperation;
 
 /**
- * How a command opens PanHub.
+ * How a command opens the hub.
  *
  * A reference is a selection, never a write. `/hub install <ref>` opens the
  * browser on that row with its review armed, so the operator reads the plan

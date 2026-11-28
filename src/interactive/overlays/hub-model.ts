@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 /**
- * PanHub browser's projection: one inventory read becomes the rows, the
+ * The hub browser's projection: one inventory read becomes the rows, the
  * status line and the detail panes the operator actually sees.
  *
  * The overlay owns the keyboard, the lifecycle port
@@ -933,7 +933,7 @@ function memberDetail(
 
 /**
  * A notice pane: the message, then how to get back to the rows it is about.
- * Only a PanHub-wide discovery notice says it covers every category; a
+ * Only a hub-wide discovery notice says it covers every category; a
  * package's companion file or an inspection diagnostic belongs to its package.
  */
 function noticeDetail(title: string, facts: Fact[], message: string, hubWide: boolean, width: number): DetailRows {
@@ -1364,10 +1364,10 @@ export function buildHubRows(options: HubRowOptions): HubRowSet {
 			{
 				label: `${GLYPH.warnInline} ${message}`,
 				get meta() {
-					return theme.fg("annotation", "PanHub");
+					return theme.fg("annotation", "Hub");
 				},
 				group: HUB_GROUP_NOTICES,
-				detail: (_pick, width) => noticeDetail("PanHub notice", [], message, true, width),
+				detail: (_pick, width) => noticeDetail("Hub notice", [], message, true, width),
 			},
 			widths,
 		);

@@ -1,7 +1,7 @@
 {
 	"source": {
 		"path": "hub/index.yaml",
-		"sha256": "86c2eb89ac4366d36368093824069c653f805166054c11e6c385313ef70e7b70",
+		"sha256": "f3f423355bef9270d5129016716e39fdc3369be7d1bc3a89021f967bd1611054",
 		"rows": 48,
 		"revoked": 0
 	},
@@ -395,7 +395,7 @@
 			"kind": "skill",
 			"name": "extension-authoring",
 			"publisher": "pancode",
-			"version": "0.1.8",
+			"version": "0.1.9",
 			"description": "Builds, tests, and debugs PanCode api 2 extensions with declared capabilities and host-rendered views. Not for instruction-only skills; use skill-authoring.",
 			"category": "meta",
 			"tier": "core",
@@ -403,7 +403,7 @@
 			"source": {
 				"path": "hub/packs/skills/meta/extension-authoring"
 			},
-			"sha256": "90dd8f936047e91a284d218edc4c656e055cf8076e368282c215a314b34fa58c",
+			"sha256": "dd8f43e8eab979f723bcd8b4f23d611cf670a1a76186722534b17dcf0e4ca92c",
 			"install": "pancode hub install skill:extension-authoring"
 		},
 		{
@@ -425,15 +425,15 @@
 			"kind": "skill",
 			"name": "find-skills",
 			"publisher": "pancode",
-			"version": "0.3.4",
-			"description": "Finds published skills and prepares their PanHub installation for the operator when the user asks whether a capability exists as a skill. Not for authoring a new skill; use skill-authoring.",
+			"version": "0.3.5",
+			"description": "Finds published skills and prepares their hub installation for the operator when the user asks whether a capability exists as a skill. Not for authoring a new skill; use skill-authoring.",
 			"category": "meta",
 			"tier": "core",
 			"licence": "LicenseRef-PanCode-1.0",
 			"source": {
 				"path": "hub/packs/skills/meta/find-skills"
 			},
-			"sha256": "931d05de4a417f9c024efa209b48e9aadf18e8d2b3c9a22541f70a0b8fbcde9d",
+			"sha256": "079500248f9481bf59223cb0114e4c983852a450f2e44e239496cc1f3bbdcf39",
 			"install": "pancode hub install skill:find-skills"
 		},
 		{
@@ -471,21 +471,21 @@
 			"name": "pancode-dev",
 			"publisher": "pancode",
 			"version": "0.7.4",
-			"description": "Develop PanCode inside its own repository: orient on the running build versus the workspace, trace owners, avoid the checks that fail landings, apply each edit the right way and hand the work back. Use before changing PanCode source, prompts, tools or PanHub; pair with pancode-test for validation.",
+			"description": "Develop PanCode inside its own repository: orient on the running build versus the workspace, trace owners, avoid the checks that fail landings, apply each edit the right way and hand the work back. Use before changing PanCode source, prompts, tools or the hub; pair with pancode-test for validation.",
 			"category": "meta",
 			"tier": "core",
 			"licence": "LicenseRef-PanCode-1.0",
 			"source": {
 				"path": "hub/packs/skills/meta/pancode-dev"
 			},
-			"sha256": "926f53e65f0b6bad1b267db2e8f1ca80b536b4c5d7b2366cca92ad29004f16fe",
+			"sha256": "452cd6f6245b2f37cba0c8969ea01227ca54fd153aea377331d75edf68623f79",
 			"install": "pancode hub install skill:pancode-dev"
 		},
 		{
 			"kind": "skill",
 			"name": "pancode-test",
 			"publisher": "pancode",
-			"version": "0.5.2",
+			"version": "0.5.3",
 			"description": "Validate PanCode changes: pick checks from the diff, know what each test tier proves, keep runs isolated, verify behaviour live in a candidate build and report evidence without claiming unrun coverage. Use when developing or diagnosing PanCode itself.",
 			"category": "meta",
 			"tier": "core",
@@ -493,7 +493,7 @@
 			"source": {
 				"path": "hub/packs/skills/meta/pancode-test"
 			},
-			"sha256": "2342771a6c419c155a12c8a32f12a5125da28abc4be4f4a9440185a03c26ac7e",
+			"sha256": "a7bc09a42e0b4494d5da7a24090a6ef3a714a58642a4577eb7b2c0d587e46350",
 			"install": "pancode hub install skill:pancode-test"
 		},
 		{
@@ -620,7 +620,7 @@
 			"kind": "skill",
 			"name": "skill-authoring",
 			"publisher": "pancode",
-			"version": "0.4.3",
+			"version": "0.4.4",
 			"description": "Writes, reviews, or prunes a SKILL.md, judging whether its description, body, and length earn their cost. Not for packaging a workflow that just happened; use workflow-capture.",
 			"category": "meta",
 			"tier": "core",
@@ -628,7 +628,7 @@
 			"source": {
 				"path": "hub/packs/skills/meta/skill-authoring"
 			},
-			"sha256": "e817d9e8dfad5a4da5234c3f20b601ee7292f572e8d0c28962fd3fb0504e5598",
+			"sha256": "f719e8e5437fbd03ecddee68aff537ac50717574bad2580b4547fbe313373110",
 			"install": "pancode hub install skill:skill-authoring"
 		},
 		{
@@ -695,7 +695,7 @@
 			"kind": "skill",
 			"name": "workflow-capture",
 			"publisher": "pancode",
-			"version": "0.4.8",
+			"version": "0.4.9",
 			"description": "Packages a workflow that just happened into a reusable SKILL.md: reconstructs it from the session record, checks overlap with installed skills, gates on approval, then writes it following skill-authoring. Not for authoring a skill with no prior workflow; use skill-authoring.",
 			"category": "workflow",
 			"tier": "core",
@@ -703,7 +703,7 @@
 			"source": {
 				"path": "hub/packs/skills/workflow/workflow-capture"
 			},
-			"sha256": "1724e1059eeb408462125e340ecc0c0f7c1939789849a218285b54414ed2b88d",
+			"sha256": "275452b78956aaf622395a9baf5d7b391bd1ba90236440c8be2d8d530d8f94d0",
 			"install": "pancode hub install skill:workflow-capture"
 		},
 		{

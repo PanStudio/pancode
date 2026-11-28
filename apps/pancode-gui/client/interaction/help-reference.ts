@@ -78,7 +78,7 @@ export const VIEW_GUIDE: Readonly<Record<NavPath, { title: string; meaning: stri
 			"Run a research hill climb: PanCode's agent changes an isolated worktree, each change is measured against the best so far, and only changes that beat noise are kept.",
 	},
 	"/hub": {
-		title: "PanHub",
+		title: "Hub",
 		meaning: "Available agents, skills, resources, extensions and checks, with their trust and scope.",
 	},
 	"/system": {

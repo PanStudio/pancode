@@ -7,7 +7,7 @@ triggers:
   - improve this skill
   - why isn't this skill firing
   - prune a skill body
-version: 0.4.3
+version: 0.4.4
 license: LicenseRef-PanCode-1.0
 allowed-tools:
   - read
@@ -39,7 +39,7 @@ installed package roots. In this repository, curated sources live under
 
 For distribution, use the portable envelope in
 `hub/_authoring/templates/skill/` and validate the complete package root.
-The operator installs it through PanHub into the user or project package
+The operator installs it through the hub into the user or project package
 store (`<configDir>/plugins/` or `.pancode/plugins/`). Loose skills under
 `.pancode/skills/` and `<configDir>/skills/` are also operator-managed; PanCode's
 model tools cannot author directly in those protected roots. Other hosts may

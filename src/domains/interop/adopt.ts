@@ -113,7 +113,9 @@ export function preparePortablePackage(root: string): PreparedAdoption {
 	// Preserve the declared package kind; a kind whose only public component is dropped is not a useful plugin.
 	const kind = manifest.pancode.kind ?? "plugin";
 	if (kind !== "plugin" && kind !== "skill")
-		throw new Error(`Not adoptable: ${kind} packages have no data-only projection; install them through PanHub instead.`);
+		throw new Error(
+			`Not adoptable: ${kind} packages have no data-only projection; install them through the hub instead.`,
+		);
 	if (kind !== "plugin" && !components.some((component) => component.kind === kind))
 		throw new Error(`Not adoptable: the ${kind} package's public ${kind} component is not projectable.`);
 	// The portable skills/ convention needs no PanCode component graph. Enumerate
@@ -592,7 +594,7 @@ export function planInteropAdoption(input: {
 			const missing = unmetRequirements(value.requirements, cwd, scope, vendorOf(value.format));
 			if (missing.length) {
 				skip(
-					`Unsatisfied package requirements: ${missing.join(", ")}. Install dependencies through PanHub and review a new plan; no extra resources are imported.`,
+					`Unsatisfied package requirements: ${missing.join(", ")}. Install dependencies through the hub and review a new plan; no extra resources are imported.`,
 				);
 				continue;
 			}

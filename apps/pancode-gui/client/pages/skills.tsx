@@ -68,7 +68,7 @@ function SkillRow({ skill }: { skill: Resource }) {
 						))}
 					</ul>
 				)}
-				<Link to={`/hub?collection=skills&q=${encodeURIComponent(skill.name)}`}>Inspect in PanHub</Link>
+				<Link to={`/hub?collection=skills&q=${encodeURIComponent(skill.name)}`}>Inspect in the hub</Link>
 			</details>
 		</li>
 	);
@@ -76,7 +76,7 @@ function SkillRow({ skill }: { skill: Resource }) {
 
 /**
  * The skills PanCode can use in the current workspace, and nothing else. Installing packages, agents,
- * extensions and verifiers is Settings > Advanced > PanHub, which this page links to.
+ * extensions and verifiers is Settings > Advanced > the hub, which this page links to.
  */
 export function SkillsPage({ client }: { client: Client }) {
 	useEffect(() => {
@@ -194,7 +194,7 @@ export function SkillsPage({ client }: { client: Client }) {
 						</ul>
 					) : null}
 					{inventory.data && skills.length === 0 ? (
-						<p className="skills__note">No skills were discovered in this workspace. Inspect pack sources in PanHub.</p>
+						<p className="skills__note">No skills were discovered in this workspace. Inspect pack sources in the hub.</p>
 					) : null}
 					{skills.length > 0 && shown.length === 0 ? (
 						<p className="skills__note">
@@ -207,7 +207,7 @@ export function SkillsPage({ client }: { client: Client }) {
 						</p>
 					) : null}
 					<p className="skills__foot">
-						Install or remove packs, agents, extensions and verifiers in <Link to="/hub">PanHub</Link>.
+						Install or remove packs, agents, extensions and verifiers in <Link to="/hub">the hub</Link>.
 					</p>
 				</div>
 			</div>
