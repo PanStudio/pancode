@@ -26,6 +26,9 @@ import type {
 	SteerMode,
 } from "../../contracts/steering.js";
 import { formatDuration } from "../api/clock.js";
+import type { KeyEventLike } from "../interaction/keybindings.js";
+import { attachmentCapabilityIssue } from "./attachment-review-model.js";
+import { type Attachment, attachmentRefusal } from "./attachments-model.js";
 import { DRAFT_INDEX, DRAFT_KEY, MAX_DRAFT_STORES, storedDraftIds, stores } from "./draft-registry.js";
 import { PROMPT_TEXT_MAX_CHARACTERS } from "./prompt-limit.js";
 import { isSlashAlias } from "./slash-model.js";
@@ -514,6 +517,76 @@ export function submitLabel(intent: SubmitIntent, situation: ComposerSituation, 
 	return mode === "end-of-turn" ? "Queue for after" : "Send now";
 }
 
+/** The facts `submitIntent` judges, gathered from the composer's reads and the send in flight. */
+export function composerSituation(facts: {
+	readonly sessionState: SessionSnapshot["state"];
+	readonly running: boolean;
+	readonly send: { readonly isPending: boolean; readonly isPaused: boolean; readonly failureCount: number };
+	readonly control: { readonly stage: NonNullable<ComposerSituation["sessionControl"]> | "complete" } | undefined;
+	readonly steering: SteeringAffordances;
+	readonly steeringUnavailable: ComposerSituation["steeringUnavailable"];
+	readonly shell: boolean;
+	readonly viewing: string | null;
+	readonly unknownSlash: string | undefined;
+}): ComposerSituation & { readonly shell: boolean } {
+	const { send, control, steeringUnavailable, viewing, unknownSlash } = facts;
+	return {
+		sessionState: facts.sessionState,
+		turnRunning: facts.running,
+		sending: send.isPending,
+		...(send.isPending && (send.isPaused || send.failureCount > 0)
+			? { unreached: send.isPaused ? ("offline" as const) : ("retrying" as const) }
+			: {}),
+		...(control && control.stage !== "complete" ? { sessionControl: control.stage } : {}),
+		steering: facts.steering,
+		...(steeringUnavailable === undefined ? {} : { steeringUnavailable }),
+		shell: facts.shell,
+		...(viewing === null ? {} : { viewing }),
+		...(unknownSlash === undefined ? {} : { unknownSlash }),
+	};
+}
+
+/** What the submit control says while a send is on its way, or null when none is. */
+export function sendingButtonLabel(situation: ComposerSituation): string | null {
+	return situation.unreached ? UNREACHED[situation.unreached].button : situation.sending ? "Sending…" : null;
+}
+
+/**
+ * The delivery switch takes the route's place in the row, and only once there is a message to
+ * deliver: an empty field mid-turn offers Stop alone.
+ */
+export function offersSteerChoice(running: boolean, modes: readonly SteerModeOffer[], text: string): boolean {
+	return running && modes.length > 1 && text.trim() !== "";
+}
+
+/** What an open task takes as attachments: images when the agent reads them, text files when it embeds context. */
+export function attachAbility(capabilities: AgentCapabilities | undefined, sessionState: SessionSnapshot["state"]) {
+	const canAttachImages = capabilities?.images === true && sessionState === "open";
+	const canAttachFiles = capabilities?.embeddedContext === true && sessionState === "open";
+	return {
+		canAttachImages,
+		canAttachFiles,
+		canAttach: canAttachImages || canAttachFiles,
+		attachLabel: canAttachFiles ? (canAttachImages ? "Attach files" : "Attach text files") : "Attach images",
+	};
+}
+
+/** Why the attachments keep this draft from going, the first reason that applies; null when nothing does. */
+export function attachmentBlock(
+	kind: SubmitIntent["kind"],
+	attachments: readonly Attachment[],
+	capabilities: AgentCapabilities | undefined,
+	running: boolean,
+	contextRunning: boolean,
+): string | null {
+	return (
+		(contextRunning && !running ? "Context work is running. Your draft is kept until it finishes." : null) ??
+		attachmentCapabilityIssue(attachments, capabilities) ??
+		shellBlock(kind, attachments.length) ??
+		attachmentRefusal(attachments, running)
+	);
+}
+
 // ---------------------------------------------------------------------------
 // A /name the session cannot run
 // ---------------------------------------------------------------------------
@@ -567,6 +640,46 @@ export function slashNotice(
 // The policy lives with the field's other shared behaviour, where the new-task screen can reach it
 // without loading this module into the shell's first chunk.
 export { type ComposerKeyAction, type ComposerKeyContext, composerKeyAction } from "./composer-field.js";
+
+// ---------------------------------------------------------------------------
+// The slash and suggestion lists under the field
+// ---------------------------------------------------------------------------
+
+/** The highlighted row, kept inside a list that may have shrunk under it. */
+export function clampIndex(index: number, count: number): number {
+	return Math.min(index, Math.max(0, count - 1));
+}
+
+export type PaletteKeyAction =
+	| { readonly kind: "move"; readonly index: number }
+	| { readonly kind: "pick" }
+	| { readonly kind: "dismiss" }
+	| null;
+
+/**
+ * What a key does while a list is open. The arrows wrap around and Tab picks; Enter picks only when
+ * `enterPicks`, so a command line that can already run keeps Enter for running it.
+ */
+export function paletteKeyAction(
+	event: KeyEventLike,
+	active: number,
+	count: number,
+	enterPicks = true,
+): PaletteKeyAction {
+	const plain = !event.altKey && !event.ctrlKey && !event.metaKey && !event.shiftKey;
+	if ((event.key === "ArrowDown" || event.key === "ArrowUp") && plain)
+		return { kind: "move", index: (active + (event.key === "ArrowDown" ? 1 : -1) + count) % count };
+	if ((event.key === "Tab" || (event.key === "Enter" && enterPicks)) && plain) return { kind: "pick" };
+	if (event.key === "Escape") return { kind: "dismiss" };
+	return null;
+}
+
+/** The screen reader's count of the open list; the slash list wins when both have rows. */
+export function paletteStatus(slashCount: number, suggestionCount: number): string {
+	if (slashCount > 0) return `${slashCount} slash ${slashCount === 1 ? "command" : "commands"}`;
+	if (suggestionCount > 0) return `${suggestionCount} ${suggestionCount === 1 ? "suggestion" : "suggestions"}`;
+	return "";
+}
 
 // ---------------------------------------------------------------------------
 // The queue waiting on the engine
