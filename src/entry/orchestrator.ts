@@ -158,7 +158,7 @@ function bannerConfigurationLine(): string {
 	}
 	// A dangling chat target normalizes to null in the schema, so a deleted
 	// target arrives here as no target at all rather than as a name to report.
-	const targetId = settings.chat?.target;
+	const targetId = settings.chat?.connection;
 	if (!targetId) {
 		return chalk.yellow("no model connection configured. Run `pancode configure` to add one.");
 	}
@@ -189,7 +189,7 @@ function printJsonSessionHeader(
 		id: meta.id,
 		timestamp: meta.createdAt,
 		cwd: meta.cwd,
-		target: active.target ?? meta.target,
+		target: active.connection ?? meta.target,
 		model: active.model ?? meta.model,
 		pancodeVersion: meta.pancodeVersion,
 	};
@@ -830,11 +830,11 @@ export async function bootOrchestrator(options: BootOptions = {}): Promise<BootR
 				: { ...providers, list: () => providers.list().filter((status) => status.target.id === routeRequest.target) },
 			{
 				use: "chat",
-				...(initialRoutingSettings.chat.target ? { preferTarget: initialRoutingSettings.chat.target } : {}),
+				...(initialRoutingSettings.chat.connection ? { preferTarget: initialRoutingSettings.chat.connection } : {}),
 			},
 		);
 		if (selected.ref) {
-			initialRoutingSettings.chat.target = selected.ref.target;
+			initialRoutingSettings.chat.connection = selected.ref.target;
 			initialRoutingSettings.chat.model = selected.ref.model;
 			if (options.headless?.thinking === undefined && selected.ref.thinkingLevel) {
 				initialRoutingSettings.chat.thinkingLevel = selected.ref.thinkingLevel;
@@ -973,7 +973,7 @@ export async function bootOrchestrator(options: BootOptions = {}): Promise<BootR
 		},
 	});
 	if (options.apiKey) {
-		const target = resolveTarget(providers, getCurrentSettings().chat.target);
+		const target = resolveTarget(providers, getCurrentSettings().chat.connection);
 		const runtime = target ? providers.getRuntime(target.runtime) : null;
 		if (!target || !runtime) {
 			bootStderr("PanCode: --api-key supplied but no active orchestrator connection could be resolved; refusing.\n");

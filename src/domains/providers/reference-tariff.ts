@@ -8,7 +8,7 @@ import { isRecord } from "../../core/type-guards.js";
 /**
  * Dated public API retail list prices per exact provider model id (`models/economy-rates.json`), quoted one request
  * at a time: what the request would cost at the publisher's list price. It is a reference, never a route price:
- * `resolveEffectivePricing`, cost caps and `targets[].pricing` stay per target and never read it.
+ * `resolveEffectivePricing`, cost caps and `connections[].pricing` stay per target and never read it.
  */
 
 type PromptBucket = "fresh" | "read" | "write";

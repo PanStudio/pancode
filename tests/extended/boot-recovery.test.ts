@@ -143,8 +143,8 @@ describe("dispatch admission during boot recovery", () => {
 
 	function fleet(recovery: WorktreeBootRecovery) {
 		const settings = structuredClone(DEFAULT_SETTINGS);
-		settings.targets = [{ id: "default", runtime: "openai", defaultModel: "gpt-4o" }];
-		settings.fleet.default.target = "default";
+		settings.connections = [{ id: "default", runtime: "openai", defaultModel: "gpt-4o" }];
+		settings.fleet.default.connection = "default";
 		settings.fleet.default.model = "gpt-4o";
 		let spawned = 0;
 		const bundle = makeDispatchBundle(dispatchStubContext({ settings }), {

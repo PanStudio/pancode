@@ -156,7 +156,7 @@ export function formatSettingsValue(path: string, value: string): string {
 export function settingsPathLabel(path: string): string {
 	const control = settingControl(path);
 	if (control) return control.label;
-	if (path === "targets" || path.startsWith("targets.")) return "Connections";
+	if (path === "connections" || path.startsWith("connections.")) return "Connections";
 	if (path.startsWith("fleet.agentProfiles.")) return `Agent ${path.slice("fleet.agentProfiles.".length)} profile`;
 	if (path.startsWith("fleet.profiles.")) {
 		const [, name, field] = path.match(/^fleet\.profiles\.([^.]+)(?:\.(.+))?$/) ?? [];
@@ -176,7 +176,7 @@ export function settingsPathLabel(path: string): string {
 
 /** The two action rows under the connections table: Add a target and Connect by URL. */
 function isTargetsCta(item: SettingsCenterItem): boolean {
-	return item.id === "targets.add-cta" || item.id === "targets.url-cta";
+	return item.id === "connections.add-cta" || item.id === "connections.url-cta";
 }
 
 /**
@@ -185,10 +185,10 @@ function isTargetsCta(item: SettingsCenterItem): boolean {
  * after a value is chosen, stated before the operator opens the row.
  */
 export function effectTiming(item: SettingsCenterItem): string | null {
-	if (item.presentationKind === "group-header" || item.id === "targets" || isTargetsCta(item)) return null;
+	if (item.presentationKind === "group-header" || item.id === "connections" || isTargetsCta(item)) return null;
 	if (item.id.startsWith("maintenance.")) return null;
 	if (item.scope === "restart") return "after restart";
-	if (item.id.startsWith("targets.")) return `chat now ${GLYPH.sep} workers next dispatch`;
+	if (item.id.startsWith("connections.")) return `chat now ${GLYPH.sep} workers next dispatch`;
 	if (item.id.startsWith("workers.") || item.configPath.startsWith("fleet.")) return "next dispatch";
 	if (item.readOnly) return null;
 	if (settingsChangeKind(item.configPath) === "nextTurn" && !isRoutingPath(item.configPath)) return "next request";
@@ -200,7 +200,7 @@ export function effectTiming(item: SettingsCenterItem): string | null {
  * the scope card never sees (an action, a fact, a connection) has no scope.
  */
 function changeScope(item: SettingsCenterItem): string | null {
-	if (item.presentationKind !== "setting" || item.readOnly || item.id.startsWith("targets.")) return null;
+	if (item.presentationKind !== "setting" || item.readOnly || item.id.startsWith("connections.")) return null;
 	return item.scope === "restart" ? "project, global" : "session, project, global";
 }
 
@@ -337,7 +337,7 @@ function isIdentityValue(item: SettingsCenterItem, value: string): boolean {
 	const last = item.configPath.split(".").at(-1) ?? "";
 	return (
 		last === "model" ||
-		last === "target" ||
+		last === "connection" ||
 		last === "defaultModel" ||
 		item.id.startsWith("fleet.profiles") ||
 		item.id.startsWith("fleet.agentProfiles") ||
@@ -473,7 +473,7 @@ export function renderTargetTable(
 	let targetIndex = 0;
 	for (const item of items) {
 		starts.push(lines.length);
-		if (item.id === "targets") {
+		if (item.id === "connections") {
 			// Column names over no connection would read as the action row's columns.
 			if (targets.length > 0) lines.push(...table.slice(0, 2));
 			continue;
@@ -592,8 +592,8 @@ function sectionFacts(theme: PancodeTheme, counts: InspectorContext["counts"]): 
 function itemFacts(theme: PancodeTheme, context: InspectorContext, item: SettingsCenterItem): Array<string | null> {
 	const facts: Array<string | null> = [];
 	if (item.id.startsWith("maintenance.")) facts.push(chip(theme, `Enter ${item.currentValue}`, "muted"));
-	else if (item.id === "targets.add-cta") facts.push(chip(theme, "Enter opens the guided setup", "muted"));
-	else if (item.id === "targets.url-cta") facts.push(chip(theme, "Enter asks for the endpoint URL", "muted"));
+	else if (item.id === "connections.add-cta") facts.push(chip(theme, "Enter opens the guided setup", "muted"));
+	else if (item.id === "connections.url-cta") facts.push(chip(theme, "Enter asks for the endpoint URL", "muted"));
 	else if (item.readOnly) facts.push(chip(theme, `read-only here ${GLYPH.sep} ${item.affordance}`, "muted"));
 	else if (item.presentationKind === "status" || item.presentationKind === "action")
 		facts.push(chip(theme, item.affordance, "muted"));
@@ -796,9 +796,9 @@ function scopeNote(item: SettingsCenterItem, context: InspectorContext): string 
 				: "";
 	const pin = pinWords.length > 0 ? ` ${GLYPH.sep} ${pinWords}` : "";
 	if (item.id.startsWith("maintenance.")) return `Enter ${item.currentValue}`;
-	if (item.id === "targets.add-cta")
+	if (item.id === "connections.add-cta")
 		return "Opens the guided setup for a new connection; its last step saves it to your global settings";
-	if (item.id === "targets.url-cta")
+	if (item.id === "connections.url-cta")
 		return "Saves the connection to your global settings and uses the chosen model for chat";
 	if (item.submenu && (item.presentationKind === "status" || item.presentationKind === "action"))
 		return `${item.affordance} ${GLYPH.sep} nothing changes until an action is confirmed`;

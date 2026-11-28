@@ -222,7 +222,7 @@ async function assertInstalledReasoningReplay(bin: string, cwd: string, home: st
 	try {
 		await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
 		const settings = structuredClone(DEFAULT_SETTINGS);
-		settings.targets = [
+		settings.connections = [
 			{
 				id: "replay",
 				runtime: "litellm",
@@ -231,10 +231,10 @@ async function assertInstalledReasoningReplay(bin: string, cwd: string, home: st
 				auth: { apiKeyEnvVar: "PANCODE_REPLAY_FIXTURE_KEY" },
 			},
 		];
-		settings.chat.target = "replay";
+		settings.chat.connection = "replay";
 		settings.chat.model = modelId;
 		settings.chat.maxOutputTokens = 16384;
-		settings.fleet.profiles = { replay: { target: "replay", model: modelId, thinkingLevel: "xhigh" } };
+		settings.fleet.profiles = { replay: { connection: "replay", model: modelId, thinkingLevel: "xhigh" } };
 		settings.context.memory.enabled = false;
 		mkdirSync(join(home, "config/agents"), { recursive: true });
 		writeFileSync(join(home, "config/settings.yaml"), JSON.stringify(settings));
@@ -596,8 +596,8 @@ async function assertInstalledWebApp(packageRoot: string, bin: string, prefix: s
 		const workspace = JSON.parse(openedText) as { id: string; path: string };
 		match(workspace.id, /^[a-f0-9]{32}$/u);
 		strictEqual(workspace.path, realpathSync.native(foreign));
-		const targets = await request(`/api/workspaces/${workspace.id}/targets`);
-		strictEqual(targets.status, 200, `targets through the installed CLI: ${await targets.text()}`);
+		const connections = await request(`/api/workspaces/${workspace.id}/connections`);
+		strictEqual(connections.status, 200, `connections through the installed CLI: ${await connections.text()}`);
 
 		const index = await request("/");
 		strictEqual(index.status, 200);

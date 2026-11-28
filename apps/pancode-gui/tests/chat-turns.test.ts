@@ -926,7 +926,7 @@ test("conversation routing takes reported current values and keeps target change
 	};
 	const settings = {
 		settings: {
-			chat: { target: "saved-target", model: "saved-model", thinkingLevel: "off" as const },
+			chat: { connection: "saved-target", model: "saved-model", thinkingLevel: "off" as const },
 			safety: { autonomy: "default" as const },
 		},
 		editable: [],
@@ -941,7 +941,7 @@ test("conversation routing takes reported current values and keeps target change
 		{ configId: "thinkingLevel", value: "low" },
 	]);
 	assert.deepEqual(savedRoutePatch(next, draft), {
-		"chat.target": "other-target",
+		"chat.connection": "other-target",
 		"chat.model": "next-model",
 		"chat.thinkingLevel": "low",
 	});

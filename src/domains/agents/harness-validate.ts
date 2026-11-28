@@ -421,16 +421,16 @@ function settingsIssues(input: HarnessInput): HarnessIssue[] {
 		for (const [name, profile] of Object.entries(fleet.profiles)) {
 			if (!isRecord(profile)) continue;
 			const field = `fleet.profiles.${name}`;
-			if (typeof profile.target === "string" && !targetIds.includes(profile.target)) {
+			if (typeof profile.connection === "string" && !targetIds.includes(profile.connection)) {
 				issues.push({
 					file,
-					field: `${field}.target`,
-					message: `names connection '${profile.target}', which is not configured${suggestion(profile.target, targetIds)}; the profile is dropped silently and every agent bound to it falls back to fleet.default, so use one of ${listOf(targetIds)} or add the connection with \`pancode configure\``,
+					field: `${field}.connection`,
+					message: `names connection '${profile.connection}', which is not configured${suggestion(profile.connection, targetIds)}; the profile is dropped silently and every agent bound to it falls back to fleet.default, so use one of ${listOf(targetIds)} or add the connection with \`pancode configure\``,
 				});
 				continue;
 			}
-			if (typeof profile.target === "string") {
-				const issue = modelIssue(file, `${field}.model`, profile.model, profile.target, input);
+			if (typeof profile.connection === "string") {
+				const issue = modelIssue(file, `${field}.model`, profile.model, profile.connection, input);
 				if (issue !== null) issues.push(issue);
 			}
 		}
@@ -449,8 +449,14 @@ function settingsIssues(input: HarnessInput): HarnessIssue[] {
 						message: `names agent '${agent}', which is not a loaded recipe${suggestion(agent, recipeIds)}; a council on roster '${name}' is refused with council_member_agent_unknown, so fix the id or add .pancode/agents/${agent}.md (loaded recipes: ${listOf(recipeIds, 12)})`,
 					});
 				}
-				if (typeof member.target !== "string") continue;
-				const issue = modelIssue(file, `fleet.rosters.${name}.members[${index}].model`, member.model, member.target, input);
+				if (typeof member.connection !== "string") continue;
+				const issue = modelIssue(
+					file,
+					`fleet.rosters.${name}.members[${index}].model`,
+					member.model,
+					member.connection,
+					input,
+				);
 				if (issue !== null) issues.push(issue);
 			}
 		}
@@ -661,7 +667,7 @@ export function collectHarnessInput(workspaceRoot: string, options: CollectHarne
 			...(configDir === null ? [] : [path.join(configDir, "skills")]),
 		],
 		localSettings,
-		targets: layered?.settings.targets ?? [],
+		targets: layered?.settings.connections ?? [],
 		profileNames: [...new Set([...Object.keys(layered?.settings.fleet.profiles ?? {}), ...localProfileNames])],
 		externalAgentIds: layered?.settings.integrations.externalAgents.entries.map((agent) => agent.id) ?? [],
 		packageScripts: readPackageScripts(workspaceRoot),

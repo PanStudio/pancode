@@ -81,7 +81,7 @@ export function StructuredSettingsEditor({
 							type={field.kind === "number" ? "number" : "text"}
 							min={field.kind === "number" ? 1 : undefined}
 							value={text}
-							list={field.key === "target" ? `${id}-connections` : undefined}
+							list={field.key === "connection" ? `${id}-connections` : undefined}
 							placeholder={field.kind === "list" ? "Comma-separated values" : "Default"}
 							onChange={(event) => {
 								const input = event.target.value;

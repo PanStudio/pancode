@@ -308,7 +308,7 @@ test("demo-off skips welcome-only readers and live toggles restore the full welc
 	const settings = structuredClone(DEFAULT_SETTINGS);
 	settings.interface.demo = false;
 	settings.interface.outputDetail = "detailed";
-	settings.chat.target = "local";
+	settings.chat.connection = "local";
 	settings.chat.model = "test-model";
 	const reads = { context: 0, quota: 0, recipes: 0, keys: 0 };
 	const header = createWelcomeDashboard({
@@ -528,7 +528,7 @@ test("the detailed banner claims only automatic edits on a host whose shell runs
 	process.env.TERM = "xterm-256color";
 	delete process.env.PANCODE_SCREEN_READER;
 	const settings = structuredClone(DEFAULT_SETTINGS);
-	settings.chat.target = "local";
+	settings.chat.connection = "local";
 	settings.chat.model = "test-model";
 	settings.interface.demo = true;
 	settings.interface.outputDetail = "detailed";
@@ -579,7 +579,7 @@ test("startup and live tier changes share one bounded welcome policy", () => {
 	process.env.TERM = "xterm-256color";
 	delete process.env.PANCODE_SCREEN_READER;
 	const settings = structuredClone(DEFAULT_SETTINGS);
-	settings.chat.target = "local";
+	settings.chat.connection = "local";
 	settings.chat.model = "test-model";
 	const live = createWelcomeDashboard({
 		providers: { list: () => [] },

@@ -102,11 +102,11 @@ function printSummary(settings: PancodeSettings, descriptor: TargetDescriptor, p
 		for (const line of probeLines(descriptor, probe)) process.stdout.write(`  ${line}\n`);
 	}
 	warnUndiscoveredContextWindow(descriptor, probe);
-	if (settings.chat.target === descriptor.id) process.stdout.write("  orchestrator connection\n");
-	if (settings.context.memory.target === descriptor.id) process.stdout.write("  background memory connection\n");
-	if (settings.fleet.default.target === descriptor.id) process.stdout.write("  fleet default\n");
+	if (settings.chat.connection === descriptor.id) process.stdout.write("  orchestrator connection\n");
+	if (settings.context.memory.connection === descriptor.id) process.stdout.write("  background memory connection\n");
+	if (settings.fleet.default.connection === descriptor.id) process.stdout.write("  fleet default\n");
 	for (const [name, profile] of Object.entries(settings.fleet.profiles)) {
-		if (profile.target === descriptor.id) process.stdout.write(`  fleet profile ${name}\n`);
+		if (profile.connection === descriptor.id) process.stdout.write(`  fleet profile ${name}\n`);
 	}
 	process.stdout.write(`\nsettings written to ${settingsPath()}\n`);
 }
@@ -194,7 +194,7 @@ export async function runNonInteractive(runtime: RuntimeDescriptor, args: Parsed
 	const settings = readSettings();
 	const auth = openAuthStorage();
 	const support = buildProviderSupportEntry(runtime);
-	const existing = settings.targets.find((e) => e.id === args.id);
+	const existing = settings.connections.find((e) => e.id === args.id);
 	if (existing && (getRuntimeRegistry().get(existing.runtime)?.id ?? existing.runtime) !== runtime.id) {
 		printError(`connection ${args.id} already exists with runtime ${existing.runtime}`);
 		return 2;
@@ -239,7 +239,7 @@ export async function runNonInteractive(runtime: RuntimeDescriptor, args: Parsed
 	const apiKeyRef =
 		runtime.auth === "api-key" && (args.apiKey || existing?.auth?.apiKeyRef || authStatus.source === "stored-api-key")
 			? args.apiKey
-				? targetApiKeyRef(args.id, settings.targets)
+				? targetApiKeyRef(args.id, settings.connections)
 				: (existing?.auth?.apiKeyRef ?? runtime.id)
 			: undefined;
 	const oauthProfile =
@@ -566,7 +566,7 @@ export async function runTargetSetupInteractive(
 	const initialRuntimeId = runtime.id;
 	const existingForRuntime = configuredTargetsForRuntime(settings, initialRuntimeId);
 	const existing = defaults.id
-		? (settings.targets.find((entry) => entry.id === defaults.id && entry.runtime === initialRuntimeId) ?? null)
+		? (settings.connections.find((entry) => entry.id === defaults.id && entry.runtime === initialRuntimeId) ?? null)
 		: null;
 	if (existingForRuntime.length > 0) {
 		process.stdout.write(`\nExisting connections for ${runtime.id}:\n`);
@@ -579,7 +579,7 @@ export async function runTargetSetupInteractive(
 	if (support.modelHints.length > 0) {
 		process.stdout.write(`Known models: ${describeRuntimeModels(support, 4)}\n`);
 	}
-	const suggestedId = defaults.id ?? existing?.id ?? deriveTargetId(runtime.id, settings.targets);
+	const suggestedId = defaults.id ?? existing?.id ?? deriveTargetId(runtime.id, settings.connections);
 	const idInput = await ask(rl, "Connection id", suggestedId);
 	if (idInput === null || idInput.length === 0) {
 		printError("connection id is required");
@@ -673,7 +673,7 @@ export async function runTargetSetupInteractive(
 			);
 			if (literal !== null && literal.length > 0) {
 				apiKeyLiteral = literal;
-				apiKeyRef = targetApiKeyRef(targetId, settings.targets);
+				apiKeyRef = targetApiKeyRef(targetId, settings.connections);
 			}
 		} else if (normalized === "env") {
 			const envDefault = defaults.apiKeyEnv ?? existing?.auth?.apiKeyEnvVar ?? runtime.credentialsEnvVar ?? "";
@@ -853,10 +853,10 @@ export async function runTargetSetupInteractive(
 		? false
 		: defaults.setOrchestrator
 			? true
-			: await askYesNo(rl, "use as orchestrator (chat) connection?", !settings.chat.target);
+			: await askYesNo(rl, "use as orchestrator (chat) connection?", !settings.chat.connection);
 	const setWorkerDefault = defaults.setWorkerDefault
 		? true
-		: await askYesNo(rl, "use as fleet default?", !settings.fleet.default.target);
+		: await askYesNo(rl, "use as fleet default?", !settings.fleet.default.connection);
 	const setBackground = !isOrchestratorEligibleRuntime(runtime)
 		? false
 		: defaults.setBackground
@@ -868,7 +868,7 @@ export async function runTargetSetupInteractive(
 				rl,
 				"Orchestrator model",
 				wireModels,
-				settings.chat.target === targetId ? (settings.chat.model ?? model) : model,
+				settings.chat.connection === targetId ? (settings.chat.model ?? model) : model,
 			)))
 		: undefined;
 	if (orchestratorModel === null) return 0;
@@ -878,7 +878,7 @@ export async function runTargetSetupInteractive(
 				rl,
 				"Fleet model",
 				wireModels,
-				settings.fleet.default.target === targetId ? (settings.fleet.default.model ?? model) : model,
+				settings.fleet.default.connection === targetId ? (settings.fleet.default.model ?? model) : model,
 			)))
 		: undefined;
 	if (workerModel === null) return 0;
@@ -888,7 +888,7 @@ export async function runTargetSetupInteractive(
 				rl,
 				"Background memory model",
 				wireModels,
-				settings.context.memory.target === targetId ? (settings.context.memory.model ?? model) : model,
+				settings.context.memory.connection === targetId ? (settings.context.memory.model ?? model) : model,
 			)))
 		: undefined;
 	if (backgroundModel === null) return 0;
@@ -920,7 +920,7 @@ export async function runTargetSetupInteractive(
 }
 
 export function runTargetRemove(id: string): number {
-	const removed = readSettings().targets.find((e) => e.id === id);
+	const removed = readSettings().connections.find((e) => e.id === id);
 	if (!removed) {
 		printError(`no connection with id ${id}`);
 		return 1;
@@ -932,7 +932,7 @@ export function runTargetRemove(id: string): number {
 	ensureRegistryPopulated();
 	const auth = openAuthStorage();
 	const credential = applyTargetCredentialPlan(
-		planTargetCredentialRemoval(removed, readSettings().targets, getRuntimeRegistry().list()),
+		planTargetCredentialRemoval(removed, readSettings().connections, getRuntimeRegistry().list()),
 		{
 			isStored: (key) => auth.get(key) !== undefined,
 			remove: (key) => auth.remove(key),
@@ -949,26 +949,26 @@ export function runTargetRename(oldId: string, newId: string): number {
 		return 2;
 	}
 	const current = readSettings();
-	if (current.targets.some((e) => e.id === newId)) {
+	if (current.connections.some((e) => e.id === newId)) {
 		printError(`connection id already exists: ${newId}`);
 		return 2;
 	}
-	if (!current.targets.some((e) => e.id === oldId)) {
+	if (!current.connections.some((e) => e.id === oldId)) {
 		printError(`no connection with id ${oldId}`);
 		return 1;
 	}
 	updateSettings((settings) => {
-		const target = settings.targets.find((e) => e.id === oldId);
+		const target = settings.connections.find((e) => e.id === oldId);
 		if (!target) return;
 		target.id = newId;
-		if (settings.chat.target === oldId) settings.chat.target = newId;
-		if (settings.context.memory.target === oldId) settings.context.memory.target = newId;
-		if (settings.fleet.default.target === oldId) settings.fleet.default.target = newId;
+		if (settings.chat.connection === oldId) settings.chat.connection = newId;
+		if (settings.context.memory.connection === oldId) settings.context.memory.connection = newId;
+		if (settings.fleet.default.connection === oldId) settings.fleet.default.connection = newId;
 		for (const profile of Object.values(settings.fleet.profiles)) {
-			if (profile.target === oldId) profile.target = newId;
+			if (profile.connection === oldId) profile.connection = newId;
 		}
 		for (const roster of Object.values(settings.fleet.rosters)) {
-			for (const member of roster.members) if (member.target === oldId) member.target = newId;
+			for (const member of roster.members) if (member.connection === oldId) member.connection = newId;
 		}
 		const renameRef = (entry: string): string => {
 			const [head, ...rest] = entry.split("/");

@@ -80,7 +80,7 @@ test("settings: canonical layer origins, complete leaves, real credential store 
 			"built-in",
 			"A partial object layer does not set absent default leaves",
 		);
-		assert.equal(rows.get("targets.0.runtime")?.source, "user", "Array replacement attributes its contained leaves");
+		assert.equal(rows.get("connections.0.runtime")?.source, "user", "Array replacement attributes its contained leaves");
 		assert.deepEqual(
 			report.layers.map((layer) => layer.origin),
 			["built-in", "user", "project", "project.local"],

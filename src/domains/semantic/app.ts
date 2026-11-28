@@ -92,8 +92,8 @@ async function openSemanticRoute(options: SemanticAppOptions) {
 	const settings = options.settings ?? readSettings();
 	const config = configured(settings);
 	const projectId = realpathSync(options.projectRoot);
-	const target = settings.targets.find((entry) => entry.id === config.target);
-	if (!target) throw new Error(`Semantic connection ${config.target} is not configured`);
+	const target = settings.connections.find((entry) => entry.id === config.connection);
+	if (!target) throw new Error(`Semantic connection ${config.connection} is not configured`);
 	if (target.runtime !== "llamacpp-embed" && target.runtime !== "litellm")
 		throw new Error("Semantic connection must use a qualified llama.cpp embedding or LiteLLM runtime");
 	const runtime = findBuiltinRuntimeBootMetadata(target.runtime);

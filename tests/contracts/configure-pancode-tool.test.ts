@@ -161,11 +161,11 @@ test("configure_pancode Apply cards show sanitized changed leaves without unchan
 	const env = await isolatePancodeEnv("pancode-configure-card-");
 	t.after(() => env.restore());
 	updateSettings((settings) => {
-		settings.targets = [{ id: "openai-codex", runtime: "openai-codex", defaultModel: "gpt-6-sol" }];
+		settings.connections = [{ id: "openai-codex", runtime: "openai-codex", defaultModel: "gpt-6-sol" }];
 		settings.fleet.profiles = Object.fromEntries(
 			["old", "keep", "fast-sol"].map((name) => [
 				name,
-				{ target: settings.targets[0]?.id ?? "openai-codex", model: "gpt-6-sol", thinkingLevel: "low" },
+				{ connection: settings.connections[0]?.id ?? "openai-codex", model: "gpt-6-sol", thinkingLevel: "low" },
 			]),
 		);
 		settings.fleet.agentProfiles = { coder: "old", verifier: "keep" };
@@ -204,8 +204,8 @@ test("configure_pancode fleet routing apply parks for the operator while its pre
 	const env = await isolatePancodeEnv("pancode-configure-routing-yolo-");
 	t.after(() => env.restore());
 	updateSettings((settings) => {
-		settings.targets = [{ id: "openai-codex", runtime: "openai-codex", defaultModel: "gpt-6-sol" }];
-		settings.fleet.profiles = { fast: { target: "openai-codex", model: "gpt-6-sol", thinkingLevel: "low" } };
+		settings.connections = [{ id: "openai-codex", runtime: "openai-codex", defaultModel: "gpt-6-sol" }];
+		settings.fleet.profiles = { fast: { connection: "openai-codex", model: "gpt-6-sol", thinkingLevel: "low" } };
 		return settings;
 	});
 	const registry = defaultRegistry(env.dir);
@@ -325,11 +325,11 @@ test("at yolo, headless and read-only configure_pancode only proposes: the diff 
 	ok(!existsSync(join(pancodeStateDir(), "settings-changes.jsonl")));
 });
 
-test("configure_pancode sets a target's routing fields, keeps the rest, and never takes a credential", async (t) => {
+test("configure_pancode sets a connection's routing fields, keeps the rest, and never takes a credential", async (t) => {
 	const env = await isolatePancodeEnv("pancode-configure-target-");
 	t.after(() => env.restore());
 	updateSettings((settings) => {
-		settings.targets = [
+		settings.connections = [
 			{
 				id: "gw",
 				runtime: "openai-compat",
@@ -343,14 +343,14 @@ test("configure_pancode sets a target's routing fields, keeps the rest, and neve
 	});
 	const tool = createConfigurePancodeTool(attended);
 	const refused: Array<[string, string, RegExp]> = [
-		["targets.gw", JSON.stringify({ auth: { apiKey: "sk-live-123" } }), /never stores credentials/],
-		["targets.gw", JSON.stringify({ trustedUnmediated: true }), /cannot set targets\.gw\.trustedUnmediated/],
-		["targets.gw", JSON.stringify({ auth: { apiKeyEnvVar: "sk-live-123" } }), /NAME of an environment variable/],
-		["targets.gw", JSON.stringify({ url: "http://user:pw@host:4000" }), /must not carry credentials/],
-		["targets.gw", JSON.stringify({ url: "http://host:4000/v1?api_key=x" }), /key or token/],
-		["targets.new", JSON.stringify({ url: "http://host:4000" }), /needs a runtime/],
-		["targets.new", JSON.stringify({ runtime: "no-such-runtime" }), /unknown runtime/],
-		["targets.gw.url", JSON.stringify({ url: "http://host:4000" }), /names no connection/],
+		["connections.gw", JSON.stringify({ auth: { apiKey: "sk-live-123" } }), /never stores credentials/],
+		["connections.gw", JSON.stringify({ trustedUnmediated: true }), /cannot set connections\.gw\.trustedUnmediated/],
+		["connections.gw", JSON.stringify({ auth: { apiKeyEnvVar: "sk-live-123" } }), /NAME of an environment variable/],
+		["connections.gw", JSON.stringify({ url: "http://user:pw@host:4000" }), /must not carry credentials/],
+		["connections.gw", JSON.stringify({ url: "http://host:4000/v1?api_key=x" }), /key or token/],
+		["connections.new", JSON.stringify({ url: "http://host:4000" }), /needs a runtime/],
+		["connections.new", JSON.stringify({ runtime: "no-such-runtime" }), /unknown runtime/],
+		["connections.gw.url", JSON.stringify({ url: "http://host:4000" }), /names no connection/],
 	];
 	for (const [path, value, expected] of refused) {
 		const result = await tool.run({ action: "preview", path, value });
@@ -358,7 +358,7 @@ test("configure_pancode sets a target's routing fields, keeps the rest, and neve
 	}
 	const preview = await tool.run({
 		action: "preview",
-		path: "targets.gw",
+		path: "connections.gw",
 		value: JSON.stringify({ defaultModel: "mini/qwen", auth: { apiKeyEnvVar: "LITELLM_API_KEY" } }),
 	});
 	const text = preview.kind === "ok" ? preview.output : "";
@@ -367,7 +367,7 @@ test("configure_pancode sets a target's routing fields, keeps the rest, and neve
 	const proposalId = /proposalId="([^"]+)"/.exec(text)?.[1];
 	if (!proposalId) throw new Error(`preview omitted proposal id: ${text}`);
 	strictEqual((await tool.run({ action: "apply", proposalId })).kind, "ok");
-	const saved = readSettings().targets.find((target) => target.id === "gw");
+	const saved = readSettings().connections.find((target) => target.id === "gw");
 	strictEqual(saved?.defaultModel, "mini/qwen");
 	strictEqual(saved?.auth?.apiKeyEnvVar, "LITELLM_API_KEY");
 	strictEqual(saved?.pricing, "free");
@@ -375,12 +375,12 @@ test("configure_pancode sets a target's routing fields, keeps the rest, and neve
 	const headless = createConfigurePancodeTool({ interactive: false, getAutonomy: () => "default" });
 	const added = await headless.run({
 		action: "preview",
-		path: "targets.lab",
+		path: "connections.lab",
 		value: JSON.stringify({ runtime: "openai-compat", url: "http://192.0.2.9:8000/v1", defaultModel: "m" }),
 	});
 	match(
 		added.kind === "ok" ? added.output : "",
 		/pancode configure --id lab --runtime openai-compat --url http:\/\/192\.0\.2\.9:8000\/v1/,
 	);
-	strictEqual(readSettings().targets.length, 1);
+	strictEqual(readSettings().connections.length, 1);
 });

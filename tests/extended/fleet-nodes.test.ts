@@ -111,8 +111,8 @@ describe("fleet node management", () => {
 	it("refuses removing nodes referenced by profile pins", () => {
 		addFleetNode({ id: "builder", host: "builder.invalid", maxWorkers: 1 });
 		updateSettings((settings) => {
-			settings.targets.push({ id: "test-target", runtime: "openai-compat", url: "http://localhost:8080" });
-			settings.fleet.profiles.pinned = { node: "builder", target: "test-target", model: null, thinkingLevel: "off" };
+			settings.connections.push({ id: "test-target", runtime: "openai-compat", url: "http://localhost:8080" });
+			settings.fleet.profiles.pinned = { node: "builder", connection: "test-target", model: null, thinkingLevel: "off" };
 		});
 		throws(() => removeFleetNode("builder"), /pinned by profiles/);
 		strictEqual(readSettings().fleet.nodes.length, 1);
@@ -191,13 +191,13 @@ describe("fleet node management", () => {
 	}, async () => {
 		addFleetNode({ id: "builder", host: "builder.invalid", maxWorkers: 1 });
 		updateSettings((settings) => {
-			settings.targets.push({
+			settings.connections.push({
 				id: "named",
 				runtime: "openai",
 				url: "http://127.0.0.1:9/v1",
 				auth: { apiKeyEnvVar: "PANCODE_FLEET_NAMED_TEST_KEY" },
 			});
-			settings.fleet.profiles.pinned = { node: "builder", target: "named", model: null, thinkingLevel: "off" };
+			settings.fleet.profiles.pinned = { node: "builder", connection: "named", model: null, thinkingLevel: "off" };
 		});
 		openAuthStorage().setApiKey("openai", "stored-runtime-key");
 		const observed = join(scratch, "targets.json");

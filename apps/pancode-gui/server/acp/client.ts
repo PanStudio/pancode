@@ -164,7 +164,7 @@ export function acpProblem(error: unknown) {
 		if (modelSelection)
 			return new AppProblem(
 				"validation",
-				"PanCode did not change the conversation route because the requested model is not declared for this connection. Choose an available model or update targets[].wireModels in settings.yaml, then restart the ACP session.",
+				"PanCode did not change the conversation route because the requested model is not declared for this connection. Choose an available model or update connections[].wireModels in settings.yaml, then restart the ACP session.",
 				undefined,
 				undefined,
 				{ modelSelection },

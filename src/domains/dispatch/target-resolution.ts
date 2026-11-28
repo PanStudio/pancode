@@ -224,7 +224,7 @@ export function explicitToolCapability(
 export function readWorkerTargets(settings: ReturnType<ConfigContract["get"]> | undefined): WorkerTargets {
 	const workerDefault = settings?.fleet?.default
 		? {
-				target: settings.fleet.default.target ?? null,
+				target: settings.fleet.default.connection ?? null,
 				model: settings.fleet.default.model ?? null,
 				thinkingLevel: (settings.fleet.default.thinkingLevel ?? "off") as ThinkingLevel,
 			}
@@ -232,7 +232,7 @@ export function readWorkerTargets(settings: ReturnType<ConfigContract["get"]> | 
 	const workerProfiles: WorkerProfileMap = {};
 	for (const [name, profile] of Object.entries(settings?.fleet?.profiles ?? {})) {
 		workerProfiles[name] = {
-			target: profile.target ?? null,
+			target: profile.connection ?? null,
 			model: profile.model ?? null,
 			thinkingLevel: (profile.thinkingLevel ?? "off") as ThinkingLevel,
 		};
@@ -243,7 +243,7 @@ export function readWorkerTargets(settings: ReturnType<ConfigContract["get"]> | 
 		const profile = profileName.trim();
 		if (id.length > 0 && profile.length > 0) agentBindings[id] = profile;
 	}
-	const targetOrder = settings?.targets?.map((target) => target.id) ?? [];
+	const targetOrder = settings?.connections?.map((target) => target.id) ?? [];
 	return { workerDefault, workerProfiles, agentBindings, targetOrder };
 }
 

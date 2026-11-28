@@ -18,13 +18,13 @@ afterEach(() => env.restore());
 
 function settings() {
 	const value = structuredClone(DEFAULT_SETTINGS);
-	value.targets = [
+	value.connections = [
 		{ id: "blade", runtime: "litellm", defaultModel: "dynamo/main" },
 		{ id: "cloud", runtime: "openai-codex", defaultModel: "luna" },
 	];
-	value.chat.target = "blade";
+	value.chat.connection = "blade";
 	value.chat.model = "dynamo/main";
-	value.fleet.default = { target: "blade", model: "dynamo/main", thinkingLevel: "low" };
+	value.fleet.default = { connection: "blade", model: "dynamo/main", thinkingLevel: "low" };
 	return value;
 }
 
@@ -43,7 +43,7 @@ it("keeps the scoped call working once --model is moved to --orchestrator-model"
 	const before = structuredClone(value);
 	useTargetInSettings(value, "blade", { orchestratorModel: "dynamo/new", workerTargetId: "cloud", workerModel: "sol" });
 	deepStrictEqual(value.chat, { ...before.chat, model: "dynamo/new" });
-	deepStrictEqual(value.fleet.default, { ...before.fleet.default, target: "cloud", model: "sol" });
+	deepStrictEqual(value.fleet.default, { ...before.fleet.default, connection: "cloud", model: "sol" });
 });
 
 it("exits 2 from the CLI, names the flag that sets chat, and writes nothing", async () => {
@@ -60,7 +60,7 @@ it("exits 2 from the CLI, names the flag that sets chat, and writes nothing", as
 			"blade",
 			"--model",
 			"dynamo/new",
-			"--fleet-target",
+			"--fleet-connection",
 			"cloud",
 			"--fleet-model",
 			"sol",
@@ -80,7 +80,7 @@ it("lists an agent binding kept only in trusted project-local settings", async (
 	mkdirSync(join(workspace, ".pancode"), { recursive: true });
 	writeFileSync(
 		join(workspace, ".pancode", "settings.local.yaml"),
-		"fleet:\n  profiles:\n    local-fast:\n      target: blade\n      model: dynamo/main\n      thinkingLevel: low\n  agentProfiles:\n    coder: local-fast\n",
+		"fleet:\n  profiles:\n    local-fast:\n      connection: blade\n      model: dynamo/main\n      thinkingLevel: low\n  agentProfiles:\n    coder: local-fast\n",
 	);
 	const snapshot = captureProjectSurface(workspace, "settings");
 	if (!snapshot.contentHash) throw new Error("missing project settings hash");
@@ -125,32 +125,32 @@ async function stdoutOf(args: string[]): Promise<{ code: number; output: string 
 
 it("shows the fleet default that targets use --fleet-model sets, with no profiles configured", async () => {
 	updateSettings((value) => {
-		value.targets = [{ id: "blade", runtime: "litellm", url: "http://127.0.0.1:9", defaultModel: "dynamo/main" }];
+		value.connections = [{ id: "blade", runtime: "litellm", url: "http://127.0.0.1:9", defaultModel: "dynamo/main" }];
 	});
 	const unset = await stdoutOf(["profile", "list"]);
 	strictEqual(unset.code, 0);
 	match(unset.output, /^fleet default: not set\. run `pancode connections use <id> --fleet-model <model>`/mu);
 
 	updateSettings((value) => {
-		value.fleet.default = { target: "blade", model: "dynamo/fast", thinkingLevel: "off" };
+		value.fleet.default = { connection: "blade", model: "dynamo/fast", thinkingLevel: "off" };
 	});
 	const text = await stdoutOf(["profile", "list"]);
-	match(text.output, /^fleet default: target blade \(litellm\), model dynamo\/fast, thinking off, from user$/mu);
+	match(text.output, /^fleet default: connection blade \(litellm\), model dynamo\/fast, thinking off, from user$/mu);
 	match(text.output, /no fleet profiles configured/u);
 	const json = JSON.parse((await stdoutOf(["profile", "list", "--json"])).output) as {
-		default: { target: string; model: string | null; source: string } | null;
+		default: { connection: string; model: string | null; source: string } | null;
 		profiles: unknown[];
 	};
 	deepStrictEqual(
-		{ target: json.default?.target, model: json.default?.model, source: json.default?.source },
-		{ target: "blade", model: "dynamo/fast", source: "user" },
+		{ connection: json.default?.connection, model: json.default?.model, source: json.default?.source },
+		{ connection: "blade", model: "dynamo/fast", source: "user" },
 	);
 	deepStrictEqual(json.profiles, []);
 });
 
 it("names the Copilot sign-in as the auth of a copilot-sdk target", async () => {
 	updateSettings((value) => {
-		value.targets = [{ id: "copilot", runtime: "copilot-sdk", defaultModel: "gpt-6-luna" }];
+		value.connections = [{ id: "copilot", runtime: "copilot-sdk", defaultModel: "gpt-6-luna" }];
 	});
 	const columns = process.env.COLUMNS;
 	process.env.COLUMNS = "240";

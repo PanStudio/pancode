@@ -96,13 +96,13 @@ async function retryFleet(
 ) {
 	const settings = structuredClone(DEFAULT_SETTINGS);
 	settings.safety.sandbox = "off";
-	settings.targets = targetIds.map((id) => ({
+	settings.connections = targetIds.map((id) => ({
 		id,
 		runtime: "openai",
 		defaultModel: "gpt-4o",
 		...(options.models !== undefined ? { wireModels: [...options.models] } : {}),
 	}));
-	settings.fleet.default.target = "default";
+	settings.fleet.default.connection = "default";
 	settings.fleet.default.model = "gpt-4o";
 	settings.fleet.retry.maxRetries = options.maxRetries ?? 1;
 	if (options.adaptive === true) {

@@ -214,13 +214,13 @@ for (const event of [
 		chmodSync(executable, 0o755);
 		const settingsPath = join(scratch.configDir, "settings.yaml");
 		const settings = parse(readFileSync(settingsPath, "utf8"));
-		settings.targets = [
-			...(settings.targets ?? []),
+		settings.connections = [
+			...(settings.connections ?? []),
 			{ id: "peer", runtime: "codex-cli", defaultModel: "codex-cli-default" },
 		];
 		settings.fleet = {
 			...settings.fleet,
-			default: { ...settings.fleet?.default, target: "peer", model: "codex-cli-default" },
+			default: { ...settings.fleet?.default, connection: "peer", model: "codex-cli-default" },
 			retry: { ...settings.fleet?.retry, maxRetries: 0 },
 		};
 		writeFileSync(settingsPath, stringify(settings));

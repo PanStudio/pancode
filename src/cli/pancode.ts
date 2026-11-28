@@ -37,7 +37,7 @@ function describeNewerHome(newer: NewerHome): string {
 /** Whether the user settings name a chat target, read without creating or migrating the home. */
 function chatRouteChosen(): boolean {
 	const { settings, issues } = validateSettingsFile();
-	return issues.length > 0 || Boolean(settings.chat.target);
+	return issues.length > 0 || Boolean(settings.chat.connection);
 }
 
 /**

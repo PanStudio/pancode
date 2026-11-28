@@ -162,7 +162,7 @@ export function createPromptsBundle(
 				record,
 				configuredAcp: configured.has(record.kind),
 			}));
-			snapshot.peerTargets = (config()?.get().targets ?? []).map(({ id, runtime }) => ({ id, runtime }));
+			snapshot.peerTargets = (config()?.get().connections ?? []).map(({ id, runtime }) => ({ id, runtime }));
 		} catch {
 			// An unreadable report lists no peers; /interop shows the agents and why.
 		}

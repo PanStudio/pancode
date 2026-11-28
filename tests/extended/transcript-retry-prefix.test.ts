@@ -316,11 +316,11 @@ test("a calibrated route's silent request is cut at the adaptive limit and leave
 	};
 	const settings = structuredClone(DEFAULT_SETTINGS);
 	settings.chat.prewarm = false;
-	settings.chat.target = target.id;
+	settings.chat.connection = target.id;
 	settings.chat.model = model.id;
 	settings.chat.thinkingLevel = "off";
 	settings.chat.retry = { ...settings.chat.retry, enabled: true, baseDelayMs: 1, streamStallMs: 180_000 };
-	settings.targets = [{ ...target, defaultModel: model.id }];
+	settings.connections = [{ ...target, defaultModel: model.id }];
 	const runtime: RuntimeDescriptor = {
 		...litellm,
 		id: target.runtime,

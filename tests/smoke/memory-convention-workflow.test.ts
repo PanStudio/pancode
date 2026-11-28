@@ -120,7 +120,7 @@ test("operator promotion persists a convention and only approval admits it into 
 
 		mkdirSync(join(home.dir, "config"), { recursive: true });
 		const settings = structuredClone(DEFAULT_SETTINGS);
-		settings.targets = [
+		settings.connections = [
 			{
 				id: "fixture",
 				runtime: "openai-compat",
@@ -130,7 +130,7 @@ test("operator promotion persists a convention and only approval admits it into 
 				capabilities: { chat: true, tools: true, toolCallFormat: "openai" },
 			},
 		];
-		settings.chat.target = "fixture";
+		settings.chat.connection = "fixture";
 		settings.chat.model = "mock-model";
 		settings.chat.thinkingLevel = "off";
 		settings.context.memory.enabled = true;

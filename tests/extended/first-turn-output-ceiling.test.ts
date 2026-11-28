@@ -18,7 +18,7 @@ for (const api of ["openai-completions", "ollama-native"]) {
 	]) {
 		test(`${api}: a first turn ${unknownWindow ? "reaches the server with an unknown window" : oversizedInput ? "refuses oversized input explicitly" : "fits with a full-window output maximum"}`, async () => {
 			const settings = structuredClone(DEFAULT_SETTINGS);
-			settings.chat.target = "local";
+			settings.chat.connection = "local";
 			settings.chat.model = "local";
 			settings.chat.maxOutputTokens = 131072;
 			settings.chat.prewarm = false;

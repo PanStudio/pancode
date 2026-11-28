@@ -539,7 +539,7 @@ export function openModelOverlay(tui: TUI, deps: OpenModelOverlayDeps): OverlayH
 	};
 	const initial = build();
 	const overlayWidth = resolveOverlayWidth(tui.terminal?.columns ?? 0);
-	const activeTarget = currentSettings().chat?.target?.trim();
+	const activeTarget = currentSettings().chat?.connection?.trim();
 	const activeModel = currentSettings().chat?.model?.trim();
 	const view = new ModelOverlayView(
 		initial.rows,

@@ -14,8 +14,8 @@ import { probeCapabilitiesForModel, resolveModelCapabilities } from "./model-cap
  */
 export function agentRoleToolWarnings(providers: ProvidersContract, settings: Readonly<PancodeSettings>): string[] {
 	const roles: ReadonlyArray<{ label: string; target: string | null; model: string | null }> = [
-		{ label: "orchestrator", target: settings.chat.target, model: settings.chat.model },
-		{ label: "workers.default", target: settings.fleet.default.target, model: settings.fleet.default.model },
+		{ label: "orchestrator", target: settings.chat.connection, model: settings.chat.model },
+		{ label: "workers.default", target: settings.fleet.default.connection, model: settings.fleet.default.model },
 	];
 	const warnings: string[] = [];
 	for (const role of roles) {

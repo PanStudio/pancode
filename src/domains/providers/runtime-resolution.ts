@@ -438,7 +438,7 @@ export function resolveRuntimeTarget(
 	if (!target) {
 		return {
 			ok: false,
-			diagnostics: [diagnostic("error", "target-not-found", `connection '${targetId}' not found in settings.targets`)],
+			diagnostics: [diagnostic("error", "target-not-found", `connection '${targetId}' not found in settings.connections`)],
 		};
 	}
 

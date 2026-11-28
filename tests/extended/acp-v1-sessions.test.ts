@@ -275,7 +275,7 @@ test("ACP session/new carries the models block under _meta and _pancode/session/
 		strictEqual(peer.requests.has("session/set_model"), false);
 		await rejects(
 			peer.call("_pancode/session/set_model", { sessionId: opened.sessionId, modelId: "model-z" }),
-			/model is not declared for this target/u,
+			/model is not declared for this connection/u,
 		);
 		deepStrictEqual(
 			await peer.call("_pancode/session/set_model", { sessionId: opened.sessionId, modelId: "model-a" }),
@@ -310,11 +310,11 @@ test("ACP re-sends the thinking option once the live probe finds the reasoning a
 	const settings = structuredClone(DEFAULT_SETTINGS);
 	const url = `http://127.0.0.1:${(stub.address() as AddressInfo).port}`;
 	// A second target on the same endpoint keeps its own cold cache until something probes it.
-	settings.targets = [
+	settings.connections = [
 		{ id: "litellm", runtime: "litellm", url, defaultModel: "fake/m" },
 		{ id: "litellm-b", runtime: "litellm", url, defaultModel: "fake/m" },
 	];
-	settings.chat = { ...settings.chat, target: "litellm", model: "fake/m", thinkingLevel: "low" };
+	settings.chat = { ...settings.chat, connection: "litellm", model: "fake/m", thinkingLevel: "low" };
 	const providers = createProvidersBundle(dispatchStubContext({ settings }), { getSettings: () => settings });
 	await providers.extension.start();
 	const peer = stdioPeer();
@@ -378,12 +378,12 @@ test("ACP re-sends the thinking option once the live probe finds the reasoning a
 		const seen = configUpdates().length;
 		const switched = (await peer.call("session/set_config_option", {
 			sessionId: "acp-probe",
-			configId: "target",
+			configId: "connection",
 			value: "litellm-b",
 		})) as { configOptions: Array<Record<string, unknown>> };
 		strictEqual(noticeText(switched.configOptions), "low was ignored because thinking is unsupported");
 		const probed = await nextConfigUpdate(seen + 1);
-		deepStrictEqual(probed?._meta?.["pancode/session"], { target: "litellm-b", model: "fake/m" });
+		deepStrictEqual(probed?._meta?.["pancode/session"], { connection: "litellm-b", model: "fake/m" });
 		strictEqual(thinkingOption(probed?.update.configOptions)?.currentValue, "low");
 		strictEqual(noticeText(probed?.update.configOptions), undefined);
 	} finally {
@@ -422,7 +422,7 @@ test("ACP stable session list pages SessionInfo and filters cwd", async () => {
 				"pancode/session": {
 					createdAt: "2026-09-25T12:00:00.000Z",
 					endedAt: "2026-09-25T12:00:00.000Z",
-					target: "target-a",
+					connection: "target-a",
 					model: "model-a",
 				},
 			},
@@ -1505,7 +1505,7 @@ test("ACP reports each tool call's engine span and the target and model that ser
 			prompt: [{ type: "text", text: "Read" }],
 		})) as { _meta: Record<string, Record<string, unknown>> };
 		strictEqual(result._meta["pancode/turn"]?.model, "model-b");
-		strictEqual(result._meta["pancode/turn"]?.target, "target-b");
+		strictEqual(result._meta["pancode/turn"]?.connection, "target-b");
 		const timing = peer.updates
 			.filter((params) => (params.update as Record<string, unknown>).sessionUpdate === "tool_call_update")
 			.map((params) => (params._meta as Record<string, unknown> | undefined)?.["pancode/toolTiming"]);
@@ -1564,8 +1564,8 @@ test("ACP replay carries each turn's recorded model and route and each call's re
 		deepStrictEqual(
 			[...new Set(metas.map((meta) => JSON.stringify([meta["pancode/replay"]?.turn, meta["pancode/turn"]])))],
 			[
-				JSON.stringify([1, { model: "model-a", target: "target-a" }]),
-				JSON.stringify([2, { model: "model-b", target: "target-b" }]),
+				JSON.stringify([1, { model: "model-a", connection: "target-a" }]),
+				JSON.stringify([2, { model: "model-b", connection: "target-b" }]),
 			],
 		);
 		const terminal = peer.updates.find(

@@ -205,7 +205,7 @@ function findCurrentStatus(
 	statuses: ReadonlyArray<TargetStatus>,
 	settings: Readonly<PancodeSettings> | undefined,
 ): TargetStatus | null {
-	const targetId = settings?.chat?.target ?? null;
+	const targetId = settings?.chat?.connection ?? null;
 	if (!targetId) return null;
 	return statuses.find((status) => status.target.id === targetId) ?? null;
 }
@@ -927,7 +927,7 @@ class WelcomeDashboard implements WelcomeDashboardComponent {
 		const settings = this.deps.getSettings?.();
 		const statuses = this.deps.providers.list();
 		const current = findCurrentStatus(statuses, settings);
-		const targetLabel = current?.target.id ?? settings?.chat?.target ?? null;
+		const targetLabel = current?.target.id ?? settings?.chat?.connection ?? null;
 		const modelLabel = settings?.chat?.model ?? current?.target.defaultModel ?? null;
 		const workspace = this.deps.getWorkspaceSnapshot?.() ?? null;
 		const cwd = workspace?.cwd ?? process.cwd();
@@ -1076,7 +1076,7 @@ export function createBootWelcome(
 	submitKeyLabel: string | null,
 	getKeyLabel?: WelcomeDashboardDeps["getKeyLabel"],
 ): Component {
-	const target = settings.targets.find((entry) => entry.id === settings.chat.target);
+	const target = settings.connections.find((entry) => entry.id === settings.chat.connection);
 	const model = settings.chat.model ?? target?.defaultModel ?? null;
 	const version = readPancodeVersionLabel();
 	const mode = richWelcomeEnabled(settings.interface.demo) ? "launchpad" : "session";
@@ -1086,7 +1086,7 @@ export function createBootWelcome(
 		lastSession: "checking",
 		cwd: process.cwd(),
 		workspace: null,
-		targetLabel: settings.chat.target ?? null,
+		targetLabel: settings.chat.connection ?? null,
 		modelLabel: model,
 		route: target && model ? "checking" : "unset",
 		routeReason: null,

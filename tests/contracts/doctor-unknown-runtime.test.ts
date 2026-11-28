@@ -22,7 +22,7 @@ test("doctor proposes the provider catalog model and changes it only after confi
 	mkdirSync(join(home.dir, "config"), { recursive: true });
 	const file = join(home.dir, "config", "settings.yaml");
 	const original =
-		"version: 2\ntargets:\n  - { id: anthropic, runtime: anthropic }\ncontext:\n  memory:\n    target: anthropic\n    model: claude-haiku-4.5 # keep the note\n";
+		"version: 2\nconnections:\n  - { id: anthropic, runtime: anthropic }\ncontext:\n  memory:\n    connection: anthropic\n    model: claude-haiku-4.5 # keep the note\n";
 	writeFileSync(file, original);
 	const before = await runDoctorModelChecks({ fix: true, confirm: async () => false });
 	match(
@@ -53,7 +53,7 @@ test("run --agent with an API key refuses a target on an unregistered runtime", 
 	mkdirSync(cwd);
 	writeFileSync(
 		join(home.dir, "config", "settings.yaml"),
-		"version: 2\ntargets:\n  - { id: box, runtime: no-such-runtime, defaultModel: llama3 }\n",
+		"version: 2\nconnections:\n  - { id: box, runtime: no-such-runtime, defaultModel: llama3 }\n",
 	);
 	let stderr = "";
 	t.mock.method(process.stderr, "write", (chunk: string | Uint8Array) => {

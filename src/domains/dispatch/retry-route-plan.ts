@@ -161,7 +161,7 @@ export function eligibleAlternateRoute(
 		runtimeId: run.runtimeId,
 		endpointIdentityHash: "",
 	};
-	const routes = configuredJointTargets(settings?.targets ?? [], failed, endpointIdentityHash).filter((route) =>
+	const routes = configuredJointTargets(settings?.connections ?? [], failed, endpointIdentityHash).filter((route) =>
 		otherModel
 			? route.modelId !== run.wireModelId
 			: minContextWindow === undefined

@@ -383,7 +383,7 @@ function resolveDispatchPermitOnce(
 			enforcement: runtimeEnforcement(target.runtime),
 			// Read from the effective settings, the operator's configuration, never
 			// from anything the request or the model carries.
-			trustedUnmediated: settings?.targets.find((entry) => entry.id === target.target.id)?.trustedUnmediated === true,
+			trustedUnmediated: settings?.connections.find((entry) => entry.id === target.target.id)?.trustedUnmediated === true,
 			...(target.runtime.readOnlySandbox === "os" ? { readOnlySandbox: true } : {}),
 		},
 		...(mcp !== undefined ? { mcp } : {}),

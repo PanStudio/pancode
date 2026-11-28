@@ -391,7 +391,7 @@ function taskViews(args: Record<string, unknown>): DispatchPlanTaskView[] {
 	const sharedAgent = str(args.agent) ?? "coder";
 	const sharedModel = str(args.model);
 	const sharedNode = str(args.node);
-	const sharedTarget = str(args.target);
+	const sharedTarget = str(args.connection);
 	return tasks.map((item) => {
 		const record = isRecord(item) ? item : {};
 		const view: DispatchPlanTaskView = {
@@ -421,7 +421,7 @@ function taskViews(args: Record<string, unknown>): DispatchPlanTaskView[] {
 		if (model !== undefined) view.model = model;
 		const node = str(record.node) ?? sharedNode;
 		if (node !== undefined) view.node = node;
-		const target = str(record.target) ?? sharedTarget;
+		const target = str(record.connection) ?? sharedTarget;
 		if (target !== undefined) view.target = target;
 		const failover = failoverModeOf(record.failover) ?? failoverModeOf(args.failover);
 		if (failover !== undefined) view.failover = failover;

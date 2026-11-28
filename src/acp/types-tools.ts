@@ -24,7 +24,7 @@ export interface AcpDispatchPlanMeta {
 		task: string;
 		role?: string;
 		position?: number;
-		target?: string;
+		connection?: string;
 		model?: string;
 		node?: string;
 		nodeKind?: "local" | "ssh";

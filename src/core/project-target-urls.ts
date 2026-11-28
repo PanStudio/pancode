@@ -21,7 +21,7 @@ const PROJECT_TARGET_ORIGIN = Symbol("pancode.projectTargetOrigin");
 /** The origin of an entry the user's own settings supplied. */
 const USER_TARGET = "user";
 
-/** The project settings file whose `targets` list supplied an entry, and what the user's own entry for that id named. */
+/** The project settings file whose `connections` list supplied an entry, and what the user's own entry for that id named. */
 interface ProjectTargetOrigin {
 	file: string;
 	/** "stored": the user's entry names `auth.apiKeyRef` or `auth.oauthProfile`; "key-variable": only `auth.apiKeyEnvVar`. */

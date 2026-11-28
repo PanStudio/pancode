@@ -164,7 +164,7 @@ interface SafetyJudgeRoots {
 }
 
 /**
- * `safety.judge.target` and `model` default to the session's main chat route.
+ * `safety.judge.connection` and `model` default to the session's main chat route.
  * A judge target without a model asks that target's default model.
  */
 export function resolveSafetyJudgeConfig(
@@ -172,11 +172,11 @@ export function resolveSafetyJudgeConfig(
 	workspace: string = process.cwd(),
 ): SafetyJudgeConfig {
 	const judge = settings.safety.judge;
-	const target = judge.target?.trim() || null;
+	const target = judge.connection?.trim() || null;
 	const model = judge.model?.trim() || null;
 	return {
 		enabled: judge.enabled,
-		target: target ?? settings.chat.target,
+		target: target ?? settings.chat.connection,
 		model: model ?? (target === null ? settings.chat.model : null),
 		environment: cleanLines(judge.environment),
 		allow: cleanLines(judge.allow),

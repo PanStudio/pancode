@@ -1045,7 +1045,7 @@ export function createChatLoop(deps: CreateChatLoopDeps): ChatLoop {
 			const settings = deps.getSettings();
 			deps.session.create({
 				cwd: process.cwd(),
-				...(settings.chat.target ? { target: settings.chat.target } : {}),
+				...(settings.chat.connection ? { target: settings.chat.connection } : {}),
 				...(settings.chat.model ? { model: settings.chat.model } : {}),
 			});
 		},
@@ -1286,7 +1286,7 @@ export function createChatLoop(deps: CreateChatLoopDeps): ChatLoop {
 	 */
 	const nullRuntimeAdmissionReason = (): string => {
 		const orchestrator = deps.getSettings().chat;
-		const target = orchestrator.target?.trim() ?? "";
+		const target = orchestrator.connection?.trim() ?? "";
 		const model = orchestrator.model?.trim() ?? "";
 		return target.length > 0 && model.length === 0 ? "model-not-configured" : "orchestrator-not-configured";
 	};

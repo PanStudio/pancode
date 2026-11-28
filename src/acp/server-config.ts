@@ -301,7 +301,7 @@ export function createAcpServerConfig(scope: AcpServerScope) {
 				throw new AcpRequestError(-32602, "patch contains an unknown setting", { code: "invalid_params" });
 			}
 			switch (key) {
-				case "chat.target": {
+				case "chat.connection": {
 					if (value === null) {
 						patch[key] = null;
 						break;
@@ -335,7 +335,7 @@ export function createAcpServerConfig(scope: AcpServerScope) {
 			}
 		}
 		const current = options.settings.read();
-		const nextTarget = patch["chat.target"] === undefined ? current.target : patch["chat.target"];
+		const nextTarget = patch["chat.connection"] === undefined ? current.target : patch["chat.connection"];
 		const nextModel = patch["chat.model"] === undefined ? current.model : patch["chat.model"];
 		if (nextTarget === null && nextModel !== null) {
 			throw new AcpRequestError(-32602, "model requires a configured connection", { code: "invalid_params" });
@@ -345,7 +345,7 @@ export function createAcpServerConfig(scope: AcpServerScope) {
 			const session = scope.boundSessionId === null ? undefined : scope.sessions.get(scope.boundSessionId);
 			if (
 				session &&
-				(patch["chat.target"] !== undefined ||
+				(patch["chat.connection"] !== undefined ||
 					patch["chat.model"] !== undefined ||
 					patch["chat.thinkingLevel"] !== undefined)
 			) {

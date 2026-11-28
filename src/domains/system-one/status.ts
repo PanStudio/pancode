@@ -37,7 +37,7 @@ export const SYSTEM_ONE_REACH =
 
 function costNote(resolution: ChoiceResolution): string | null {
 	if (resolution.kind !== "engine" || resolution.engine.kind !== "llm") return null;
-	const where = `${resolution.engine.target}/${resolution.engine.model ?? "connection default"}`;
+	const where = `${resolution.engine.connection}/${resolution.engine.model ?? "connection default"}`;
 	return `${resolution.name} adds separate completions on ${where}. Requests pass paid-request admission and count against the session's cost ceiling.`;
 }
 
@@ -48,13 +48,13 @@ function routeReading(input: StatusInput, resolved: ChoiceResolution): { active:
 	const refusal = input.refusedEngines?.get(resolved.name);
 	if (refusal !== undefined) return { problem: refusal };
 	const effective = effectiveSystemOne(input.settings, [resolved.name]);
-	const target = effective.targets.find((entry) => entry.id === resolved.engine.target);
+	const target = effective.connections.find((entry) => entry.id === resolved.engine.connection);
 	const runtimeId = target?.runtime ?? "";
 	const required = findBuiltinRuntimeBootMetadata(runtimeId)?.credentialsEnvVar;
 	if (required !== undefined && input.hasCredential?.(runtimeId, required) === false) {
 		return { problem: `${required} is not set` };
 	}
-	const destination = `${resolved.engine.target}/${resolved.engine.model ?? target?.defaultModel ?? "connection default"}`;
+	const destination = `${resolved.engine.connection}/${resolved.engine.model ?? target?.defaultModel ?? "connection default"}`;
 	return { active: `${resolved.name} → ${destination}` };
 }
 

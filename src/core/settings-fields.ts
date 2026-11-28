@@ -3,7 +3,7 @@
 /**
  * Every field name a settings document can carry (#434). These are the fixed keys of the schema `validateSettings`
  * enforces; any other key in a settings object is a dictionary key the operator chose, such as a model id under
- * `targets[].lmstudio.models` or a keybinding action. A telemetry share keeps the fixed names and anonymizes the rest,
+ * `connections[].lmstudio.models` or a keybinding action. A telemetry share keeps the fixed names and anonymizes the rest,
  * and `Issues.unknownKeys` only accepts names from this list, so a validator cannot admit a new field without naming
  * it here.
  */
@@ -68,6 +68,8 @@ export const SETTINGS_FIELD_NAMES = [
 	"confine",
 	"confirmedRemote",
 	"connectTimeoutMs",
+	"connection",
+	"connections",
 	"content",
 	"context",
 	"contextLength",
@@ -146,7 +148,7 @@ export const SETTINGS_FIELD_NAMES = [
 	"lifecycle",
 	"limits",
 	"litellm",
-	"liveCheckTargets",
+	"liveCheckConnections",
 	"lmstudio",
 	"load",
 	"local",
@@ -276,7 +278,6 @@ export const SETTINGS_FIELD_NAMES = [
 	"tags",
 	"tariff",
 	"target",
-	"targets",
 	"tasks",
 	"telemetry",
 	"templateObservationBytesPerTurnMax",

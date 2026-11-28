@@ -381,7 +381,7 @@ async function identityFor(io: Io): Promise<LocalIdentity> {
 	if (settings === undefined) {
 		try {
 			const { readSettings } = await import("../core/config.js");
-			settings = { targets: readSettings().targets };
+			settings = { connections: readSettings().connections };
 		} catch {
 			// Unreadable settings mask no target names; every other identity value still applies.
 			settings = {};

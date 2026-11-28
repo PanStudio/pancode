@@ -78,14 +78,14 @@ async function drive(
 	const settings = structuredClone(DEFAULT_SETTINGS);
 	settings.chat.prewarm = false;
 	const routes = [route, ...(switchTo ? [switchTo] : [])];
-	settings.targets = routes.map((entry) => ({
+	settings.connections = routes.map((entry) => ({
 		id: `route-${entry.model}`,
 		runtime: "openai" as const,
 		defaultModel: entry.model,
 		...(entry.uncached === true ? { cache: { retention: "none" as const } } : {}),
 	}));
 	const context = dispatchStubContext({ settings });
-	settings.chat.target = `route-${route.model}`;
+	settings.chat.connection = `route-${route.model}`;
 	settings.chat.model = route.model;
 	const providers = {
 		...(context.getContract("providers") as ProvidersContract),
@@ -305,7 +305,7 @@ async function drive(
 							);
 						}
 						if (switchTo !== undefined && turns.length === 1) {
-							settings.chat.target = `route-${switchTo.model}`;
+							settings.chat.connection = `route-${switchTo.model}`;
 							settings.chat.model = switchTo.model;
 						}
 						const message = {

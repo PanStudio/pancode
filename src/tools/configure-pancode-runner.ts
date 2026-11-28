@@ -30,7 +30,7 @@ import type { ToolSpec } from "./tool-spec.js";
  * integrations, telemetry, keybindings and auto-update stay with the operator.
  */
 const ELIGIBLE_PATHS: ReadonlySet<string> = new Set([
-	"chat.target",
+	"chat.connection",
 	"chat.model",
 	"chat.thinkingLevel",
 	"chat.modelPicker.cycleSet",
@@ -44,7 +44,7 @@ const ELIGIBLE_PATHS: ReadonlySet<string> = new Set([
 	"fleet.rosters",
 	"fleet.agentProfiles",
 	"fleet.concurrency",
-	"context.memory.target",
+	"context.memory.connection",
 	"context.memory.model",
 	"interface.exitSummary",
 	"interface.demo",
@@ -72,7 +72,7 @@ function eligiblePath(path: string): boolean {
 	);
 }
 
-const TARGET_PATH = /^targets\.[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/u;
+const TARGET_PATH = /^connections\.[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/u;
 const TARGET_FIELDS = new Set(["runtime", "url", "defaultModel", "wireModels", "gateway", "capabilities", "auth"]);
 const ENV_NAME = /^[A-Z_][A-Z0-9_]{0,127}$/u;
 const SECRET_QUERY = /key|token|secret|password|passwd|sig|auth/iu;
@@ -123,7 +123,7 @@ export function configurePancodeRunner(
 						};
 					}
 					const affected = changedSettingLines(valuePath, valueAt(saved, change), valueAt(candidate, change));
-					if (path === "chat.target" && saved.chat.model !== candidate.chat.model) {
+					if (path === "chat.connection" && saved.chat.model !== candidate.chat.model) {
 						affected.push(
 							`chat.model: ${formatControlValue(saved.chat.model)} → ${formatControlValue(candidate.chat.model)}`,
 						);
@@ -198,12 +198,12 @@ export function configurePancodeRunner(
 }
 
 function changePath(change: ConfigurePancodeChange): string {
-	return change.kind === "target" ? `targets.${change.id}` : change.path;
+	return change.kind === "target" ? `connections.${change.id}` : change.path;
 }
 
 function valueAt(settings: Readonly<PancodeSettings>, change: ConfigurePancodeChange): unknown {
 	return change.kind === "target"
-		? settings.targets.find((target) => target.id === change.id)
+		? settings.connections.find((target) => target.id === change.id)
 		: getAtPath(settings, change.path);
 }
 
@@ -212,19 +212,19 @@ function applyChange(settings: PancodeSettings, change: ConfigurePancodeChange):
 		applyControlValue(settings, change.path, change.value, settingsRuntimeFacts());
 		return;
 	}
-	const index = settings.targets.findIndex((target) => target.id === change.id);
-	if (index < 0) settings.targets.push(structuredClone(change.target));
-	else settings.targets[index] = structuredClone(change.target);
+	const index = settings.connections.findIndex((target) => target.id === change.id);
+	if (index < 0) settings.connections.push(structuredClone(change.target));
+	else settings.connections[index] = structuredClone(change.target);
 }
 
-/** The target a `targets.<id>` path names: a saved id as written, or a new id without dots. */
+/** The target a `connections.<id>` path names: a saved id as written, or a new id without dots. */
 function targetIdOf(saved: PancodeSettings, path: string): { id: string } | { error: string } | null {
-	if (!path.startsWith("targets.")) return null;
-	const id = path.slice("targets.".length);
-	if (saved.targets.some((target) => target.id === id)) return { id };
+	if (!path.startsWith("connections.")) return null;
+	const id = path.slice("connections.".length);
+	if (saved.connections.some((target) => target.id === id)) return { id };
 	if (TARGET_PATH.test(path)) return { id };
 	return {
-		error: `path ${JSON.stringify(path)} names no connection; use targets.<id> with a JSON object value, for example targets.gw with {"url":"http://host:4000/v1"}`,
+		error: `path ${JSON.stringify(path)} names no connection; use connections.<id> with a JSON object value, for example connections.gw with {"url":"http://host:4000/v1"}`,
 	};
 }
 
@@ -237,7 +237,7 @@ function buildChange(
 	if (targetId !== null && "error" in targetId) return targetId;
 	if (targetId !== null) {
 		const merged = mergeTarget(
-			saved.targets.find((target) => target.id === targetId.id),
+			saved.connections.find((target) => target.id === targetId.id),
 			targetId.id,
 			value,
 		);
@@ -260,7 +260,7 @@ function buildChange(
 }
 
 /**
- * The target a `targets.<id>` proposal saves: the model's fields over the
+ * The target a `connections.<id>` proposal saves: the model's fields over the
  * saved target, so fields it may not touch (pricing, cache, lifecycle,
  * concurrency, trust, runtime sub-config) survive unchanged.
  */
@@ -273,16 +273,18 @@ function mergeTarget(
 	try {
 		patch = JSON.parse(value);
 	} catch {
-		return { error: 'a targets.<id> value is a JSON object, for example {"runtime":"litellm","url":"http://host:4000"}' };
+		return {
+			error: 'a connections.<id> value is a JSON object, for example {"runtime":"litellm","url":"http://host:4000"}',
+		};
 	}
 	if (patch === null || typeof patch !== "object" || Array.isArray(patch)) {
-		return { error: "a targets.<id> value is a JSON object" };
+		return { error: "a connections.<id> value is a JSON object" };
 	}
 	const fields = patch as Record<string, unknown>;
 	const refused = Object.keys(fields).filter((key) => !TARGET_FIELDS.has(key));
 	if (refused.length > 0) {
 		return {
-			error: `configure_pancode cannot set ${refused.map((key) => `targets.${id}.${key}`).join(", ")}; it may set runtime, url, defaultModel, wireModels, gateway, capabilities, auth.apiKeyEnvVar and auth.oauthProfile. Pricing, lifecycle, concurrency, trust and runtime sub-settings are the operator's.`,
+			error: `configure_pancode cannot set ${refused.map((key) => `connections.${id}.${key}`).join(", ")}; it may set runtime, url, defaultModel, wireModels, gateway, capabilities, auth.apiKeyEnvVar and auth.oauthProfile. Pricing, lifecycle, concurrency, trust and runtime sub-settings are the operator's.`,
 		};
 	}
 	const target: TargetDescriptor = existing ? structuredClone(existing) : { id, runtime: "" };
@@ -399,7 +401,7 @@ function recordSettingsChange(proposal: ConfigurePancodeProposal, sessionId: str
 }
 
 function savedSettingEffect(path: string): string {
-	if (path.startsWith("targets."))
+	if (path.startsWith("connections."))
 		return "New sessions and dispatches see the connection; switch a running chat with /model or /settings models.";
 	if (isRoutingPath(path))
 		return "This session keeps its current routing. Exit and start a new PanCode session to use the saved routing.";

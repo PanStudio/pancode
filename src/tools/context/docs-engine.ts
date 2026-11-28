@@ -82,7 +82,7 @@ const VOCABULARY_ALIASES: ReadonlyArray<{ triggers: ReadonlyArray<string>; expan
 		expansions: ["agent", "dispatch", "fleet", "profile", "worker", "journal", "run"],
 	},
 	{
-		triggers: ["model", "models", "provider", "runtime", "target", "targets", "endpoint"],
+		triggers: ["model", "models", "provider", "runtime", "connection", "connections", "target", "targets", "endpoint"],
 		expansions: ["catalog", "model", "probe", "provider", "runtime", "target", "wireModels"],
 	},
 	{

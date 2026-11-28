@@ -94,7 +94,7 @@ function unpricedLoop(
 		},
 	} as unknown as ProvidersContract;
 	const settings = structuredClone(DEFAULT_SETTINGS);
-	settings.chat.target = target.id;
+	settings.chat.connection = target.id;
 	settings.chat.model = "chat";
 	settings.chat.thinkingLevel = "off";
 	settings.chat.prewarm = prewarm;
@@ -334,8 +334,8 @@ it("the triage side round passes the cost ceiling under purpose triage, and the 
 		capabilities: { chat: true, vision: true, contextWindow: 8192, maxTokens: 1024 },
 	};
 	const visionSettings = structuredClone(DEFAULT_SETTINGS);
-	visionSettings.targets.push(visionTarget);
-	visionSettings.fleet.profiles.vision = { target: visionTarget.id, model: "minicpm", thinkingLevel: "off" };
+	visionSettings.connections.push(visionTarget);
+	visionSettings.fleet.profiles.vision = { connection: visionTarget.id, model: "minicpm", thinkingLevel: "off" };
 	const visionProviders = {
 		getTarget: (id: string) => (id === visionTarget.id ? visionTarget : null),
 		getRuntime: (id: string) => (id === "llamacpp" ? llamacpp : null),

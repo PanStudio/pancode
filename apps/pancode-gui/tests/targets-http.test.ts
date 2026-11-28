@@ -88,11 +88,11 @@ test("targets HTTP: real CLI use/remove, typed follow-up reads, redaction and of
 			);
 			const settings = await json(await h.request(`/api/settings?workspace=${workspace.id}`), SettingsReport);
 			assert.equal(
-				settings.rows.find((row) => row.key === "chat.target")?.value,
+				settings.rows.find((row) => row.key === "chat.connection")?.value,
 				action === "use" ? "fixture-target" : null,
 			);
 			assert.equal(
-				settings.rows.find((row) => row.key === "fleet.default.target")?.value,
+				settings.rows.find((row) => row.key === "fleet.default.connection")?.value,
 				action === "use" ? "fixture-target" : null,
 			);
 			if (action === "use") assert.deepEqual(op.result.settings, settings);

@@ -291,13 +291,13 @@ function fixture(
 ) {
 	const settings = structuredClone(DEFAULT_SETTINGS);
 	settings.chat.prewarm = false;
-	settings.chat.target = target.id;
+	settings.chat.connection = target.id;
 	settings.chat.model = model.id;
 	// "high" on this on/off route runs as "low"; the recovery notice names the level the operator chose (RV-2).
 	settings.chat.thinkingLevel =
 		initialMode === "overthink" || initialMode === "loop" ? "high" : initialMode === "overthink-always" ? "low" : "off";
-	settings.targets = [{ ...target, defaultModel: model.id }];
-	if (visionCapable && settings.targets[0]) settings.targets[0].capabilities = { vision: true };
+	settings.connections = [{ ...target, defaultModel: model.id }];
+	if (visionCapable && settings.connections[0]) settings.connections[0].capabilities = { vision: true };
 	const runtime: RuntimeDescriptor = {
 		...litellm,
 		auth: "none",

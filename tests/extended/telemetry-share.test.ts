@@ -92,7 +92,7 @@ test("a content-free share drops a planted secret, verifies as an archive, and i
 				source: "file",
 				paths: {
 					hotReload: [`providers.key=${SECRET}`],
-					nextTurn: [`targets.0.lmstudio.models.${CONFIG_KEY}.load`],
+					nextTurn: [`connections.0.lmstudio.models.${CONFIG_KEY}.load`],
 					restartRequired: [],
 				},
 				before: telemetryCommitment("config", { before: true }),
@@ -151,7 +151,7 @@ test("a content-free share drops a planted secret, verifies as an archive, and i
 			providers: { local: { password: PASSWORD } },
 			workspace: PRIVATE_PATH,
 			funding: { team: { scheme: "declared", payer: "employer", fee: { amount: 1234.5678, currency: "USD" } } },
-			targets: [
+			connections: [
 				{
 					id: "local",
 					funding: { pool: "team" },
@@ -328,7 +328,7 @@ test("a content-free share drops a planted secret, verifies as an archive, and i
 		ok(structuralBytes.includes("sandbox.launched") && structuralBytes.includes('"dropped":3'));
 		ok(structuralBytes.includes('"port":8443') && structuralBytes.includes('"reason":"ungranted"'));
 		ok(!structuralBytes.includes("exfil.test"), "a destination host left in the structural archive");
-		// Funding pools and each target's binding are private funding metadata under every profile (S10).
+		// Funding pools and each connection's binding are private funding metadata under every profile (S10).
 		const reportPath = join(root, "report.tar.gz");
 		await writeShare(planShare({ scopes, skipped, profile: "report", source: freshShareSource(), writer }), reportPath);
 		for (const shared of [structuralBytes, gunzipSync(await readFile(reportPath)).toString("utf8")])

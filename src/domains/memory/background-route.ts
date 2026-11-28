@@ -266,13 +266,13 @@ export function createBackgroundMemoryModelClient(
 			timeoutMs,
 			bus,
 			"chat-default",
-			settings.targets,
+			settings.connections,
 			admitModelFlow,
 			budget,
 			thinkingLevel,
 		);
 	}
-	const chatTarget = settings.chat.target?.trim();
+	const chatTarget = settings.chat.connection?.trim();
 	const chatModel = settings.chat.model?.trim();
 	const sameRoute = configuredTarget === chatTarget && configuredModel === chatModel;
 	if (fallbackOnly && sameRoute) return null;
@@ -286,7 +286,7 @@ export function createBackgroundMemoryModelClient(
 				timeoutMs,
 				bus,
 				"dedicated",
-				settings.targets,
+				settings.connections,
 				admitModelFlow,
 				budget,
 				thinkingLevel,
@@ -308,7 +308,7 @@ export function createBackgroundMemoryModelClient(
 				timeoutMs,
 				bus,
 				"chat-fallback",
-				settings.targets,
+				settings.connections,
 				admitModelFlow,
 				budget,
 				thinkingLevel,
@@ -932,7 +932,7 @@ export function createBackgroundMemoryRouting(
 		getModelMaxTokens: (configured: number): number => route?.modelMaxTokens(configured) ?? configured,
 		backgroundEndpointBusy: (): boolean => {
 			if (route?.endpointKey == null || snapshot === undefined) return false;
-			return backgroundMemoryEndpointBusy(providers, route.endpointKey, snapshot.targets);
+			return backgroundMemoryEndpointBusy(providers, route.endpointKey, snapshot.connections);
 		},
 	};
 }

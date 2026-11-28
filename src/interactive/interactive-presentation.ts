@@ -457,7 +457,7 @@ export function createInteractivePresentation(deps: InteractivePresentationDeps)
 			const current = deps.getSettings?.();
 			const capabilities = resolveModelRuntimeCapabilitiesForProviders(
 				deps.providers,
-				current?.chat?.target,
+				current?.chat?.connection,
 				current?.chat?.model,
 			)?.capabilities;
 			const preload = selectProjectPreload(renderEffectivePromptContext(cwd), capabilities?.tools ?? null, {
@@ -589,12 +589,12 @@ export function createInteractivePresentation(deps: InteractivePresentationDeps)
 	const thinkingNotesDelivered = new Set<string>();
 	const thinkingNoteKey = (): string => {
 		const chat = deps.getSettings?.()?.chat;
-		return `${routeKey(chat?.target, chat?.model)}#${chat?.thinkingLevel ?? "off"}`;
+		return `${routeKey(chat?.connection, chat?.model)}#${chat?.thinkingLevel ?? "off"}`;
 	};
 	const recordReasoningRoute = (event: ChatLoopEvent): void => {
 		if (event.type !== "thinking_delta" || event.delta.length === 0) return;
 		const current = deps.getSettings?.();
-		const key = routeKey(current?.chat?.target, current?.chat?.model);
+		const key = routeKey(current?.chat?.connection, current?.chat?.model);
 		if (reasoningRoutes.has(key)) return;
 		reasoningRoutes.add(key);
 		deps.tui.requestRender();
@@ -619,9 +619,9 @@ export function createInteractivePresentation(deps: InteractivePresentationDeps)
 	const routeNoticeStands = (notice: Notification): boolean => {
 		if (!notice.key?.startsWith("route-applied:")) return true;
 		const route = deps.getSettings?.().chat;
-		if (notice.key !== routeAppliedNoticeKey(route?.target, route?.model)) return false;
+		if (notice.key !== routeAppliedNoticeKey(route?.connection, route?.model)) return false;
 		if (notice.level !== "warning") return true;
-		return deps.providers.list().find((status) => status.target.id === route?.target)?.health.status === "down";
+		return deps.providers.list().find((status) => status.target.id === route?.connection)?.health.status === "down";
 	};
 	const notifications = factories.createNotificationCenter({
 		onChange: () => {

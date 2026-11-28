@@ -177,7 +177,7 @@ describe("playbook CLI variables", () => {
 		);
 		writeFileSync(
 			join(root, ".pancode", "settings.local.yaml"),
-			"version: 2\ntargets:\n  - id: project-route\n    runtime: openai-compat\n    url: http://127.0.0.1:1/v1\n    defaultModel: fixture\n",
+			"version: 2\nconnections:\n  - id: project-route\n    runtime: openai-compat\n    url: http://127.0.0.1:1/v1\n    defaultModel: fixture\n",
 		);
 		// Version 5 enforces write boundaries, which compare a git checkout.
 		execFileSync("git", ["init", "-q"], { cwd: root });
@@ -185,7 +185,7 @@ describe("playbook CLI variables", () => {
 		// SPEC L7a row 7: exit 2, as `fleet run routed` refuses it.
 		strictEqual(untrusted.code, 2);
 		// The preflight fleet run shares, so the diagnostic reads the same from both commands.
-		match(untrusted.stderr, /preflight failed: unknown target 'project-route' at step 'build'/);
+		match(untrusted.stderr, /preflight failed: unknown connection 'project-route' at step 'build'/);
 		recordProjectSurfaceTrust(root, "settings", captureProjectSurface(root, "settings").contentHash as string);
 		const trusted = captured(() => runPlaybookValidate(["routed"]));
 		strictEqual(trusted.code, 0, `${trusted.stdout}${trusted.stderr}`);
@@ -218,13 +218,13 @@ describe("playbook CLI variables", () => {
 		);
 		process.env.HOME = env.dir;
 		updateSettings((settings) => {
-			settings.targets.push({
+			settings.connections.push({
 				id: "fixture",
 				runtime: "openai-compat",
 				url: "http://127.0.0.1:1/v1",
 				defaultModel: "fixture",
 			});
-			settings.fleet.default.target = "fixture";
+			settings.fleet.default.connection = "fixture";
 			settings.fleet.default.model = "fixture";
 		});
 		const { runFleetCommand } = await import("../../src/cli/fleet.js");
@@ -257,13 +257,13 @@ describe("playbook CLI variables", () => {
 		);
 		process.env.HOME = env.dir;
 		updateSettings((settings) => {
-			settings.targets.push({
+			settings.connections.push({
 				id: "fixture",
 				runtime: "openai-compat",
 				url: "http://127.0.0.1:1/v1",
 				defaultModel: "fixture",
 			});
-			settings.fleet.default.target = "fixture";
+			settings.fleet.default.connection = "fixture";
 			settings.fleet.default.model = "fixture";
 		});
 		const cli = (args: ReadonlyArray<string>) =>

@@ -96,12 +96,12 @@ export type EntrySettingId =
 	| `fleet.profiles.${string}`
 	| `fleet.agentProfiles.${string}`
 	| "systemOne.use"
-	| `targets.${string}`
+	| `connections.${string}`
 	| `fleet.nodes.${string}`
 	| `fleet.endpoints.${string}`;
 export type EditableSettingId = keyof typeof SETTINGS_LABELS_BY_ID | EntrySettingId;
 export type GroupHeaderId = `settings.group.${string}`;
-type TargetsCtaId = "targets.add-cta" | "targets.url-cta";
+type TargetsCtaId = "connections.add-cta" | "connections.url-cta";
 export type SettingsCenterRowId =
 	| EditableSettingId
 	| GroupHeaderId

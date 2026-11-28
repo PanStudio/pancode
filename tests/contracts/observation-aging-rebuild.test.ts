@@ -128,14 +128,14 @@ function harness(
 ) {
 	const settings = structuredClone(DEFAULT_SETTINGS);
 	settings.chat.prewarm = false;
-	settings.chat.target = targetA.id;
+	settings.chat.connection = targetA.id;
 	settings.chat.model = model.id;
 	settings.chat.thinkingLevel = "off";
 	const contextWindow = window ?? 131072;
-	settings.targets = [
+	settings.connections = [
 		{ ...targetA, defaultModel: model.id, ...(window ? { capabilities: { contextWindow } } : {}) },
 		{ ...targetB, defaultModel: model.id },
-	] as typeof settings.targets;
+	] as typeof settings.connections;
 	const runtime: RuntimeDescriptor = {
 		...litellm,
 		auth: "none",
@@ -248,7 +248,7 @@ it("a model switch that rebuilds the agent keeps the marker and writes no second
 		const built = counter.agents;
 
 		// Another target with the same model rebuilds the agent rather than hot-swapping it.
-		settings.chat.target = targetB.id;
+		settings.chat.connection = targetB.id;
 		await loop.submit("Now answer.");
 		await loop.whenSettled();
 		strictEqual(counter.agents, built + 1, "the switch built a new agent");

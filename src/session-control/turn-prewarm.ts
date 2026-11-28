@@ -231,7 +231,7 @@ export function createTurnPrewarm(deps: TurnPrewarmDeps): TurnPrewarm {
 		// resolved runtime is checked again below, but asking here means a target
 		// that was never eligible costs no capability probe, no agent, and no
 		// notice from either.
-		const targetId = deps.getSettings().chat?.target?.trim();
+		const targetId = deps.getSettings().chat?.connection?.trim();
 		const runtimeId = targetId ? deps.providers.getTarget(targetId)?.runtime : undefined;
 		if (
 			runtimeId === undefined ||
@@ -246,7 +246,7 @@ export function createTurnPrewarm(deps: TurnPrewarmDeps): TurnPrewarm {
 	const runOnce = async (trigger: PrewarmTrigger, controller: AbortController): Promise<PrewarmOutcome> => {
 		const refusal = admissionRefusal();
 		if (refusal) return { ran: false, reason: refusal };
-		const targetId = deps.getSettings().chat.target;
+		const targetId = deps.getSettings().chat.connection;
 		const target = targetId ? deps.providers.getTarget(targetId) : null;
 		if (!target) return { ran: false, reason: "unresolved" };
 		const targetSettings = JSON.stringify(target);
@@ -267,7 +267,7 @@ export function createTurnPrewarm(deps: TurnPrewarmDeps): TurnPrewarm {
 		const selectedModel = deps.getSettings().chat.model ?? target.defaultModel ?? "";
 		const stillSelected = () =>
 			JSON.stringify(deps.providers.getTarget(target.id)) === targetSettings &&
-			deps.getSettings().chat.target === target.id &&
+			deps.getSettings().chat.connection === target.id &&
 			(deps.getSettings().chat.model ?? target.defaultModel ?? "") === selectedModel;
 		const canSend = () =>
 			!admissionRefusal() && !detached.has(controller) && !controller.signal.aborted && stillSelected();
@@ -526,7 +526,7 @@ export function createTurnPrewarm(deps: TurnPrewarmDeps): TurnPrewarm {
 		)
 			.then((outcome) => {
 				if (deps.isLatencySurface()) {
-					const { target, model } = deps.getSettings().chat;
+					const { connection: target, model } = deps.getSettings().chat;
 					telemetryHub().emit("prewarm.decided", {
 						round: "prompt",
 						trigger,

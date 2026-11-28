@@ -86,14 +86,14 @@ function fixture(extra: NodeJS.ProcessEnv = {}): Fixture {
 	writeFileSync(
 		join(home.dir, "config", "settings.yaml"),
 		`version: 2
-targets:
+connections:
   - id: handoff-local
     runtime: lmstudio
     url: ${endpoint}
     defaultModel: handoff-model
     lifecycle: user-managed
 chat:
-  target: handoff-local
+  connection: handoff-local
   model: handoff-model
 `,
 	);

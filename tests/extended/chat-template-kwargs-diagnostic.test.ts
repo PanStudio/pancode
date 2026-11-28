@@ -27,7 +27,7 @@ import { packagedModelCatalog } from "../harness/packaged-model-catalog.js";
 
 function providersFor(runtimeId: "lmstudio" | "llamacpp"): ProvidersContract {
 	const settings = structuredClone(DEFAULT_SETTINGS);
-	settings.targets = [
+	settings.connections = [
 		{
 			id: "fleet",
 			runtime: runtimeId,
@@ -36,7 +36,7 @@ function providersFor(runtimeId: "lmstudio" | "llamacpp"): ProvidersContract {
 			wireModels: ["nvidia-nemotron-3.5-lightning-30b-a3b"],
 		},
 	];
-	settings.fleet.default.target = "fleet";
+	settings.fleet.default.connection = "fleet";
 	settings.fleet.default.model = "nvidia-nemotron-3.5-lightning-30b-a3b";
 	const runtime: RuntimeDescriptor = {
 		id: runtimeId,
@@ -108,7 +108,7 @@ describe("template-option advisory presentation", () => {
 		ok(target);
 		target.url = fixture.url;
 		const settings = structuredClone(DEFAULT_SETTINGS);
-		settings.chat.target = "fleet";
+		settings.chat.connection = "fleet";
 		settings.chat.model = fixture.modelId;
 		settings.chat.prewarm = false;
 		settings.chat.thinkingLevel = "off";

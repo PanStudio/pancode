@@ -53,9 +53,9 @@ for (const continuation of [false, true])
 			const settings = structuredClone(DEFAULT_SETTINGS);
 			settings.chat.prewarm = false;
 			const context = dispatchStubContext({ settings });
-			const target = settings.targets[0];
+			const target = settings.connections[0];
 			ok(target);
-			settings.chat.target = target.id;
+			settings.chat.connection = target.id;
 			settings.chat.model = target.defaultModel ?? "gpt-4o";
 			const entries: SessionEntry[] = [];
 			let leaf: string | null = null;
@@ -228,9 +228,9 @@ it("the worker honesty rail exempts detached collection but still warns on ordin
 	const settings = structuredClone(DEFAULT_SETTINGS);
 	settings.chat.prewarm = false;
 	const context = dispatchStubContext({ settings });
-	const target = settings.targets[0];
+	const target = settings.connections[0];
 	ok(target);
-	settings.chat.target = target.id;
+	settings.chat.connection = target.id;
 	settings.chat.model = target.defaultModel ?? "gpt-4o";
 	let source: "injected" | "monitor" | "pending" | "ordinary" = "injected";
 	const warnings: string[] = [];
@@ -334,9 +334,9 @@ async function cancelBeforeAdmission(sealAfterMs: number, check: (run: Cancelled
 	const settings = structuredClone(DEFAULT_SETTINGS);
 	settings.chat.prewarm = false;
 	const context = dispatchStubContext({ settings });
-	const target = settings.targets[0];
+	const target = settings.connections[0];
 	ok(target);
-	settings.chat.target = target.id;
+	settings.chat.connection = target.id;
 	settings.chat.model = target.defaultModel ?? "gpt-4o";
 	const entries: SessionEntry[] = [];
 	const session = {

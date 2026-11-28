@@ -283,7 +283,7 @@ export function registerBootTurnHooks(input: BootTurnHooksInput) {
 					dispatch,
 					bus,
 					...(agents ? { getAgentRoleFacts: agentRoleFactsResolver((id: string) => agents.getSpec(id)) } : {}),
-					target: (effectiveSettingsForDispatch?.() ?? getCurrentSettings()).safety.review.target,
+					target: (effectiveSettingsForDispatch?.() ?? getCurrentSettings()).safety.review.connection,
 					...(cells.deferredWatchdogNoticeSink ? { emitNotice: cells.deferredWatchdogNoticeSink } : {}),
 				}),
 		}),

@@ -114,7 +114,7 @@ async function offlineSystemOneDeps(live: Readonly<PancodeSettings>) {
 	const { oneShotTokens } = await import("../domains/providers/one-shot.js");
 	const { runOutOfTurnRound } = await import("../session-control/side-question.js");
 	const auth = openAuthStorage();
-	const getTarget = (id: string) => live.targets.find((entry) => entry.id === id) ?? null;
+	const getTarget = (id: string) => live.connections.find((entry) => entry.id === id) ?? null;
 	const getRuntime = (id: string) => BUILTIN_RUNTIMES.find((runtime) => runtime.id === id) ?? null;
 	const authPort = {
 		resolveForTarget: (

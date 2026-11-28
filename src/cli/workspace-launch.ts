@@ -186,7 +186,7 @@ export async function maybeLaunchWorkspace(
 		outputStyle: settings.interface.outputDetail,
 		cwd: process.cwd(),
 		pancodeArgv: pancodeArgv(),
-		pancodeEnv: { ...pancodePaneEnv(process.env, settings.targets), ...terminalHandover() },
+		pancodeEnv: { ...pancodePaneEnv(process.env, settings.connections), ...terminalHandover() },
 		notice: (line) => process.stderr.write(`PanCode: ${line}.\n`),
 	});
 	if (result.status === "fallback") {

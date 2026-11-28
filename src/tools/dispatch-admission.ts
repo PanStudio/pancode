@@ -131,11 +131,15 @@ function councilSettingsFromArgs(
 	if (rosterName !== undefined) {
 		const roster = deps.getWorkerRosters?.()[rosterName];
 		if (roster === undefined) return { ok: false, message: `council_roster_unknown: ${rosterName}` };
-		// A roster member names its thinking level as `thinkingLevel`, the
-		// settings key; the council member carries it as `thinking`.
+		// A roster member names its connection and thinking level by their settings
+		// keys; the council member carries them as `target` and `thinking`.
 		members = roster.members.map((member) => {
-			const { thinkingLevel, ...rest } = member as typeof member & { thinkingLevel?: string };
-			return { ...rest, ...(rest.thinking === undefined && thinkingLevel ? { thinking: thinkingLevel } : {}) };
+			const { thinkingLevel, connection, ...rest } = member as typeof member & { thinkingLevel?: string };
+			return {
+				...rest,
+				target: connection,
+				...(rest.thinking === undefined && thinkingLevel ? { thinking: thinkingLevel } : {}),
+			};
 		});
 	} else {
 		if (!Array.isArray(args.members)) return { ok: false, message: "council_members_out_of_range" };
@@ -143,7 +147,7 @@ function councilSettingsFromArgs(
 		for (const raw of args.members) {
 			if (!isRecord(raw)) return { ok: false, message: "council_members_out_of_range" };
 			const label = stringArg(raw, "label");
-			const target = stringArg(raw, "target");
+			const target = stringArg(raw, "connection");
 			if (label === undefined || target === undefined || !COUNCIL_LABEL.test(label)) {
 				return { ok: false, message: "council_members_out_of_range" };
 			}
@@ -191,9 +195,9 @@ function councilSettingsFromArgs(
 	}
 	const judge = isRecord(args.judge)
 		? Object.fromEntries(
-				["agent", "model", "target", "node"].flatMap((key) => {
+				["agent", "model", "connection", "node"].flatMap((key) => {
 					const value = stringArg(args.judge as Record<string, unknown>, key);
-					return value === undefined ? [] : [[key, value]];
+					return value === undefined ? [] : [[key === "connection" ? "target" : key, value]];
 				}),
 			)
 		: undefined;
@@ -230,7 +234,7 @@ function reviewSettingsFromArgs(
 	if (node) review.node = node;
 	const model = stringArg(record, "model");
 	if (model) review.model = model;
-	const target = stringArg(record, "target");
+	const target = stringArg(record, "connection");
 	if (target) review.target = target;
 	return { ok: true, review };
 }
@@ -252,12 +256,12 @@ function competeSettingsFromArgs(args: Record<string, unknown>):
 		for (const entry of args.candidates) {
 			if (
 				!isRecord(entry) ||
-				Object.keys(entry).some((key) => key !== "target" && key !== "model") ||
+				Object.keys(entry).some((key) => key !== "connection" && key !== "model") ||
 				Object.values(entry).some((value) => typeof value !== "string")
 			) {
 				return { ok: false, message: candidatesMessage };
 			}
-			const target = stringArg(entry, "target");
+			const target = stringArg(entry, "connection");
 			const model = stringArg(entry, "model");
 			candidateRoutes.push({
 				...(target !== undefined ? { target } : {}),
@@ -282,9 +286,9 @@ function competeSettingsFromArgs(args: Record<string, unknown>):
 	const routes = candidateRoutes !== undefined ? { candidateRoutes } : {};
 	if (!isRecord(args.judge)) return { ok: true, compete: { candidates, ...routes } };
 	const judge: { agent?: string; model?: string; target?: string; node?: string } = {};
-	for (const key of ["agent", "model", "target", "node"] as const) {
+	for (const key of ["agent", "model", "connection", "node"] as const) {
 		const value = stringArg(args.judge, key);
-		if (value !== undefined) judge[key] = value;
+		if (value !== undefined) judge[key === "connection" ? "target" : key] = value;
 	}
 	return { ok: true, compete: { candidates, ...routes, judge } };
 }

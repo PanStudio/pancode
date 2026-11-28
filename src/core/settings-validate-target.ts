@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
-/** One `targets[]` entry: capabilities, auth, pricing, the LM Studio and LiteLLM blocks, and the funding pools and bindings it draws on. */
+/** One `connections[]` entry: capabilities, auth, pricing, the LM Studio and LiteLLM blocks, and the funding pools and bindings it draws on. */
 
 import type { PancodeSettings } from "./config.js";
 import type { FundingBinding, FundingPool } from "./funding-config.js";
@@ -45,7 +45,7 @@ const THINKING_FORMATS = [
 const STRUCTURED_OUTPUTS = ["json-schema", "gbnf", "xgrammar", "none"] as const;
 export const TOOL_GOVERNANCE = ["pancode-policy", "agent-managed", "deny-all"] as const;
 
-type TargetCapabilities = NonNullable<PancodeSettings["targets"][number]["capabilities"]>;
+type TargetCapabilities = NonNullable<PancodeSettings["connections"][number]["capabilities"]>;
 
 function validateCapabilities(issues: Issues, path: string, value: unknown): TargetCapabilities | undefined {
 	if (!isRecord(value)) {
@@ -101,13 +101,13 @@ function validateAuth(
 	issues: Issues,
 	path: string,
 	value: unknown,
-): PancodeSettings["targets"][number]["auth"] | undefined {
+): PancodeSettings["connections"][number]["auth"] | undefined {
 	if (!isRecord(value)) {
 		issues.add(path, `expected a map, got ${describe(value)}`);
 		return undefined;
 	}
 	issues.unknownKeys(path, value, ["apiKeyEnvVar", "apiKeyRef", "oauthProfile", "headers"]);
-	const out: NonNullable<PancodeSettings["targets"][number]["auth"]> = {};
+	const out: NonNullable<PancodeSettings["connections"][number]["auth"]> = {};
 	for (const key of ["apiKeyEnvVar", "apiKeyRef", "oauthProfile"] as const) {
 		if (key in value) {
 			const v = expectString(issues, `${path}.${key}`, value[key]);
@@ -125,7 +125,7 @@ function validatePricing(
 	issues: Issues,
 	path: string,
 	value: unknown,
-): PancodeSettings["targets"][number]["pricing"] | undefined {
+): PancodeSettings["connections"][number]["pricing"] | undefined {
 	if (value === "free") return value;
 	if (!isRecord(value)) {
 		issues.add(path, `expected 'free' or a map, got ${describe(value)}`);
@@ -135,7 +135,7 @@ function validatePricing(
 	const input = expectNumber(issues, `${path}.input`, value.input, { min: 0 });
 	const output = expectNumber(issues, `${path}.output`, value.output, { min: 0 });
 	if (input === undefined || output === undefined) return undefined;
-	const out: Exclude<NonNullable<PancodeSettings["targets"][number]["pricing"]>, "free"> = { input, output };
+	const out: Exclude<NonNullable<PancodeSettings["connections"][number]["pricing"]>, "free"> = { input, output };
 	if ("cacheRead" in value) {
 		const v = expectNumber(issues, `${path}.cacheRead`, value.cacheRead, { min: 0 });
 		if (v !== undefined) out.cacheRead = v;
@@ -147,7 +147,7 @@ function validatePricing(
 	return out;
 }
 
-type LmStudioLoadSetting = NonNullable<NonNullable<PancodeSettings["targets"][number]["lmstudio"]>["load"]>;
+type LmStudioLoadSetting = NonNullable<NonNullable<PancodeSettings["connections"][number]["lmstudio"]>["load"]>;
 
 function validateLmStudioLoad(issues: Issues, path: string, value: unknown): LmStudioLoadSetting | undefined {
 	if (!isRecord(value)) {
@@ -183,13 +183,13 @@ function validateLmStudioSettings(
 	issues: Issues,
 	path: string,
 	value: unknown,
-): PancodeSettings["targets"][number]["lmstudio"] | undefined {
+): PancodeSettings["connections"][number]["lmstudio"] | undefined {
 	if (!isRecord(value)) {
 		issues.add(path, `expected a map, got ${describe(value)}`);
 		return undefined;
 	}
 	issues.unknownKeys(path, value, ["load", "models", "request"]);
-	const out: NonNullable<PancodeSettings["targets"][number]["lmstudio"]> = {};
+	const out: NonNullable<PancodeSettings["connections"][number]["lmstudio"]> = {};
 	if ("load" in value) {
 		const load = validateLmStudioLoad(issues, `${path}.load`, value.load);
 		if (load !== undefined) out.load = load;
@@ -247,13 +247,13 @@ function validateLiteLLMSettings(
 	issues: Issues,
 	path: string,
 	value: unknown,
-): PancodeSettings["targets"][number]["litellm"] | undefined {
+): PancodeSettings["connections"][number]["litellm"] | undefined {
 	if (!isRecord(value)) {
 		issues.add(path, `expected a map, got ${describe(value)}`);
 		return undefined;
 	}
 	issues.unknownKeys(path, value, ["request"]);
-	const out: NonNullable<PancodeSettings["targets"][number]["litellm"]> = {};
+	const out: NonNullable<PancodeSettings["connections"][number]["litellm"]> = {};
 	if ("request" in value) {
 		if (!isRecord(value.request)) {
 			issues.add(`${path}.request`, `expected a map, got ${describe(value.request)}`);
@@ -465,7 +465,7 @@ export function validateTarget(
 	path: string,
 	value: unknown,
 	funding: PancodeSettings["funding"],
-): PancodeSettings["targets"][number] | null {
+): PancodeSettings["connections"][number] | null {
 	if (!isRecord(value)) {
 		issues.add(path, `expected a map, got ${describe(value)}`);
 		return null;
@@ -495,7 +495,7 @@ export function validateTarget(
 	if (!("id" in value)) issues.add(`${path}.id`, "required");
 	if (!("runtime" in value)) issues.add(`${path}.runtime`, "required");
 	if (id === undefined || runtime === undefined) return null;
-	const target: PancodeSettings["targets"][number] = { id, runtime };
+	const target: PancodeSettings["connections"][number] = { id, runtime };
 	if ("url" in value) {
 		const v = expectString(issues, `${path}.url`, value.url);
 		if (v !== undefined) target.url = v;
@@ -631,7 +631,7 @@ export function validateTarget(
 			issues.add(`${path}.ollama`, `expected a map, got ${describe(value.ollama)}`);
 		} else {
 			issues.unknownKeys(`${path}.ollama`, value.ollama, ["numCtx"]);
-			const ollama: NonNullable<PancodeSettings["targets"][number]["ollama"]> = {};
+			const ollama: NonNullable<PancodeSettings["connections"][number]["ollama"]> = {};
 			if ("numCtx" in value.ollama) {
 				const parsed = expectInteger(issues, `${path}.ollama.numCtx`, value.ollama.numCtx, { min: 1 });
 				if (parsed !== undefined) ollama.numCtx = parsed;

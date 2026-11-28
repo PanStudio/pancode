@@ -9,7 +9,7 @@ import { createDispatchBoardView } from "../../src/interactive/dispatch-board.js
 import { formatFleetRunApprovalBody } from "../../src/interactive/overlays/fleet-run-approval.js";
 import { footerState } from "../harness/footer-fixture.js";
 
-test("board and fleet approval share target labels without the observe glyph", () => {
+test("board and fleet approval share connection labels without the observe glyph", () => {
 	const row = footerState().dispatchRows[0];
 	ok(row);
 	const board = createDispatchBoardView(
@@ -43,7 +43,7 @@ test("board and fleet approval share target labels without the observe glyph", (
 			if (expanded) board.toggleDetail();
 			const rows = board.render(width);
 			// The route is a fact of the open detail at standard; the folded facts are doing, task, slots and started.
-			if (expanded) match(rows.map(stripTerminalSequences).join("\n"), /target +blade · dynamo\/qwopus/);
+			if (expanded) match(rows.map(stripTerminalSequences).join("\n"), /connection +blade · dynamo\/qwopus/);
 			for (const line of rows) ok(visibleWidth(line) <= width);
 		}
 		// A step's route is provenance the plan review shows at detailed.

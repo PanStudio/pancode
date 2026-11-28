@@ -131,7 +131,7 @@ async function resolveCompactionModel(
 	signal?: AbortSignal,
 ): Promise<CompactionResolution | null> {
 	const override = settings.context.compaction.model;
-	let targetId = settings.chat.target;
+	let targetId = settings.chat.connection;
 	let wireModelId = settings.chat.model;
 	if (override !== undefined && override !== null) {
 		let selected: ReturnType<typeof resolveModelReference>;
@@ -300,7 +300,7 @@ export async function runCompactionFlow(
 		const resolved = await resolveCompactionModel(settings, providers, budget?.signal);
 		budget?.signal?.throwIfAborted();
 		if (!resolved) {
-			throw new Error("no model configured; set chat.target + chat.model");
+			throw new Error("no model configured; set chat.connection + chat.model");
 		}
 		// Summarize only the active branch: after a /tree switch the raw file
 		// still holds abandoned sibling turns, and a summary that folds them in

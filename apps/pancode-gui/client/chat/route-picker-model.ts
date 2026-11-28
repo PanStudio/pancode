@@ -20,7 +20,7 @@ export function routeDraft(
 	if (scope === "conversation" && !config) return null;
 	const chat = settings?.settings.chat;
 	return {
-		target: (scope === "conversation" && config?.target !== undefined ? config.target : chat?.target) ?? "",
+		target: (scope === "conversation" && config?.target !== undefined ? config.target : chat?.connection) ?? "",
 		model:
 			(scope === "conversation" ? config?.options.find((row) => row.id === "model")?.currentValue : chat?.model) ?? "",
 		thinking:
@@ -49,7 +49,7 @@ export function conversationChanges(
 
 export function savedRoutePatch(draft: RouteDraft, reported: RouteDraft): SafeSettingsPatch {
 	const patch: SafeSettingsPatch = {};
-	if (draft.target !== reported.target) patch["chat.target"] = draft.target || null;
+	if (draft.target !== reported.target) patch["chat.connection"] = draft.target || null;
 	if (draft.model !== reported.model) patch["chat.model"] = draft.model || null;
 	if (draft.thinking !== reported.thinking)
 		patch["chat.thinkingLevel"] = draft.thinking as NonNullable<SafeSettingsPatch["chat.thinkingLevel"]>;

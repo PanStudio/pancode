@@ -427,7 +427,7 @@ test("footer producer follows selected runtime changes instead of picking the bu
 			],
 			knowledgeBase: null,
 		} as never,
-		getSettings: () => ({ ...DEFAULT_SETTINGS, chat: { ...DEFAULT_SETTINGS.chat, target, model: null } }),
+		getSettings: () => ({ ...DEFAULT_SETTINGS, chat: { ...DEFAULT_SETTINGS.chat, connection: target, model: null } }),
 		getQuotaSnapshots: () => quotaRows(criticalAccounts()),
 		getTerminalColumns: () => 160,
 		getTerminalRows: () => 48,

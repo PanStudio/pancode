@@ -141,7 +141,7 @@ async function askChoice(
 }
 
 async function runTargetWizard(io: SectionIo, options: Parameters<typeof runOnboardingWizard>[1]): Promise<void> {
-	const before = readSettings().targets;
+	const before = readSettings().connections;
 	io.rl.clearScreen();
 	const code = await runOnboardingWizard(io.streams, options);
 	if (code === 130) throw new ConfigureNavigation("quit");
@@ -151,7 +151,7 @@ async function runTargetWizard(io: SectionIo, options: Parameters<typeof runOnbo
 		io.warn("Connection settings were not saved.");
 		return;
 	}
-	const changed = readSettings().targets.find(
+	const changed = readSettings().connections.find(
 		(target) => JSON.stringify(target) !== JSON.stringify(before.find((entry) => entry.id === target.id)),
 	);
 	if (changed) io.ok(`Connection ${changed.id} saved`);
@@ -210,13 +210,13 @@ async function declareFundingPool(rl: ConfigurePrompts): Promise<FundingPool> {
 
 async function configureTargetFunding(io: SectionIo): Promise<void> {
 	const settings = readSettings();
-	const targets = settings.targets.map((target) => target.id);
+	const targets = settings.connections.map((target) => target.id);
 	if (targets.length === 0) {
 		io.warn("Add a connection before binding a funding pool.");
 		return;
 	}
 	const id = await io.rl.choose("Connection for funding", targets, targets[0] ?? "");
-	const target = settings.targets.find((entry) => entry.id === id);
+	const target = settings.connections.find((entry) => entry.id === id);
 	if (target === undefined) throw new Error("choose a configured connection");
 	const evidence = targetFundingEvidence(target);
 	const declared = Object.keys(settings.funding).filter((key) => settings.funding[key]?.scheme === "declared");
@@ -263,7 +263,7 @@ async function configureTargetFunding(io: SectionIo): Promise<void> {
 			throw new Error("choose a funding action from the list");
 	}
 	updateSettings((draft) => {
-		const current = draft.targets.find((entry) => entry.id === id);
+		const current = draft.connections.find((entry) => entry.id === id);
 		if (current === undefined) throw new Error(`connection ${id} no longer exists`);
 		if (binding === undefined) {
 			delete current.funding;
@@ -291,7 +291,7 @@ const CONTENT_PARTS = {
 		fields: () => {
 			const settings = readSettings();
 			const rows: Array<readonly [string, string]> = [];
-			for (const target of settings.targets) {
+			for (const target of settings.connections) {
 				rows.push([
 					target.id,
 					`${target.runtime} · ${target.url ?? "provider default"} · ${target.defaultModel ?? "no default model"}`,
@@ -303,12 +303,12 @@ const CONTENT_PARTS = {
 		actions: [
 			{
 				label: "Add a connection",
-				place: "targets",
+				place: "connections",
 				hint: "register a provider endpoint",
 				run: async (io) => {
 					if (canRunOnboarding(io.streams)) {
 						await runTargetWizard(io, {
-							mode: readSettings().targets.length === 0 ? "first" : "add",
+							mode: readSettings().connections.length === 0 ? "first" : "add",
 							verify: io.verify,
 						});
 						return;
@@ -319,10 +319,10 @@ const CONTENT_PARTS = {
 			},
 			{
 				label: "Edit a connection",
-				place: "targets",
+				place: "connections",
 				hint: "endpoint, credentials, model, capabilities",
 				run: async (io) => {
-					const targets = readSettings().targets;
+					const targets = readSettings().connections;
 					if (targets.length === 0) return;
 					const id = await io.rl.choose(
 						"Connection to edit",
@@ -341,9 +341,9 @@ const CONTENT_PARTS = {
 			},
 			{
 				label: "Rename a connection",
-				place: "targets",
+				place: "connections",
 				run: async (io) => {
-					const ids = readSettings().targets.map((target) => target.id);
+					const ids = readSettings().connections.map((target) => target.id);
 					if (ids.length === 0) return;
 					const id = await io.rl.choose("Connection to rename", ids, ids[0] ?? "");
 					const name = await ask(io.rl, "New connection id", id);
@@ -358,10 +358,10 @@ const CONTENT_PARTS = {
 			},
 			{
 				label: "Remove a connection",
-				place: "targets",
+				place: "connections",
 				run: async (io) => {
 					const settings = readSettings();
-					const ids = settings.targets.map((target) => target.id);
+					const ids = settings.connections.map((target) => target.id);
 					if (ids.length === 0) {
 						io.warn("No connections to remove.");
 						return;
@@ -377,7 +377,7 @@ const CONTENT_PARTS = {
 			},
 			{
 				label: "Funding for a connection",
-				place: "targets[].funding",
+				place: "connections[].funding",
 				hint: "optional fee, grant or electricity facts; does not send requests",
 				run: configureTargetFunding,
 			},
@@ -387,7 +387,7 @@ const CONTENT_PARTS = {
 		fields: () => {
 			const settings = readSettings();
 			return [
-				["Chat connection", settings.chat.target ?? NONE],
+				["Chat connection", settings.chat.connection ?? NONE],
 				["Chat model", settings.chat.model ?? "(connection default)"],
 				["Chat thinking", settings.chat.thinkingLevel],
 				["Favorites", listOr(settings.chat.modelPicker.favorites)],
@@ -399,7 +399,7 @@ const CONTENT_PARTS = {
 		actions: [
 			{
 				label: "Choose the chat model",
-				controlPath: "chat.target",
+				controlPath: "chat.connection",
 				hint: "select a connection, then a model PanCode can list for it",
 				run: async (io) => assignTarget(io, "chat"),
 			},
@@ -409,7 +409,7 @@ const CONTENT_PARTS = {
 		fields: () => {
 			const settings = readSettings();
 			return [
-				["Fleet connection", settings.fleet.default.target ?? NONE],
+				["Fleet connection", settings.fleet.default.connection ?? NONE],
 				["Fleet model", settings.fleet.default.model ?? "(connection default)"],
 				["Fleet thinking", settings.fleet.default.thinkingLevel],
 				["Concurrency limit", concurrencyLabel(settings.fleet.concurrency)],
@@ -427,7 +427,7 @@ const CONTENT_PARTS = {
 		actions: [
 			{
 				label: "Choose the default fleet model",
-				controlPath: "fleet.default.target",
+				controlPath: "fleet.default.connection",
 				hint: "select a connection, then a model PanCode can list for it",
 				run: async (io) => assignTarget(io, "fleet"),
 			},
@@ -454,7 +454,7 @@ const CONTENT_PARTS = {
 		actions: [
 			{
 				label: "Choose the proactive-memory model",
-				controlPath: "context.memory.target",
+				controlPath: "context.memory.connection",
 				hint: "optional; with no memory model set, memory uses the chat route",
 				run: async (io) => assignTarget(io, "memory"),
 			},
@@ -819,11 +819,11 @@ function areaContent(area: SharedSettingsAreaId): Pick<SectionSpec, "fields" | "
 }
 
 const GUIDED_CONTROL_PATHS = new Set([
-	"chat.target",
+	"chat.connection",
 	"chat.model",
-	"fleet.default.target",
+	"fleet.default.connection",
 	"fleet.default.model",
-	"context.memory.target",
+	"context.memory.connection",
 	"context.memory.model",
 	"safety.autonomy",
 	"fleet.permissions.mode",
@@ -868,7 +868,7 @@ export const SECTIONS: ReadonlyArray<SectionSpec> = SHARED_SETTINGS_AREAS.map((a
 					const control = catalog.find(({ control }) => control.path === path)?.control;
 					return {
 						...action,
-						label: `${settingsPlacementForPath(path).group} · ${path.endsWith(".target") ? action.label : (control?.label ?? action.label)}`,
+						label: `${settingsPlacementForPath(path).group} · ${path.endsWith(".connection") ? action.label : (control?.label ?? action.label)}`,
 						hint: () => `${formatControlValue(getAtPath(readSettings(), path), path)} · ${control?.description ?? ""}`,
 					};
 				}),

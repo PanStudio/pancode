@@ -57,7 +57,7 @@ export async function copilotSignInReport(): Promise<CopilotSignInReport | null>
 	let active: boolean;
 	try {
 		const settings = readSettings();
-		targets = settings.targets.filter((target) => target.runtime === "copilot-sdk").map((target) => target.id);
+		targets = settings.connections.filter((target) => target.runtime === "copilot-sdk").map((target) => target.id);
 		active = targets.some((id) => targetIsActive(settings, id));
 	} catch {
 		// An unreadable settings file has its own doctor row.

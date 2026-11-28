@@ -28,9 +28,9 @@ test("an ACP client's session and prompt ceilings narrow the operator's limits a
 	const settings = structuredClone(DEFAULT_SETTINGS);
 	settings.chat.prewarm = false;
 	const context = dispatchStubContext({ settings });
-	const target = settings.targets[0];
+	const target = settings.connections[0];
 	assert.ok(target);
-	settings.chat.target = target.id;
+	settings.chat.connection = target.id;
 	settings.chat.model = target.defaultModel ?? "gpt-4o";
 	const cwd = process.cwd();
 	let current: SessionMeta | null = null;

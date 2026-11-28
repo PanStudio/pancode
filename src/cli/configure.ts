@@ -246,8 +246,8 @@ async function runConfigSectionsMenu(
 }
 
 async function runConfigLauncher(rl: ConfigurePrompts, streams: ConfigureStreams, verify = true): Promise<number> {
-	let selected = readSettings().targets.length === 0 ? 0 : 2;
-	const exitCode = () => (readSettings().chat.target ? 0 : 130);
+	let selected = readSettings().connections.length === 0 ? 0 : 2;
+	const exitCode = () => (readSettings().chat.connection ? 0 : 130);
 	for (;;) {
 		rl.clearScreen();
 		const presenter = createLifecyclePresenter({ stream: streams.out });
@@ -269,7 +269,7 @@ async function runConfigLauncher(rl: ConfigurePrompts, streams: ConfigureStreams
 		if (choice.kind !== "index") return exitCode();
 		selected = choice.index;
 		if (selected === 0) {
-			const first = readSettings().targets.length === 0;
+			const first = readSettings().connections.length === 0;
 			// Every other launcher entry opens on a clean screen. Without this the
 			// launcher's banner stayed stacked above the wizard's own header.
 			rl.clearScreen();
@@ -328,7 +328,7 @@ async function runInteractive(
 	if (preselectedRuntime) {
 		if (canRunOnboarding(streams))
 			return runOnboardingWizard(streams, {
-				mode: readSettings().targets.length === 0 ? "first" : "add",
+				mode: readSettings().connections.length === 0 ? "first" : "add",
 				runtime: preselectedRuntime,
 				verify: defaults.verify !== false,
 			});
@@ -354,11 +354,11 @@ async function runInteractive(
 	}
 	// A first run that the bare `pancode` start sent here has one thing to do. The launcher would put
 	// a second welcome above the wizard's own and offer three entries that lead nowhere with no target.
-	if (canRunOnboarding(streams) && startsChat && readSettings().targets.length === 0)
+	if (canRunOnboarding(streams) && startsChat && readSettings().connections.length === 0)
 		return runOnboardingWizard(streams, { mode: "first", startsChat, verify: defaults.verify !== false });
 	if (canRunOnboarding(streams)) return runConfigLauncher(rl, streams, defaults.verify !== false);
 
-	if (readSettings().targets.length === 0) {
+	if (readSettings().connections.length === 0) {
 		// Dumb terminals retain the numbered setup path.
 		const runtime = await pickRuntimeViaCategory(rl);
 		if (!runtime) return firstRunCancelled();
@@ -508,7 +508,7 @@ export async function runConfigureCommand(
 		return await runInteractive(rl, runtime, args, { in: inStream, out: outStream }, startsChat);
 	} catch (err) {
 		if (err instanceof ConfigureNavigation) {
-			if (readSettings().targets.length > 0) return 0;
+			if (readSettings().connections.length > 0) return 0;
 			return firstRunCancelled();
 		}
 		printError(err instanceof Error ? err.message : String(err));

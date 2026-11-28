@@ -48,7 +48,7 @@ function unknownNodeError(requested: string, settings: Readonly<PancodeSettings>
 				"The dispatch node field takes 'local' or a fleet.nodes id. Select the profile connection/model in dispatch, or use --agent-profile in the CLI.",
 		);
 	}
-	if (settings?.targets.some((entry) => entry.id === requested)) {
+	if (settings?.connections.some((entry) => entry.id === requested)) {
 		return admissionError(
 			`unknown fleet node '${requested}'; '${requested}' is a connection id. ` +
 				`The dispatch node field takes 'local' or a fleet.nodes id. Put '${requested}' in connection and omit node.`,

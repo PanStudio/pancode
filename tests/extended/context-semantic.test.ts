@@ -59,11 +59,11 @@ test("background failures before checkpoint report diagnostics, coalesce work an
 }, async (t) => {
 	const { openSemanticApp, statusSemantic } = await import("../../src/domains/semantic/index.js");
 	const settings = structuredClone(DEFAULT_SETTINGS);
-	settings.targets = [{ id: "embedding", runtime: "litellm", url: "http://fixture.invalid" }];
+	settings.connections = [{ id: "embedding", runtime: "litellm", url: "http://fixture.invalid" }];
 	Object.assign(settings.context.semantic, {
 		enabled: true,
 		background: true,
-		target: "embedding",
+		connection: "embedding",
 		model: "gemma",
 		assetIdentity: "fixture",
 	});
@@ -74,7 +74,7 @@ test("background failures before checkpoint report diagnostics, coalesce work an
 	const app = await openSemanticApp(options);
 	await app.index.refresh([]);
 	const before = await statusSemantic(options);
-	const unavailable = { ...settings, targets: [] };
+	const unavailable = { ...settings, connections: [] };
 	const background = createSemanticBackgroundRefresh(() => unavailable);
 	t.after(() => background.stop());
 	t.mock.timers.enable({ apis: ["setTimeout"] });
@@ -99,7 +99,7 @@ test("background failures before checkpoint report diagnostics, coalesce work an
 	assert.equal(diagnostics.length, 2);
 	assert.match(
 		diagnostics[0]?.text ?? "",
-		/Semantic background refresh failed: Semantic target embedding is not configured/,
+		/Semantic background refresh failed: Semantic connection embedding is not configured/,
 	);
 	assert.match(diagnostics[1]?.text ?? "", /ENOENT/);
 	assert((diagnostics[1]?.text ?? "").includes(missingRoot));
@@ -115,7 +115,7 @@ test("background failures before checkpoint report diagnostics, coalesce work an
 	const racing = createSemanticBackgroundRefresh(() => unavailable);
 	let stopped!: Promise<void>;
 	const routeReached = new Promise<void>((resolve) => {
-		unavailable.targets.find = () => {
+		unavailable.connections.find = () => {
 			queueMicrotask(() => {
 				stopped = racing.stop();
 				resolve();
@@ -128,7 +128,7 @@ test("background failures before checkpoint report diagnostics, coalesce work an
 	await routeReached;
 	await stopped;
 	assert.equal(diagnostics.length, 3, "shutdown after a route failure cannot hide that failure");
-	assert.match(diagnostics[2]?.text ?? "", /Semantic target embedding is not configured/);
+	assert.match(diagnostics[2]?.text ?? "", /Semantic connection embedding is not configured/);
 });
 
 test("disabled and unbound semantic mode is inert, including core-bootstrap's settings gate", async () => {
@@ -161,10 +161,10 @@ test("turn hint, tool gate and advertised scope agree on semantic pins (#432)", 
 	t.mock.method(globalThis, "fetch", () => {
 		throw new Error("agreement regression must not call a provider");
 	});
-	const pinned = { enabled: true, target: "embedding", model: "gemma", assetIdentity: "fixture" };
+	const pinned = { enabled: true, connection: "embedding", model: "gemma", assetIdentity: "fixture" };
 	for (const [label, semantic, usable] of [
 		["pinned", pinned, true],
-		["missing target", { ...pinned, target: undefined }, false],
+		["missing connection", { ...pinned, connection: undefined }, false],
 		["missing model", { ...pinned, model: " " }, false],
 		["missing asset identity", { ...pinned, assetIdentity: undefined }, false],
 	] as const) {

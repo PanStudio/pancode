@@ -26,8 +26,8 @@ export type ChoiceResolution =
 			readonly kind: "engine";
 			readonly name: string;
 			readonly engine: EngineSettings;
-			/** A target the choice brings with it: a hosted decision service needs only its key, not a `targets` entry. */
-			readonly impliedTarget?: PancodeSettings["targets"][number];
+			/** A target the choice brings with it: a hosted decision service needs only its key, not a `connections` entry. */
+			readonly impliedTarget?: PancodeSettings["connections"][number];
 	  }
 	| { readonly kind: "unavailable"; readonly name: string; readonly problem: string };
 
@@ -72,10 +72,10 @@ export function resolveChoice(settings: Readonly<PancodeSettings>, name: string 
 	const aliased = aliasedRuntime(name);
 	if (aliased?.decisionAlias !== undefined) {
 		const { defaultModel, profile } = aliased.decisionAlias;
-		const target = settings.targets.find((entry) => entry.runtime === aliased.id);
+		const target = settings.connections.find((entry) => entry.runtime === aliased.id);
 		const engine: EngineSettings = {
 			kind: "systemone",
-			target: target?.id ?? name,
+			connection: target?.id ?? name,
 			model: target?.defaultModel ?? defaultModel,
 			profile,
 		};
@@ -84,12 +84,12 @@ export function resolveChoice(settings: Readonly<PancodeSettings>, name: string 
 			: { kind: "engine", name, engine, impliedTarget: { id: name, runtime: aliased.id } };
 	}
 	if (name === "main") {
-		const { target, model } = settings.chat;
+		const { connection: target, model } = settings.chat;
 		if (!target) return { kind: "unavailable", name, problem: "no chat route is configured" };
-		return { kind: "engine", name, engine: { kind: "llm", target, ...(model ? { model } : {}) } };
+		return { kind: "engine", name, engine: { kind: "llm", connection: target, ...(model ? { model } : {}) } };
 	}
 	if (name === "memory") {
-		const { target, model } = settings.context.memory;
+		const { connection: target, model } = settings.context.memory;
 		if (!target || !model) {
 			return {
 				kind: "unavailable",
@@ -97,16 +97,16 @@ export function resolveChoice(settings: Readonly<PancodeSettings>, name: string 
 				problem: "context.memory names no connection and model, and memory never falls back to the chat route",
 			};
 		}
-		return { kind: "engine", name, engine: { kind: "llm", target, model } };
+		return { kind: "engine", name, engine: { kind: "llm", connection: target, model } };
 	}
-	const target = settings.targets.find((entry) => entry.id === name);
+	const target = settings.connections.find((entry) => entry.id === name);
 	if (target === undefined) {
 		return { kind: "unavailable", name, problem: `'${name}' is not a known route, engine or connection` };
 	}
 	return {
 		kind: "engine",
 		name,
-		engine: runtimeDecides(target.runtime) ? { kind: "systemone", target: name } : { kind: "llm", target: name },
+		engine: runtimeDecides(target.runtime) ? { kind: "systemone", connection: name } : { kind: "llm", connection: name },
 	};
 }
 
@@ -116,12 +116,12 @@ export function effectiveSystemOne(
 	use: SystemOneUse | undefined = settings.systemOne.use,
 ): Readonly<PancodeSettings> {
 	const engines = { ...settings.systemOne.engines };
-	const targets = [...settings.targets];
+	const targets = [...settings.connections];
 	for (const name of routeNames(use)) {
 		const resolved = resolveChoice(settings, name);
 		if (resolved.kind !== "engine") continue;
 		engines[resolved.name] = resolved.engine;
 		if (resolved.impliedTarget !== undefined) targets.push(resolved.impliedTarget);
 	}
-	return { ...settings, targets, systemOne: { ...settings.systemOne, engines } };
+	return { ...settings, connections: targets, systemOne: { ...settings.systemOne, engines } };
 }

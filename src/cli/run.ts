@@ -116,7 +116,7 @@ function armRunTimeout(seconds: number): HeadlessRunDeadline {
 
 /**
  * True when an explicit --connection override names a target that is not in
- * effective settings.targets. Include project overlays just as the runtime
+ * effective settings.connections. Include project overlays just as the runtime
  * resolver does (providers.getTarget), so this mirrors its `target-not-found`
  * verdict without booting the providers domain. Unreadable/invalid settings
  * fall through (returns false) so the normal boot path surfaces that error
@@ -124,7 +124,7 @@ function armRunTimeout(seconds: number): HeadlessRunDeadline {
  */
 export function explicitTargetMissing(targetId: string): boolean {
 	try {
-		return !readStrictLayeredSettings(process.cwd()).settings.targets.some((target) => target.id === targetId);
+		return !readStrictLayeredSettings(process.cwd()).settings.connections.some((target) => target.id === targetId);
 	} catch {
 		return false;
 	}
@@ -144,8 +144,8 @@ export async function borrowHeadlessRoute(
 	try {
 		const layered = readStrictLayeredSettings(process.cwd());
 		settings = layered.settings;
-		// `targets` replaces wholesale across layers, so a project origin means every saved target is the project's.
-		projectTargets = settingsSourceFor(layered.sources, "targets").startsWith("project");
+		// `connections` replaces wholesale across layers, so a project origin means every saved target is the project's.
+		projectTargets = settingsSourceFor(layered.sources, "connections").startsWith("project");
 	} catch {
 		// The boot path reports unreadable settings with its own diagnostic.
 		return null;
@@ -153,7 +153,7 @@ export async function borrowHeadlessRoute(
 	// A project that chose its targets chose the route too; borrowing anything else would override that choice.
 	if (projectTargets) return null;
 	if (classifyDefaultTarget(settings).kind !== "no-target") return null;
-	if (targetId !== undefined && settings.targets.some((target) => target.id === targetId)) return null;
+	if (targetId !== undefined && settings.connections.some((target) => target.id === targetId)) return null;
 	const { headlessChatRoute } = await import("./detect-chat-routes.js");
 	const found = await headlessChatRoute(settings, targetId, {
 		...(model !== undefined ? { model } : {}),
@@ -163,7 +163,7 @@ export async function borrowHeadlessRoute(
 		// The memory refusal is the whole answer; booting on would add the generic no-target line after it.
 		if (found.reservedForMemory !== undefined && model === undefined) {
 			writeRunDiagnostic(
-				`pancode run: the only usable saved connection, ${found.reservedForMemory}, is reserved for memory (context.memory.target); add a chat connection or pass --connection <id>\n`,
+				`pancode run: the only usable saved connection, ${found.reservedForMemory}, is reserved for memory (context.memory.connection); add a chat connection or pass --connection <id>\n`,
 			);
 			return 2;
 		}
@@ -656,7 +656,7 @@ async function executeRunCommand(
 						}
 					}
 					if (borrowed === null && parsed.target !== undefined && explicitTargetMissing(parsed.target)) {
-						writeRunDiagnostic(`pancode run: connection '${parsed.target}' not found in settings.targets\n`);
+						writeRunDiagnostic(`pancode run: connection '${parsed.target}' not found in settings.connections\n`);
 						return 2;
 					}
 					// The boot path's graph loads here, after every pre-boot refusal above has had its say.
@@ -938,7 +938,7 @@ async function runDispatch(
 	// throw site.
 	configureRunEventJournal(baseSettings.fleet.history.journal);
 	effectiveSettings = structuredClone(baseSettings);
-	keepTargetOrigins(baseSettings.targets, effectiveSettings.targets);
+	keepTargetOrigins(baseSettings.connections, effectiveSettings.connections);
 	// D1: headless takes yolo only from --autonomy on the command line, and the
 	// parser rejects --autonomy with --agent, so this path never takes it. Pin
 	// the clone to default so a settings-file yolo cannot reach it either.
@@ -956,15 +956,19 @@ async function runDispatch(
 			return await stopDomains(1);
 		}
 		const settings = effectiveSettings;
-		const profileTargetId = parsed.agentProfile ? settings.fleet?.profiles?.[parsed.agentProfile]?.target : undefined;
-		const runtimeByTarget = new Map(settings.targets.map((target) => [target.id, target.runtime] as const));
+		const profileTargetId = parsed.agentProfile ? settings.fleet?.profiles?.[parsed.agentProfile]?.connection : undefined;
+		const runtimeByTarget = new Map(settings.connections.map((target) => [target.id, target.runtime] as const));
 		const runtimeTargetId = parsed.agentRuntime
 			? [settings.fleet?.default, ...Object.values(settings.fleet?.profiles ?? {})].find(
-					(profile) => profile?.target && runtimeByTarget.get(profile.target) === parsed.agentRuntime,
-				)?.target
+					(profile) => profile?.connection && runtimeByTarget.get(profile.connection) === parsed.agentRuntime,
+				)?.connection
 			: undefined;
 		const targetId =
-			parsed.target ?? profileTargetId ?? runtimeTargetId ?? settings.fleet?.default?.target ?? settings.chat?.target;
+			parsed.target ??
+			profileTargetId ??
+			runtimeTargetId ??
+			settings.fleet?.default?.connection ??
+			settings.chat?.connection;
 		if (!targetId) {
 			writeRunDiagnostic("pancode run: --api-key supplied but no connection resolved; pass --connection <id>\n");
 			return await stopDomains(2);

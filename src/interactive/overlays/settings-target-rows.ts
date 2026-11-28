@@ -55,12 +55,12 @@ export function targetRows(
 	const providers = options?.providers;
 	const statuses = new Map(providers?.list().map((status) => [status.target.id, status] as const) ?? []);
 	const breakers = options?.getRouteBreakers?.() ?? [];
-	return settings.targets.map((target) => {
+	return settings.connections.map((target) => {
 		const status = statuses.get(target.id);
 		const roles = [
-			settings.chat.target === target.id ? "chat" : null,
-			settings.fleet.default.target === target.id ? "fleet" : null,
-			settings.context.memory.target === target.id ? "memory" : null,
+			settings.chat.connection === target.id ? "chat" : null,
+			settings.fleet.default.connection === target.id ? "fleet" : null,
+			settings.context.memory.connection === target.id ? "memory" : null,
 		].filter((role) => role !== null);
 		const health = status?.health.status ?? "unknown";
 		const operation = options?.getTargetOperation?.(target.id) ?? null;
@@ -91,7 +91,7 @@ export function targetRows(
 			{ text: `  ${latency}`, tone: "neutral" as const },
 		];
 		const value = `${health} ${GLYPH.sep} ${target.id} ${GLYPH.sep} ${roleText} ${GLYPH.sep} ${runtime} ${GLYPH.sep} ${latency}${breakerText}`;
-		const item = settingItem(`targets.${target.id}`, value, {
+		const item = settingItem(`connections.${target.id}`, value, {
 			label: target.id,
 			description: `URL: ${target.url ?? "(none)"} ${GLYPH.sep} Default model: ${target.defaultModel ?? "(none)"}`,
 			// A target with no failure says nothing about one; `Failure reason: none` read as a failure at a glance.

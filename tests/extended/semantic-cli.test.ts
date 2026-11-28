@@ -231,7 +231,7 @@ it("uses the manager bridge with preview-before-save, exact profile pins and pro
 	const { realpathSync } = await import("node:fs");
 	const cwd = realpathSync(process.cwd());
 	const settings = structuredClone(DEFAULT_SETTINGS);
-	settings.targets = [{ id: "embedding", runtime: "litellm", url: "http://fixture.invalid" }];
+	settings.connections = [{ id: "embedding", runtime: "litellm", url: "http://fixture.invalid" }];
 	const semantic = {
 		enabled: false,
 		target: null as string | null,

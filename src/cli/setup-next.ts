@@ -40,7 +40,9 @@ export async function nextStepLines(
 	}
 	const { classifyDefaultTarget, firstMissing } = await import("./default-target.js");
 	if (classifyDefaultTarget(settings).kind === "usable") {
-		lines.push(`${INDENT}Chat uses ${settings.chat.target}${settings.chat.model ? ` / ${settings.chat.model}` : ""}.`);
+		lines.push(
+			`${INDENT}Chat uses ${settings.chat.connection}${settings.chat.model ? ` / ${settings.chat.model}` : ""}.`,
+		);
 		return lines;
 	}
 	const missing = firstMissing(settings);

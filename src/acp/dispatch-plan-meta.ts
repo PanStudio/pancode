@@ -49,7 +49,7 @@ export function projectDispatchPlanMeta(view: DispatchPlanView): AcpDispatchPlan
 		task: clean(task.task, MAX_TASK_BYTES),
 		...(task.role !== undefined ? { role: task.role } : {}),
 		...(task.position !== undefined ? { position: task.position } : {}),
-		...bounded("target", task.target),
+		...bounded("connection", task.target),
 		...bounded("model", task.model),
 		...bounded("node", task.node),
 		...(task.nodeKind !== undefined ? { nodeKind: task.nodeKind } : {}),

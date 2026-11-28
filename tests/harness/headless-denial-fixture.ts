@@ -18,7 +18,7 @@ export async function runtimeFixture(cwd: string) {
 	registry.register(bashTool);
 	const settings = structuredClone(DEFAULT_SETTINGS);
 	settings.chat.prewarm = false;
-	settings.chat.target = "fixture";
+	settings.chat.connection = "fixture";
 	settings.chat.model = "fixture-model";
 	settings.safety.autonomy = "default";
 	const capabilities = {

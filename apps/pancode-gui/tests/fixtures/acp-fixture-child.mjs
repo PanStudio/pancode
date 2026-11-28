@@ -12,7 +12,7 @@ let sessionId = randomUUID(),
 let eventSequence = 0,
 	autonomy = "default";
 const settings = {
-	chat: { target: "fixture", model: "fixture-model", thinkingLevel: "off" },
+	chat: { connection: "fixture", model: "fixture-model", thinkingLevel: "off" },
 	safety: { autonomy: "default" },
 };
 // The engine starts each task on the chat route the layered settings name, the same layers Settings and Home
@@ -36,7 +36,7 @@ const readSettingsLayer = async (path) => {
 		}
 	}
 };
-const savedChat = { target: null, model: null };
+const savedChat = { connection: null, model: null };
 // The connections the layers configure. The engine lists these whichever one chat uses.
 const configuredTargets = new Set();
 for (const path of [
@@ -45,10 +45,10 @@ for (const path of [
 	join(process.cwd(), ".pancode", "settings.local.yaml"),
 ]) {
 	const layer = await readSettingsLayer(path);
-	for (const target of Array.isArray(layer?.targets) ? layer.targets : [])
+	for (const target of Array.isArray(layer?.connections) ? layer.connections : [])
 		if (typeof target?.id === "string" && target.id) configuredTargets.add(target.id);
 	const chat = layer?.chat;
-	for (const key of ["target", "model", "thinkingLevel"])
+	for (const key of ["connection", "model", "thinkingLevel"])
 		if (typeof chat?.[key] === "string" && chat[key]) {
 			settings.chat[key] = chat[key];
 			if (key !== "thinkingLevel") savedChat[key] = chat[key];
@@ -69,7 +69,7 @@ const MODES = [
 			"No approval card waits for you. Commands run in a sandbox that limits what they can change. The automatic safety check works as it does in default, and anything that would ask you is refused back to PanCode instead. PanCode's built-in blocks, your own safety rules and the run's limits still apply, and questions PanCode asks still reach you.",
 	},
 ];
-const editable = ["chat.target", "chat.model", "chat.thinkingLevel", "safety.autonomy"];
+const editable = ["chat.connection", "chat.model", "chat.thinkingLevel", "safety.autonomy"];
 const thinkingLevels = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
 const configOptions = () => [
 	{ id: "autonomy", currentValue: autonomy, options: [] },
@@ -78,10 +78,10 @@ const configOptions = () => [
 		currentValue: settings.chat.model,
 		options: [
 			...new Set([
-				...(settings.chat.target === "field-station"
+				...(settings.chat.connection === "field-station"
 					? ["survey-large", "survey-small"]
 					: ["fixture-model", "fixture-small"]),
-				...(savedChat.model && settings.chat.target === (savedChat.target ?? "fixture") ? [savedChat.model] : []),
+				...(savedChat.model && settings.chat.connection === (savedChat.connection ?? "fixture") ? [savedChat.model] : []),
 			]),
 		].map((value) => ({ value, name: value, _meta: { "pancode/thinkingLevels": thinkingLevels } })),
 	},
@@ -185,7 +185,7 @@ const recordExchange = (prompt, answer) => {
 				createdAt: at,
 				endedAt: null,
 				model: settings.chat.model,
-				target: settings.chat.target,
+				target: settings.chat.connection,
 				pancodeVersion: "0",
 				piMonoVersion: "0",
 				platform: process.platform,
@@ -313,8 +313,15 @@ const planPermission = async () => {
 					planScale: true,
 					hash: PLAN_HASH,
 					tasks: [
-						{ ...tasks[0], target: "fixture", model: "fixture-model", dependencies: [] },
-						{ ...tasks[1], target: "fixture", model: "fixture-small", worktree: true, apply: "preserve", dependencies: [] },
+						{ ...tasks[0], connection: "fixture", model: "fixture-model", dependencies: [] },
+						{
+							...tasks[1],
+							connection: "fixture",
+							model: "fixture-small",
+							worktree: true,
+							apply: "preserve",
+							dependencies: [],
+						},
 					],
 					truncated: false,
 					unknownFutureField: "ignored",
@@ -1019,7 +1026,7 @@ async function handle(frame) {
 				result = {
 					sessionId,
 					...(ROUTE
-						? { configOptions: configOptions(), _meta: { "pancode/session": { connection: settings.chat.target } } }
+						? { configOptions: configOptions(), _meta: { "pancode/session": { connection: settings.chat.connection } } }
 						: {}),
 					modes: {
 						currentModeId: autonomy,
@@ -1030,7 +1037,7 @@ async function handle(frame) {
 					setTimeout(
 						() =>
 							event("provider.health_changed", {
-								targetId: settings.chat.target,
+								targetId: settings.chat.connection,
 								status: "healthy",
 								available: true,
 								latencyMs: 5,
@@ -1066,7 +1073,7 @@ async function handle(frame) {
 				sessionId = frame.params.sessionId;
 				result = {
 					...(ROUTE
-						? { configOptions: configOptions(), _meta: { "pancode/session": { connection: settings.chat.target } } }
+						? { configOptions: configOptions(), _meta: { "pancode/session": { connection: settings.chat.connection } } }
 						: {}),
 					modes: {
 						currentModeId: autonomy,
@@ -1927,7 +1934,7 @@ async function handle(frame) {
 				if (ROUTE)
 					update(
 						{ sessionUpdate: "config_option_update", configOptions: configOptions() },
-						{ "pancode/session": { connection: settings.chat.target } },
+						{ "pancode/session": { connection: settings.chat.connection } },
 					);
 				break;
 			case "_pancode/settings/get_safe":
@@ -1942,7 +1949,7 @@ async function handle(frame) {
 							models: [
 								"fixture-model",
 								"fixture-small",
-								...((savedChat.target ?? "fixture") === "fixture" && savedChat.model ? [savedChat.model] : []),
+								...((savedChat.connection ?? "fixture") === "fixture" && savedChat.model ? [savedChat.model] : []),
 							],
 							isOrchestrator: true,
 							apiKey: "must-be-stripped",
@@ -1953,7 +1960,7 @@ async function handle(frame) {
 							.map((id) => ({
 								id,
 								runtime: "openai-compatible",
-								models: [(savedChat.target === id && savedChat.model) || "fixture-model"],
+								models: [(savedChat.connection === id && savedChat.model) || "fixture-model"],
 								isOrchestrator: true,
 							})),
 						// A second target with a catalog, so choosing one in the route picker changes the model list.

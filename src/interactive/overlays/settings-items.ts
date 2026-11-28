@@ -71,13 +71,13 @@ export function buildSettingItems(
 	const panes = settings.interface.panes;
 	const orchestratorThinking = thinkingChoices(
 		options?.providers,
-		settings.chat.target,
+		settings.chat.connection,
 		settings.chat.model,
 		settings.chat.thinkingLevel,
 	);
 	const workerThinking = thinkingChoices(
 		options?.providers,
-		settings.fleet.default.target,
+		settings.fleet.default.connection,
 		settings.fleet.default.model,
 		settings.fleet.default.thinkingLevel,
 	);
@@ -94,16 +94,16 @@ export function buildSettingItems(
 	);
 	const targetSubmenu = options?.providers ? selectTargetSubmenu(options.providers) : editTextSubmenu("Connection id");
 	const orchestratorModelSubmenu = options?.providers
-		? selectModelSubmenu(options.providers, () => live().chat.target ?? undefined)
+		? selectModelSubmenu(options.providers, () => live().chat.connection ?? undefined)
 		: editTextSubmenu("Type model name");
 	const workerModelSubmenu = options?.providers
-		? selectModelSubmenu(options.providers, () => live().fleet.default.target ?? undefined)
+		? selectModelSubmenu(options.providers, () => live().fleet.default.connection ?? undefined)
 		: editTextSubmenu("Type model name");
 	const backgroundTargetSubmenu = options?.providers
 		? selectOptionalBackgroundTargetSubmenu(options.providers)
 		: editTextSubmenu("Memory connection id", "Leave memory connection and model blank to use the chat route.");
 	const backgroundModelSubmenu = options?.providers
-		? selectModelSubmenu(options.providers, () => live().context.memory.target ?? undefined)
+		? selectModelSubmenu(options.providers, () => live().context.memory.connection ?? undefined)
 		: editTextSubmenu("Type memory model name");
 	const memoryRoute = resolveMemoryRoute(settings);
 	const memoryRouteNote = memoryRoute.source === "chat" ? "Chat route (no memory model set): " : "";
@@ -155,7 +155,7 @@ export function buildSettingItems(
 		settingItem("chat.thinkingLevel", orchestratorThinking.display, {
 			values: orchestratorThinking.values,
 		}),
-		settingItem("chat.target", settings.chat.target ?? "(unset)", {
+		settingItem("chat.connection", settings.chat.connection ?? "(unset)", {
 			submenu: targetSubmenu,
 			affordance: options?.providers ? "opens picker" : "free text",
 		}),
@@ -164,9 +164,9 @@ export function buildSettingItems(
 			editValue: settings.chat.model ?? "",
 			affordance: options?.providers ? "opens picker" : "free text",
 		}),
-		settingItem("context.memory.target", `${memoryRouteNote}${memoryRoute.target ?? "(unset)"}`, {
+		settingItem("context.memory.connection", `${memoryRouteNote}${memoryRoute.target ?? "(unset)"}`, {
 			submenu: backgroundTargetSubmenu,
-			editValue: settings.context.memory.target ?? "",
+			editValue: settings.context.memory.connection ?? "",
 			affordance: options?.providers ? "opens picker" : "free text",
 		}),
 		settingItem(
@@ -196,7 +196,7 @@ export function buildSettingItems(
 		settingItem("chat.prewarm", String(settings.chat.prewarm), {
 			values: ["true", "false"],
 		}),
-		settingItem("fleet.default.target", settings.fleet.default.target ?? "(unset)", {
+		settingItem("fleet.default.connection", settings.fleet.default.connection ?? "(unset)", {
 			submenu: targetSubmenu,
 			affordance: options?.providers ? "opens picker" : "free text",
 		}),
@@ -306,7 +306,7 @@ export function buildSettingItems(
 			affordance: "free text",
 		}),
 		settingItem("fleet.history.journal", String(settings.fleet.history.journal), { values: ["true", "false"] }),
-		settingItem("targets", "", {
+		settingItem("connections", "", {
 			description: "Live inference connection inventory and routing roles.",
 			affordance: "column heading",
 			readOnly: true,
@@ -439,10 +439,10 @@ export function buildSettingItems(
 		// Both optional keys render their absence rather than a fabricated value:
 		// an unset target means the session's own, and an unset cadence means the
 		// watchdog fires at turn end only. Submitting an empty value clears them.
-		settingItem("safety.review.target", watchdog.target ?? "(session connection)", {
+		settingItem("safety.review.connection", watchdog.connection ?? "(session connection)", {
 			submenu: editTextSubmenu("Edit watchdog connection; blank uses the session's active connection"),
 			affordance: "free text",
-			editValue: watchdog.target ?? "",
+			editValue: watchdog.connection ?? "",
 		}),
 		settingItem(
 			"safety.review.cadenceToolCalls",
@@ -597,14 +597,14 @@ function fleetProfileRows(
 	return Object.entries(settings.fleet.profiles)
 		.sort(([a], [b]) => a.localeCompare(b))
 		.map(([name, profile]) => {
-			const thinking = thinkingChoices(providers, profile.target, profile.model, profile.thinkingLevel);
-			const target = profile.target ?? "(unset)";
+			const thinking = thinkingChoices(providers, profile.connection, profile.model, profile.thinkingLevel);
+			const target = profile.connection ?? "(unset)";
 			const model = profile.model ?? "(unset)";
 			const placement = profile.node ?? "auto";
 			const summary = `${target}/${model}  ${thinking.display}  ${placement}`;
 			const compactThinking = truncateProfileFact(thinking.display, 7);
 			const compactPlacement = truncateProfileFact(placement, 7);
-			const route = target === settings.fleet.default.target ? model : `${target}/${model}`;
+			const route = target === settings.fleet.default.connection ? model : `${target}/${model}`;
 			const routeBudget = Math.max(
 				8,
 				PROFILE_SUMMARY_VALUE_BUDGET -
@@ -668,18 +668,18 @@ function profileWorkbenchSubmenu(
 					`Connection for profile ${name}`,
 					profileTargetChoices(live, options?.providers),
 					"Changing the connection rebases the model on that connection's default.",
-				)(profile.target ?? "(unset)", finish);
+				)(profile.connection ?? "(unset)", finish);
 				return;
 			}
 			if (field === "model") {
 				const submenu = options?.providers
-					? selectModelSubmenu(options.providers, () => live().fleet.profiles[name]?.target ?? undefined)
+					? selectModelSubmenu(options.providers, () => live().fleet.profiles[name]?.connection ?? undefined)
 					: editTextSubmenu("Type model name");
 				active = submenu(profile.model ?? "(unset)", finish);
 				return;
 			}
 			if (field === "thinkingLevel") {
-				const thinking = thinkingChoices(options?.providers, profile.target, profile.model, profile.thinkingLevel);
+				const thinking = thinkingChoices(options?.providers, profile.connection, profile.model, profile.thinkingLevel);
 				active = selectListSubmenu(
 					`Thinking level for profile ${name}`,
 					thinking.values.map((value) => ({ value, label: value })),
@@ -747,7 +747,7 @@ function systemOneRows(
 	live: () => Readonly<PancodeSettings>,
 ): SettingsCenterItem[] {
 	const engineNames = Object.keys(live().systemOne.engines);
-	const targetNames = settings.targets.map((target) => target.id);
+	const targetNames = settings.connections.map((target) => target.id);
 	const useChoices = [...new Set(["jev", "memory", "main", ...engineNames, ...targetNames])];
 	const { use } = settings.systemOne;
 	return [

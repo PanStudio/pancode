@@ -384,7 +384,7 @@ async function main(argv: string[]): Promise<number> {
 		const { explicitTargetMissing } = await import("./run.js");
 		if (explicitTargetMissing(route.target)) {
 			printError(
-				`connection '${route.target}' not found in settings.targets`,
+				`connection '${route.target}' not found in settings.connections`,
 				"pancode connections lists the configured ones.",
 			);
 			return 2;

@@ -23,7 +23,7 @@ test("a run refused because the only target is reserved for memory stops at that
 	});
 	writeFileSync(
 		settingsPath(),
-		'version: 2\ntargets:\n  - { id: litellm, runtime: litellm, url: "http://127.0.0.1:9", defaultModel: m1, auth: { apiKeyEnvVar: RUNMEM_LITELLM_KEY } }\ncontext:\n  memory: { target: litellm, model: m1 }\n',
+		'version: 2\nconnections:\n  - { id: litellm, runtime: litellm, url: "http://127.0.0.1:9", defaultModel: m1, auth: { apiKeyEnvVar: RUNMEM_LITELLM_KEY } }\ncontext:\n  memory: { connection: litellm, model: m1 }\n',
 	);
 	// A null result would boot the run, which then prints the generic no-target line after the memory refusal.
 	assert.equal(await borrowHeadlessRoute(undefined, undefined), 2);

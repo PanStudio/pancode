@@ -116,7 +116,11 @@ export function buildPollDispatchArgs(options: PollCommandOptions, chat: Partial
 	}
 	const members = Array.from({ length: n }, (_, index) => {
 		const seat = seats[index % seats.length] as PollSeat;
-		return { label: `p${index + 1}`, target: seat.target, ...(seat.model !== undefined ? { model: seat.model } : {}) };
+		return {
+			label: `p${index + 1}`,
+			connection: seat.target,
+			...(seat.model !== undefined ? { model: seat.model } : {}),
+		};
 	});
 	return {
 		ok: true,

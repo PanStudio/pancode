@@ -700,7 +700,7 @@ type TargetFunding = { target: TargetDescriptor | undefined; funding: FundingRes
 /** The target and the pool it draws on, as the user's settings bind them now. */
 function targetFundingOf(targetId: string, runtimeId: string): TargetFunding {
 	const settings = currentSettings();
-	const target = settings?.targets.find((candidate) => candidate.id === targetId);
+	const target = settings?.connections.find((candidate) => candidate.id === targetId);
 	const definitions = settings?.funding ?? {};
 	const binding = target?.funding;
 	const observation =

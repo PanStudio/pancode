@@ -54,7 +54,7 @@ const HOT_RELOAD_FIELDS = new Set<string>([
 	// into each new WorkerSpec, so a running worker keeps the list it started with.
 	"safety.sandboxPassEnv",
 	// Read per contained call in the main session; workers never read it.
-	"safety.liveCheckTargets",
+	"safety.liveCheckConnections",
 	// Read the same way: per contained call in the main session, into each
 	// new WorkerSpec for workers.
 	"safety.sandboxUnixSockets",
@@ -108,7 +108,7 @@ const NEXT_TURN_FIELDS = new Set<string>([
 	"turnControl",
 	// An engine resolves per call; the use that registers consult at startup is restart-required.
 	"systemOne",
-	"targets",
+	"connections",
 	"funding",
 	"chat",
 	"fleet.default",

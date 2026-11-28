@@ -420,7 +420,7 @@ function copilotDiscoveryAllowed(): boolean {
 
 function hasConfiguredCopilotTarget(): boolean {
 	try {
-		return readSettings().targets.some((target) => target.runtime === "copilot-sdk");
+		return readSettings().connections.some((target) => target.runtime === "copilot-sdk");
 	} catch {
 		return false;
 	}

@@ -55,11 +55,11 @@ export function playbookAgents(playbook: Playbook): Array<{ id: string; agent: s
 export function playbookPreflightDiagnostic(
 	playbook: Playbook,
 	deps: {
-		settings: Pick<Readonly<PancodeSettings>, "targets" | "fleet">;
+		settings: Pick<Readonly<PancodeSettings>, "connections" | "fleet">;
 		agentSpec: (id: string) => AgentSpec | null | undefined;
 	},
 ): string | null {
-	const targets = new Set(deps.settings.targets.map((target) => target.id));
+	const targets = new Set(deps.settings.connections.map((target) => target.id));
 	const profiles = new Set(Object.keys(deps.settings.fleet?.profiles ?? {}));
 	// A step that names its own target or profile does not use its agent's fleet.agentProfiles binding.
 	const routed = new Set<string>();

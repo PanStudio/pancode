@@ -529,7 +529,7 @@ export function profileTargetChoices(
 	providers: ProvidersContract | undefined,
 ): Array<{ value: string; label: string }> {
 	if (!providers)
-		return live().targets.map((target) => ({
+		return live().connections.map((target) => ({
 			value: target.id,
 			label: target.id,
 		}));
@@ -560,7 +560,7 @@ export function targetActionsSubmenu(
 	const connectTarget = options?.connectTarget;
 	return (currentValue: string, done: (val?: string) => void) => {
 		const status = providers?.list().find((entry) => entry.target.id === targetId);
-		const target = status?.target ?? options?.getSettings?.().targets.find((entry) => entry.id === targetId);
+		const target = status?.target ?? options?.getSettings?.().connections.find((entry) => entry.id === targetId);
 		const runtime = status?.runtime ?? null;
 		const chatEligible = !providers || (runtime !== null && isOrchestratorEligibleRuntime(runtime));
 		// A key PanCode stored can always be replaced from this menu. Once the target refused it, Connect itself asks for the new one.

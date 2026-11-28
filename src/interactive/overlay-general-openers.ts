@@ -546,8 +546,8 @@ export function createOverlayGeneralOpeners(deps: OverlayGeneralOpenersDeps): Ov
 				},
 				activeRuntime: () => {
 					const settings = deps.getSettings?.();
-					const targetId = deps.getSessionMeta()?.target ?? settings?.chat.target;
-					const runtime = settings?.targets.find((target) => target.id === targetId)?.runtime;
+					const targetId = deps.getSessionMeta()?.target ?? settings?.chat.connection;
+					const runtime = settings?.connections.find((target) => target.id === targetId)?.runtime;
 					return runtime ? { kind: "runtime", key: runtime } : null;
 				},
 				activeAgent: () => null,

@@ -125,7 +125,7 @@ export const PROVIDER_PROBE_TIMEOUT_MS = 5_000;
 export interface ProvidersContract {
 	list(): ReadonlyArray<TargetStatus>;
 
-	/** Null when the id is not in settings.targets. */
+	/** Null when the id is not in settings.connections. */
 	getTarget(id: string): TargetDescriptor | null;
 
 	/**
@@ -138,7 +138,7 @@ export interface ProvidersContract {
 	probeAllLive(options?: LiveProbeOptions): Promise<void>;
 
 	/**
-	 * Probe a single target live. Null when the id is not in settings.targets.
+	 * Probe a single target live. Null when the id is not in settings.connections.
 	 * `reasoning: true` opts into generating reasoning qualification; otherwise
 	 * only passive liveness and model-catalog checks run. `tools: true`
 	 * adds the streamed tool-call probe against the chat or default model.

@@ -332,14 +332,14 @@ async function runtimeProbeModels(
 }
 
 export function applyTarget(settings: PancodeSettings, descriptor: TargetDescriptor): void {
-	const idx = settings.targets.findIndex((e) => e.id === descriptor.id);
-	const previous = settings.targets[idx];
+	const idx = settings.connections.findIndex((e) => e.id === descriptor.id);
+	const previous = settings.connections[idx];
 	if (previous) {
-		settings.targets[idx] = {
+		settings.connections[idx] = {
 			...descriptor,
 			...(descriptor.funding === undefined && previous.funding !== undefined ? { funding: previous.funding } : {}),
 		};
-	} else settings.targets.push(descriptor);
+	} else settings.connections.push(descriptor);
 }
 
 export function setOrchestratorPointer(
@@ -358,7 +358,7 @@ export function setOrchestratorPointer(
 			`cannot use connection '${descriptor.id}' as orchestrator connection because runtime '${runtime.id}' is not an HTTP/native runtime`,
 		);
 	}
-	settings.chat.target = descriptor.id;
+	settings.chat.connection = descriptor.id;
 	settings.chat.model = model ?? descriptor.defaultModel ?? null;
 }
 
@@ -367,7 +367,7 @@ export function setWorkerDefaultPointer(
 	descriptor: TargetDescriptor,
 	model?: string | null,
 ): void {
-	settings.fleet.default.target = descriptor.id;
+	settings.fleet.default.connection = descriptor.id;
 	settings.fleet.default.model = model ?? descriptor.defaultModel ?? null;
 }
 
@@ -382,13 +382,13 @@ export function setBackgroundPointer(
 			`cannot use connection '${descriptor.id}' as background connection because runtime '${descriptor.runtime}' is not an HTTP/native runtime`,
 		);
 	}
-	settings.context.memory.target = descriptor.id;
+	settings.context.memory.connection = descriptor.id;
 	settings.context.memory.model = model ?? descriptor.defaultModel ?? null;
 }
 
 export function assertOrchestratorReplacementEligible(settings: PancodeSettings, descriptor: TargetDescriptor): void {
-	if (settings.chat.target !== descriptor.id && settings.context.memory.target !== descriptor.id) return;
-	const role = settings.chat.target === descriptor.id ? "orchestrator" : "background";
+	if (settings.chat.connection !== descriptor.id && settings.context.memory.connection !== descriptor.id) return;
+	const role = settings.chat.connection === descriptor.id ? "orchestrator" : "background";
 	const runtime = getRuntimeRegistry().get(descriptor.runtime);
 	if (!runtime) {
 		throw new Error(
@@ -409,7 +409,7 @@ export function setWorkerProfilePointer(
 	const trimmed = name.trim();
 	if (trimmed.length === 0) throw new Error("fleet profile name must be non-empty");
 	settings.fleet.profiles[trimmed] = {
-		target: descriptor.id,
+		connection: descriptor.id,
 		model: model ?? descriptor.defaultModel ?? null,
 		thinkingLevel: "off",
 	};

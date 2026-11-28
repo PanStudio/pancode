@@ -138,7 +138,7 @@ function connectableJson(rows: ReadonlyArray<ConnectableProviderRow>): Array<Rec
 }
 
 function statusRows(rows: ReadonlyArray<ConnectableProviderRow>, auth: ReturnType<typeof openAuthStorage>): string[][] {
-	const targets = readSettings().targets;
+	const targets = readSettings().connections;
 	return rows.flatMap((row) => {
 		if (row.login)
 			return [statusCells(row.entry.runtimeId, row.entry.label, "seat", row.login.present, row.login.detail)];
@@ -180,8 +180,8 @@ function statusRows(rows: ReadonlyArray<ConnectableProviderRow>, auth: ReturnTyp
 
 function defaultAuthTarget(rows: ReadonlyArray<ConnectableProviderRow>): string | undefined {
 	const settings = readSettings();
-	const activeTarget = settings.chat.target
-		? settings.targets.find((entry) => entry.id === settings.chat.target)
+	const activeTarget = settings.chat.connection
+		? settings.connections.find((entry) => entry.id === settings.chat.connection)
 		: undefined;
 	if (activeTarget && rows.some((row) => row.entry.runtimeId === activeTarget.runtime)) {
 		return activeTarget.runtime;
@@ -256,7 +256,7 @@ function statusForResolvedTarget(
 /** The row holding the active chat target's key, else its runtime's row, else the first choice. */
 function defaultLogoutChoice(choices: ReadonlyArray<LogoutChoice>): LogoutChoice | undefined {
 	const settings = readSettings();
-	const active = settings.chat.target ? resolveCliProviderReference(settings.chat.target) : null;
+	const active = settings.chat.connection ? resolveCliProviderReference(settings.chat.connection) : null;
 	const runtime = active ? resolveLogoutReference(`${RUNTIME_LOGOUT_PREFIX}${active.runtime.id}`) : null;
 	const holds = (reference: typeof active) =>
 		reference ? choices.find((choice) => choice.authTarget.providerId === reference.authTarget.providerId) : undefined;
@@ -649,7 +649,7 @@ function runLogout(args: ReadonlyArray<string>): Promise<number> | number {
 	if (!status.available && auth.damageReason() === null && resolved.target === null) {
 		// Logout by runtime id never drops a target's own key; name those targets.
 		const keyed = readSettings()
-			.targets.filter((t) => t.runtime === resolved.runtime.id && targetRequiresAuth(t, resolved.runtime))
+			.connections.filter((t) => t.runtime === resolved.runtime.id && targetRequiresAuth(t, resolved.runtime))
 			.filter((t) => auth.statusForTarget(resolveAuthTarget(t, resolved.runtime), { includeFallback: false }).available)
 			.map((t) => t.id);
 		if (keyed.length > 0) {

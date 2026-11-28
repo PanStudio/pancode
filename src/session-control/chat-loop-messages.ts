@@ -62,15 +62,15 @@ interface RuntimeResolutionView {
  * Why chat cannot start, in the words `pancode doctor` uses on its chat row,
  * so the two surfaces name the same missing piece and the same next command.
  */
-export function notConfiguredNotice(chat: { target?: string | null; model?: string | null } = {}): string {
-	const target = chat.target?.trim();
+export function notConfiguredNotice(chat: { connection?: string | null; model?: string | null } = {}): string {
+	const target = chat.connection?.trim();
 	if (target && !chat.model?.trim()) {
 		return `[PanCode] ${describeMissing({ kind: "model", target }).sentence}`;
 	}
 	return [
 		"[PanCode] No model connection is configured; run `pancode configure` to choose one.",
 		"Without a terminal: pancode configure --id <id> --runtime <runtime> --url <url> --model <model> --set-orchestrator",
-		`(chat.target and chat.model live in ${settingsPath()})`,
+		`(chat.connection and chat.model live in ${settingsPath()})`,
 	].join("\n");
 }
 

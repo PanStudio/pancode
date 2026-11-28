@@ -338,7 +338,7 @@ export function buildModelItems(deps: {
 	settings: Readonly<PancodeSettings>;
 	providers: ProvidersContract;
 }): ModelItemsResult {
-	const activeTarget = deps.settings.chat?.target?.trim() ?? "";
+	const activeTarget = deps.settings.chat?.connection?.trim() ?? "";
 	const activeModel = deps.settings.chat?.model?.trim() ?? "";
 	const activeRef = activeTarget && activeModel ? modelRefWords(activeTarget, activeModel) : activeTarget;
 	const favoriteSet = new Set(deps.settings.chat.modelPicker?.favorites ?? []);

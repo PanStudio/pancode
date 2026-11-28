@@ -309,7 +309,7 @@ export function createTurnRuntime(deps: TurnRuntimeDeps): TurnRuntime {
 	const unreportedUsageSessions = new Set<string>();
 	const readTarget = (route?: { target: string; model: string }): ChatLoopTarget | null => {
 		const settings = deps.getSettings();
-		const targetId = (route?.target ?? settings.chat.target)?.trim();
+		const targetId = (route?.target ?? settings.chat.connection)?.trim();
 		const wireModelId = (route?.model ?? settings.chat.model)?.trim();
 		if (!targetId || !wireModelId) return null;
 		const resolved = resolveRuntimeTarget(deps.providers, {
@@ -384,7 +384,7 @@ export function createTurnRuntime(deps: TurnRuntimeDeps): TurnRuntime {
 	const ensureLiveCapabilitiesForSelectedModel = async (options?: { silent?: boolean }): Promise<void> => {
 		if (disposed) return;
 		const settings = deps.getSettings();
-		const targetId = settings.chat.target?.trim();
+		const targetId = settings.chat.connection?.trim();
 		const wireModelId = settings.chat.model?.trim();
 		if (!targetId || !wireModelId) return;
 		const target = deps.providers.getTarget(targetId);
@@ -417,7 +417,7 @@ export function createTurnRuntime(deps: TurnRuntimeDeps): TurnRuntime {
 			if (
 				state.runtime &&
 				!state.streaming &&
-				deps.getSettings().chat.target === targetId &&
+				deps.getSettings().chat.connection === targetId &&
 				deps.getSettings().chat.model === wireModelId
 			) {
 				ensureRuntime({ silent: true });
@@ -576,7 +576,7 @@ export function createTurnRuntime(deps: TurnRuntimeDeps): TurnRuntime {
 		setGlobalDefaultMaxOutputTokens(deps.getSettings().chat.maxOutputTokens);
 		if (!deps.knownTargets().has(target.target.id)) {
 			throw new TurnAdmissionError(
-				`[PanCode] orchestrator target=${target.target.id} unknown. Run \`pancode targets\` to see configured targets.`,
+				`[PanCode] orchestrator connection=${target.target.id} unknown. Run \`pancode connections\` to see configured connections.`,
 				"target-unknown",
 			);
 		}

@@ -63,13 +63,13 @@ test("a council declined once is asked again the next time", async () => {
  */
 test("council members run as their roster agent, else the council agent", async () => {
 	const settings = validateSettings({
-		targets: [{ id: "mini", runtime: "openai-compat", url: "http://127.0.0.1:1", defaultModel: "m" }],
+		connections: [{ id: "mini", runtime: "openai-compat", url: "http://127.0.0.1:1", defaultModel: "m" }],
 		fleet: {
 			rosters: {
 				design: {
 					members: [
-						{ label: "arch", target: "mini", model: "a", agent: "architect" },
-						{ label: "plain", target: "mini", model: "b", thinkingLevel: "low" },
+						{ label: "arch", connection: "mini", model: "a", agent: "architect" },
+						{ label: "plain", connection: "mini", model: "b", thinkingLevel: "low" },
 					],
 				},
 			},
@@ -102,8 +102,8 @@ test("council members run as their roster agent, else the council agent", async 
 		{
 			mode: "council",
 			members: [
-				{ label: "x", target: "mini", agent: "nope" },
-				{ label: "y", target: "mini" },
+				{ label: "x", connection: "mini", agent: "nope" },
+				{ label: "y", connection: "mini" },
 			],
 			task: "t",
 		},
@@ -152,8 +152,8 @@ test("a member deadline aborts only the slow member and names the deadline", asy
 		{
 			mode: "council",
 			members: [
-				{ label: "a", target: "mini" },
-				{ label: "b", target: "mini" },
+				{ label: "a", connection: "mini" },
+				{ label: "b", connection: "mini" },
 			],
 			member_deadline_ms: 20,
 			task: "t",
@@ -185,9 +185,9 @@ test("/poll seats n independent vote members cycling over --models and tallies t
 	);
 	ok(built.ok);
 	deepStrictEqual(built.args.members, [
-		{ label: "p1", target: "copilot", model: "gpt-6-luna" },
-		{ label: "p2", target: "litellm", model: "mini/q" },
-		{ label: "p3", target: "copilot", model: "gpt-6-luna" },
+		{ label: "p1", connection: "copilot", model: "gpt-6-luna" },
+		{ label: "p2", connection: "litellm", model: "mini/q" },
+		{ label: "p3", connection: "copilot", model: "gpt-6-luna" },
 	]);
 	strictEqual(built.args.synthesis, "vote");
 	strictEqual(built.args.rounds, undefined);
@@ -373,7 +373,7 @@ test("a council with one answer and one failed member reports partial, not faile
 
 test("a seat whose target is down sits as a failed seat while the live seats deliberate; fewer than two live is refused (FL-4)", async () => {
 	const seated: DispatchRequest[] = [];
-	const downMessage = "dispatch: target 'deadend' unavailable: health down: ECONNREFUSED";
+	const downMessage = "dispatch: connection 'deadend' unavailable: health down: ECONNREFUSED";
 	const tool = createDispatchTool({
 		dispatch: {
 			preview: (request: DispatchRequest) => {
@@ -410,7 +410,7 @@ test("a seat whose target is down sits as a failed seat while the live seats del
 		getAutonomy: () => "yolo",
 	});
 	const members = (labels: string[]) =>
-		labels.map((label) => ({ label, target: label === "dead" ? "deadend" : "mini" }));
+		labels.map((label) => ({ label, connection: label === "dead" ? "deadend" : "mini" }));
 	const result = await tool.run(
 		{ mode: "council", members: members(["a", "b", "dead"]), rounds: 2, task: "t" },
 		{} as never,
@@ -426,17 +426,20 @@ test("a seat whose target is down sits as a failed seat while the live seats del
 		[
 			["a", null],
 			["b", null],
-			["dead", "seat not run: target 'deadend' unavailable: health down: ECONNREFUSED"],
+			["dead", "seat not run: connection 'deadend' unavailable: health down: ECONNREFUSED"],
 		],
 	);
 	// FX-20: the skipped seat is named but not counted; both seats that ran answered, so the council is whole as admitted.
 	strictEqual(result.kind, "ok", result.kind === "error" ? result.message : "");
-	match(result.kind === "ok" ? result.output : "", /\[dead\] seat not run \(target unavailable\): target 'deadend'/u);
+	match(
+		result.kind === "ok" ? result.output : "",
+		/\[dead\] seat not run \(connection unavailable\): connection 'deadend'/u,
+	);
 	const outcome = await dispatchCouncilThroughRegistry({ invoke: async () => ({ kind: "ok", result }) } as never, {
 		mode: "council",
 	});
 	deepStrictEqual(outcome, { status: "ok", skipped: { answered: 2, ran: 2, labels: ["dead"] } });
-	strictEqual(presentCouncilReport(report as CouncilReport).lines.at(-1), "dead: seat not run (target unavailable)");
+	strictEqual(presentCouncilReport(report as CouncilReport).lines.at(-1), "dead: seat not run (connection unavailable)");
 	// With a ran seat failing too, partial counts only the seats that ran.
 	deepStrictEqual(
 		councilShortfall({
@@ -511,7 +514,7 @@ test("a judge council admits round 2 and the judge when host text names an endpo
 	});
 	const args = {
 		mode: "council",
-		members: ["a", "b", "dead"].map((label) => ({ label, target: "mini" })),
+		members: ["a", "b", "dead"].map((label) => ({ label, connection: "mini" })),
 		rounds: 2,
 		synthesis: "judge",
 		task: "Does src/core/clock.ts own the clock?",

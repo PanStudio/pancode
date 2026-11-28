@@ -109,7 +109,7 @@ async function interopInspectSnapshot(now: () => number = Date.now): Promise<Int
 	const report = await detectInteropAgents({ cwd: process.cwd(), probeVersion: true, inventory: true });
 	const settings = readSettings();
 	const configured = new Set(settings.integrations.externalAgents.entries.map((agent) => agent.id));
-	const configuredRuntimes = new Set(settings.targets.map((target) => target.runtime));
+	const configuredRuntimes = new Set(settings.connections.map((target) => target.runtime));
 	const agents: InteropInspectAgent[] = [];
 	for (const record of report.agents) {
 		const kind = interopAgentKind(record.kind);
@@ -120,7 +120,7 @@ async function interopInspectSnapshot(now: () => number = Date.now): Promise<Int
 		const decisionStale = decision !== null && record.decidedFingerprint !== record.fingerprint;
 		const modes = peerModeCapabilities(kind, record, {
 			configuredAcp: isConfigured,
-			configuredTargets: settings.targets,
+			configuredTargets: settings.connections,
 			paneAvailable: null,
 		});
 		const adoption = adoptionStates(kind.id, record.inventory);

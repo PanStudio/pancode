@@ -48,11 +48,14 @@ test("a select never rewrites a saved value it does not recognise, and an option
 		selectOptions(control({ choices: ["low", "high"] }))?.map((option) => option.value),
 		["low", "high"],
 	);
-	assert.deepEqual(selectOptions(control({ path: "chat.target", optional: true, value: "gone", suggestions: ["a"] })), [
-		{ value: "", label: "Automatic" },
-		{ value: "gone", label: "gone" },
-		{ value: "a", label: "a" },
-	]);
+	assert.deepEqual(
+		selectOptions(control({ path: "chat.connection", optional: true, value: "gone", suggestions: ["a"] })),
+		[
+			{ value: "", label: "Automatic" },
+			{ value: "gone", label: "gone" },
+			{ value: "a", label: "a" },
+		],
+	);
 	// Suggestions on a list stay free text; a list is not one value.
 	assert.equal(selectOptions(control({ kind: "list", suggestions: ["a"] })), null);
 	assert.equal(emptyMeaning(control({ kind: "list" })), "None");
@@ -81,19 +84,24 @@ test("search covers path, label, description and group; groups keep registry ord
 });
 
 test("a write reports the requested change first and names every side effect", () => {
-	const controls = [control({ path: "chat.target", label: "Target" }), control({ path: "chat.model", label: "Model" })];
+	const controls = [
+		control({ path: "chat.connection", label: "Target" }),
+		control({ path: "chat.model", label: "Model" }),
+	];
 	assert.deepEqual(
 		writtenSentences(
 			[
-				{ path: "chat.target", value: "other" },
+				{ path: "chat.connection", value: "other" },
 				{ path: "chat.model", value: "" },
 			],
 			controls,
-			"chat.target",
+			"chat.connection",
 		),
 		["Saved Target.", "This also cleared Model."],
 	);
-	assert.deepEqual(writtenSentences([], controls, "chat.target"), ["Nothing changed; the value was already in effect."]);
+	assert.deepEqual(writtenSentences([], controls, "chat.connection"), [
+		"Nothing changed; the value was already in effect.",
+	]);
 	assert.equal(sentence("never send a pre-warm request"), "Never send a pre-warm request.");
 	assert.equal(sentence("Done."), "Done.");
 });

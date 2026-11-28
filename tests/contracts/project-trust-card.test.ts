@@ -27,7 +27,7 @@ function fixture(dir: string): string {
 	mkdirSync(join(workspace, ".pancode"), { recursive: true });
 	writeFileSync(
 		join(workspace, ".pancode", "settings.yaml"),
-		"chat:\n  retry:\n    streamStallMs: 60000\ntargets:\n  - id: lab\n    runtime: openai-compat\n    url: http://10.0.0.5:8000/v1\n",
+		"chat:\n  retry:\n    streamStallMs: 60000\nconnections:\n  - id: lab\n    runtime: openai-compat\n    url: http://10.0.0.5:8000/v1\n",
 	);
 	writeFileSync(join(workspace, ".pancode", "safety.yaml"), "version: 1\nnoWritePaths:\n  - secrets/\n");
 	writeFileSync(
@@ -48,7 +48,7 @@ test("S-76: the card names each untrusted surface, its connections, rule counts 
 			["settings", "safety", "hooks"],
 		);
 		const text = renderProjectTrustCard(model).join("\n");
-		ok(text.includes("areas: chat, targets"), text);
+		ok(text.includes("areas: chat, connections"), text);
 		ok(text.includes("connection lab → http://10.0.0.5:8000/v1"), text);
 		ok(text.includes("1 path block rule, 0 command allow rules"), text);
 		ok(text.includes("after_tool: runs ./scripts/fmt.sh --check"), text);
@@ -78,7 +78,7 @@ test("after Trust all, each project connection names the key or sign-in it still
 		writeFileSync(
 			join(workspace, ".pancode", "settings.yaml"),
 			[
-				"targets:",
+				"connections:",
 				"  - id: team-openai",
 				"    runtime: openai",
 				"  - id: lab-gateway",
@@ -110,7 +110,7 @@ test("after Trust all, each project connection names the key or sign-in it still
 	}
 });
 
-test("a project target names its key variable: the card says it sends $NAME to the url, and only the name is kept after trust", async () => {
+test("a project connection names its key variable: the card says it sends $NAME to the url, and only the name is kept after trust", async () => {
 	const home = await isolatePancodeEnv("pancode-trust-card-");
 	const saved = process.env.TEAM_KEY;
 	delete process.env.TEAM_KEY;
@@ -120,7 +120,7 @@ test("a project target names its key variable: the card says it sends $NAME to t
 		writeFileSync(
 			join(workspace, ".pancode", "settings.yaml"),
 			[
-				"targets:",
+				"connections:",
 				"  - id: team",
 				"    runtime: openai-compat",
 				"    url: https://llm.team.example.org/v1",
@@ -133,7 +133,7 @@ test("a project target names its key variable: the card says it sends $NAME to t
 		);
 		const untrusted = readStrictLayeredSettings(workspace);
 		strictEqual(
-			untrusted.settings.targets.some((target) => target.id === "team"),
+			untrusted.settings.connections.some((target) => target.id === "team"),
 			false,
 			"an untrusted project's key name is not read",
 		);
@@ -143,13 +143,15 @@ test("a project target names its key variable: the card says it sends $NAME to t
 		ok(text.includes("connection team sends $TEAM_KEY to https://llm.team.example.org/v1"), text);
 		trustProjectCard(model);
 		const trusted = readStrictLayeredSettings(workspace);
-		deepStrictEqual(trusted.settings.targets.find((target) => target.id === "team")?.auth, { apiKeyEnvVar: "TEAM_KEY" });
+		deepStrictEqual(trusted.settings.connections.find((target) => target.id === "team")?.auth, {
+			apiKeyEnvVar: "TEAM_KEY",
+		});
 		deepStrictEqual(
 			trusted.issues
 				.filter((issue) => issue.message.startsWith("credentials are not allowed"))
 				.map((issue) => issue.path)
 				.sort(),
-			["targets[0].auth.apiKeyRef", "targets[0].auth.headers"],
+			["connections[0].auth.apiKeyRef", "connections[0].auth.headers"],
 		);
 		deepStrictEqual(projectConnectionNeeds(workspace, trusted.settings), [
 			"connection team reads its key from $TEAM_KEY, which is not set in this shell.",
@@ -170,7 +172,10 @@ test("a launch with the project trusted, as after /trust restarts into the sessi
 	try {
 		const workspace = join(home.dir, "workspace");
 		mkdirSync(join(workspace, ".pancode"), { recursive: true });
-		writeFileSync(join(workspace, ".pancode", "settings.yaml"), "targets:\n  - id: team-openai\n    runtime: openai\n");
+		writeFileSync(
+			join(workspace, ".pancode", "settings.yaml"),
+			"connections:\n  - id: team-openai\n    runtime: openai\n",
+		);
 		writeFileSync(join(workspace, ".pancode", "safety.yaml"), "version: 1\nnoWritePaths:\n  - secrets/\n");
 		const settings = () => readStrictLayeredSettings(workspace).settings;
 		const need = "openai has no key or sign-in stored. Run: pancode auth login openai (or press Enter on /config)";

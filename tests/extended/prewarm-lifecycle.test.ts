@@ -30,7 +30,7 @@ function fixture(
 ) {
 	const settings = structuredClone(DEFAULT_SETTINGS);
 	settings.chat.prewarm = true;
-	settings.chat.target = "local";
+	settings.chat.connection = "local";
 	settings.chat.model = "fixture";
 	const target = {
 		id: "local",
@@ -128,7 +128,7 @@ test("prewarm on a local target that binds no cache.deployment says so once inst
 		await f.warm.settled();
 		strictEqual(f.rounds.length, 0);
 		strictEqual(f.notices.length, 1, "one notice per target, not one per skipped trigger");
-		match(f.notices[0] ?? "", /chat\.prewarm is on, but target local binds no cache\.deployment/u);
+		match(f.notices[0] ?? "", /chat\.prewarm is on, but connection local binds no cache\.deployment/u);
 		match(f.notices[0] ?? "", /backend llamacpp, controlUrl, model and build/u);
 	} finally {
 		f.warm.dispose();

@@ -65,7 +65,7 @@ const NOTES: Record<string, string> = {
 		"PanCode reads this catalog path when resolving hub packs. Saving the path does not install a pack.",
 	"safety.review.enabled":
 		"Conversations in PanCode on the desktop run over ACP, and headless and ACP runs never fire the review. This setting changes terminal sessions only.",
-	"safety.review.target": "Used by terminal sessions only; ACP runs never fire the review.",
+	"safety.review.connection": "Used by terminal sessions only; ACP runs never fire the review.",
 	"safety.review.cadenceToolCalls": "Used by terminal sessions only; ACP runs never fire the review.",
 	"safety.autonomy":
 		"This is the default for new sessions. A conversation that is already open keeps the autonomy it was bound to.",
@@ -187,7 +187,7 @@ function plainIssue(label: string, message: string): string {
 /** A null `cwd` is the user layer alone: no workspace is open, so no project layer applies. */
 export function readSettingsControls(cwd: string | null): SettingsControls {
 	const layered = readLayeredSettings(cwd);
-	const targets = layered.settings.targets.map((target) => target.id);
+	const targets = layered.settings.connections.map((target) => target.id);
 	const controls = SHARED_SETTINGS_AREAS.flatMap((area) => orderedAreaControls(area.id).map((entry) => entry.control))
 		.filter((control) => !hidden(control.path))
 		.map((control): SettingControl => {
@@ -206,7 +206,7 @@ export function readSettingsControls(cwd: string | null): SettingsControls {
 			const reason = readOnlyReason(control) ?? overridden ?? oversized;
 			const valueConfirm = CONFIRM_VALUE[control.path];
 			const suggestions =
-				control.path.endsWith(".target") || ["fleet.profiles", "fleet.rosters"].includes(control.path)
+				control.path.endsWith(".connection") || ["fleet.profiles", "fleet.rosters"].includes(control.path)
 					? targets
 					: control.path === "fleet.default.node"
 						? ["local", ...layered.settings.fleet.nodes.map((node) => node.id)]

@@ -177,10 +177,10 @@ function applySettingChange(settings: PancodeSettings, id: string, value: string
 		// how the operator says "go back to the default" from a text row. Deleting
 		// the key rather than storing a blank keeps settings.yaml matching what the
 		// config validator accepts.
-		case "safety.review.target": {
+		case "safety.review.connection": {
 			const trimmed = value.trim();
-			if (trimmed) settings.safety.review.target = trimmed;
-			else delete settings.safety.review.target;
+			if (trimmed) settings.safety.review.connection = trimmed;
+			else delete settings.safety.review.connection;
 			return;
 		}
 		case "interface.smoothStreaming":
@@ -192,39 +192,41 @@ function applySettingChange(settings: PancodeSettings, id: string, value: string
 				.map((entry) => entry.trim())
 				.filter(Boolean);
 			return;
-		case "chat.target": {
+		case "chat.connection": {
 			const target = value === "(unset)" || value === "" ? null : value;
 			// Switching targets re-bases the model on the new target default.
-			if (target !== settings.chat.target) {
-				settings.chat.model = target ? (settings.targets.find((entry) => entry.id === target)?.defaultModel ?? null) : null;
+			if (target !== settings.chat.connection) {
+				settings.chat.model = target
+					? (settings.connections.find((entry) => entry.id === target)?.defaultModel ?? null)
+					: null;
 			}
-			settings.chat.target = target;
+			settings.chat.connection = target;
 			return;
 		}
 		case "chat.model":
 			settings.chat.model = value === "(unset)" || value === "" ? null : value;
 			return;
-		case "context.memory.target": {
+		case "context.memory.connection": {
 			const target = value.startsWith("(unset") || value === "" ? null : value;
-			if (target !== settings.context.memory.target) {
+			if (target !== settings.context.memory.connection) {
 				settings.context.memory.model = target
-					? (settings.targets.find((entry) => entry.id === target)?.defaultModel ?? null)
+					? (settings.connections.find((entry) => entry.id === target)?.defaultModel ?? null)
 					: null;
 			}
-			settings.context.memory.target = target;
+			settings.context.memory.connection = target;
 			return;
 		}
 		case "context.memory.model":
 			settings.context.memory.model = value === "(unset)" || value === "" ? null : value;
 			return;
-		case "fleet.default.target": {
+		case "fleet.default.connection": {
 			const target = value === "(unset)" || value === "" ? null : value;
-			if (target !== settings.fleet.default.target) {
+			if (target !== settings.fleet.default.connection) {
 				settings.fleet.default.model = target
-					? (settings.targets.find((entry) => entry.id === target)?.defaultModel ?? null)
+					? (settings.connections.find((entry) => entry.id === target)?.defaultModel ?? null)
 					: null;
 			}
-			settings.fleet.default.target = target;
+			settings.fleet.default.connection = target;
 			return;
 		}
 		case "fleet.default.model":
@@ -303,7 +305,7 @@ function applyEntrySettingChange(settings: PancodeSettings, id: string, value: s
 		if (value === REMOVE_PROFILE_CHOICE) {
 			removeFleetProfileFromSettings(settings, name);
 		} else if (field === "target") {
-			if (fieldValue !== profile.target) setFleetProfileInSettings(settings, name, fieldValue);
+			if (fieldValue !== profile.connection) setFleetProfileInSettings(settings, name, fieldValue);
 		} else if (field === "model") {
 			profile.model = fieldValue === "(unset)" || fieldValue === "" ? null : fieldValue;
 		} else if (field === "thinkingLevel") {
@@ -324,8 +326,8 @@ function applyEntrySettingChange(settings: PancodeSettings, id: string, value: s
 		else bindAgentProfileInSettings(settings, agentId, value);
 		return true;
 	}
-	if (id.startsWith("targets.")) {
-		const targetId = id.slice("targets.".length);
+	if (id.startsWith("connections.")) {
+		const targetId = id.slice("connections.".length);
 		if (value === "use") useTargetInSettings(settings, targetId);
 		else if (value === "remove") removeTargetFromSettings(settings, targetId);
 		return true;
@@ -402,7 +404,7 @@ function propagationTiming(
 	restartRequired: boolean,
 ): SettingsPropagationTiming {
 	if (restartRequired) return "next-session";
-	if (id.startsWith("targets.")) {
+	if (id.startsWith("connections.")) {
 		if (selectedValue === "remove") return "next-dispatch";
 		return path.startsWith("chat.") ? "now" : "next-dispatch";
 	}

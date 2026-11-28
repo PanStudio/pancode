@@ -69,8 +69,8 @@ it("binds fleet.profiles.vision to a separate llama.cpp target and fails closed 
 		defaultModel: "MiniCPM-V-4_6-Q4_K_M.gguf",
 		capabilities: { chat: true, vision: true, contextWindow: 8192, maxTokens: 1024 },
 	};
-	settings.targets.push(target);
-	settings.fleet.profiles.vision = { target: target.id, model: target.defaultModel, thinkingLevel: "off" };
+	settings.connections.push(target);
+	settings.fleet.profiles.vision = { connection: target.id, model: target.defaultModel, thinkingLevel: "off" };
 	const providers = {
 		getTarget: (id: string) => (id === target.id ? target : null),
 		getRuntime: (id: string) => (id === "llamacpp" ? llamacpp : null),
@@ -111,8 +111,8 @@ it("binds fleet.profiles.vision to a separate llama.cpp target and fails closed 
 it("probes an unprobed vision target once before resolving it, so a fresh headless process can use it", async () => {
 	const settings = structuredClone(DEFAULT_SETTINGS);
 	const target = { id: "mini-vision", runtime: "llamacpp", url: "http://127.0.0.1:8081", defaultModel: "minicpm" };
-	settings.targets.push(target);
-	settings.fleet.profiles.vision = { target: target.id, model: target.defaultModel, thinkingLevel: "off" };
+	settings.connections.push(target);
+	settings.fleet.profiles.vision = { connection: target.id, model: target.defaultModel, thinkingLevel: "off" };
 	const status = {
 		target,
 		runtime: llamacpp,

@@ -83,7 +83,7 @@ as in: pancode config set <path> -- -1
                     and the bytes written are approved
   --json            one JSON object: version, path, scope, value, file
 
-Routing (chat.target, chat.model, fleet.*, context.memory.target,
+Routing (chat.connection, chat.model, fleet.*, context.memory.connection,
 context.memory.model, connections) is refused: use pancode connections use, pancode
 connections profile, or pancode configure. List and structured settings are edited
 with pancode configure --settings or in the settings file.

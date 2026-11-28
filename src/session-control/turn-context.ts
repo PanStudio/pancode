@@ -1112,7 +1112,7 @@ export function createTurnContext(deps: TurnContextDeps): TurnContext {
 
 	const resolveTargetWithoutRuntime = (): ResolvedRuntimeTarget | null => {
 		const settings = deps.getSettings();
-		const targetId = settings.chat?.target?.trim();
+		const targetId = settings.chat?.connection?.trim();
 		const wireModelId = settings.chat?.model?.trim();
 		if (!targetId || !wireModelId) return null;
 		const resolved = resolveRuntimeTarget(deps.providers, {
@@ -1170,7 +1170,7 @@ export function createTurnContext(deps: TurnContextDeps): TurnContext {
 	 */
 	const routeSuperseded = (targetId: string | null | undefined, modelId: string | null | undefined): boolean => {
 		const route = deps.getSettings().chat;
-		const target = route?.target?.trim();
+		const target = route?.connection?.trim();
 		const model = route?.model?.trim();
 		if (!target || !model || state.streaming || deps.isTurnActive?.() === true) return false;
 		return targetId !== target || modelId !== model;
@@ -1835,7 +1835,7 @@ export function createTurnContext(deps: TurnContextDeps): TurnContext {
 			const snapshot = currentContextSnapshot;
 			return sha256Json([
 				"historical/1",
-				settings.chat?.target ?? null,
+				settings.chat?.connection ?? null,
 				settings.chat?.model ?? null,
 				snapshot?.snapshotId ?? null,
 				snapshot ? snapshotInputTokens(snapshot) : null,
@@ -1935,7 +1935,7 @@ export function createTurnContext(deps: TurnContextDeps): TurnContext {
 	): LiveBudgetAccounting => {
 		// Inspection uses already-loaded capture facts, never a diagnostic-ledger scan.
 		const sameRoute =
-			!snapshot || (snapshot.providerId === settings.chat?.target && snapshot.modelId === settings.chat?.model);
+			!snapshot || (snapshot.providerId === settings.chat?.connection && snapshot.modelId === settings.chat?.model);
 		// A saved request from model A cannot acquire model B's window while
 		// retaining A's identity and input measurement. Keep that capture coherent.
 		const window =
@@ -1947,7 +1947,7 @@ export function createTurnContext(deps: TurnContextDeps): TurnContext {
 				: windowWithoutRuntime();
 		const pendingTokens = pendingUserInputTokens();
 		return {
-			targetId: snapshot?.providerId ?? settings.chat?.target ?? null,
+			targetId: snapshot?.providerId ?? settings.chat?.connection ?? null,
 			runtimeId: snapshot?.runtimeId ?? null,
 			modelId: snapshot?.modelId ?? settings.chat?.model ?? null,
 			modelApi: null,
@@ -2014,7 +2014,7 @@ export function createTurnContext(deps: TurnContextDeps): TurnContext {
 			settings.context.compaction.maxTokens,
 			agentRuntime?.agent.state.model ??
 				getCatalogModelForRuntime(
-					accounting.runtimeId ?? settings.targets.find((target) => target.id === accounting.targetId)?.runtime ?? "",
+					accounting.runtimeId ?? settings.connections.find((target) => target.id === accounting.targetId)?.runtime ?? "",
 					accounting.modelId ?? "",
 				),
 		);
@@ -2638,7 +2638,7 @@ export function createTurnContext(deps: TurnContextDeps): TurnContext {
 
 		liveBudget: (): LiveBudgetView => budgetProducer.current() ?? refreshLiveBudget(),
 		inspectLiveBudget(): BudgetInspection {
-			const targetId = deps.getSettings().chat?.target;
+			const targetId = deps.getSettings().chat?.connection;
 			const target = !state.runtime && targetId ? deps.providers.getTarget(targetId) : null;
 			const runtime =
 				state.runtime?.runtimeResolution.runtime ?? (target ? deps.providers.getRuntime(target.runtime) : null);
@@ -2984,7 +2984,7 @@ export function createTurnContext(deps: TurnContextDeps): TurnContext {
 					settings.context.compaction.maxTokens,
 					getCatalogModelForRuntime(
 						(state.runtime ? undefined : currentContextSnapshot?.runtimeId) ??
-							settings.targets.find((target) => target.id === settings.chat.target)?.runtime ??
+							settings.connections.find((target) => target.id === settings.chat.connection)?.runtime ??
 							"",
 						settings.chat.model ?? "",
 					),
@@ -3002,7 +3002,7 @@ export function createTurnContext(deps: TurnContextDeps): TurnContext {
 								route.triggerReserve(economic.threshold * economic.triggerWindow),
 							)
 						: economic.threshold;
-			const provider = routed?.targetId ?? settings.chat?.target ?? null;
+			const provider = routed?.targetId ?? settings.chat?.connection ?? null;
 			const model = routed?.wireModelId ?? settings.chat?.model ?? null;
 			const liveToolCount = state.runtime?.agent.state.tools.length ?? 0;
 			// The total is the published view's, the figure the footer and admission read; the capture only splits it.

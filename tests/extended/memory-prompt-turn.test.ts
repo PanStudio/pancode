@@ -161,7 +161,7 @@ test("real submit distinguishes rejected preflight, admitted turn, synthetic con
 	mkdirSync(join(root, "memory"));
 	save(root, "First attempt evidence.");
 	const settings = structuredClone(DEFAULT_SETTINGS);
-	settings.chat.target = "local";
+	settings.chat.connection = "local";
 	settings.chat.model = "local";
 	settings.chat.prewarm = false;
 	const capabilities = {

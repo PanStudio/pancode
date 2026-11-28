@@ -26,13 +26,13 @@ const base: SetupTargetFacts = { id: "t", runtime: "openai", defaultModel: "m", 
 test("setupStatus: the three stages and every missing kind", () => {
 	const kinds = (facts: Partial<SetupTargetFacts>, withModel = true) => {
 		const { defaultModel: _model, ...modelless } = base;
-		const status = setupStatus({ chat: { target: "t" }, target: { ...(withModel ? base : modelless), ...facts } });
+		const status = setupStatus({ chat: { connection: "t" }, target: { ...(withModel ? base : modelless), ...facts } });
 		return status.stage === "needs" ? status.missing.map((item) => item.kind) : status.stage;
 	};
 	assert.equal(setupStatus({ chat: {} }).stage, "choose");
 	assert.equal(kinds({ credential: { available: true, provider: "openai" }, answered: true }), "ready");
 	const needs = setupStatus({
-		chat: { target: "t" },
+		chat: { connection: "t" },
 		target: { ...base, credential: { available: false, provider: "openai" } },
 	});
 	assert.equal(needs.stage, "needs");
@@ -60,8 +60,8 @@ test("every surface prints the setup status's sentence for a missing credential 
 	delete process.env.OPENAI_API_KEY;
 	initializePancodeHome();
 	updateSettings((settings) => {
-		settings.targets = [{ id: "oa", runtime: "openai", defaultModel: "gpt-x" }];
-		settings.chat.target = "oa";
+		settings.connections = [{ id: "oa", runtime: "openai", defaultModel: "gpt-x" }];
+		settings.chat.connection = "oa";
 		settings.chat.model = "gpt-x";
 	});
 	const credential = describeMissing({ kind: "credential", target: "oa", provider: "openai" }).sentence;
@@ -90,7 +90,7 @@ test("every surface prints the setup status's sentence for a missing credential 
 		assert.ok(!text?.includes("/config"), text ?? "");
 
 	updateSettings((settings) => {
-		settings.targets = [
+		settings.connections = [
 			{
 				id: "oa",
 				runtime: "openai",
@@ -139,8 +139,8 @@ test("a chat route at an address a project chose says to define it in user setti
 	initializePancodeHome();
 	const url = "https://llm.lab.example.org/v1";
 	updateSettings((settings) => {
-		settings.targets = [{ id: "lab-gateway", runtime: "openai", url, defaultModel: "gpt-x" }];
-		settings.chat.target = "lab-gateway";
+		settings.connections = [{ id: "lab-gateway", runtime: "openai", url, defaultModel: "gpt-x" }];
+		settings.chat.connection = "lab-gateway";
 		settings.chat.model = "gpt-x";
 	});
 	noteProjectTargets([{ id: "lab-gateway", url }]);
@@ -153,7 +153,7 @@ test("a chat route at an address a project chose says to define it in user setti
 	assert.equal(describeMissing(missing, { inSession: true }).sentence, sentence);
 	assert.equal(chatReadinessFinding(false, []).detail, `connection 'lab-gateway', model 'gpt-x'; ${sentence}`);
 	const pure = setupStatus({
-		chat: { target: "t" },
+		chat: { connection: "t" },
 		target: { ...base, credential: { available: false, provider: "openai", envVariable: "LAB_KEY", projectUrl: url } },
 	});
 	assert.deepEqual(pure.stage === "needs" && pure.missing, [
@@ -167,10 +167,10 @@ test("a project-chosen address never gets a well-known key variable suggested fo
 	initializePancodeHome();
 	const url = "https://evil.example/v1";
 	updateSettings((settings) => {
-		settings.targets = [
+		settings.connections = [
 			{ id: "gateway", runtime: "openai", url, defaultModel: "m", auth: { apiKeyEnvVar: "ANTHROPIC_API_KEY" } },
 		];
-		settings.chat.target = "gateway";
+		settings.chat.connection = "gateway";
 		settings.chat.model = "m";
 	});
 	noteProjectTargets([{ id: "gateway", url }]);

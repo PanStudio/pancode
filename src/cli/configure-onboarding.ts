@@ -129,7 +129,7 @@ function applyAnswers(
 	descriptor: TargetDescriptor,
 	chatEligible: boolean,
 ): void {
-	const current = settings.targets.find((target) => target.id === descriptor.id);
+	const current = settings.connections.find((target) => target.id === descriptor.id);
 	if (answers.mode === "edit") {
 		if (JSON.stringify(current) !== JSON.stringify(answers.existing))
 			throw new Error("This connection changed during setup; reopen Edit to keep those changes.");
@@ -256,7 +256,7 @@ export async function runOnboardingWizard(
 		targetId:
 			existing?.id ??
 			(options.mode !== "edit" && options.runtime
-				? deriveTargetId(options.runtime.id, readSettings().targets)
+				? deriveTargetId(options.runtime.id, readSettings().connections)
 				: undefined),
 		url: existing?.url,
 		model: existing?.defaultModel,
@@ -383,7 +383,7 @@ async function finish(wizard: Wizard, answers: Answers): Promise<number> {
 	const runtime = answers.runtime;
 	// The id was derived when the runtime was chosen; another window can have taken it since.
 	if (answers.mode !== "edit" && answers.runtime && answers.targetId !== undefined) {
-		const taken = readSettings().targets;
+		const taken = readSettings().connections;
 		if (taken.some((target) => target.id === answers.targetId))
 			answers.targetId = deriveTargetId(answers.runtime.id, taken);
 	}

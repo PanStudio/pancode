@@ -33,11 +33,11 @@ function describeSettingsPosture(settings: Readonly<PancodeSettings>): string {
 }
 
 const SAFE_STRING_VALUES = new Set([
-	"chat.target",
+	"chat.connection",
 	"chat.model",
-	"fleet.default.target",
+	"fleet.default.connection",
 	"fleet.default.model",
-	"context.memory.target",
+	"context.memory.connection",
 	"context.memory.model",
 	"fleet.concurrency",
 ]);
@@ -62,7 +62,7 @@ export function settingsAwareness(
 		.sort((a, b) => (area ? a.index - b.index : b.score - a.score || a.index - b.index))
 		.map(({ control }) => control);
 	const route = (value: PancodeSettings["fleet"]["default"]) => ({
-		target: value.target ?? null,
+		connection: value.connection ?? null,
 		model: value.model ?? null,
 		thinkingLevel: value.thinkingLevel,
 		...(value.node ? { node: value.node } : {}),
@@ -107,7 +107,7 @@ export function settingsAwareness(
 			fleetDefault: sourced("fleet", route(settings.fleet.default)),
 			profiles: Object.fromEntries(Object.entries(settings.fleet.profiles).map(([name, value]) => [name, route(value)])),
 			agentProfiles: { ...settings.fleet.agentProfiles },
-			targets: settings.targets.map((target) => ({
+			targets: settings.connections.map((target) => ({
 				id: target.id,
 				runtime: target.runtime,
 				defaultModel: target.defaultModel ?? null,

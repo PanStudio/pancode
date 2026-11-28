@@ -267,7 +267,7 @@ function loadReportHost(
 					const settings = deps.app.getSettings?.();
 					const autonomy = settings?.safety.autonomy;
 					// Session meta names the target; the report's Runtime line wants that target's runtime.
-					const runtime = settings?.targets.find((target) => target.id === meta.target)?.runtime;
+					const runtime = settings?.connections.find((target) => target.id === meta.target)?.runtime;
 					return {
 						id: meta.id,
 						cwd: meta.cwd,
@@ -278,7 +278,7 @@ function loadReportHost(
 						},
 					};
 				},
-				identitySettings: () => ({ targets: deps.app.getSettings?.().targets ?? [] }),
+				identitySettings: () => ({ connections: deps.app.getSettings?.().connections ?? [] }),
 				flushTelemetry: () => deps.app.telemetry.flush(),
 				telemetryProcess: () => telemetryProcessId(),
 				...(deps.takeReportOffer ? { takeOffer: deps.takeReportOffer } : {}),

@@ -111,7 +111,7 @@ describe("llama.cpp router probe", () => {
 			match(advisory, /^ornith clears idle slots from its unified KV cache/);
 			match(advisory, /--parallel 4/);
 			match(advisory, /--no-cache-idle-slots \(preset: cache-idle-slots = false\)$/);
-			ok(result?.notes?.includes(advisory), "targets --probe renders the advisory with the other notes");
+			ok(result?.notes?.includes(advisory), "connections --probe renders the advisory with the other notes");
 		}
 	});
 
@@ -125,13 +125,13 @@ describe("llama.cpp router probe", () => {
 				join(home, "config", "settings.yaml"),
 				[
 					"version: 2",
-					"targets:",
+					"connections:",
 					"  - id: mini",
 					"    runtime: llamacpp",
 					`    url: ${url}`,
 					"    defaultModel: ornith",
 					"chat:",
-					"  target: mini",
+					"  connection: mini",
 					"  model: ornith",
 					"  prewarm: false",
 					"",

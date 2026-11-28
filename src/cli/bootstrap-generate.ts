@@ -93,17 +93,18 @@ export function resolveBootstrapRoute(settings: Readonly<PancodeSettings>): Boot
 		if (!profileName) continue;
 		const profile = settings.fleet.profiles[profileName];
 		if (!profile) throw new Error(`bootstrap profile '${profileName}' is not configured (bound to '${agentId}')`);
-		if (!profile.target) throw new Error(`bootstrap profile '${profileName}' has no connection (bound to '${agentId}')`);
+		if (!profile.connection)
+			throw new Error(`bootstrap profile '${profileName}' has no connection (bound to '${agentId}')`);
 		return {
-			target: profile.target,
+			target: profile.connection,
 			...(profile.model ? { model: profile.model } : {}),
 			...(profile.thinkingLevel ? { thinkingLevel: profile.thinkingLevel } : {}),
 		};
 	}
 	for (const fallback of [settings.chat, settings.fleet.default]) {
-		if (!fallback?.target) continue;
+		if (!fallback?.connection) continue;
 		return {
-			target: fallback.target,
+			target: fallback.connection,
 			...(fallback.model ? { model: fallback.model } : {}),
 			...(fallback.thinkingLevel ? { thinkingLevel: fallback.thinkingLevel } : {}),
 		};
@@ -111,7 +112,7 @@ export function resolveBootstrapRoute(settings: Readonly<PancodeSettings>): Boot
 	throw new Error(
 		`bootstrap has no route: fleet.agentProfiles.${CONTEXT_BOOTSTRAP_AGENT_ID} is unbound, chat has no connection and ` +
 			`fleet.default has no connection; bind a profile with ` +
-			`'pancode connections profile bind ${CONTEXT_BOOTSTRAP_AGENT_ID} <profile>' or set fleet.default.target or chat.target`,
+			`'pancode connections profile bind ${CONTEXT_BOOTSTRAP_AGENT_ID} <profile>' or set fleet.default.connection or chat.connection`,
 	);
 }
 

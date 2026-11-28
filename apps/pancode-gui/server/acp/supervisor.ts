@@ -1257,9 +1257,9 @@ export class Supervisor {
 	}
 	settings(id: string, patch?: SafeSettingsPatch) {
 		if (patch)
-			for (const key of ["chat.target", "chat.model"] as const) {
+			for (const key of ["chat.connection", "chat.model"] as const) {
 				const value = patch[key];
-				if (value && Buffer.byteLength(value) > (key === "chat.target" ? 128 : 256))
+				if (value && Buffer.byteLength(value) > (key === "chat.connection" ? 128 : 256))
 					throw new AppProblem("validation", "Setting exceeds its UTF-8 byte limit.");
 			}
 		return this.projected(

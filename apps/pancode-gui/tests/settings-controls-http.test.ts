@@ -61,7 +61,7 @@ test("settings controls derive from the engine registry, write only the user lay
 		assert.equal(byPath.get("fleet.concurrency")?.timing, "restartRequired");
 		assert.equal(byPath.get("safety.review.enabled")?.timing, "hotReload");
 		assert.match(byPath.get("safety.review.enabled")?.note ?? "", /ACP runs never fire/);
-		assert.deepEqual(byPath.get("chat.target")?.suggestions, ["fixture-target"]);
+		assert.deepEqual(byPath.get("chat.connection")?.suggestions, ["fixture-target"]);
 		assert.ok(Object.keys(byPath.get("safety.autonomy")?.valueHelp ?? {}).includes("yolo"));
 
 		// Autonomy comes from the operator layer, while project overrides still block user writes to their own controls.
@@ -106,18 +106,18 @@ test("settings controls derive from the engine registry, write only the user lay
 		// Engine validation, not a copy of it.
 		const badChoice = await patch({ path: "chat.thinkingLevel", value: "extreme" });
 		assert.equal(badChoice.status, 422);
-		const badTarget = await patch({ path: "chat.target", value: "no-such-connection" });
+		const badTarget = await patch({ path: "chat.connection", value: "no-such-connection" });
 		assert.equal(badTarget.status, 422);
 		assert.match(JSON.stringify(await badTarget.json()), /existing connection/);
 		assert.equal((await patch({ path: "chat.retry.maxRetries", value: "many" })).status, 422);
 
 		// A connection change clears the model override, and the response says so.
-		const target = await json(await patch({ path: "fleet.default.target", value: "fixture-target" }), SettingWritten);
-		assert.equal(target.changed[0]?.path, "fleet.default.target");
+		const target = await json(await patch({ path: "fleet.default.connection", value: "fixture-target" }), SettingWritten);
+		assert.equal(target.changed[0]?.path, "fleet.default.connection");
 		const model = await json(await patch({ path: "fleet.default.model", value: "fixture-model" }), SettingWritten);
 		assert.deepEqual(model.changed, [{ path: "fleet.default.model", value: "fixture-model" }]);
-		const cleared = await json(await patch({ path: "fleet.default.target", value: "" }), SettingWritten);
-		assert.deepEqual(cleared.changed.map((row) => row.path).sort(), ["fleet.default.model", "fleet.default.target"]);
+		const cleared = await json(await patch({ path: "fleet.default.connection", value: "" }), SettingWritten);
+		assert.deepEqual(cleared.changed.map((row) => row.path).sort(), ["fleet.default.connection", "fleet.default.model"]);
 
 		// The app's own turn limit applies on write, bounded by the engine to 1..16.
 		assert.equal(byPath.get("interface.guiTurnCapacity")?.value, "4");
@@ -129,7 +129,7 @@ test("settings controls derive from the engine registry, write only the user lay
 		assert.equal(h.supervisor.turnCapacity, 1);
 
 		assert.equal((await patch({ path: "interface.mode", value: "fullscreen" })).status, 404);
-		assert.equal((await patch({ path: "targets.0.url", value: "http://x" })).status, 422);
+		assert.equal((await patch({ path: "connections.0.url", value: "http://x" })).status, 422);
 		assert.equal((await patch({ path: "integrations.externalAgents.entries", value: "[]" })).status, 409);
 		assert.equal((await patch({ path: "integrations.hub.confirmedRemote", value: "x" })).status, 409);
 
@@ -146,7 +146,7 @@ test("settings controls derive from the engine registry, write only the user lay
 		assert.ok(!byPath.has("safety.yoloAccepted"));
 		assert.ok(!byPath.has("safety.yoloUnconfinedAccepted"));
 		assert.equal((await patch({ path: "safety.yoloAccepted", value: "true" })).status, 404);
-		assert.equal(byPath.get("safety.review.target")?.timingNote, "Terminal sessions only");
+		assert.equal(byPath.get("safety.review.connection")?.timingNote, "Terminal sessions only");
 		// Only the unconfined value asks first, with the same refusal the other confirm rows use.
 		const confinement = byPath.get("safety.yoloConfinement");
 		assert.equal(confinement?.confirmValue, "unconfined");

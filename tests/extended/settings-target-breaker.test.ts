@@ -9,7 +9,7 @@ import { targetRows } from "../../src/interactive/overlays/settings-target-rows.
 
 function settingsWithTargets() {
 	const settings = structuredClone(DEFAULT_SETTINGS);
-	settings.targets = [
+	settings.connections = [
 		{ id: "mini", runtime: "openai-compat", url: "http://mini:8080", defaultModel: "qwen" },
 		{ id: "dragon", runtime: "openai-compat", url: "http://dragon:8080", defaultModel: "llama" },
 	];

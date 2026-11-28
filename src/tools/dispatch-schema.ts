@@ -87,7 +87,7 @@ export function coordinatorDispatchParameters() {
 	});
 	return Type.Object({
 		node: Type.Optional(Type.String()),
-		target: Type.Optional(Type.String()),
+		connection: Type.Optional(Type.String()),
 		model: Type.Optional(Type.String()),
 		list: Type.Optional(Type.Boolean({ description: "List worker recipes and their tools." })),
 		agent: Type.Optional(Type.String({ description: "Recipe id from list." })),
@@ -141,7 +141,7 @@ export function coordinatorDispatchParameters() {
 const CouncilMemberSchema = Type.Object(
 	{
 		label: Type.String({ pattern: "^[a-z][a-z0-9_-]{0,31}$" }),
-		target: Type.String(),
+		connection: Type.String(),
 		model: Type.Optional(Type.String()),
 		thinking: Type.Optional(StringEnum(THINKING_LEVELS)),
 		agent: Type.Optional(Type.String({ description: "Agent this member runs as; defaults to the call's agent." })),
@@ -321,7 +321,7 @@ function judgeSchema(composition: DispatchSchemaComposition) {
 				}),
 			),
 			model: Type.Optional(Type.String()),
-			target: Type.Optional(Type.String()),
+			connection: Type.Optional(Type.String()),
 			node: Type.Optional(Type.String({ description: "Fleet node pin for the judge." })),
 		},
 		{
@@ -403,7 +403,7 @@ export function buildDispatchParameters(composition: DispatchSchemaComposition =
 							}),
 						),
 						budget: Type.Optional(DispatchBudgetSchema),
-						target: Type.Optional(Type.String()),
+						connection: Type.Optional(Type.String()),
 						model: Type.Optional(Type.String()),
 						node: Type.Optional(Type.String({ description: "Fleet node pin: local or a fleet.nodes id." })),
 						worktree: Type.Optional(
@@ -467,7 +467,7 @@ export function buildDispatchParameters(composition: DispatchSchemaComposition =
 						),
 						node: Type.Optional(Type.String({ description: "Fleet node pin for the reviewer." })),
 						model: Type.Optional(Type.String({ description: "Model for the reviewer." })),
-						target: Type.Optional(Type.String({ description: "Connection for the reviewer." })),
+						connection: Type.Optional(Type.String({ description: "Connection for the reviewer." })),
 					}),
 				],
 				{
@@ -482,7 +482,7 @@ export function buildDispatchParameters(composition: DispatchSchemaComposition =
 						Type.Union(
 							[
 								Type.Number(),
-								Type.Array(Type.Object({ target: Type.Optional(Type.String()), model: Type.Optional(Type.String()) })),
+								Type.Array(Type.Object({ connection: Type.Optional(Type.String()), model: Type.Optional(Type.String()) })),
 							],
 							{ description: "Compete candidates, 2 to 4 (default 2), or one {connection, model} each." },
 						),
@@ -525,7 +525,7 @@ export function buildDispatchParameters(composition: DispatchSchemaComposition =
 		persona: Type.Optional(Type.String({ description: "Default persona for the batch, max 8000 chars." })),
 		tool_profile: Type.Optional(StringEnum(TOOL_PROFILE_NAMES, { description: "Default worker tool profile." })),
 		budget: Type.Optional(DispatchBudgetSchema),
-		target: Type.Optional(
+		connection: Type.Optional(
 			Type.String({
 				description: "Connection ID; configured external CLI selects headless mode.",
 			}),

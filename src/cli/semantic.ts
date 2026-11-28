@@ -303,7 +303,7 @@ export async function executeSemanticRequest(
 	const config = context.settings.context.semantic;
 	context.signal.throwIfAborted();
 	if (request.command === "configure") {
-		const target = context.settings.targets.find((entry) => entry.id === request.target);
+		const target = context.settings.connections.find((entry) => entry.id === request.target);
 		if (!target || !["llamacpp-embed", "litellm"].includes(target.runtime))
 			throw new Error("--connection must name a configured llama.cpp embedding or LiteLLM connection");
 		if (request.profile && request.profile !== "embeddinggemma-2-q8-768")
@@ -313,7 +313,7 @@ export async function executeSemanticRequest(
 			throw new Error("--modality requires text and only qualified text/image/audio/mixed values");
 		const next: SemanticConfiguration = {
 			enabled: true,
-			target: request.target,
+			connection: request.target,
 			model: request.model,
 			assetIdentity: request.assetIdentity,
 			projectorIdentity: request.projectorIdentity ?? null,
@@ -321,7 +321,7 @@ export async function executeSemanticRequest(
 			// qualification, while --qualify measures afresh.
 			canaryFingerprint:
 				!request.qualify &&
-				config.target === request.target &&
+				config.connection === request.target &&
 				config.model === request.model &&
 				config.assetIdentity === request.assetIdentity &&
 				config.projectorIdentity === (request.projectorIdentity ?? null)
@@ -394,13 +394,19 @@ export async function executeSemanticRequest(
 		return { registration, preview, indexed: false };
 	}
 	if (request.command === "qualify") {
-		const pinnedRecipe = JSON.stringify([config.target, config.model, config.assetIdentity, config.projectorIdentity]);
+		const pinnedRecipe = JSON.stringify([
+			config.connection,
+			config.model,
+			config.assetIdentity,
+			config.projectorIdentity,
+		]);
 		const qualified = await bridge.qualifySemantic(options);
 		context.signal.throwIfAborted();
 		const saved = context.updateSettings((draft) => {
 			const current = draft.context.semantic;
 			if (
-				JSON.stringify([current.target, current.model, current.assetIdentity, current.projectorIdentity]) !== pinnedRecipe
+				JSON.stringify([current.connection, current.model, current.assetIdentity, current.projectorIdentity]) !==
+				pinnedRecipe
 			)
 				throw new Error("Semantic configuration changed during qualification; qualify the new recipe explicitly");
 			current.canaryFingerprint = qualified.canaryFingerprint;

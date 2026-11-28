@@ -34,7 +34,7 @@ import type { ThinkingLevel } from "./views/thinking-levels.js";
 export { THINKING_LEVELS, type ThinkingLevel } from "./views/thinking-levels.js";
 
 interface WorkerTarget {
-	target: string | null;
+	connection: string | null;
 	model: string | null;
 	thinkingLevel: ThinkingLevel;
 	/** Optional fleet node pin: workers routed through this profile run on that node. */
@@ -61,7 +61,7 @@ export const THEME_NAMED_COLORS = [
 type ThemeNamedColor = (typeof THEME_NAMED_COLORS)[number];
 interface WorkerRosterMember {
 	label: string;
-	target: string;
+	connection: string;
 	model?: string;
 	thinkingLevel?: ThinkingLevel;
 	color?: ThemeNamedColor | string;
@@ -83,8 +83,8 @@ export type SystemOneUse = string | string[] | null;
 
 export interface SystemOneEngineSettings {
 	kind: SystemOneEngineKind;
-	/** A `targets[].id`. */
-	target: string;
+	/** A `connections[].id`. */
+	connection: string;
 	/** Wire model id; absent means the target's default model. */
 	model?: string;
 	/**
@@ -417,7 +417,7 @@ interface InterfaceSettings {
 interface ReviewSettings {
 	enabled: boolean;
 	/** Target id the watchdog run is dispatched to; the session's active target when unset. */
-	target?: string;
+	connection?: string;
 	/** Mid-turn cadence in tool calls; no mid-turn firing when unset. */
 	cadenceToolCalls?: number;
 }
@@ -652,7 +652,7 @@ export interface RoutingActivationSettings {
  */
 export interface SteeringTriageSettings {
 	enabled: boolean;
-	target: string | null;
+	connection: string | null;
 	model: string | null;
 	/** Thinking level of the triage side call; `off` sends no reasoning request. */
 	thinkingLevel: ThinkingLevel;
@@ -743,7 +743,7 @@ interface MemorySettings {
 	 */
 	sideShare: number;
 	surfaces: MemorySurfaceSettings;
-	target: string | null;
+	connection: string | null;
 	model: string | null;
 	/** Thinking level of the memory side call; `off` sends no reasoning request. */
 	thinkingLevel: ThinkingLevel;
@@ -760,7 +760,7 @@ export type SemanticModality = (typeof SEMANTIC_MODALITIES)[number];
 /** The optional local semantic index and its explicit ingestion roots. */
 interface SemanticSettings {
 	enabled: boolean;
-	target: string | null;
+	connection: string | null;
 	model: string | null;
 	assetIdentity: string | null;
 	projectorIdentity: string | null;
@@ -849,7 +849,7 @@ export interface SafetySettings {
 	 * live check of a candidate build can sign in (copilot-sdk: `$COPILOT_HOME/config.json`). Workers keep every
 	 * mask. Read only from the operator's own settings file.
 	 */
-	liveCheckTargets: string[];
+	liveCheckConnections: string[];
 	/**
 	 * Unix-domain sockets inside the OS sandbox. block refuses new ones, since a
 	 * socket a contained command can see (a terminal multiplexer, X11, a
@@ -974,7 +974,7 @@ export interface EgressSettings {
 interface SafetyJudgeSettings {
 	enabled: boolean;
 	/** Target the judge asks; null asks the session's main chat route. */
-	target: string | null;
+	connection: string | null;
 	/** Model on that target; null asks the chat model, or the judge target's default model. */
 	model: string | null;
 	/** Facts about the operator's environment the judge reads, in their own words. */
@@ -1014,10 +1014,10 @@ export const DEFAULT_SETTINGS = {
 	turnControl: {
 		workflows: ["detached-collection"],
 	} as TurnControlSettings,
-	targets: [] as TargetDescriptor[],
+	connections: [] as TargetDescriptor[],
 	funding: {} as FundingDefinitions,
 	chat: {
-		target: null as string | null,
+		connection: null as string | null,
 		model: null as string | null,
 		thinkingLevel: "low" as ThinkingLevel,
 		modelPicker: {
@@ -1040,7 +1040,7 @@ export const DEFAULT_SETTINGS = {
 		steering: {
 			triage: {
 				enabled: false,
-				target: null as string | null,
+				connection: null as string | null,
 				model: null as string | null,
 				thinkingLevel: "off" as ThinkingLevel,
 				minQueued: 2,
@@ -1052,7 +1052,7 @@ export const DEFAULT_SETTINGS = {
 	fleet: {
 		defaultNode: null as string | null,
 		default: {
-			target: null as string | null,
+			connection: null as string | null,
 			model: null as string | null,
 			thinkingLevel: "off" as ThinkingLevel,
 		} as WorkerTarget,
@@ -1107,7 +1107,7 @@ export const DEFAULT_SETTINGS = {
 				bank: "rules",
 				history: "off",
 			},
-			target: null as string | null,
+			connection: null as string | null,
 			model: null as string | null,
 			thinkingLevel: "off" as ThinkingLevel,
 			cadenceToolCalls: 10,
@@ -1117,7 +1117,7 @@ export const DEFAULT_SETTINGS = {
 		} as MemorySettings,
 		semantic: {
 			enabled: false,
-			target: null,
+			connection: null,
 			model: null,
 			assetIdentity: null,
 			projectorIdentity: null,
@@ -1159,7 +1159,7 @@ export const DEFAULT_SETTINGS = {
 		},
 		scratchRoots: [] as string[],
 		sandboxPassEnv: [] as string[],
-		liveCheckTargets: [] as string[],
+		liveCheckConnections: [] as string[],
 		sandboxUnixSockets: "block" as UnixSocketMode,
 		sandboxUnconfinedLocalWorkers: false,
 		workerIsolation: "children" as WorkerIsolationMode,
@@ -1179,7 +1179,7 @@ export const DEFAULT_SETTINGS = {
 		yoloUnconfinedAccepted: false,
 		judge: {
 			enabled: true,
-			target: null,
+			connection: null,
 			model: null,
 			environment: [] as string[],
 			allow: [] as string[],

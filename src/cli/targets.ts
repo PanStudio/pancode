@@ -240,7 +240,7 @@ export async function runTargetsCommand(args: ReadonlyArray<string>): Promise<nu
 	if (parsed.json) {
 		const settings = readSettings();
 		const candidateFor = (status: TargetStatus): string | null => {
-			const orchestratorModel = settings.chat?.target === status.target.id ? (settings.chat?.model ?? null) : null;
+			const orchestratorModel = settings.chat?.connection === status.target.id ? (settings.chat?.model ?? null) : null;
 			return orchestratorModel ?? status.target.defaultModel ?? null;
 		};
 		const rows = filtered.map((status) => {
@@ -323,7 +323,7 @@ async function runUse(args: ReadonlyArray<string>): Promise<number> {
 	}
 	ensurePancodeState();
 	const settings = readSettings();
-	const target = settings.targets.find((entry) => entry.id === parsed.id);
+	const target = settings.connections.find((entry) => entry.id === parsed.id);
 	if (!target) {
 		printError(`no connection with id ${parsed.id}`);
 		return 1;
@@ -348,7 +348,7 @@ async function runUse(args: ReadonlyArray<string>): Promise<number> {
 	const notedTargets = new Set<string>();
 	for (const role of selection.roles) {
 		const route = routes[role];
-		const selectedTarget = candidate.targets.find((entry) => entry.id === route.target);
+		const selectedTarget = candidate.connections.find((entry) => entry.id === route.connection);
 		if (!selectedTarget) throw new Error("selected connection disappeared");
 		const runtime = registry.get(selectedTarget.runtime);
 		if (!runtime) {
@@ -398,7 +398,7 @@ async function runUse(args: ReadonlyArray<string>): Promise<number> {
 	try {
 		updateSettings((fresh) => {
 			for (const [id, descriptor] of checkedTargets) {
-				if (JSON.stringify(fresh.targets.find((entry) => entry.id === id)) !== descriptor) {
+				if (JSON.stringify(fresh.connections.find((entry) => entry.id === id)) !== descriptor) {
 					throw new Error(`connection '${id}' changed while checking models; retry connections use`);
 				}
 			}
@@ -412,7 +412,7 @@ async function runUse(args: ReadonlyArray<string>): Promise<number> {
 	}
 	const changedByTarget = new Map<string, string[]>();
 	for (const role of changedRoles) {
-		const id = routes[role].target as string;
+		const id = routes[role].connection as string;
 		const names = changedByTarget.get(id) ?? [];
 		names.push(labels[role]);
 		changedByTarget.set(id, names);
@@ -498,8 +498,8 @@ function resolveDispatchProfileTarget(
 	settings: PancodeSettings,
 	targetId: string,
 	role = "fleet profile connection",
-): { target: PancodeSettings["targets"][number] } | { exitCode: number } {
-	const target = settings.targets.find((entry) => entry.id === targetId);
+): { target: PancodeSettings["connections"][number] } | { exitCode: number } {
+	const target = settings.connections.find((entry) => entry.id === targetId);
 	if (!target) {
 		printError(`no connection with id ${targetId}`);
 		return { exitCode: 2 };
@@ -717,7 +717,7 @@ function runProfileBindings(args: ReadonlyArray<string>): number {
 			return {
 				agentId,
 				profile: profileName,
-				target: profile?.target ?? null,
+				connection: profile?.connection ?? null,
 				model: profile?.model ?? null,
 				source: settingsSourceFor(sources, `fleet.agentProfiles.${agentId}`),
 				warning: profile ? null : "missing profile",
@@ -738,7 +738,7 @@ function runProfileBindings(args: ReadonlyArray<string>): number {
 	);
 	for (const row of rows) {
 		process.stdout.write(
-			`${column(row.agentId, 18)}${column(row.profile, 20)}${column(row.target ?? "-", 16)}${column(row.model ?? "-", 30)}${column(row.source, 15)}${row.warning ?? "-"}\n`,
+			`${column(row.agentId, 18)}${column(row.profile, 20)}${column(row.connection ?? "-", 16)}${column(row.model ?? "-", 30)}${column(row.source, 15)}${row.warning ?? "-"}\n`,
 		);
 	}
 	return 0;
@@ -789,23 +789,23 @@ function runFleet(args: ReadonlyArray<string>, usage = "pancode connections flee
 	ensurePancodeState();
 	// Same merged trusted view dispatch resolves profiles from; see runProfileBindings.
 	const { settings, sources } = readLayeredSettings(process.cwd());
-	const byId = new Map(settings.targets.map((target) => [target.id, target] as const));
+	const byId = new Map(settings.connections.map((target) => [target.id, target] as const));
 	const fleetDefault = settings.fleet.default;
-	const defaultTarget = fleetDefault.target ? byId.get(fleetDefault.target) : undefined;
-	const defaultRow = fleetDefault.target
+	const defaultTarget = fleetDefault.connection ? byId.get(fleetDefault.connection) : undefined;
+	const defaultRow = fleetDefault.connection
 		? {
-				target: fleetDefault.target,
+				connection: fleetDefault.connection,
 				runtime: defaultTarget?.runtime ?? null,
 				model: fleetDefault.model,
 				thinkingLevel: fleetDefault.thinkingLevel,
-				source: settingsSourceFor(sources, "fleet.default.target"),
+				source: settingsSourceFor(sources, "fleet.default.connection"),
 			}
 		: null;
 	const rows = Object.entries(settings.fleet.profiles).map(([name, profile]) => {
-		const target = profile.target ? byId.get(profile.target) : undefined;
+		const target = profile.connection ? byId.get(profile.connection) : undefined;
 		return {
 			name,
-			target: profile.target,
+			connection: profile.connection,
 			runtime: target?.runtime ?? null,
 			model: profile.model,
 			thinkingLevel: profile.thinkingLevel,
@@ -819,7 +819,7 @@ function runFleet(args: ReadonlyArray<string>, usage = "pancode connections flee
 	if (defaultRow) {
 		const model = defaultRow.model ?? "the connection's default";
 		process.stdout.write(
-			`fleet default: connection ${defaultRow.target} (${defaultRow.runtime ?? "unknown runtime"}), model ${model}, thinking ${defaultRow.thinkingLevel}, from ${defaultRow.source}\n`,
+			`fleet default: connection ${defaultRow.connection} (${defaultRow.runtime ?? "unknown runtime"}), model ${model}, thinking ${defaultRow.thinkingLevel}, from ${defaultRow.source}\n`,
 		);
 	} else {
 		process.stdout.write("fleet default: not set. run `pancode connections use <id> --fleet-model <model>` to set it.\n");
@@ -833,7 +833,7 @@ function runFleet(args: ReadonlyArray<string>, usage = "pancode connections flee
 	);
 	for (const row of rows) {
 		process.stdout.write(
-			`${column(row.name, 18)}${column(row.target ?? "-", 16)}${column(row.runtime ?? "-", 20)}${column(row.model ?? "-", 30)}${column(row.thinkingLevel, 10)}${row.source}\n`,
+			`${column(row.name, 18)}${column(row.connection ?? "-", 16)}${column(row.runtime ?? "-", 20)}${column(row.model ?? "-", 30)}${column(row.thinkingLevel, 10)}${row.source}\n`,
 		);
 	}
 	return 0;
@@ -902,7 +902,7 @@ function runConvert(args: ReadonlyArray<string>): number {
 	// A plugin runtime may declare aliases; the target always stores the canonical id.
 	runtimeId = runtime.id;
 	const settings = readSettings();
-	const target = settings.targets.find((entry) => entry.id === id);
+	const target = settings.connections.find((entry) => entry.id === id);
 	if (!target) {
 		printError(`no connection with id ${id}`);
 		return 1;
@@ -911,13 +911,13 @@ function runConvert(args: ReadonlyArray<string>): number {
 		printOk(`connection ${id} already uses runtime ${runtimeId}`);
 		return 0;
 	}
-	if (settings.chat.target === id && !isOrchestratorEligibleRuntime(runtime)) {
+	if (settings.chat.connection === id && !isOrchestratorEligibleRuntime(runtime)) {
 		printError(`cannot convert orchestrator connection '${id}' to non-HTTP/native runtime '${runtime.id}'`);
 		return 1;
 	}
 	const previousRuntime = target.runtime;
 	updateSettings((fresh) => {
-		const entry = fresh.targets.find((candidate) => candidate.id === id);
+		const entry = fresh.connections.find((candidate) => candidate.id === id);
 		if (entry) entry.runtime = runtimeId;
 	});
 	printOk(`converted connection ${id}: ${previousRuntime} -> ${runtimeId}`);

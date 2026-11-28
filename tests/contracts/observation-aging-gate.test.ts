@@ -199,10 +199,10 @@ function transport(tool: string) {
 async function drive(effect: DeclaredToolEffect): Promise<AgentMessage[][]> {
 	const settings = structuredClone(DEFAULT_SETTINGS);
 	settings.chat.prewarm = false;
-	settings.chat.target = target.id;
+	settings.chat.connection = target.id;
 	settings.chat.model = model.id;
 	settings.chat.thinkingLevel = "off";
-	settings.targets = [{ ...target, defaultModel: model.id, cache: { retention: "none" } }];
+	settings.connections = [{ ...target, defaultModel: model.id, cache: { retention: "none" } }];
 	const runtime: RuntimeDescriptor = {
 		...litellm,
 		auth: "none",

@@ -21219,9 +21219,9 @@
 											"properties": {
 												"chat": {
 													"type": "object",
-													"required": ["target", "model", "thinkingLevel"],
+													"required": ["connection", "model", "thinkingLevel"],
 													"properties": {
-														"target": {
+														"connection": {
 															"$ref": "#/components/schemas/Union_e331c0cd"
 														},
 														"model": {
@@ -21252,7 +21252,7 @@
 												"anyOf": [
 													{
 														"type": "string",
-														"const": "chat.target"
+														"const": "chat.connection"
 													},
 													{
 														"type": "string",
@@ -21349,7 +21349,7 @@
 							"schema": {
 								"type": "object",
 								"properties": {
-									"chat.target": {
+									"chat.connection": {
 										"$ref": "#/components/schemas/Union_e331c0cd"
 									},
 									"chat.model": {
@@ -21382,9 +21382,9 @@
 											"properties": {
 												"chat": {
 													"type": "object",
-													"required": ["target", "model", "thinkingLevel"],
+													"required": ["connection", "model", "thinkingLevel"],
 													"properties": {
-														"target": {
+														"connection": {
 															"$ref": "#/components/schemas/Union_e331c0cd"
 														},
 														"model": {
@@ -21415,7 +21415,7 @@
 												"anyOf": [
 													{
 														"type": "string",
-														"const": "chat.target"
+														"const": "chat.connection"
 													},
 													{
 														"type": "string",

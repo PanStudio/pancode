@@ -94,21 +94,21 @@ export function restoreResumedSessionRoute(
 		}
 	})();
 	try {
-		const runtimeId = effective.target
-			? (settings.targets.find((entry) => entry.id === effective.target)?.runtime ?? null)
+		const runtimeId = effective.connection
+			? (settings.connections.find((entry) => entry.id === effective.connection)?.runtime ?? null)
 			: null;
 		if (
-			effective.target &&
+			effective.connection &&
 			effective.model &&
 			runtimeId &&
-			(effective.target !== recorded.target || effective.model !== recorded.model)
+			(effective.connection !== recorded.target || effective.model !== recorded.model)
 		) {
 			session.appendEntry({
 				kind: "modelChange",
 				parentTurnId,
 				provider: runtimeId,
 				modelId: effective.model,
-				target: effective.target,
+				target: effective.connection,
 			});
 		}
 		ports.persistThinkingLevel();

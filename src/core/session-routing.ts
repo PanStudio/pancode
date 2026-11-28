@@ -44,10 +44,10 @@ export interface EffectiveMemoryRoute {
 
 /** Keep an unset memory route live-bound to chat rather than pinning its boot-time model. */
 export function resolveMemoryRoute(settings: Readonly<PancodeSettings>): EffectiveMemoryRoute {
-	const target = settings.context.memory.target?.trim() || null;
+	const target = settings.context.memory.connection?.trim() || null;
 	const model = settings.context.memory.model?.trim() || null;
 	return target === null && model === null
-		? { target: settings.chat.target, model: settings.chat.model, source: "chat" }
+		? { target: settings.chat.connection, model: settings.chat.model, source: "chat" }
 		: { target, model, source: "dedicated" };
 }
 
@@ -64,12 +64,12 @@ export interface RoutingPatch {
 }
 
 function targetFrom(source: {
-	target: string | null;
+	connection: string | null;
 	model: string | null;
 	thinkingLevel: SessionThinkingLevel;
 }): SessionRoutingTarget {
 	return {
-		target: source.target ?? null,
+		target: source.connection ?? null,
 		model: source.model ?? null,
 		thinkingLevel: source.thinkingLevel ?? "off",
 	};
@@ -78,7 +78,7 @@ function targetFrom(source: {
 export function seedSessionRouting(saved: Readonly<PancodeSettings>): SessionRoutingState {
 	return {
 		orchestrator: targetFrom(saved.chat),
-		background: { target: saved.context.memory.target, model: saved.context.memory.model },
+		background: { target: saved.context.memory.connection, model: saved.context.memory.model },
 		workersDefault: targetFrom(saved.fleet.default),
 		scope: [...saved.chat.modelPicker.cycleSet],
 	};
@@ -91,13 +91,13 @@ export function seedSessionRouting(saved: Readonly<PancodeSettings>): SessionRou
  */
 export function applySessionRouting(saved: Readonly<PancodeSettings>, routing: SessionRoutingState): PancodeSettings {
 	const view = structuredClone(saved) as PancodeSettings;
-	keepTargetOrigins(saved.targets, view.targets);
-	view.chat.target = routing.orchestrator.target;
+	keepTargetOrigins(saved.connections, view.connections);
+	view.chat.connection = routing.orchestrator.target;
 	view.chat.model = routing.orchestrator.model;
 	view.chat.thinkingLevel = routing.orchestrator.thinkingLevel;
-	view.context.memory.target = routing.background.target;
+	view.context.memory.connection = routing.background.target;
 	view.context.memory.model = routing.background.model;
-	view.fleet.default.target = routing.workersDefault.target;
+	view.fleet.default.connection = routing.workersDefault.target;
 	view.fleet.default.model = routing.workersDefault.model;
 	view.fleet.default.thinkingLevel = routing.workersDefault.thinkingLevel;
 	view.chat.modelPicker.cycleSet = [...routing.scope];
@@ -207,8 +207,8 @@ export function planResumedRouting(
 	const orchestrator: Partial<SessionRoutingTarget> = {};
 	let notice: string | null = null;
 	if (pinned.route !== true && route.target !== null && route.model !== null) {
-		const current = { target: settings.chat.target ?? null, model: settings.chat.model ?? null };
-		if (!settings.targets.some((entry) => entry.id === route.target)) {
+		const current = { target: settings.chat.connection ?? null, model: settings.chat.model ?? null };
+		if (!settings.connections.some((entry) => entry.id === route.target)) {
 			const kept = current.target === null ? "the current route" : `${current.target}/${current.model ?? "(no model)"}`;
 			notice = `resumed session ran on ${route.target}/${route.model}, which is no longer configured; continuing on ${kept}.`;
 		} else if (route.target !== current.target || route.model !== current.model) {
@@ -246,12 +246,12 @@ export function isRoutingPath(path: string): boolean {
 }
 
 const ROUTING_PATHS = new Set<string>([
-	"chat.target",
+	"chat.connection",
 	"chat.model",
 	"chat.thinkingLevel",
-	"context.memory.target",
+	"context.memory.connection",
 	"context.memory.model",
-	"fleet.default.target",
+	"fleet.default.connection",
 	"fleet.default.model",
 	"fleet.default.thinkingLevel",
 	"chat.modelPicker.cycleSet",
@@ -295,7 +295,7 @@ export function setAtPath(target: PancodeSettings, path: string, value: unknown)
 export function applyOverrides(base: Readonly<PancodeSettings>, overrides: SessionOverrides): PancodeSettings {
 	if (overrides.size === 0) return base as PancodeSettings;
 	const view = structuredClone(base) as PancodeSettings;
-	keepTargetOrigins(base.targets, view.targets);
+	keepTargetOrigins(base.connections, view.connections);
 	for (const [path, value] of overrides) setAtPath(view, path, value);
 	return view;
 }
@@ -322,20 +322,20 @@ export function mergeRoutingPatchIntoSettings(settings: PancodeSettings, patch: 
  */
 export function routingPatchForId(path: string, settings: Readonly<PancodeSettings>): RoutingPatch | null {
 	switch (path) {
-		case "chat.target":
-			return { orchestrator: { target: settings.chat.target, model: settings.chat.model } };
+		case "chat.connection":
+			return { orchestrator: { target: settings.chat.connection, model: settings.chat.model } };
 		case "chat.model":
-			return { orchestrator: { target: settings.chat.target, model: settings.chat.model } };
+			return { orchestrator: { target: settings.chat.connection, model: settings.chat.model } };
 		case "chat.thinkingLevel":
 			return { orchestrator: { thinkingLevel: settings.chat.thinkingLevel } };
-		case "context.memory.target":
-			return { background: { target: settings.context.memory.target, model: settings.context.memory.model } };
+		case "context.memory.connection":
+			return { background: { target: settings.context.memory.connection, model: settings.context.memory.model } };
 		case "context.memory.model":
-			return { background: { target: settings.context.memory.target, model: settings.context.memory.model } };
-		case "fleet.default.target":
-			return { workersDefault: { target: settings.fleet.default.target, model: settings.fleet.default.model } };
+			return { background: { target: settings.context.memory.connection, model: settings.context.memory.model } };
+		case "fleet.default.connection":
+			return { workersDefault: { target: settings.fleet.default.connection, model: settings.fleet.default.model } };
 		case "fleet.default.model":
-			return { workersDefault: { target: settings.fleet.default.target, model: settings.fleet.default.model } };
+			return { workersDefault: { target: settings.fleet.default.connection, model: settings.fleet.default.model } };
 		case "fleet.default.thinkingLevel":
 			return { workersDefault: { thinkingLevel: settings.fleet.default.thinkingLevel } };
 		case "chat.modelPicker.cycleSet":
@@ -346,11 +346,11 @@ export function routingPatchForId(path: string, settings: Readonly<PancodeSettin
 }
 
 function diffTarget(
-	prev: { target: string | null; model: string | null; thinkingLevel: SessionThinkingLevel },
-	next: { target: string | null; model: string | null; thinkingLevel: SessionThinkingLevel },
+	prev: { connection: string | null; model: string | null; thinkingLevel: SessionThinkingLevel },
+	next: { connection: string | null; model: string | null; thinkingLevel: SessionThinkingLevel },
 ): Partial<SessionRoutingTarget> | null {
 	const out: Partial<SessionRoutingTarget> = {};
-	if ((prev.target ?? null) !== (next.target ?? null)) out.target = next.target ?? null;
+	if ((prev.connection ?? null) !== (next.connection ?? null)) out.target = next.connection ?? null;
 	if ((prev.model ?? null) !== (next.model ?? null)) out.model = next.model ?? null;
 	if ((prev.thinkingLevel ?? "off") !== (next.thinkingLevel ?? "off")) out.thinkingLevel = next.thinkingLevel ?? "off";
 	return Object.keys(out).length > 0 ? out : null;
@@ -389,12 +389,12 @@ export function diffRouting(prev: Readonly<PancodeSettings>, next: Readonly<Panc
  * saved routing defaults with this session's live routing.
  */
 export function restoreRoutingFields(target: PancodeSettings, source: Readonly<PancodeSettings>): void {
-	target.chat.target = source.chat.target;
+	target.chat.connection = source.chat.connection;
 	target.chat.model = source.chat.model;
 	target.chat.thinkingLevel = source.chat.thinkingLevel;
-	target.context.memory.target = source.context.memory.target;
+	target.context.memory.connection = source.context.memory.connection;
 	target.context.memory.model = source.context.memory.model;
-	target.fleet.default.target = source.fleet.default.target;
+	target.fleet.default.connection = source.fleet.default.connection;
 	target.fleet.default.model = source.fleet.default.model;
 	target.fleet.default.thinkingLevel = source.fleet.default.thinkingLevel;
 	target.chat.modelPicker.cycleSet = [...source.chat.modelPicker.cycleSet];
@@ -405,12 +405,12 @@ const ROUTING_FIELD_LABELS: ReadonlyArray<{
 	label: string;
 	read: (settings: Readonly<PancodeSettings>) => unknown;
 }> = [
-	{ field: "chat.target", label: "chat connection", read: (s) => s.chat.target ?? null },
+	{ field: "chat.connection", label: "chat connection", read: (s) => s.chat.connection ?? null },
 	{ field: "chat.model", label: "chat model", read: (s) => s.chat.model ?? null },
 	{ field: "chat.thinkingLevel", label: "chat thinking", read: (s) => s.chat.thinkingLevel ?? "off" },
-	{ field: "context.memory.target", label: "memory connection", read: (s) => s.context.memory.target ?? null },
+	{ field: "context.memory.connection", label: "memory connection", read: (s) => s.context.memory.connection ?? null },
 	{ field: "context.memory.model", label: "memory model", read: (s) => s.context.memory.model ?? null },
-	{ field: "fleet.default.target", label: "fleet connection", read: (s) => s.fleet.default.target ?? null },
+	{ field: "fleet.default.connection", label: "fleet connection", read: (s) => s.fleet.default.connection ?? null },
 	{ field: "fleet.default.model", label: "fleet model", read: (s) => s.fleet.default.model ?? null },
 	{
 		field: "fleet.default.thinkingLevel",
@@ -475,9 +475,9 @@ export function routingChangeNotices(
 			text: `settings.yaml changed (${diverged.join(", ")}). This session keeps its routing; new sessions use the saved defaults.${hint}`,
 		});
 	}
-	const activeTarget = effective.chat.target;
-	const targetsTouched = changedPaths.some((path) => path === "targets" || path.startsWith("targets."));
-	if (activeTarget && targetsTouched && !saved.targets.some((entry) => entry.id === activeTarget)) {
+	const activeTarget = effective.chat.connection;
+	const targetsTouched = changedPaths.some((path) => path === "connections" || path.startsWith("connections."));
+	if (activeTarget && targetsTouched && !saved.connections.some((entry) => entry.id === activeTarget)) {
 		const hint = options?.commandHints ? " (/model)" : "";
 		notices.push({
 			kind: "active-target-removed",

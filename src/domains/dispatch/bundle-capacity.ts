@@ -79,7 +79,7 @@ export function createCapacityMachine(rt: DispatchRuntime) {
 	function configuredEndpointCapacities(): Readonly<Record<string, EndpointCapacity>> {
 		return resolveEndpointCapacities({
 			statuses: providers.list(),
-			targets: getEffectiveSettings()?.targets ?? [],
+			targets: getEffectiveSettings()?.connections ?? [],
 			runtimeFor: (runtimeId) => providers.getRuntime(runtimeId),
 		});
 	}
@@ -102,7 +102,7 @@ export function createCapacityMachine(rt: DispatchRuntime) {
 	const probedDefaultBoundEndpoints = new Set<string>();
 	function probeEndpointsAtDefaultBound(): void {
 		const capacities = configuredEndpointCapacities();
-		for (const target of getEffectiveSettings()?.targets ?? []) {
+		for (const target of getEffectiveSettings()?.connections ?? []) {
 			const key = canonicalEndpointKey(target);
 			if (key === null || capacities[key]?.source !== "local-native-default") continue;
 			if (probedDefaultBoundEndpoints.has(key)) continue;

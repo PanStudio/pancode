@@ -34,7 +34,7 @@ for (const outcome of ["recovered", "exhausted", "usable-prose", "cancelled"] as
 			return index > 0 && outcome === "recovered" ? "The command has no model flag." : markup;
 		});
 		const settings = structuredClone(DEFAULT_SETTINGS);
-		settings.chat.target = "fixture";
+		settings.chat.connection = "fixture";
 		settings.chat.model = wire.modelId;
 		settings.chat.thinkingLevel = "off";
 		settings.chat.prewarm = false;

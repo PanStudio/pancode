@@ -146,7 +146,7 @@ function configuredAutonomy(): AutonomyLevel {
 function copilotTierFindings(): DoctorFinding[] {
 	let targets: ReadonlyArray<{ id: string; runtime: string; contextTier?: "default" | "long_context" }>;
 	try {
-		targets = readSettings().targets;
+		targets = readSettings().connections;
 	} catch {
 		// An unreadable settings file has its own doctor row.
 		return [];
@@ -438,7 +438,7 @@ async function deepFindings(
 		// nothing, and on an untouched home there are no settings to read.
 		let targetCount = 0;
 		try {
-			targetCount = readLayeredSettings(process.cwd()).settings.targets.length;
+			targetCount = readLayeredSettings(process.cwd()).settings.connections.length;
 		} catch {
 			// The settings row already reports an unreadable document.
 		}
@@ -502,14 +502,14 @@ export function chatReadinessFinding(untouched: boolean, connectionRows: Readonl
 	if (verdict.kind === "ineligible-runtime") {
 		return broken(`cannot run: ${describeVerdict(verdict)} Run \`pancode configure\` to choose a chat connection.`);
 	}
-	const targetId = settings.chat.target ?? "";
+	const targetId = settings.chat.connection ?? "";
 	const model = settings.chat.model?.trim();
 	if (!model) return broken(`cannot run yet: ${describeMissing({ kind: "model", target: targetId }).sentence}`);
 	const route = `connection '${targetId}', model '${model}'`;
 	if (verdict.kind === "missing-credential") {
 		const missing = firstMissing(settings) ?? { kind: "credential", target: targetId, provider: verdict.store };
 		// A key variable a project target names is fixed in the shell or in that project file, never by configure.
-		const targetsOrigin = settingsSourceFor(layered.sources, "targets");
+		const targetsOrigin = settingsSourceFor(layered.sources, "connections");
 		const projectFile =
 			missing.kind === "env" && (targetsOrigin === "project" || targetsOrigin === "project.local")
 				? layered.layers.find((layer) => layer.origin === targetsOrigin)?.path
@@ -522,7 +522,7 @@ export function chatReadinessFinding(untouched: boolean, connectionRows: Readonl
 		(row) =>
 			(row.name === `connection ${targetId}` || row.name === `model ${targetId}`) && (!row.ok || row.level === "warn"),
 	);
-	const url = settings.targets.find((entry) => entry.id === targetId)?.url;
+	const url = settings.connections.find((entry) => entry.id === targetId)?.url;
 	const unanswered = failing
 		.map((row) => (row.name === `connection ${targetId}` ? /was not verified: (.+?)\. /u.exec(row.detail)?.[1] : null))
 		.find((detail) => detail != null && !/\b40[13]\b|auth|credential|key/iu.test(detail));

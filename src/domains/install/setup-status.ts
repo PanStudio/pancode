@@ -92,8 +92,8 @@ export interface SetupTargetFacts {
 }
 
 export interface SetupFacts<TargetDraft = unknown> {
-	chat: { target?: string | null; model?: string | null };
-	/** Facts for the target `chat.target` names; absent when it names none. */
+	chat: { connection?: string | null; model?: string | null };
+	/** Facts for the target `chat.connection` names; absent when it names none. */
 	target?: SetupTargetFacts;
 	candidates?: ReadonlyArray<Candidate<TargetDraft>>;
 }
@@ -104,7 +104,7 @@ export interface SetupFacts<TargetDraft = unknown> {
  * the credential, the address and finally the first answer.
  */
 export function setupStatus<TargetDraft = unknown>(facts: SetupFacts<TargetDraft>): SetupStatus<TargetDraft> {
-	const chosen = facts.chat.target?.trim();
+	const chosen = facts.chat.connection?.trim();
 	const target = facts.target;
 	if (!chosen || target === undefined || target.id !== chosen) {
 		return { stage: "choose", candidates: [...(facts.candidates ?? [])] };

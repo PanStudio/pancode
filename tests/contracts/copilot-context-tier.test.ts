@@ -80,36 +80,36 @@ test("a model without a long-context tier keeps its default budget and prices un
 });
 
 function settingsWith(target: Record<string, unknown>): unknown {
-	return { version: 2, targets: [target] };
+	return { version: 2, connections: [target] };
 }
 
-test("targets[].contextTier round-trips through validateSettings for a copilot-sdk target", () => {
+test("connections[].contextTier round-trips through validateSettings for a copilot-sdk target", () => {
 	ok((SETTINGS_FIELD_NAMES as readonly string[]).includes("contextTier"));
 	const first = validateSettings(settingsWith({ id: "gh", runtime: "copilot-sdk", contextTier: "long_context" }));
 	deepStrictEqual(first.issues, []);
-	strictEqual(first.settings.targets[0]?.contextTier, "long_context");
+	strictEqual(first.settings.connections[0]?.contextTier, "long_context");
 	const second = validateSettings(JSON.parse(JSON.stringify(first.settings)));
 	deepStrictEqual(second.issues, []);
-	deepStrictEqual(second.settings.targets, first.settings.targets);
-	strictEqual(copilotContextTierOf(second.settings.targets[0]), "long_context");
-	strictEqual(copilotContextTierLabel(second.settings.targets[0]), "long context");
+	deepStrictEqual(second.settings.connections, first.settings.connections);
+	strictEqual(copilotContextTierOf(second.settings.connections[0]), "long_context");
+	strictEqual(copilotContextTierLabel(second.settings.connections[0]), "long context");
 });
 
 test("an absent contextTier stays absent and means the default tier", () => {
 	const result = validateSettings(settingsWith({ id: "gh", runtime: "copilot-sdk" }));
 	deepStrictEqual(result.issues, []);
-	strictEqual("contextTier" in (result.settings.targets[0] ?? {}), false);
-	strictEqual(copilotContextTierOf(result.settings.targets[0]), "default");
-	strictEqual(copilotContextTierLabel(result.settings.targets[0]), null);
+	strictEqual("contextTier" in (result.settings.connections[0] ?? {}), false);
+	strictEqual(copilotContextTierOf(result.settings.connections[0]), "default");
+	strictEqual(copilotContextTierLabel(result.settings.connections[0]), null);
 });
 
 test("contextTier rejects unknown values and non-copilot targets", () => {
 	const bad = validateSettings(settingsWith({ id: "gh", runtime: "copilot-sdk", contextTier: "huge" }));
 	strictEqual(bad.issues.length, 1);
-	strictEqual(bad.issues[0]?.path, "targets[0].contextTier");
+	strictEqual(bad.issues[0]?.path, "connections[0].contextTier");
 	match(bad.issues[0]?.message ?? "", /default \| long_context/);
 	const other = validateSettings(settingsWith({ id: "oa", runtime: "openai", contextTier: "long_context" }));
 	strictEqual(other.issues.length, 1);
-	strictEqual(other.issues[0]?.path, "targets[0].contextTier");
-	strictEqual(other.settings.targets[0]?.contextTier, undefined);
+	strictEqual(other.issues[0]?.path, "connections[0].contextTier");
+	strictEqual(other.settings.connections[0]?.contextTier, undefined);
 });

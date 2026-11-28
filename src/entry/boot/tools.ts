@@ -253,7 +253,7 @@ export function registerBootTools(input: BootToolsInput) {
 		jobTool: jobHost.tool,
 		jobs: jobHost.operations,
 		flow: flowPort,
-		...(resolvedSettings.fleet.profiles.vision?.target
+		...(resolvedSettings.fleet.profiles.vision?.connection
 			? {
 					visionSidecar,
 					getRecentVisionImages: () => {
@@ -307,7 +307,7 @@ export function registerBootTools(input: BootToolsInput) {
 				// The session header keeps the target the session was created with;
 				// routing changed in the TUI or over ACP only appends ledger entries.
 				// The prompt path reports the runtime it actually compiled for.
-				const settingsTarget = getCurrentSettings().chat.target;
+				const settingsTarget = getCurrentSettings().chat.connection;
 				const runtimeId =
 					lastMemoryPromptRuntimeId ?? (settingsTarget ? providers.getTarget(settingsTarget)?.runtime : undefined);
 				return {

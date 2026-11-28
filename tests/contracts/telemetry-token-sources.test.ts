@@ -126,7 +126,7 @@ it("a recorded faux session splits each turn's input by source, summing to the c
 		throw new Error("fixture journal unavailable");
 	});
 	const settings = structuredClone(DEFAULT_SETTINGS);
-	settings.chat.target = target.id;
+	settings.chat.connection = target.id;
 	settings.chat.model = "chat";
 	settings.chat.thinkingLevel = "off";
 	settings.chat.prewarm = false;
@@ -753,7 +753,7 @@ it("names every side producer by purpose: one row per purpose under its role, un
 			settings: () =>
 				({
 					...DEFAULT_SETTINGS,
-					chat: { ...DEFAULT_SETTINGS.chat, target: "judge-target", model: "m" },
+					chat: { ...DEFAULT_SETTINGS.chat, connection: "judge-target", model: "m" },
 				}) as PancodeSettings,
 			complete: async (request) => {
 				(await admit("safety-judge")({ targetId: request.targetId, model: request.model ?? "m", signal }))(null);

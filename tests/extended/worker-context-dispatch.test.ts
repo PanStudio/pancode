@@ -41,12 +41,12 @@ for (const mode of ["isolated", "fork", "splice"] as const) {
 			parent.push({ role: "user", content: "LATER_PARENT_TURN", timestamp: 2 });
 		});
 		const settings = structuredClone(DEFAULT_SETTINGS);
-		settings.targets = [{ id: "worker", runtime: "litellm", url: fixture.url, defaultModel: fixture.modelId }];
-		settings.fleet.default.target = "worker";
+		settings.connections = [{ id: "worker", runtime: "litellm", url: fixture.url, defaultModel: fixture.modelId }];
+		settings.fleet.default.connection = "worker";
 		settings.fleet.default.model = fixture.modelId;
 		const context = dispatchStubContext({ settings });
 		const providers = createProvidersBundle(context);
-		const target = settings.targets[0];
+		const target = settings.connections[0];
 		ok(target);
 		providers.contract.auth.setRuntimeOverrideForTarget(target, litellm, "fixture");
 		const specs: WorkerSpec[] = [];
