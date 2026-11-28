@@ -180,7 +180,7 @@ async function loginAlcf(callbacks: OAuthLoginCallbacks): Promise<OAuthCredentia
 	callbacks.onAuth({
 		url,
 		instructions:
-			"Log in with your ALCF / anl.gov identity. Globus will show an authorization code; copy it and paste it here.",
+			"Sign in with your ALCF / anl.gov identity. Globus will show an authorization code; copy it and paste it here.",
 	});
 	const pasted = callbacks.onManualCodeInput
 		? await callbacks.onManualCodeInput()

@@ -92,7 +92,7 @@ Setup:
   pancode configure            guided setup for targets, models and settings
   pancode targets              list configured targets, health, auth, and capabilities
   pancode models [search]      list models for configured targets
-  pancode auth <verb>          list, check, log in to or log out of targets and runtimes
+  pancode auth <verb>          list, check, sign in to or sign out of targets and runtimes
   pancode config inspect [--json]  inspect effective customization and provenance
   pancode doctor [--fix]       diagnose state; --fix creates or repairs it
   pancode paths|reset|uninstall|upgrade  directories, state recovery, removal, upgrade

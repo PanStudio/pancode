@@ -84,7 +84,7 @@ export class AuthStorageDamagedError extends Error {
 				`refusing to write credentials: ${damage}.`,
 				path ? `File: ${path}` : null,
 				"Writing would replace the whole file and lose whatever is stored there.",
-				"Move the file aside once you have recovered anything you need, then log in again.",
+				"Move the file aside once you have recovered anything you need, then sign in again.",
 			]
 				.filter((line): line is string => line !== null)
 				.join(" "),

@@ -308,7 +308,7 @@ function removeStoredCredential(auth: ReturnType<typeof openAuthStorage>, entry:
 		return 1;
 	}
 	if (status.source === "environment") {
-		printError(`credential for ${entry} comes from ${status.detail ?? "the environment"}; clear the env var to log out`);
+		printError(`credential for ${entry} comes from ${status.detail ?? "the environment"}; clear the env var to sign out`);
 		return 1;
 	}
 	if (status.source !== "stored-api-key" && status.source !== "stored-oauth") {

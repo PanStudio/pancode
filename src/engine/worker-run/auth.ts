@@ -69,7 +69,7 @@ export function createWorkerAuth(scope: WorkerRunScope) {
 			});
 			refreshed = resolved.refreshed;
 			if (!resolved.available || !resolved.apiKey) {
-				throw new Error(resolved.detail ?? `Credential '${input.authProfile}' is unavailable. Log in again.`);
+				throw new Error(resolved.detail ?? `Credential '${input.authProfile}' is unavailable. Sign in again.`);
 			}
 			lastAuthResolution = resolved;
 			return resolved.apiKey;
