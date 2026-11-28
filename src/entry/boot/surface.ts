@@ -1,0 +1,150 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import type { DomainContractMap } from "../../core/domain-contracts.js";
+import type { LoadResult } from "../../core/domain-loader.js";
+import type { StartupTimer } from "../../core/startup-timer.js";
+import type { TelemetryHub } from "../../core/telemetry/hub.js";
+import type { getTerminationCoordinator } from "../../core/termination.js";
+import type { AgentsContract } from "../../domains/agents/contract.js";
+import type { ConfigContract } from "../../domains/config/contract.js";
+import type { RunBootstrapResult } from "../../domains/context/bootstrap-types.js";
+import type { ContextContract } from "../../domains/context/contract.js";
+import type { WorktreeBootRecovery } from "../../domains/dispatch/boot-recovery.js";
+import type { DispatchContract } from "../../domains/dispatch/contract.js";
+import type { ExtensionsContract } from "../../domains/extensions/contract.js";
+import type { ExtensionRuntimeHookBridge } from "../../domains/extensions/runtime-hook-bridge.js";
+import type { InteropContract } from "../../domains/interop/contract.js";
+import type { GuardianStatePublisher } from "../../domains/memory/guardian-state.js";
+import type { MemoryRuntime } from "../../domains/memory/index.js";
+import type { MemoryInterventionRegistration } from "../../domains/memory/intervention-types.js";
+import type { TaskMemoryHandoffSeedOutcome } from "../../domains/memory/task-memory-handoff.js";
+import type { HistoryReviewActivity } from "../../domains/memory/task-memory-status.js";
+import type { MuxContract } from "../../domains/mux/contract.js";
+import type { PanesOperations } from "../../domains/mux/operations.js";
+import type { PluginSnapshot } from "../../domains/plugins/types.js";
+import type { ProvidersContract } from "../../domains/providers/index.js";
+import type { ResourcesContract } from "../../domains/resources/contract.js";
+import type { McpSubmitReader } from "../../domains/resources/submit-expansion.js";
+import type { AutonomyWindow } from "../../domains/safety/autonomy-window.js";
+import type { GitHookDriftGuard } from "../../domains/safety/hook-drift.js";
+import type { SessionContract } from "../../domains/session/contract.js";
+import type { DecisionBoardStore } from "../../domains/session/decision-board.js";
+import type { SessionEntry } from "../../domains/session/entries.js";
+import type { TaskBoardStore } from "../../domains/session/task-board.js";
+import type { SystemOne } from "../../domains/system-one/types.js";
+import type { TelemetryContract, TelemetryRunReaderBinder } from "../../domains/telemetry/contract.js";
+import type { UserTasksStore } from "../../domains/user-tasks/store.js";
+import type * as InteractiveIndexModule from "../../interactive/index.js";
+import type { BootInteractivity } from "../../interactive/terminal-lease.js";
+import type { ChatLoop } from "../../session-control/chat-loop.js";
+import type { ReloadClassesController } from "../../session-control/reload-report.js";
+import type { RunIo } from "../../session-control/slash-command-types.js";
+import type { AskUserHandler } from "../../tools/ask-user.js";
+import type { ToolBootstrapHandle } from "../../tools/bootstrap.js";
+import type { DispatchBackgroundRegistry } from "../../tools/dispatch-background.js";
+import type { ToolRegistry } from "../../tools/registry-contract.js";
+import type { BootOptions } from "../boot-options.js";
+import type { ExtensionReloadOutcome } from "../extension-reload.js";
+import type { createFlowLedger } from "../flow-ledger.js";
+import type { createJobHost } from "../job-host.js";
+import type { createSessionSettingsView } from "../session-settings-view.js";
+import type { createSystemOneControl } from "../system-one-control.js";
+
+type SessionSettingsView = ReturnType<typeof createSessionSettingsView>;
+
+/**
+ * The lets bootOrchestrator still assigns after a surface starts, read and written live through accessors: a
+ * surface that copied one would miss the later writes of the closures that share it.
+ */
+export interface BootSurfaceCells {
+	askUserHandler: AskUserHandler | null;
+	reportReviewOpener: ((draftId: string) => void) | null;
+	readonly resumedSessionAtBoot: boolean;
+	readonly yoloHeldAtBoot: boolean;
+}
+
+/** What the surface tails (src/entry/boot/*-surface.ts) read from the wired session. */
+export interface BootSurfaceInput {
+	agents: AgentsContract | undefined;
+	applySettingsBlob: SessionSettingsView["applySettingsBlob"];
+	autonomyWindow: AutonomyWindow;
+	beforeShellEntryRecorded: () => void;
+	bus: TelemetryHub;
+	chat: ChatLoop;
+	clampAtScope: SessionSettingsView["clampAtScope"];
+	commitExtensionHooks: () => ExtensionReloadOutcome;
+	commitSetting: SessionSettingsView["commitSetting"];
+	config: ConfigContract | undefined;
+	contextDomain: ContextContract | undefined;
+	createRoutedSession: SessionSettingsView["createRoutedSession"];
+	decisionBoard: DecisionBoardStore;
+	dispatch: DispatchContract;
+	dispatchBackground: DispatchBackgroundRegistry;
+	extensions: ExtensionsContract | undefined;
+	flowLedger: ReturnType<typeof createFlowLedger>;
+	getCurrentSettings: SessionSettingsView["getCurrentSettings"];
+	getTaskMemorySeedOffer: () => { source: string; count: number } | null;
+	guardianState: GuardianStatePublisher;
+	historyReviews: HistoryReviewActivity;
+	hookDrift: GitHookDriftGuard;
+	initialNotices: string[];
+	interop: InteropContract | undefined;
+	jobHost: ReturnType<typeof createJobHost>;
+	mcpSubmit: McpSubmitReader | undefined;
+	memoryIntervention: MemoryInterventionRegistration;
+	memoryOwner: MemoryRuntime;
+	mux: MuxContract | undefined;
+	options: BootOptions;
+	panes: PanesOperations | null;
+	providers: ProvidersContract;
+	readCurrentSessionEntries: () => ReadonlyArray<SessionEntry>;
+	recordBoot: (interactivity?: BootInteractivity) => void;
+	reloadClasses: ReloadClassesController;
+	reloadPlugins: () => PluginSnapshot;
+	resources: ResourcesContract | undefined;
+	result: LoadResult<DomainContractMap>;
+	routingGestures: SessionSettingsView["routingGestures"];
+	runContextInit: (
+		options: {
+			preview?: boolean;
+			adopt?: boolean;
+			applyPancodeMd?: boolean;
+			rewritePancodeMd?: boolean;
+			proposePancodeMd?: boolean;
+			includeGlobalImports?: boolean;
+			heuristic?: boolean;
+			depth?: "quick" | "standard" | "deep";
+			accept?: boolean;
+			acceptRef?: string;
+		},
+		runIo?: RunIo,
+	) => Promise<{ ok: true; proposalPath: string; handbookPath: string } | RunBootstrapResult>;
+	runtimeHooks: ExtensionRuntimeHookBridge;
+	seedCurrentTaskMemoryFromHandoff: () => TaskMemoryHandoffSeedOutcome;
+	selectAtScope: SessionSettingsView["selectAtScope"];
+	session: SessionContract | undefined;
+	settingOrigin: SessionSettingsView["settingOrigin"];
+	systemOne: SystemOne;
+	systemOneControl: ReturnType<typeof createSystemOneControl>;
+	taskBoard: TaskBoardStore;
+	taskMemoryTier: () => "llm" | "rules";
+	telemetry: TelemetryContract;
+	telemetryRunReaders: TelemetryRunReaderBinder | undefined;
+	termination: ReturnType<typeof getTerminationCoordinator>;
+	timer: StartupTimer;
+	toolBootstrap: ToolBootstrapHandle;
+	toolRegistry: ToolRegistry;
+	userTasks: UserTasksStore;
+	withPanes: typeof import("../with-panes.js") | null;
+	worktreeRecovery: WorktreeBootRecovery;
+	yoloRefusal: string | null;
+	cells: BootSurfaceCells;
+}
+
+/**
+ * Values from the trees the Stage 0 closure sits on. Only src/entry/orchestrator.ts may import them (rule6,
+ * STAGE0_SEAMS), so it hands them to the surfaces; each `load*` is that module's `import()`, still run on its own path.
+ */
+export interface BootSurfaceSeams {
+	loadInteractiveIndex: () => Promise<typeof InteractiveIndexModule>;
+}
