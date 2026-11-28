@@ -22,7 +22,7 @@ import { setToolEnvAutonomy, startLoginEnvCapture } from "../core/bash-exec.js";
 import { formatBootTrace } from "../core/boot-trace.js";
 import { readPancodeVersionLabel } from "../core/build-info.js";
 import { type PancodeSettings, readSettings } from "../core/config.js";
-import { interfaceGuidanceEnabled, type OutputStyle } from "../core/defaults.js";
+import type { OutputStyle } from "../core/defaults.js";
 import { writeDiagnostic } from "../core/diagnostics.js";
 import { type LoadResult, loadDomains } from "../core/domain-loader.js";
 import { setAutonomousCommitProcess, setCommitDecisionRefsProvider } from "../core/git-commit-attribution.js";
@@ -54,12 +54,6 @@ import { pancodeDataDir, pancodeStateDir } from "../core/xdg.js";
 import { autonomyCeilingRefusal, launchAutonomyRefusal, yoloRootRefusal } from "../core/yolo-host.js";
 import { renderAgentCatalogSectionsFromSpecs } from "../domains/agents/catalog.js";
 import { AgentsDomainModule } from "../domains/agents/module.js";
-import {
-	createClaimCaptureRegistration,
-	createClaimsDeliveryRegistrations,
-	createHypothesisCaptureRegistration,
-} from "../domains/claims/index.js";
-import { PANCODE_KEYBINDINGS, type PancodeKeybinding } from "../domains/config/keybindings.js";
 import { ConfigDomainModule, createConfigDomainModule } from "../domains/config/module.js";
 import { liveHistoryBudget } from "../domains/context/budget/inspection.js";
 import { createContextDomainModule } from "../domains/context/module.js";
@@ -114,29 +108,16 @@ import {
 import { createHistoryReviewActivity } from "../domains/memory/task-memory-status.js";
 import { type CapabilityMatch, capabilityCorpus, createCapabilityGate } from "../domains/middleware/capability-gate.js";
 import {
-	createDetachedDispatchNudgeRegistration,
-	createUnbackedWorkerClaimRegistration,
-	finishedDetachedBatchIds,
-	openDetachedBatchViews,
-} from "../domains/middleware/dispatch-nudge.js";
-import { createGuidanceRegistration } from "../domains/middleware/guidance.js";
-import {
-	type CompletionFact,
-	createExplorationNudgeRegistrations,
 	createMarketplaceOfferRegistration,
 	createMiddlewareToolChoiceControl,
 	createSkillsReminderRegistration,
-	createTurnPlanCueRegistration,
 	formatRegistrationConflict,
 	writeMiddlewareDiagnosticToStderr,
 } from "../domains/middleware/index.js";
 import { createLocalClockReminderRegistration } from "../domains/middleware/local-clock-reminder.js";
 import { createMiddlewareDomain } from "../domains/middleware/module.js";
-import { createPlanCloseRegistration } from "../domains/middleware/plan-close.js";
 import { createStaleBuildReminderRegistration } from "../domains/middleware/stale-build-reminder.js";
 import { createTaskBoardReminderRegistration } from "../domains/middleware/task-board-reminder.js";
-import { createTaskNudgeRegistration } from "../domains/middleware/task-nudge.js";
-import { createWatchdogRegistration } from "../domains/middleware/watchdog.js";
 import { committedPluginSnapshot } from "../domains/plugins/index.js";
 import { PluginsDomainModule } from "../domains/plugins/module.js";
 import { createPromptsDomainModule } from "../domains/prompts/module.js";
@@ -163,8 +144,6 @@ import {
 	suggestableSkills,
 } from "../domains/resources/index.js";
 import { createResourcesDomainModule } from "../domains/resources/module.js";
-import { createCitationGroundingRegistration } from "../domains/safety/citation-grounding.js";
-import { createFinishContractRegistration } from "../domains/safety/finish-contract-registration.js";
 import { DEFAULT_RECENT_ENTRY_LIMIT } from "../domains/safety/finish-entries.js";
 import { createGitHookDriftGuard, type GitHookDriftGuard, gitHookDriftNotice } from "../domains/safety/hook-drift.js";
 import type { FlowRestrictionSet } from "../domains/safety/index.js";
@@ -173,15 +152,12 @@ import {
 	flowUnmediatedAgentRefusal,
 	isFlowRestrictionSet,
 	mergeFlowRestrictions,
-	parseRigorOverride,
 	resolveModelDestination,
-	resolveRigor,
-	sessionChangesTree,
 } from "../domains/safety/index.js";
 import { workerFlowPolicyInput } from "../domains/safety/information-flow.js";
 import { createInternalGitPolicy } from "../domains/safety/internal-git-policy.js";
 import { SafetyDomainModule } from "../domains/safety/module.js";
-import { createRunGitHelpersRelay, createStandingChecks } from "../domains/safety/observed-checks.js";
+import { createStandingChecks } from "../domains/safety/observed-checks.js";
 import type { ProtectedArtifactState } from "../domains/safety/protected-artifacts.js";
 import { createProtectedArtifactsRegistration } from "../domains/safety/protected-artifacts-registration.js";
 import { SAFETY_JUDGE_CONSECUTIVE_BLOCKS, type SafetyJudgeSeat } from "../domains/safety/safety-judge.js";
@@ -204,7 +180,6 @@ import type { CompactionTrigger, SessionEntry } from "../domains/session/entries
 import { commitHandoff, type HandoffServiceDeps, prepareHandoff } from "../domains/session/handoff-service.js";
 import { SessionLiveError } from "../domains/session/index.js";
 import { SessionDomainModule } from "../domains/session/module.js";
-import { reconcilePendingProtectedArtifacts } from "../domains/session/protected-artifact-journal.js";
 import {
 	appendProtectedArtifactRegistryEvent,
 	protectedArtifactStateForCurrentSession,
@@ -220,7 +195,6 @@ import { latestUserImages } from "../domains/session/vision-images.js";
 import type { SystemOneInstance } from "../domains/system-one/index.js";
 import { createSystemOne, parseRouteList } from "../domains/system-one/index.js";
 import { createTelemetryDomain } from "../domains/telemetry/module.js";
-import { activeUserTaskAcceptance } from "../domains/user-tasks/active-acceptance.js";
 import { createUserTasksStore } from "../domains/user-tasks/store.js";
 import {
 	createWorkspaceSnapshots,
@@ -325,6 +299,7 @@ import { startBootChat } from "./boot/chat.js";
 import { runHeadlessSurface } from "./boot/headless-surface.js";
 import { runInteractiveSurface } from "./boot/interactive-surface.js";
 import type { BootSurfaceCells, BootSurfaceInput, BootSurfaceSeams } from "./boot/surface.js";
+import { registerBootTurnHooks } from "./boot/turn-hooks.js";
 
 export interface BootResult {
 	exitCode: number;
@@ -2400,225 +2375,55 @@ export async function bootOrchestrator(options: BootOptions = {}): Promise<BootR
 		}
 		providers.auth.setRuntimeOverrideForTarget(target, runtime, options.apiKey);
 	}
-	// Every later resume (/resume, ACP session/load) goes through the session
-	// domain, which announces it synchronously before the caller replays the
-	// transcript. A `/tree` branch switch is a different event and keeps the
-	// route the operator is on.
-	const unsubscribeResumedRoute = bus.subscribe("session.reattached", (payload) => {
-		const event = payload as { sessionId?: unknown; via?: unknown } | null | undefined;
-		if (event?.via !== "resume" || session?.current()?.id !== event.sessionId) return;
-		const notice = restoreResumedRoute();
-		if (notice === null) return;
-		if (interactive && deferredWatchdogNoticeSink) {
-			deferredWatchdogNoticeSink(notice);
-		} else if (options.acp !== undefined) {
-			// ACP has no advisory channel outside a prompt; record it where the
-			// routing notices already go (see the ConfigNextTurn subscriber below).
-			try {
-				session?.appendEntry({
-					kind: "custom",
-					customType: "pancode.routing-notice",
-					parentTurnId: null,
-					data: { kind: "resumed-route-unavailable", level: "warning", text: notice },
-				});
-			} catch {
-				// Advisory only.
-			}
-		} else {
-			bootStderr(`PanCode: ${notice}\n`);
-		}
-	});
-	termination.onDrain(() => unsubscribeResumedRoute());
-
-	const readCurrentSessionEntries = (): ReadonlyArray<SessionEntry> => {
-		if (session === undefined) return [];
-		const meta = session.current();
-		if (!meta) return [];
-		reconcilePendingProtectedArtifacts(session);
-		return session.readEntries();
-	};
-
-	const reseedUsage = (): void => {
-		const meta = session?.current();
-		if (!meta || !telemetry) return;
-		telemetry.resetSession(meta.id);
-	};
-	termination.onDrain(bus.subscribe("session.reattached", reseedUsage));
-	termination.onDrain(bus.subscribe("session.turn_switched", reseedUsage));
-
-	const turnOutcomeCollector = createTurnOutcomeCollector({ workspaceRoot: memoryWorkspaceRoot });
-	let outcomeSessionId: string | null = null;
-	const seedOutcomeFromSession = (): void => {
-		const meta = session?.current();
-		outcomeSessionId = meta?.id ?? null;
-		let streak = 0;
-		try {
-			const latest = meta
-				? [...readRecentSessionEntriesForContract(meta.id)]
-						.reverse()
-						.find((entry) => entry.kind === "custom" && entry.customType === "turnOutcome")
-				: undefined;
-			if (latest?.kind === "custom") {
-				const data = latest.data as { conversation?: { clarificationStreak?: unknown } } | null;
-				if (typeof data?.conversation?.clarificationStreak === "number") streak = data.conversation.clarificationStreak;
-			}
-		} catch {
-			// An unreadable tail provides no previous measurement; it must not prevent opening a session.
-		}
-		turnOutcomeCollector.seedClarificationStreak(streak);
-	};
-	seedOutcomeFromSession();
-	const unsubscribeOutcomeResume = bus.subscribe("session.reattached", seedOutcomeFromSession);
-	termination.onDrain(() => unsubscribeOutcomeResume());
-	middlewareRegistrar.registerHook(turnOutcomeCollector);
-	// Only the main session writes claims (#406): a worker's own verify call judges a tree the worker controls, so its
-	// checks reach the log through host verification instead. The verify tool judges against process.cwd(), so the claim
-	// is scoped to the project that cwd lies in.
-	middlewareRegistrar.registerHook(createClaimCaptureRegistration({ cwd: () => process.cwd() }));
-	// A hypothesis slate the main session writes enters the same log at proposed; the check its criterion names moves it.
-	middlewareRegistrar.registerHook(createHypothesisCaptureRegistration({ cwd: () => process.cwd() }));
-	// Contested and superseded claims reach the main agent in the message tail when the task touches their check (#406).
-	// Registered after capture, so the awaited verify delivery reads the claim and edges that call just appended.
-	for (const registration of createClaimsDeliveryRegistrations({ cwd: () => process.cwd() }))
-		middlewareRegistrar.registerHook(registration);
-
-	// turn_end assessors, fired by the chat-loop when the final assistant
-	// message of a run lands. Tool-prose first so its hard-block interruption
-	// precedes the finish-contract advisory in effect order.
-	middlewareRegistrar.registerHook(createToolProseRegistration());
-	middlewareRegistrar.registerHook(createTaskNudgeRegistration({ getBoard: () => taskBoard.snapshot() }));
-	const changesTree = sessionChangesTree(getCurrentSettings);
-	for (const registration of createExplorationNudgeRegistrations({
-		workspaceRoot: memoryWorkspaceRoot,
-		readStreak: { repeatsAsRead: callRepeatsAsRead, changesTree },
-		readStreakObserver: turnOutcomeCollector,
-		readStreakStall: (detail) => autonomyWindow.haltFor("exploration", detail),
-	}))
-		middlewareRegistrar.registerHook(registration);
-	// Main session only (workers never see the turn-plan cue). It names a parallel dispatch only where writing tasks can
-	// run: yolo, or an operator (TUI/ACP) to approve them; headless default denies approvals, so it keeps the board part.
-	middlewareRegistrar.registerHook(
-		createTurnPlanCueRegistration((args) => changesTree(ToolNames.Bash, args, memoryWorkspaceRoot()), {
-			dispatchRuns: () => resolveEffectiveAutonomy() === "yolo" || interactive || acpMode,
-		}),
-	);
-	middlewareRegistrar.registerHook(createUnbackedWorkerClaimRegistration());
-	middlewareRegistrar.registerHook(
-		createDetachedDispatchNudgeRegistration({ getOpenBatches: () => openDetachedBatchViews(dispatch) }),
-	);
-	const taskEstablished = (): boolean => {
-		const board = taskBoard.snapshot();
-		return (
-			board?.tasks.some((task) => task.status === "active" || task.status === "pending" || task.status === "blocked") ===
-				true || userTasks.snapshot().some((task) => task.status === "handed" || task.status === "picked")
-		);
-	};
-	const turnControl = createTurnControlRunner({
-		getSettings: getCurrentSettings,
+	const {
+		headlessGitHelpers,
+		readCurrentSessionEntries,
+		seedOutcomeFromSession,
+		taskEstablished,
+		turnControl,
+		turnOutcomeCollector,
+		turnHookState,
+	} = registerBootTurnHooks({
+		acpMode,
+		actionKeyLabel,
+		agents,
+		autonomyWindow,
+		bootStderr,
+		bus,
+		callRepeatsAsRead,
+		createToolProseRegistration,
+		createTurnControlRunner,
+		createTurnOutcomeCollector,
 		dispatch,
-		getInvokeOptions: () => {
-			const sessionId = session?.current()?.id;
-			return sessionId === undefined ? {} : { sessionId };
-		},
-		getTurnConstraints: () => chat.currentTurnConstraints?.(),
-		finishedDetachedBatchIds: () => finishedDetachedBatchIds(dispatch),
-		emitNotice: (text) => {
-			if (deferredWatchdogNoticeSink) deferredWatchdogNoticeSink(text);
-			else bootStderr(`${text}\n`);
+		effectiveSettingsForDispatch,
+		getCurrentSettings,
+		interactive,
+		memoryWorkspaceRoot,
+		middlewareRegistrar,
+		options,
+		readRecentSessionEntriesForContract,
+		resolveEffectiveAutonomy,
+		restoreResumedRoute,
+		runWatchdogReview,
+		safety,
+		session,
+		taskBoard,
+		telemetry,
+		termination,
+		unattendedYolo,
+		userTasks,
+		cells: {
+			get askUserHandler() {
+				return askUserHandler;
+			},
+			get chat() {
+				return chat;
+			},
+			get deferredWatchdogNoticeSink() {
+				return deferredWatchdogNoticeSink;
+			},
 		},
 	});
-	// The opt-in turn-end watchdog. Headless and ACP runs pass `false` for the
-	// surface: neither has an operator reading a transcript, so a notice they
-	// cannot see would be a worker run spent on nothing whatever the setting says.
-	middlewareRegistrar.registerHook(
-		createWatchdogRegistration({
-			firesOnThisSurface: interactive,
-			getSettings: () => (effectiveSettingsForDispatch?.() ?? getCurrentSettings()).safety.review,
-			getScope: () => {
-				const board = taskBoard.snapshot();
-				if (board === null) return null;
-				const active = board.tasks.find((task) => task.status === "active");
-				return active ? `${board.title}: ${active.id} ${active.title}` : board.title;
-			},
-			run: (trigger) =>
-				runWatchdogReview(trigger, {
-					dispatch,
-					bus,
-					...(agents ? { getAgentRoleFacts: agentRoleFactsResolver((id: string) => agents.getSpec(id)) } : {}),
-					target: (effectiveSettingsForDispatch?.() ?? getCurrentSettings()).safety.review.target,
-					...(deferredWatchdogNoticeSink ? { emitNotice: deferredWatchdogNoticeSink } : {}),
-				}),
-		}),
-	);
-	// `run --verify` checks the last finish decision credited to the agent's own run after its last edit.
-	const runVerifyChecks = options.headless?.verify?.checks ?? [];
-	let creditedRunChecks: ReadonlySet<string> = new Set();
-	let declaredCompletionFacts: ReadonlyArray<CompletionFact> = [];
-	const headlessGitHelpers = createRunGitHelpersRelay();
-	if (session) {
-		middlewareRegistrar.registerHook(
-			createFinishContractRegistration({
-				getTurnConstraints: () => chat.currentTurnConstraints?.(),
-				...(runVerifyChecks.length > 0 ? { readSessionVerifiers: () => runVerifyChecks } : {}),
-				readRunGitHelpers: headlessGitHelpers.read,
-				// Tail-scoped: the contract only needs the last-user-message window, so
-				// it parses a bounded ledger tail per turn_end rather than the whole
-				// file (which grows unbounded with session length).
-				readSessionEntries: () => readRecentSessionEntriesForContract(session.current()?.id),
-				resolveRigor: () =>
-					resolveRigor({
-						cwd: process.cwd(),
-						override: parseRigorOverride(process.env.PANCODE_RIGOR),
-						containedYolo: unattendedYolo(),
-					}),
-				reserveVerificationNudge: unattendedYolo,
-				readActiveAcceptance: (window) =>
-					activeUserTaskAcceptance(userTasks.snapshot(), taskBoard.snapshot(), session.current()?.id ?? null, window),
-				recordDecision: (record) => {
-					turnOutcomeCollector.recordCompletion(
-						record.turnId,
-						record.decision,
-						record.mutatedPaths.length,
-						record.evidenceKinds,
-					);
-					safety.decisions.recordCompletionContract?.(record);
-					creditedRunChecks = new Set(record.verificationScope?.passedChecks ?? []);
-				},
-				reportDeclaredFacts: (facts) => {
-					declaredCompletionFacts = facts;
-				},
-			}),
-		);
-	}
-
-	// DF-1: a final answer that cites line numbers no tool printed gets one
-	// continuation to re-read with line_numbers. Every surface, headless included.
-	middlewareRegistrar.registerHook(createCitationGroundingRegistration());
-
-	if (!options.headless && !options.acp) {
-		middlewareRegistrar.registerHook(
-			createPlanCloseRegistration({
-				// Yolo asks too; an unanswered card takes its recommended option
-				// once the unattended window passes, so it never parks a run (#421).
-				canAsk: () => askUserHandler !== null,
-			}),
-		);
-		// Demo guidance: operator-only capability tips after a turn. Everything it
-		// does, profile writes included, stops while interface.demo is off.
-		middlewareRegistrar.registerHook(
-			createGuidanceRegistration({
-				enabled: () => interfaceGuidanceEnabled(getCurrentSettings().interface),
-				autonomy: () => resolveEffectiveAutonomy(),
-				keyFor: (actionId) =>
-					Object.hasOwn(PANCODE_KEYBINDINGS, actionId) ? actionKeyLabel(actionId as PancodeKeybinding) : null,
-				hasProjectContext: () => existsSync(join(process.cwd(), "PANCODE.md")),
-				contextPressure: () => {
-					const ledger = chat.contextLedger();
-					return ledger.contextWindow > 0 ? ledger.usedTokens / ledger.contextWindow : null;
-				},
-			}),
-		);
-	}
 	const {
 		beginChatSettlement,
 		captureRunIo,
@@ -2691,7 +2496,7 @@ export async function bootOrchestrator(options: BootOptions = {}): Promise<BootR
 		visionSidecar,
 		cells: {
 			get declaredCompletionFacts() {
-				return declaredCompletionFacts;
+				return turnHookState.declaredCompletionFacts;
 			},
 			get deferredMemoryReminderSink() {
 				return deferredMemoryReminderSink;
@@ -2724,7 +2529,7 @@ export async function bootOrchestrator(options: BootOptions = {}): Promise<BootR
 				operatorTask = value;
 			},
 			get outcomeSessionId() {
-				return outcomeSessionId;
+				return turnHookState.outcomeSessionId;
 			},
 		},
 	});
@@ -2745,7 +2550,7 @@ export async function bootOrchestrator(options: BootOptions = {}): Promise<BootR
 			askUserHandler = value;
 		},
 		get creditedRunChecks() {
-			return creditedRunChecks;
+			return turnHookState.creditedRunChecks;
 		},
 		get lastAutonomyHalt() {
 			return lastAutonomyHalt;
