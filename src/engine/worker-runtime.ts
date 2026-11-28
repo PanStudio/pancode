@@ -13,15 +13,12 @@
  */
 
 import { randomUUID } from "node:crypto";
-import { isWorkerToolCallCapExceededReason, isWorkerToolCallCapSynthesisReason } from "../core/guardrails.js";
 import { snapshotModelInfo } from "../core/model-tier.js";
 import { modelRouteGuarded } from "../core/response-model-id.js";
 import { observedToolCallOrigin, withTelemetryContext } from "../core/telemetry/context.js";
-import { telemetryHub } from "../core/telemetry/hub.js";
 import { ToolNames } from "../core/tool-names.js";
 import { createWorkerObservationStore } from "../domains/context/worker/recall.js";
 import { workerEconomicsView } from "../domains/dispatch/economics-view.js";
-import { WALL_HANDBACK_SHARE } from "../domains/dispatch/handback.js";
 import { createReadStreakRegistration } from "../domains/middleware/read-streak.js";
 import { createMiddlewareToolChoiceControl } from "../domains/middleware/tool-choice-control.js";
 import { openAuthStorage } from "../domains/providers/auth/index.js";
@@ -52,13 +49,13 @@ import {
 	resolveDeliveryTools,
 	workerLoopBlockBudget,
 } from "./loop-guard.js";
-import { isLoopGuardSynthesisBackstopReason } from "./loop-guard-reasons.js";
 import { registerPancodeOAuthProviders } from "./oauth.js";
 import { supportsNamedToolChoice } from "./provider-payload.js";
-import { createRunPhase, type HandbackTrigger } from "./run-phase.js";
+import { createRunPhase } from "./run-phase.js";
 import { createWorkerCallTelemetry } from "./worker-call-telemetry.js";
 import type { PancodeWorkerEvent } from "./worker-events.js";
 import { createWorkerExtensionHookRegistrations } from "./worker-extension-hooks.js";
+import { createWorkerBounds } from "./worker-run/bounds.js";
 import { subscribeWorkerEvents } from "./worker-run/events.js";
 import { createWorkerEvidence } from "./worker-run/evidence.js";
 import { finishWorkerRun, taskMessage } from "./worker-run/finish.js";
@@ -252,6 +249,12 @@ export function startWorkerRun(input: WorkerRunInput, emit: WorkerEventEmit): Wo
 		},
 		get loopGuardRegistration() {
 			return loopGuardRegistration;
+		},
+		get workerBudget() {
+			return workerBudget;
+		},
+		get deliveryTools() {
+			return deliveryTools;
 		},
 	};
 
@@ -448,69 +451,7 @@ export function startWorkerRun(input: WorkerRunInput, emit: WorkerEventEmit): Wo
 	const { terminalHandoffActive, pushHelperTool, beforeToolCall, finishTurn, onAssistantBatch, onMessageEnd } =
 		createWorkerResult(scope);
 
-	/** The run's next round is its handback round; the bound that triggered it is journaled as its kind (M3). */
-	const enterHandback = (bound: HandbackTrigger): void => {
-		phase.lockTools(bound);
-		process.stderr.write(
-			`[worker] handback: ${bound} reached the ${input.role ?? "run"}'s share; the next round reports\n`,
-		);
-		if (input.telemetryContext)
-			telemetryHub().emit(
-				"middleware.fired",
-				{
-					hook: "turn_start",
-					phase: "sync",
-					ruleId: "worker.handback",
-					effects: ["lock_tools"],
-					severity: "info",
-					evidence: `bound:${bound}@worker`,
-				},
-				input.telemetryContext,
-			);
-	};
-	/**
-	 * A refusal whose reason is a run bound. Direct calls reach this through
-	 * their blocked finish; a chain child the bound refused reaches it through
-	 * the chain's receipt, because the aggregate settles as an ordinary error
-	 * and its own finish cannot carry the child's verdict.
-	 */
-	const observeBoundReason = (reason: string): void => {
-		// Lifetime-cap lockout ends tool use before the final report. Writers
-		// retain the exhausted outcome; reporting workers can seal their synthesis.
-		if (isWorkerToolCallCapSynthesisReason(reason)) {
-			if (workerBudget.synthesis && deliveryTools.length === 0) {
-				// DF-10: a reporting recipe's cap ends tool use; its sealed synthesis is the product.
-				phase.lockTools("tools");
-				process.stderr.write(`[worker] ${reason}\n`);
-				return;
-			}
-			emit({ type: "pancode_run_outcome", payload: { outcomeCode: "worker_tool_call_cap_exhausted" } });
-			if (phase.sealedBy === null) {
-				phase.seal(reason);
-				process.stderr.write(`[worker] ${reason}\n`);
-			}
-			return;
-		}
-		// Hard bounds: the immediate cap abort (lockout not wired) and
-		// the synthesis backstop for a model that keeps emitting tool calls
-		// after the lock. Both end the run; the first recorded bound wins the
-		// receipt diagnostic.
-		if (isWorkerToolCallCapExceededReason(reason) || isLoopGuardSynthesisBackstopReason(reason)) {
-			emit({
-				type: "pancode_run_outcome",
-				payload: {
-					outcomeCode: isLoopGuardSynthesisBackstopReason(reason)
-						? "loop_guard_tools_disabled_exhausted"
-						: "worker_tool_call_cap_exhausted",
-				},
-			});
-			if (scope.workerBoundAborted) return;
-			scope.workerBoundAborted = true;
-			phase.seal(reason);
-			process.stderr.write(`[worker] ${reason}\n`);
-			scope.abortWorkerForBound?.();
-		}
-	};
+	const { enterHandback, observeBoundReason, startTimers } = createWorkerBounds(scope);
 	const telemetry: ToolTelemetry = {
 		onStart(event) {
 			emit({ type: "pancode_tool_start", payload: event });
@@ -644,39 +585,7 @@ export function startWorkerRun(input: WorkerRunInput, emit: WorkerEventEmit): Wo
 		scope.workerStopCause ??= "loop_guard";
 		agent.abort();
 	};
-	// Qwopus 3.8 explored context init's whole 240 s ceiling one read at a time and was
-	// aborted before submitting. A host deadline ends exploration while the terminal round fits.
-	const synthesisTimer =
-		input.synthesisAt === undefined
-			? undefined
-			: setTimeout(
-					() => {
-						phase.lockTools("synthesis");
-					},
-					Math.max(0, input.synthesisAt - Date.now()),
-				);
-	synthesisTimer?.unref();
-	// DESIGN 4.5: at 85% of the wall clock the next round is the handback round, and the host stops the run at the
-	// wall. A run the wall clock moved to handback seals timed_out with what it reports (fleet M8).
-	const wallLimits = input.limits?.time;
-	const wallTimer =
-		wallLimits === undefined
-			? undefined
-			: setTimeout(
-					() => {
-						if (phase.sealedBy !== null) return;
-						enterHandback("time");
-						emit({
-							type: "pancode_run_outcome",
-							payload: {
-								outcomeCode: "worker_run_timeout",
-								detail: `worker_run_timeout: the run reached ${Math.round(WALL_HANDBACK_SHARE * 100)}% of its ${Math.round(wallLimits.wallMs / 1000)} s wall clock; its tools are withdrawn and its next round is its report`,
-							},
-						});
-					},
-					Math.max(0, wallLimits.handbackAt - Date.now()),
-				);
-	wallTimer?.unref();
+	const { synthesisTimer, wallTimer } = startTimers();
 	const unsubscribe = subscribeWorkerEvents(scope);
 
 	const {

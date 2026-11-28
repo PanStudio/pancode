@@ -21,6 +21,7 @@ import type { ThinkingLevel } from "../../domains/providers/index.js";
 import type { FlowRestrictionSet } from "../../domains/safety/information-flow.js";
 import type { RunEffectsRecorder } from "../../domains/safety/run-effects.js";
 import type { seedRecallLineage } from "../../lib/worker-wire/context-seed.js";
+import type { WorkerBudget } from "../../lib/worker-wire/spec-contract.js";
 import type { resolveAgentTools } from "../../tools/agent-tools.js";
 import type { McpCapabilitySource } from "../../tools/gateway/index.js";
 import type { createEngineAgent } from "../agent.js";
@@ -120,4 +121,6 @@ export interface WorkerRunScope {
 	readonly observations: ReturnType<typeof createWorkerObservationStore>;
 	readonly seedLineage: ReturnType<typeof seedRecallLineage>;
 	readonly loopGuardRegistration: ReturnType<typeof createLoopGuardRegistration>;
+	readonly workerBudget: WorkerBudget;
+	readonly deliveryTools: string[];
 }
