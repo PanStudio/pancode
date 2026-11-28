@@ -5,9 +5,10 @@
  * transport owns exactly one child process and never restarts it. The child
  * gets the allowlisted tool environment and a workspace-contained cwd. Inside
  * a dispatched worker it also runs under the worker's OS sandbox, like every
- * other child the worker starts; in the orchestrator no sandbox policy is
- * configured and it runs directly. Nothing the server prints reaches this
- * process's stdout or stderr.
+ * other child the worker starts; in the orchestrator it runs directly unless
+ * the operator confined it (`safety.confine`), when it runs under the
+ * main-session sandbox policy it is given. Nothing the server prints reaches
+ * this process's stdout or stderr.
  *
  * Both directions are bounded. The framer caps inbound lines; an outbound
  * cap bounds the bytes waiting on a server that stopped reading its stdin,
@@ -25,7 +26,13 @@ import path from "node:path";
 import { performance } from "node:perf_hooks";
 import { boundedExternalDiagnostic } from "../../core/external-diagnostic.js";
 import { buildSafeToolEnv, resolveSafeCwd } from "../../core/safe-exec.js";
+import { bridgeEgress, egressStdio } from "../../core/sandbox/egress/bridge.js";
+import type { HostLaunchLabel } from "../../core/sandbox/host-launch.js";
+import { settleHostLaunch } from "../../core/sandbox/host-launch-record.js";
+import type { SandboxLaunchRecord } from "../../core/sandbox/launch-record.js";
+import { type MainSandboxPolicy, planMainSandboxSpawn } from "../../core/sandbox/main-session.js";
 import { signalSandboxPayload } from "../../core/sandbox/signal.js";
+import type { SandboxLaunchOutcome } from "../../core/sandbox/types.js";
 import { planSandboxedSpawn } from "../../core/sandbox/worker-process.js";
 import { sleep } from "../../core/timers.js";
 import { createLineFramer, encodeJsonRpcMessage, McpError } from "./protocol.js";
@@ -61,6 +68,16 @@ export interface McpStdioTransportOptions {
 	killGraceMs: number;
 	teardownBoundMs: number;
 	sandboxNetwork: boolean;
+	/** The operator confined this orchestrator server (`safety.confine`): it runs under this policy or not at all. */
+	hostSandbox?: MainSandboxPolicy;
+	/** Labels each launch of the server (P8) and hands its settled record back. */
+	launch?: McpLaunchReport;
+}
+
+/** How a server's launch is labelled, and who receives its record once it ran, was refused or failed to start. */
+export interface McpLaunchReport {
+	label: HostLaunchLabel;
+	onSettled: (record: SandboxLaunchRecord) => void;
 }
 
 interface OutboundEntry {
@@ -378,14 +395,27 @@ export function createMcpStdioTransport(
 		// A worker's policy engine admits execute-class calls under write roots on
 		// the promise that bwrap binds every child it starts to those roots, so a
 		// server must not be the one child that escapes them or the network policy.
-		const sandbox = planSandboxedSpawn({ argv: [spec.command, ...(spec.args ?? [])] }, cwd, [], {
-			network: options.sandboxNetwork,
-		});
+		const argv = [spec.command, ...(spec.args ?? [])];
+		const sandbox =
+			options.hostSandbox !== undefined
+				? planMainSandboxSpawn(options.hostSandbox, { argv }, cwd, undefined, { bridge: true })
+				: planSandboxedSpawn({ argv }, cwd, [], { network: options.sandboxNetwork });
+		const report = options.launch;
+		const settleLaunch = (outcome: SandboxLaunchOutcome): void => {
+			if (report !== undefined) report.onSettled(settleHostLaunch(report.label, { outcome }, sandbox.launch));
+		};
 		if (sandbox.kind === "refused") {
+			settleLaunch("refused");
 			fatal(new McpError("spawn", `mcp server ${spec.id} failed to start: ${sandbox.message}`), true);
 			return false;
 		}
 		sandboxedLauncher = sandbox.kind === "sandboxed";
+		let released = false;
+		const releaseSandbox = (): void => {
+			if (released || sandbox.kind !== "sandboxed") return;
+			released = true;
+			sandbox.afterExit();
+		};
 		let proc: ChildProcess;
 		try {
 			const [file, args] =
@@ -397,22 +427,34 @@ export function createMcpStdioTransport(
 			env.PATH = (spec.ownNodeFirst === true ? [ownNode, env.PATH] : [env.PATH, ownNode])
 				.filter((entry) => entry)
 				.join(path.delimiter);
+			const egressPlan = sandbox.kind === "sandboxed" && "egress" in sandbox ? sandbox.egress : undefined;
 			proc = spawn(file, args, {
 				cwd,
 				env,
 				detached: process.platform !== "win32",
-				stdio: ["pipe", "pipe", "pipe"],
+				stdio: egressPlan === undefined ? ["pipe", "pipe", "pipe"] : egressStdio(["pipe", "pipe", "pipe"]),
 			});
+			// A confined server's network is PanCode's proxy for its own grants, served for as long as it runs.
+			if (egressPlan !== undefined) bridgeEgress(proc, egressPlan);
 		} catch (error) {
+			releaseSandbox();
+			settleLaunch("launch-failed");
 			fatal(new McpError("spawn", `mcp server ${spec.id} failed to start: ${errorMessage(error)}`), true);
 			return false;
 		}
 		child = proc;
-		if (sandbox.kind === "sandboxed") proc.once("exit", sandbox.afterExit);
+		proc.once("exit", releaseSandbox);
 		if (proc.pid !== undefined) groupPhase = "live";
 		spawned = new Promise<boolean>((resolve) => {
-			proc.once("spawn", () => resolve(true));
+			proc.once("spawn", () => {
+				settleLaunch("ran");
+				resolve(true);
+			});
 			proc.once("error", (error) => {
+				if (proc.pid === undefined) {
+					releaseSandbox();
+					settleLaunch("launch-failed");
+				}
 				fatal(new McpError("spawn", `mcp server ${spec.id} failed to start: ${error.message}`), true);
 				resolve(false);
 			});

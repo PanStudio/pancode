@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import type { HostLaunchLabel } from "../../core/sandbox/host-launch.js";
+import type { SandboxLaunchRecord } from "../../core/sandbox/launch-record.js";
 import type { DynamicToolName } from "../../core/tool-names.js";
 import type {
 	McpClient,
@@ -274,6 +276,13 @@ export interface McpCapabilitySourceOptions {
 	 * can ask anyone, as on a headless run, a worker or `pancode mcp`.
 	 */
 	elicitation?: McpElicitationHost;
+	/**
+	 * `safety.confine` as this session reads it now (P8): an orchestrator stdio
+	 * server it names as `mcp:<id>` runs in PanCode's sandbox or not at all.
+	 * Defaults to the layered settings for `cwd`; a worker never reads it, its
+	 * servers having the worker's sandbox.
+	 */
+	confine?: () => ReadonlyArray<string>;
 }
 
 export interface McpCapabilitySource {
@@ -442,6 +451,10 @@ export interface OwnedConnection {
 }
 
 export interface ServerState {
+	/** Where this server's process runs (P8), as its last launch was labelled. */
+	launchLabel?: HostLaunchLabel;
+	/** That launch's record, each call's `details.sandbox`. */
+	launchRecord?: SandboxLaunchRecord;
 	recovery?: Promise<void>;
 	refreshing?: Promise<void>;
 	listed?: boolean;

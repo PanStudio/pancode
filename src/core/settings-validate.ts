@@ -31,6 +31,7 @@ import {
 } from "./defaults.js";
 import { FUNDING_ID_PATTERN } from "./funding-config.js";
 import { LIVE_CHECK_LOGIN_RUNTIMES } from "./sandbox/env-scrub.js";
+import { confineEntryProblem } from "./sandbox/host-launch.js";
 import { RESOURCE_LIMIT_KEYS, RESOURCE_LIMIT_MAX, SANDBOX_MODES, UNIX_SOCKET_MODES } from "./sandbox/types.js";
 import {
 	describe,
@@ -93,6 +94,20 @@ function readSandboxOptions(issues: Issues, safety: Record<string, unknown>, set
 	}
 	if ("egress" in safety) validateEgress(issues, safety.egress, settings);
 	if ("homeReads" in safety) validateHomeReads(issues, safety.homeReads, settings);
+	if ("confine" in safety) {
+		const parsed = expectStringArray(issues, "safety.confine", safety.confine);
+		if (parsed !== undefined) {
+			settings.safety.confine = [
+				...new Set(
+					parsed.filter((entry) => {
+						const problem = confineEntryProblem(entry);
+						if (problem !== null) issues.add("safety.confine", `${JSON.stringify(entry)}: ${problem}`);
+						return problem === null;
+					}),
+				),
+			];
+		}
+	}
 	if ("sandboxUnconfinedLocalWorkers" in safety) {
 		const parsed = expectBoolean(issues, "safety.sandboxUnconfinedLocalWorkers", safety.sandboxUnconfinedLocalWorkers);
 		if (parsed !== undefined) settings.safety.sandboxUnconfinedLocalWorkers = parsed;
@@ -1039,6 +1054,7 @@ function validateSafety(issues: Issues, value: unknown, settings: PancodeSetting
 			"sandboxUnixSockets",
 			"sandboxUnconfinedLocalWorkers",
 			"sandboxCacheMaxGiB",
+			"confine",
 			"homeReads",
 			"snapshots",
 			"validationWrappers",

@@ -3,6 +3,8 @@
 import type { ChildProcess, IOType, StdioOptions } from "node:child_process";
 import { readdirSync, readFileSync, readlinkSync } from "node:fs";
 import type net from "node:net";
+import { recordedEgressHost } from "../launch-record.js";
+import type { EgressReason } from "../types.js";
 import type { EgressGrants } from "./policy.js";
 import type { EgressAsk, EgressProxy, EgressReceipt } from "./proxy.js";
 import { EGRESS_PROXY_PORT, EGRESS_SETUP_FAILED_EXIT, EGRESS_UNGRANTED as UNGRANTED } from "./setup.js";
@@ -32,6 +34,10 @@ export interface EgressReport {
 	setupFailed: boolean;
 	/** What would grant a refused origin. */
 	denyHint: string;
+	/** Connection attempts no receipt lists, past the proxy's receipt bound. */
+	dropped?: number;
+	/** Connections the proxy closed unread at its connection limit. */
+	shed?: number;
 }
 
 /** One proxied launch's host side, alive until the command exits. */
@@ -121,6 +127,7 @@ export function bridgeEgress(child: ChildProcess, plan: EgressBridgePlan): Egres
 			listeningPorts: [...sampled],
 			setupFailed: !received && exitCode === EGRESS_SETUP_FAILED_EXIT,
 			denyHint: plan.denyHint,
+			...(proxy?.overflow() ?? { dropped: 0, shed: 0 }),
 		}),
 		close,
 	};
@@ -130,17 +137,28 @@ const NOTE_ORIGINS = 8;
 
 function listOrigins(receipts: ReadonlyArray<EgressReceipt>): string {
 	const shown = receipts.slice(0, NOTE_ORIGINS).map((receipt) => {
-		const host = receipt.host.includes(":") ? `[${receipt.host}]` : receipt.host;
+		const { host: bounded } = recordedEgressHost(receipt);
+		const host = bounded.includes(":") ? `[${bounded}]` : bounded;
 		return `${host}:${receipt.port}${receipt.count > 1 ? ` ×${receipt.count}` : ""}`;
 	});
 	const more = receipts.length - shown.length;
 	return `${shown.join(", ")}${more > 0 ? ` and ${more} more` : ""}`;
 }
 
+/** How the note words an admitted origin the proxy could not reach. */
+const FAILED_WORDING: Readonly<Partial<Record<EgressReason, string>>> = {
+	unresolved: "the name did not resolve",
+	"dial-error": "the connection failed",
+	"dial-timeout": "the connection timed out",
+	"upstream-refused": "the upstream proxy did not open it",
+	"proxy-closed": "the proxy closed first",
+};
+
 /**
  * The host's note on a proxied command's network: what it reached, what the
- * proxy refused and why, and any server it had started, which nothing outside
- * the sandbox could reach. Null when every connection was granted and no
+ * proxy refused and why, what it admitted but could not reach, what it did
+ * not list, and any server it had started, which nothing outside the sandbox
+ * could reach. Null when every connection was granted and reached, and no
  * server was left listening.
  */
 export function egressResultNote(report: EgressReport | undefined): string | null {
@@ -149,8 +167,12 @@ export function egressResultNote(report: EgressReport | undefined): string | nul
 		return "[egress] the sandbox's network setup failed before the command started, so it did not run; retry it, and if it fails again report it.";
 	const parts: string[] = [];
 	const denied = report.receipts.filter((receipt) => receipt.decision === "denied");
-	// A command whose every connection was granted needs no note; its receipts ride in the result details.
-	if (denied.length === 0 && report.listeningPorts.length === 0) return null;
+	const failed = report.receipts.filter((receipt) => receipt.decision === "failed");
+	const dropped = report.dropped ?? 0;
+	const shed = report.shed ?? 0;
+	// A command whose every connection was granted and reached needs no note; its receipts ride in the result details.
+	if (denied.length === 0 && failed.length === 0 && dropped === 0 && shed === 0 && report.listeningPorts.length === 0)
+		return null;
 	const allowed = report.receipts.filter((receipt) => receipt.decision === "allowed");
 	if (allowed.length > 0) parts.push(`reached ${listOrigins(allowed)}`);
 	for (const reason of new Set(denied.map((receipt) => receipt.reason ?? "denied"))) {
@@ -159,6 +181,13 @@ export function egressResultNote(report: EgressReport | undefined): string | nul
 			`refused ${listOrigins(denied.filter((receipt) => (receipt.reason ?? "denied") === reason))} (${reason}${hint})`,
 		);
 	}
+	for (const code of new Set(failed.map((receipt) => receipt.code ?? "dial-error"))) {
+		const matching = failed.filter((receipt) => (receipt.code ?? "dial-error") === code);
+		parts.push(`could not reach ${listOrigins(matching)} (${FAILED_WORDING[code] ?? "the connection failed"})`);
+	}
+	if (dropped > 0) parts.push(`${dropped} more connection attempt${dropped === 1 ? "" : "s"} not listed`);
+	if (shed > 0)
+		parts.push(`${shed} connection${shed === 1 ? "" : "s"} closed unread at the proxy's limit of open connections`);
 	if (report.listeningPorts.length > 0) {
 		const ports = report.listeningPorts.join(", ");
 		parts.push(
