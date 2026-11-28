@@ -13,9 +13,9 @@ import {
 	type BashCommandProgress,
 	type BashCommandResult,
 	bashSecretValues,
-	combineBashOutput,
 	runBashCommand,
 } from "../../core/bash-exec.js";
+import { combineSafeOutput } from "../../core/safe-exec.js";
 import { CumulativeOutputMask, maskCommandOutput } from "../evidence/output-mask.js";
 import type { SessionEntryInput } from "./contract.js";
 
@@ -83,7 +83,7 @@ export async function runOperatorShellLine(input: OperatorShellLineInput): Promi
 		stdout: ready.stdout.final(result.stdout, ending),
 		stderr: ready.stderr.final(result.stderr, ending),
 	};
-	const output = appendStatusNotes(combineBashOutput(masked), result, OPERATOR_SHELL_TIMEOUT_MS, secrets);
+	const output = appendStatusNotes(combineSafeOutput(masked), result, OPERATOR_SHELL_TIMEOUT_MS, secrets);
 	return {
 		result,
 		unlabeled,

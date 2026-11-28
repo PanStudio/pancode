@@ -32,6 +32,7 @@ import type { TaskBoardSnapshot } from "../../domains/session/task-board.js";
 import type { WorkspaceSnapshot } from "../../domains/session/workspace/index.js";
 import type { TelemetryView } from "../../domains/telemetry/contract.js";
 import { ACP_CONTEXT_META_KEY, projectContextLedger } from "./context-ledger.js";
+import { boundedText } from "./server-bounds.js";
 import { ACP_USAGE_META_KEY } from "./types.js";
 
 const MAX_PLAN_ENTRIES = 100;
@@ -92,32 +93,20 @@ const TURN_METRICS = [
 	"firstToken",
 ] as const;
 
-function bounded(text: string): string {
-	let safe = "";
-	for (const character of text) {
-		const code = character.codePointAt(0) ?? 0;
-		safe += code <= 0x1f || code === 0x7f ? " " : character;
-	}
-	if (Buffer.byteLength(safe, "utf8") <= MAX_TEXT_BYTES) return safe;
-	let cut = safe.slice(0, MAX_TEXT_BYTES);
-	while (Buffer.byteLength(cut, "utf8") > MAX_TEXT_BYTES - 3) cut = cut.slice(0, -1);
-	return `${cut}…`;
-}
-
-const optional = (text: string | null) => (text === null ? null : bounded(text));
+const optional = (text: string | null) => (text === null ? null : boundedText(text, MAX_TEXT_BYTES));
 const nullableCount = (value: number | null) =>
 	value === null || !Number.isFinite(value) ? null : Math.max(0, Math.round(value));
 
 /** `origin` is read verbatim from git config, and an https remote may carry a token in its userinfo. */
 function redactRemote(url: string | null): string | null {
 	if (url === null) return null;
-	return bounded(url.replace(/^([a-z][a-z0-9+.-]*:\/\/)[^/@]*@/iu, "$1"));
+	return boundedText(url.replace(/^([a-z][a-z0-9+.-]*:\/\/)[^/@]*@/iu, "$1"), MAX_TEXT_BYTES);
 }
 
 function projectWorkspace(snapshot: WorkspaceSnapshot): AcpWorkspaceView {
 	return {
 		version: 1,
-		cwd: bounded(snapshot.cwd),
+		cwd: boundedText(snapshot.cwd, MAX_TEXT_BYTES),
 		isGit: snapshot.isGit,
 		branch: optional(snapshot.branch),
 		dirty: snapshot.dirty,
@@ -149,7 +138,7 @@ function projectAcpPlan(plan: TaskBoardSnapshot | null) {
 	return {
 		sessionUpdate: "plan" as const,
 		entries: kept.slice(0, MAX_PLAN_ENTRIES).map((task) => ({
-			content: bounded(task.title),
+			content: boundedText(task.title, MAX_TEXT_BYTES),
 			priority: "medium" as const,
 			status: PLAN_STATUS[task.status as keyof typeof PLAN_STATUS] ?? "pending",
 			_meta: {
@@ -157,7 +146,7 @@ function projectAcpPlan(plan: TaskBoardSnapshot | null) {
 					id: task.id,
 					status: task.status,
 					origin: task.origin ?? "agent",
-					reason: task.reason === undefined || task.reason === "" ? null : bounded(task.reason),
+					reason: task.reason === undefined || task.reason === "" ? null : boundedText(task.reason, MAX_TEXT_BYTES),
 				},
 			},
 		})),
@@ -165,7 +154,7 @@ function projectAcpPlan(plan: TaskBoardSnapshot | null) {
 			[ACP_PLAN_META_KEY]: {
 				version: 1,
 				boardId: plan?.boardId ?? null,
-				title: plan === null ? null : bounded(plan.title),
+				title: plan === null ? null : boundedText(plan.title, MAX_TEXT_BYTES),
 				cancelled: tasks.length - kept.length,
 				truncated: kept.length > MAX_PLAN_ENTRIES,
 			},

@@ -17,25 +17,15 @@ export { ACP_CONTEXT_LEDGER_METHOD, ACP_CONTEXT_META_KEY } from "./types.js";
  */
 
 import type { ContextLedger } from "../../domains/session/context-ledger.js";
+import { boundedText } from "./server-bounds.js";
 
 const MAX_GROUPS = 32;
 const MAX_HANDBOOK_FILES = 16;
 const MAX_COLD_REASONS = 16;
 const MAX_TEXT_BYTES = 256;
 
-function bounded(text: string): string {
-	let safe = "";
-	for (const character of text) {
-		const code = character.codePointAt(0) ?? 0;
-		safe += code <= 0x1f || code === 0x7f ? " " : character;
-	}
-	if (Buffer.byteLength(safe, "utf8") <= MAX_TEXT_BYTES) return safe;
-	let cut = safe.slice(0, MAX_TEXT_BYTES);
-	while (Buffer.byteLength(cut, "utf8") > MAX_TEXT_BYTES - 3) cut = cut.slice(0, -1);
-	return `${cut}…`;
-}
-
-const optional = (text: string | null | undefined) => (text === null || text === undefined ? null : bounded(text));
+const optional = (text: string | null | undefined) =>
+	text === null || text === undefined ? null : boundedText(text, MAX_TEXT_BYTES);
 const count = (value: number) => (Number.isFinite(value) && value > 0 ? Math.round(value) : 0);
 const duration = (value: number) => (Number.isFinite(value) && value > 0 ? value : 0);
 const nullableCount = (value: number | null | undefined) =>
@@ -63,11 +53,13 @@ export function projectContextLedger(ledger: ContextLedger): AcpContextLedger {
 		compactionAuto: ledger.compactionAuto,
 		projectPreload: optional(ledger.projectPreload),
 		projectHandbookFiles:
-			ledger.projectHandbookFiles === null ? null : ledger.projectHandbookFiles.slice(0, MAX_HANDBOOK_FILES).map(bounded),
+			ledger.projectHandbookFiles === null
+				? null
+				: ledger.projectHandbookFiles.slice(0, MAX_HANDBOOK_FILES).map((text) => boundedText(text, MAX_TEXT_BYTES)),
 		toolCount: count(ledger.toolCount),
 		groups: ledger.groups.slice(0, MAX_GROUPS).map((group) => ({
 			category: group.category,
-			label: bounded(group.label),
+			label: boundedText(group.label, MAX_TEXT_BYTES),
 			tokens: count(group.tokens),
 			percent: group.percent === null || !Number.isFinite(group.percent) ? null : Math.max(0, group.percent),
 		})),
@@ -75,10 +67,10 @@ export function projectContextLedger(ledger: ContextLedger): AcpContextLedger {
 			ledger.lastCompaction === null || ledger.lastCompaction === undefined
 				? null
 				: {
-						stage: bounded(ledger.lastCompaction.stage),
+						stage: boundedText(ledger.lastCompaction.stage, MAX_TEXT_BYTES),
 						tokensBefore: count(ledger.lastCompaction.tokensBefore),
 						tokensAfter: count(ledger.lastCompaction.tokensAfter),
-						trigger: bounded(ledger.lastCompaction.trigger),
+						trigger: boundedText(ledger.lastCompaction.trigger, MAX_TEXT_BYTES),
 					},
 		promptCache:
 			cache === null
@@ -90,7 +82,9 @@ export function projectContextLedger(ledger: ContextLedger): AcpContextLedger {
 						uncachedInputTokens: nullableCount(cache.uncachedInputTokens),
 						backendVerdict: cache.backendVerdict,
 						// The three facts /context reads for its divergence warning, so a client can show it too (#434).
-						expectedColdReasons: (cache.expectedColdReasons ?? []).slice(0, MAX_COLD_REASONS).map(bounded),
+						expectedColdReasons: (cache.expectedColdReasons ?? [])
+							.slice(0, MAX_COLD_REASONS)
+							.map((text) => boundedText(text, MAX_TEXT_BYTES)),
 						backend:
 							cache.backend === null
 								? null

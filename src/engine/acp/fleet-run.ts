@@ -24,6 +24,7 @@ export type { AcpFleetPreview } from "./types-fleet.js";
 import type { TurnConstraints } from "../../core/turn-constraints.js";
 import { executionPlanStepScope } from "../../domains/dispatch/execution-plan.js";
 import type { FleetRunPreview, FleetRunPreviewResult } from "../../domains/dispatch/index.js";
+import { boundedText } from "./server-bounds.js";
 
 export const ACP_FLEET_MAX_STEPS = 64;
 const MAX_TEXT_BYTES = 512;
@@ -56,24 +57,12 @@ export interface AcpFleetControl {
 	>;
 }
 
-export function bounded(text: string, maxBytes = MAX_TEXT_BYTES): string {
-	let safe = "";
-	for (const character of text) {
-		const code = character.codePointAt(0) ?? 0;
-		safe += code <= 0x1f || code === 0x7f ? " " : character;
-	}
-	if (Buffer.byteLength(safe, "utf8") <= maxBytes) return safe;
-	let cut = safe.slice(0, maxBytes);
-	while (Buffer.byteLength(cut, "utf8") > maxBytes - 3) cut = cut.slice(0, -1);
-	return `${cut}…`;
-}
-
 export function projectFleetPreview(result: FleetRunPreviewResult): AcpFleetPreview {
 	if (!result.ok) {
 		return {
 			status: "refused",
-			name: bounded(result.name),
-			diagnostics: result.diagnostics.slice(0, MAX_DIAGNOSTICS).map((line) => bounded(line, MAX_DIAGNOSTIC_BYTES)),
+			name: boundedText(result.name, MAX_TEXT_BYTES),
+			diagnostics: result.diagnostics.slice(0, MAX_DIAGNOSTICS).map((line) => boundedText(line, MAX_DIAGNOSTIC_BYTES)),
 		};
 	}
 	const { preview } = result;
@@ -81,7 +70,7 @@ export function projectFleetPreview(result: FleetRunPreviewResult): AcpFleetPrev
 	let truncated = false;
 	const previewText = (text: string) => {
 		if (Buffer.byteLength(text, "utf8") > MAX_TEXT_BYTES) truncated = true;
-		return bounded(text);
+		return boundedText(text, MAX_TEXT_BYTES);
 	};
 	const boundedList = (values: ReadonlyArray<string>) => {
 		if (values.length > MAX_LIST) truncated = true;

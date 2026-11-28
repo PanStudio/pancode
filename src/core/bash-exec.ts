@@ -13,7 +13,7 @@ import {
 	reportCommitAttributionDiagnostic,
 	withManagedGitCommitAttributionEnvironment,
 } from "./git-commit-attribution.js";
-import { SAFE_EXEC_PIPE_DRAIN_BOUND_MS } from "./safe-exec.js";
+import { combineSafeOutput, SAFE_EXEC_PIPE_DRAIN_BOUND_MS } from "./safe-exec.js";
 import { holdsNamedCredential, knownSecretValues, scrubSandboxEnv } from "./sandbox/env-scrub.js";
 import { type MainSandboxPolicy, planMainSandboxSpawn } from "./sandbox/main-session.js";
 import { signalSandboxPayload } from "./sandbox/signal.js";
@@ -448,11 +448,6 @@ export async function bashSecretValues(secretNames?: Iterable<string>): Promise<
 	return knownSecretValues((await bashSpawnPlan()).source, secretNames);
 }
 
-export function combineBashOutput(result: Pick<BashCommandResult, "stdout" | "stderr">): string {
-	const { stdout, stderr } = result;
-	return stderr.length > 0 ? `${stdout}${stdout.endsWith("\n") || stdout.length === 0 ? "" : "\n"}${stderr}` : stdout;
-}
-
 /**
  * The merged output of a command still running. The merge writes the newline that keeps stderr off stdout's last line, and
  * stdout can still grow there, so `https://u:pw` followed by stderr must stay held while `http://h:8080\n` followed by the
@@ -460,7 +455,7 @@ export function combineBashOutput(result: Pick<BashCommandResult, "stdout" | "st
  */
 export function combineLiveBashOutput(progress: Pick<BashCommandResult, "stdout" | "stderr">): string {
 	const { stdout, stderr } = progress;
-	return combineBashOutput({ stdout: stderr.length > 0 ? holdUnresolvedUserinfo(stdout) : stdout, stderr });
+	return combineSafeOutput({ stdout: stderr.length > 0 ? holdUnresolvedUserinfo(stdout) : stdout, stderr });
 }
 
 /** A `required` sandbox with no backend, or a host with no bash: the command never spawned. */
