@@ -2,6 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 
 import type { WorkerHookResultFrame } from "../../lib/worker-wire/protocol.js";
+import type { CheckoutRootLookup } from "../../tools/task-worktree.js";
 import type { TaskWorktreeOverlay } from "../../tools/task-worktree-overlay.js";
 import type { TaskWorktreePreview } from "../../tools/task-worktree-preview.js";
 import type { FlowRestrictionSet } from "../safety/information-flow.js";
@@ -57,6 +58,8 @@ export interface NativeAttemptState {
 	observer: DispatchAdmissionObserver | undefined;
 	preparation: DispatchPreparationOptions | undefined;
 	settlement: BatchVerificationGate | undefined;
+	/** The admission's checkout reader, shared with the request stage that opened it. */
+	checkoutRoot: CheckoutRootLookup;
 	activeRouteObservation: RouteObservationHandle | null;
 	routeObservation: RouteObservationHandle;
 	remoteReturn: FleetChangeReturn | undefined;

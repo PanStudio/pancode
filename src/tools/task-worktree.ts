@@ -14,7 +14,7 @@ import {
 	rmSync,
 	writeFileSync,
 } from "node:fs";
-import { join, relative } from "node:path";
+import { join, relative, resolve as resolvePath } from "node:path";
 import { stripAuthoredTrailers } from "../core/commit-message.js";
 import { sha256Hex } from "../core/hash.js";
 import { withoutRepositoryEnv } from "../core/internal-git.js";
@@ -171,6 +171,25 @@ export function gitCheckoutRoot(cwd: string): string | null {
 	} catch {
 		return null;
 	}
+}
+
+/** A `gitCheckoutRoot` reader that asks git once per directory. */
+export type CheckoutRootLookup = (cwd: string) => string | null;
+
+/**
+ * One admission's checkout reads: every stage of an admission asks about the same few directories, so each is read
+ * once and every stage sees the same answer. Made fresh per admission, never shared across them.
+ */
+export function checkoutRootLookup(): CheckoutRootLookup {
+	const answers = new Map<string, string | null>();
+	return (cwd) => {
+		const key = resolvePath(cwd);
+		const known = answers.get(key);
+		if (known !== undefined) return known;
+		const answer = gitCheckoutRoot(key);
+		answers.set(key, answer);
+		return answer;
+	};
 }
 
 /**

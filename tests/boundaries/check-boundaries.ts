@@ -780,7 +780,7 @@ const FUNCTION_LINE_CEILING = 500;
  * repeated in one file takes `[2]`, `[3]` in source order.
  */
 const FUNCTION_LINE_EXEMPTIONS: ReadonlyMap<string, number> = new Map([
-	["src/cli/modes/print.ts#runHeadlessMainAgent", 856],
+	["src/cli/modes/print.ts#runHeadlessMainAgent", 851],
 	["src/cli/uninstall.ts#runUninstallCommand", 543],
 	["src/cli/upgrade.ts#runUpgradeCommand", 568],
 	["src/domains/dispatch/admission.ts#createCapacityAdmissionController", 547],
@@ -831,7 +831,7 @@ const FUNCTION_LINE_EXEMPTIONS: ReadonlyMap<string, number> = new Map([
 	["src/session-control/turn-runtime.ts#createTurnRuntime", 2222],
 	["src/session-control/turn-runtime.ts#createTurnRuntime.ensureRuntime", 1812],
 	["src/session-control/turn-runtime.ts#createTurnRuntime.ensureRuntime.onAgentEvent", 530],
-	["src/tools/dispatch-admission.ts#createDispatchAdmissionController", 880],
+	["src/tools/dispatch-admission.ts#createDispatchAdmissionController", 878],
 	["src/tools/dispatch-compete.ts#runCompete", 543],
 	["src/tools/dispatch-runner.ts#runDispatchTool", 550],
 	["src/tools/gateway/index.ts#createGatewayTool", 875],

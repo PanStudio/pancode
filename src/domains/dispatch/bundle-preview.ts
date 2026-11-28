@@ -11,6 +11,7 @@ import {
 	WORKER_EXTENSION_HOOKS_MAX,
 	type WorkerExtensionHook,
 } from "../../lib/worker-wire/protocol.js";
+import type { CheckoutRootLookup } from "../../tools/task-worktree.js";
 import type { AgentRecipe } from "../agents/recipe.js";
 import {
 	type AgentSpec,
@@ -237,8 +238,9 @@ export function createRoutePreview(rt: DispatchRuntime) {
 	function previewFixed(
 		req: DispatchRequest,
 		settings: EffectiveSettings = getEffectiveSettings(),
+		checkoutRoot?: CheckoutRootLookup,
 	): DispatchPlanTaskResolution {
-		return previewFixedStages(req, settings).resolution;
+		return previewFixedStages(req, settings, checkoutRoot).resolution;
 	}
 
 	/**
@@ -250,6 +252,7 @@ export function createRoutePreview(rt: DispatchRuntime) {
 	function previewFixedStages(
 		req: DispatchRequest,
 		settings: EffectiveSettings,
+		checkoutRoot?: CheckoutRootLookup,
 	): {
 		resolution: DispatchPlanTaskResolution;
 		grants: DispatchDerivedGrants | null;
@@ -329,6 +332,7 @@ export function createRoutePreview(rt: DispatchRuntime) {
 			pathScope,
 			judgeSeated: options?.workerAskJudge !== undefined,
 			placement,
+			...(checkoutRoot === undefined ? {} : { checkoutRoot }),
 		});
 		const effectiveTools = stage.tools;
 		const previewPermit = stage.permit;

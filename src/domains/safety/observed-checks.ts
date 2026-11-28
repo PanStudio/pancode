@@ -251,6 +251,39 @@ export function createStandingChecks(): typeof standingChecks {
 	};
 }
 
+/**
+ * {@link gitRunsConfiguredHelpers} read once per run of the session path, for a hook that assesses every turn end: a
+ * new run or workspace reads afresh, and a path with no run yet reads every time.
+ */
+export function createRunGitHelpers(): (entries: ReadonlyArray<unknown>, workspaceRoot: string) => boolean {
+	let cache: { key: string; gitHelpers: boolean } | undefined;
+	return (entries, workspaceRoot) => {
+		const run = currentRun(entries);
+		const root = path.resolve(workspaceRoot);
+		if (run === null) {
+			cache = undefined;
+			return gitRunsConfiguredHelpers(root);
+		}
+		const key = JSON.stringify([run, root, process.env.HOME]);
+		if (cache?.key !== key) cache = { key, gitHelpers: gitRunsConfiguredHelpers(root) };
+		return cache.gitHelpers;
+	};
+}
+
+/** A headless run's one git helper answer, handed from its run-effects recorder to the host's finish contract at the same root. */
+export function createRunGitHelpersRelay(): {
+	note(workspaceRoot: string, gitHelpers: boolean): void;
+	read(workspaceRoot: string): boolean | undefined;
+} {
+	let noted: { root: string; gitHelpers: boolean } | undefined;
+	return {
+		note: (workspaceRoot, gitHelpers) => {
+			noted = { root: path.resolve(workspaceRoot), gitHelpers };
+		},
+		read: (workspaceRoot) => (noted?.root === path.resolve(workspaceRoot) ? noted.gitHelpers : undefined),
+	};
+}
+
 /** The same fold over any stretch of the session path, from `start` on; `scratchRoots` is `safety.scratchRoots`. */
 export function standingChecksFrom(
 	entries: ReadonlyArray<unknown>,
@@ -281,6 +314,7 @@ export function standingDispatchRuns(
 	start: number,
 	workspaceRoot: string,
 	scratchRoots: ReadonlyArray<string> = [],
+	gitHelpers?: boolean,
 ): string[] {
 	const declared = declaredVerifierCommands(workspaceRoot, []);
 	const fold = foldStanding(
@@ -290,6 +324,7 @@ export function standingDispatchRuns(
 		declared,
 		undefined,
 		pathStartedAt(entries),
+		gitHelpers,
 	);
 	return fold.checks.flatMap((check) => (check.passed && fold.dispatchRuns.has(check.name) ? [check.name] : []));
 }
@@ -326,6 +361,7 @@ export function runCheckFacts(
 	entries: ReadonlyArray<unknown>,
 	workspaceRoot: string,
 	declared: ReadonlyArray<DeclaredVerifierCommand>,
+	gitHelpers?: boolean,
 ): RunCheckFacts {
 	const { passCalls, sealed, freshRed, retired } = foldStanding(
 		entries,
@@ -334,6 +370,7 @@ export function runCheckFacts(
 		declared,
 		undefined,
 		pathStartedAt(entries),
+		gitHelpers,
 	);
 	const failing = [...sealed].flatMap(([name, passed]) => (passed ? [] : [name]));
 	return {
@@ -351,6 +388,8 @@ function foldStanding(
 	declared: ReadonlyArray<DeclaredVerifierCommand>,
 	cache?: RunReplayCache,
 	startedAt?: number,
+	/** The run's own answer at `workspaceRoot`, when the caller already read it this run. */
+	gitHelpers?: boolean,
 ): {
 	checks: ObservedCheck[];
 	passCalls: Map<string, ObservedCheck>;
@@ -360,9 +399,15 @@ function foldStanding(
 	retired: { checks: string[]; change: string } | null;
 } {
 	const root = path.resolve(workspaceRoot);
-	const gitHelpers = cache?.gitHelpers ?? gitRunsConfiguredHelpers(root);
+	const helpers = cache?.gitHelpers ?? gitHelpers ?? gitRunsConfiguredHelpers(root);
 	const outputTarget = checkOutputReader(root, process.env, scratchRoots, cache?.gitAnswers, startedAt);
-	const replay: Replay = { root, gitHelpers, outputTarget, declared, ...(cache ? { readings: cache.readings } : {}) };
+	const replay: Replay = {
+		root,
+		gitHelpers: helpers,
+		outputTarget,
+		declared,
+		...(cache ? { readings: cache.readings } : {}),
+	};
 	const calls = new Map<string, TrackedCall>();
 	const standing = new Map<string, ObservedCheck>();
 	const standingCalls = new Map<string, string>();

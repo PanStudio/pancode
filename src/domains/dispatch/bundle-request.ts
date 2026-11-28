@@ -6,7 +6,12 @@ import { DEFAULT_SETTINGS } from "../../core/defaults.js";
 import { asDirectoryPathBoundary } from "../../core/path-boundary.js";
 import { relativePathEscapes } from "../../core/path-containment.js";
 import { snapshotTurnConstraints } from "../../core/turn-constraints.js";
-import { cleanupAccountedTaskWorktree, createTaskWorktree, gitCheckoutRoot } from "../../tools/task-worktree.js";
+import {
+	type CheckoutRootLookup,
+	checkoutRootLookup,
+	cleanupAccountedTaskWorktree,
+	createTaskWorktree,
+} from "../../tools/task-worktree.js";
 import { keptTaskWorktreeDetail } from "../../tools/task-worktree-preview.js";
 import { diskWorktreeParent, prepareWorktreeParent, resolveWorktreeRoot } from "../../tools/worktree-root.js";
 import { normalizeAgentSpec } from "../agents/spec.js";
@@ -38,7 +43,7 @@ export function createDispatchRequests(rt: DispatchRuntime) {
 	 * bash and verify, and merges back only its roots. Decided from the facts the envelope reads; a request that
 	 * cannot be resolved here is left as it is for admission to refuse with its own reason.
 	 */
-	function placedInOwnWorktree(req: DispatchRequest): boolean {
+	function placedInOwnWorktree(req: DispatchRequest, checkoutRoot: CheckoutRootLookup): boolean {
 		if (req.worktree === true || req.taskWorktree !== undefined || req.gate !== undefined) return false;
 		try {
 			const recipe = agents.get(req.agentId);
@@ -65,6 +70,7 @@ export function createDispatchRequests(rt: DispatchRuntime) {
 					target,
 					settings,
 					placement: previewNode(req),
+					checkoutRoot,
 				}),
 			);
 		} catch {
@@ -74,13 +80,14 @@ export function createDispatchRequests(rt: DispatchRuntime) {
 
 	async function dispatchAttempt(
 		req: DispatchRequest,
-		observer?: DispatchAdmissionObserver,
-		preparation?: DispatchPreparationOptions,
-		settlement?: BatchVerificationGate,
+		observer: DispatchAdmissionObserver | undefined,
+		preparation: DispatchPreparationOptions | undefined,
+		settlement: BatchVerificationGate | undefined,
+		checkoutRoot: CheckoutRootLookup,
 	): ReturnType<typeof rt.attempt.admitDispatchAttempt> {
 		const probeClaims: ProbeClaim[] = [];
 		try {
-			return await rt.attempt.admitDispatchAttempt(req, probeClaims, observer, preparation, settlement);
+			return await rt.attempt.admitDispatchAttempt(req, probeClaims, observer, preparation, settlement, checkoutRoot);
 		} catch (error) {
 			// A half-open route admitted this dispatch as its probe, but the run never
 			// started. Without the release the route would wait on a probe outcome
@@ -103,6 +110,8 @@ export function createDispatchRequests(rt: DispatchRuntime) {
 		// Restart recovery settles before any run is admitted, so no stale
 		// worktree or abandoned lease is reused (boot-recovery.ts).
 		await rt.recovery.awaitStartupRecovery();
+		// Every stage of this admission, the attempt's included, reads the checkout once.
+		const checkoutRoot = checkoutRootLookup();
 		// A retry re-enters here with the request it was first admitted under, so
 		// only a request that has never been stamped takes the current session.
 		const sessionOrigin = options?.getSessionOrigin?.();
@@ -131,7 +140,7 @@ export function createDispatchRequests(rt: DispatchRuntime) {
 					"dispatch: this run is read-only, so it cannot run host verification checks; dispatch without intent.verification",
 				);
 			// Validate before creating worktrees or acquiring writer/capacity leases.
-			rt.preview.previewFixed(req);
+			rt.preview.previewFixed(req, undefined, checkoutRoot);
 		}
 		// The role is resolved from the request as admitted, a turn's read-only narrowing included, by the rule the
 		// envelope applies, so the journal, the route tuple and the receipt carry the envelope's role (DESIGN 4.2). A
@@ -146,7 +155,7 @@ export function createDispatchRequests(rt: DispatchRuntime) {
 			};
 		// Every attempt takes its own run identity before the writer lease; retries
 		// join the original writer group through lineage.rootRunId (#434).
-		if (placedInOwnWorktree(req)) req = { ...req, worktree: true };
+		if (placedInOwnWorktree(req, checkoutRoot)) req = { ...req, worktree: true };
 		if (req.runIdHint === undefined && req.worktree !== true) req = { ...req, runIdHint: newRunId() };
 		// DESIGN 4.5: every run has a wall clock from this call, so time queued for a slot counts; a retry keeps its root's.
 		const wallRecipe = agents.get(req.agentId);
@@ -169,7 +178,7 @@ export function createDispatchRequests(rt: DispatchRuntime) {
 		let writerLease: WriterSetLease | undefined;
 		const writerRecipe = agents.get(req.agentId);
 		if (writerRecipe !== null && normalizeAgentSpec(writerRecipe).capabilityClass === "workspace-edit") {
-			const checkout = req.taskWorktree?.root ?? gitCheckoutRoot(req.cwd ?? process.cwd());
+			const checkout = req.taskWorktree?.root ?? checkoutRoot(req.cwd ?? process.cwd());
 			if (checkout !== null) {
 				const roots = canonicalWriteRoots(req);
 				const runId = req.runIdHint ?? req.lineage?.rootRunId;
@@ -214,7 +223,7 @@ export function createDispatchRequests(rt: DispatchRuntime) {
 		}
 		if (req.worktree === true && req.taskWorktree === undefined) {
 			const requestedCwd = resolvePath(req.cwd ?? process.cwd());
-			const root = gitCheckoutRoot(requestedCwd);
+			const root = checkoutRoot(requestedCwd);
 			if (root === null) throw new Error("worktree_non_git_checkout");
 			if (req.taskWorktreeDestination !== undefined && root !== req.taskWorktreeDestination) {
 				writerLease?.release();
@@ -288,7 +297,7 @@ export function createDispatchRequests(rt: DispatchRuntime) {
 		let handle: Awaited<ReturnType<typeof dispatchAttempt>>;
 		try {
 			preparation?.signal?.throwIfAborted();
-			handle = await dispatchAttempt(prepared, observer, preparation, settlement);
+			handle = await dispatchAttempt(prepared, observer, preparation, settlement, checkoutRoot);
 			writerLease?.bindRun(handle.runId);
 		} catch (error) {
 			writerLease?.release();
