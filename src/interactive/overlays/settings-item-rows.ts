@@ -6,6 +6,7 @@ import { DEFAULT_SETTINGS } from "../../core/defaults.js";
 import { getAtPath } from "../../core/session-routing.js";
 import type { SettingsAreaId as SettingsSectionId } from "../../core/settings-areas.js";
 import { settingsPlacementForRow } from "../../core/settings-areas.js";
+import { settingsChangeKind } from "../../core/settings-change-kind.js";
 /** Row primitives the item builder composes: setting items, group headers, target calls to action, and the common controls. */
 import type { SettingControl } from "../../core/settings-controls.js";
 import {
@@ -19,7 +20,6 @@ import {
 	settingsPathForRow,
 } from "../../core/settings-controls.js";
 import { SettingsValidationError } from "../../core/settings-issues.js";
-import { settingsChangeKind } from "../../domains/config/classify.js";
 import {
 	type ProvidersContract,
 	resolveModelRuntimeCapabilitiesForProviders,

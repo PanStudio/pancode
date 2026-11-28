@@ -7,10 +7,10 @@ import { join } from "node:path";
 import { after, before, describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
 import { resolvePackageRoot } from "../../src/core/package-root.js";
+import { settingsChangeKind } from "../../src/core/settings-change-kind.js";
 import { controlInstructions, settingControl } from "../../src/core/settings-controls.js";
 import { resolvePancodeDirs } from "../../src/core/xdg.js";
 import { parseFrontmatter } from "../../src/domains/agents/frontmatter.js";
-import { settingsChangeKind } from "../../src/domains/config/classify.js";
 import {
 	type CompileInputs,
 	compile,

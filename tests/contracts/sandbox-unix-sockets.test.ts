@@ -30,9 +30,9 @@ import { WORKER_SANDBOX_SPEC_VERSION, type WorkerSandboxSpec } from "../../src/c
 import { sandboxLaunchFilters } from "../../src/core/sandbox/unix-sockets.js";
 import { resolveWorkerSandboxSpec } from "../../src/core/sandbox/worker-policy.js";
 import { composeWorkerSandboxInvocation } from "../../src/core/sandbox/worker-process.js";
+import { settingsChangeKind } from "../../src/core/settings-change-kind.js";
 import { readLayeredSettings } from "../../src/core/settings-layers.js";
 import { resetXdgCache } from "../../src/core/xdg.js";
-import { settingsChangeKind } from "../../src/domains/config/classify.js";
 import { planExtensionLaunch } from "../../src/domains/extensions/runtime-sandbox.js";
 import { isolatePancodeEnv } from "../harness/scratch-env.js";
 

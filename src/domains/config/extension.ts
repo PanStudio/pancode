@@ -7,6 +7,7 @@ import { configureGitCommitAttribution } from "../../core/git-commit-attribution
 import { configureGuardrails, guardrailValuesFromSettings } from "../../core/guardrails.js";
 import { keepTargetOrigins } from "../../core/project-target-urls.js";
 import { pinRunSettings } from "../../core/run-overrides.js";
+import type { ChangeKind } from "../../core/settings-change-kind.js";
 import { formatSettingsLayerWarning } from "../../core/settings-layer-diagnostics.js";
 import {
 	readLayeredSettings,
@@ -17,7 +18,7 @@ import {
 } from "../../core/settings-layers.js";
 import type { ConfigChangePayload, ConfigChangeScope, ConfigChangeSource } from "../../core/telemetry/live-events.js";
 import { assertAgentIdNamespace } from "./agent-namespace.js";
-import { type ChangeKind, diffSettings } from "./classify.js";
+import { diffSettings } from "./classify.js";
 import type { ConfigContract } from "./contract.js";
 import { type ConfigWatcher, startConfigWatcher } from "./watcher.js";
 

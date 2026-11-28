@@ -97,7 +97,7 @@ const SESSION_STAGES: ReadonlyArray<readonly [name: string, roots: ReadonlyArray
  * off the plugin domain: guards alone let src/domains/dispatch/ownership.ts,
  * which src/cli/fleet-project-scope.ts imports, share a file with
  * src/core/settings-controls.ts, whose import of src/domains/config/classify.ts
- * sits in the same file as src/domains/plugins/index.ts. It also roots
+ * sat in the same file as src/domains/plugins/index.ts. It also roots
  * src/domains/dispatch/capacity-lease.ts, which `fleet status` imports for the
  * drain line: guards alone let it share a file with src/domains/store/index.ts
  * once the safety domain's shell scanners left protected-artifacts.ts. It roots

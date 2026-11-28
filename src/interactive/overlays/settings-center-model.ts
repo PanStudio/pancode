@@ -67,7 +67,7 @@ export const SHIPPED_RESILIENCE_COOLDOWN_MS = DEFAULT_SETTINGS.fleet.retry.route
  */
 /**
  * Scope tells the operator where an edit lands. Derived from the config-change
- * classification (src/domains/config/classify.ts): hotReload/nextTurn knobs can
+ * classification (src/core/settings-change-kind.ts): hotReload/nextTurn knobs can
  * apply to the live session immediately, so they offer "this session only" vs
  * "save as the global default". restartRequired knobs cannot apply live, so the
  * overlay only offers a global save that a restart picks up.

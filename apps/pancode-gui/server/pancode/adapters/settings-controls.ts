@@ -2,6 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 
 import { SHARED_SETTINGS_AREAS, settingsPlacementForPath } from "../../../../../src/core/settings-areas.js";
+import { settingsChangeKind } from "../../../../../src/core/settings-change-kind.js";
 import {
 	applyControlValue,
 	formatControlValue,
@@ -15,7 +16,6 @@ import {
 import { SettingsValidationError } from "../../../../../src/core/settings-issues.js";
 import { readLayeredSettings, updateLayeredSettings } from "../../../../../src/core/settings-layers.js";
 import { validateSettings } from "../../../../../src/core/settings-validate.js";
-import { settingsChangeKind } from "../../../../../src/domains/config/classify.js";
 import { getRuntimeRegistry } from "../../../../../src/domains/providers/registry.js";
 import { registerBuiltinRuntimes } from "../../../../../src/domains/providers/runtimes/builtins.js";
 import { settingsRuntimeFacts } from "../../../../../src/domains/providers/settings-facts.js";

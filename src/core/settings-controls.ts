@@ -1,6 +1,5 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
-import { settingsChangeKind } from "../domains/config/classify.js";
 import type { PancodeSettings } from "./config.js";
 import { semanticUsable } from "./config.js";
 import {
@@ -20,6 +19,7 @@ import {
 	settingsPlacementForPath,
 	settingsPlacementForRow,
 } from "./settings-areas.js";
+import { settingsChangeKind } from "./settings-change-kind.js";
 import { SettingsValidationError } from "./settings-issues.js";
 import { validateSettings } from "./settings-validate.js";
 

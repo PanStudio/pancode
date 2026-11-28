@@ -12,12 +12,12 @@ import {
 import type { ActiveRoutingPosture, ActiveRoutingRole } from "../../core/defaults.js";
 import { ACTIVE_ROUTING_POSTURES, ACTIVE_ROUTING_ROLES } from "../../core/defaults.js";
 import { getAtPath, isRoutingPath } from "../../core/session-routing.js";
+import { settingsChangeKind } from "../../core/settings-change-kind.js";
 /** Applying a setting change to the settings draft, and the change plan with its propagation timing and confirm titles. */
 import { applyControlValue, settingControl, settingsPathForRow } from "../../core/settings-controls.js";
 import { SettingsValidationError } from "../../core/settings-issues.js";
 import { validateSettings } from "../../core/settings-validate.js";
 import { isRecord } from "../../core/type-guards.js";
-import { settingsChangeKind } from "../../domains/config/classify.js";
 import type { InteropAgentId } from "../../domains/interop/index.js";
 import { delegationEntryForKind, interopAgentKind } from "../../domains/interop/index.js";
 import { thinkingLevelFromChoiceLabel } from "../../domains/providers/index.js";
