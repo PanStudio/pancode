@@ -34,7 +34,6 @@ import {
 	fstatSync,
 	fsyncSync,
 	ftruncateSync,
-	mkdirSync,
 	openSync,
 	readdirSync,
 	readFileSync,
@@ -49,6 +48,7 @@ import { dirname, join, resolve } from "node:path";
 import { StringDecoder } from "node:string_decoder";
 import { type BuildStamp, readBuildStamp } from "../core/build-info.js";
 import { cwdHash } from "../core/cwd-hash.js";
+import { makeDirectorySync } from "../core/make-directory.js";
 import { readPancodeVersion } from "../core/package-root.js";
 import { processBirthToken } from "../core/process-identity.js";
 import { assertSafeId } from "../core/safe-id.js";
@@ -206,7 +206,7 @@ export const SESSION_FILE_MODE = 0o600;
 export function sessionPaths(meta: PancodeSessionMeta): PancodeSessionFile {
 	const dir = join(pancodeStateDir(), "sessions", meta.cwdHash, meta.id);
 	// Transcripts hold every prompt and tool result: owner-only, like credentials.
-	mkdirSync(dir, { recursive: true, mode: 0o700 });
+	makeDirectorySync(dir, 0o700);
 	return {
 		current: join(dir, "current.jsonl"),
 		tree: join(dir, "tree.json"),
@@ -305,7 +305,7 @@ function writeJsonlFileAtomic(
 	options: SessionJsonlWriteOptions = {},
 ): void {
 	const dir = dirname(targetPath);
-	mkdirSync(dir, { recursive: true, mode: 0o700 });
+	makeDirectorySync(dir, 0o700);
 	const body = serializeJsonl(entries);
 	const tmp = `${targetPath}.tmp`;
 	const fd = openSync(tmp, "w", SESSION_FILE_MODE);
