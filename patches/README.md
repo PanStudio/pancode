@@ -255,7 +255,7 @@ compare the installed declarations with that snapshot; `pnpm run pi:surface-diff
 does. Run
 `pnpm test:maintenance` (keyboard routing and drafts: deletion under submit
 overrides, search ownership and navigation, editor undo, and policy-first
-ordering through the gate), `tests/contracts/tui-view-ergonomics.test.ts`
+ordering through the gate), `tests/extended/tui-view-ergonomics.test.ts`
 (whole-query undo and the Unicode kill ring on `Input.applyEdit`), and the
 installed-package test, which drives the bundled executable. These cover the
 semantic edit and search hunks and the gate. No PanCode test pins the render memo;

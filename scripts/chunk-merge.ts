@@ -85,7 +85,7 @@ const SESSION_STAGES: ReadonlyArray<readonly [name: string, roots: ReadonlyArray
  * crosses from the entry on, so chunks all of them load anyway are not split
  * apart. `stage0` lists the instant shell's owner alone, and `runHelp` exists
  * although `headless` covers it, because
- * tests/contracts/instant-shell-import-graph.test.ts budgets the owner's
+ * tests/extended/instant-shell-import-graph.test.ts budgets the owner's
  * static closure and pins `run --help` to load nothing of the run command.
  * `help` keeps `help --json` to the kit and the command specs: without it the
  * kit shared a file with the import() namespace stub of
