@@ -17,14 +17,14 @@ import { join } from "node:path";
 import { listStateDirectorySync, withinStateRoot } from "../../core/state-boundary.js";
 import type { TelemetryRecord } from "../../core/telemetry/envelope.js";
 import type { Fact } from "../../core/telemetry/fact.js";
-import type { RunSettled } from "../../core/telemetry/run-schemas.js";
 import {
 	telemetryBundlePath,
 	telemetryJournalFiles,
 	telemetryObjectsDirectory,
 	telemetryRunDirectory,
 	telemetryRunsDirectory,
-} from "./paths.js";
+} from "../../core/telemetry/paths.js";
+import type { RunSettled } from "../../core/telemetry/run-schemas.js";
 import { readRunRecordWithSealedRecords, type SettledRunRecord } from "./run-record.js";
 
 /**

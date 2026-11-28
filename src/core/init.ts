@@ -343,7 +343,7 @@ function readInstallMetadata(path: string): InstallMetadata | null {
  * write into the wrong sandbox.
  *
  * Enable by setting PANCODE_REQUIRE_HOME_PREFIX=1 in the test env. The test
- * harness in tests/harness/spawn.ts opts in by default. We deliberately do
+ * harness in tests/harness/tmp-root.ts opts in by default. We deliberately do
  * not enable this in production because dev installs may legitimately point
  * individual dirs outside PANCODE_HOME.
  */

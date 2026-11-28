@@ -26,6 +26,7 @@ export {
 	writeCodewiki,
 } from "./codewiki/artifact.js";
 export { renderCodewikiDigest } from "./codewiki/digest.js";
+export { lazyCodeSkeleton } from "./codewiki/lazy-skeleton.js";
 export { CODEWIKI_VERSION } from "./codewiki/schema.js";
 export { renderEffectivePromptContext } from "./compiled-handbook.js";
 export type {
@@ -83,3 +84,14 @@ export {
 } from "./wiki/meta.js";
 export type { WikiDepth } from "./wiki/plan.js";
 export { MAX_PAGE_ATTEMPTS } from "./wiki/plan-store.js";
+export { foldWorkingSet } from "./working-set/fold.js";
+export {
+	canonicalize,
+	createPathIndexBuilder,
+	type PathIndexBuilder,
+	type PathObservation,
+} from "./working-set/path-index.js";
+export { recalledRef } from "./working-set/payload.js";
+export { projectWorkingSet } from "./working-set/project.js";
+export { recallableRefs } from "./working-set/recall.js";
+export { compactionCut } from "./working-set/visible.js";

@@ -4,6 +4,7 @@
 import { canonicalJson } from "../../core/canonical-json.js";
 import type { DelegationToolGovernance, WorkerPermissionMode } from "../../core/defaults.js";
 import { sha256Hex } from "../../core/hash.js";
+import { readOnlyWorkAdmitted } from "../../core/runtime-enforcement.js";
 import { isMcpToolName, mcpToolName, ToolNames } from "../../core/tool-names.js";
 import type { TurnConstraints } from "../../core/turn-constraints.js";
 import { turnDelegatesTool } from "../../core/turn-constraints.js";
@@ -13,7 +14,6 @@ import type { AgentCapabilityClass } from "../agents/spec.js";
 import type { McpAttestedSkill } from "../mcp/skill-catalog.js";
 import type { McpTrustActionClass } from "../mcp/trust.js";
 import type { RuntimeEnforcement } from "../providers/index.js";
-import { readOnlyWorkAdmitted } from "../providers/runtime-enforcement.js";
 import { classify } from "./action-classifier.js";
 import type { ApprovalAuthority } from "./admission.js";
 

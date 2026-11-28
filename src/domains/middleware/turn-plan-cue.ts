@@ -4,15 +4,10 @@ import { isPlanOnlyRequest } from "../../core/plan-request.js";
 import { isReadOnlyCall } from "../../core/read-only-calls.js";
 import { requestProse } from "../../core/request-prose.js";
 import { ToolNames } from "../../core/tool-names.js";
+import { turnCanCallTool } from "../../core/turn-constraints.js";
 import { forbidsFileWrites } from "../../core/write-prohibition.js";
 import type { MiddlewareHookRegistration } from "./runtime.js";
-import {
-	type MiddlewareEffect,
-	type MiddlewareHookInput,
-	metadataNumber,
-	metadataString,
-	turnCanCallTool,
-} from "./types.js";
+import { type MiddlewareEffect, type MiddlewareHookInput, metadataNumber, metadataString } from "./types.js";
 
 /**
  * Turn-plan cue, packaged as a turn_start hook of the main session (workers never register it).

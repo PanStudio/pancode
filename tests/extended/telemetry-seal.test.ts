@@ -10,14 +10,14 @@ import type { TelemetryContext } from "../../src/core/telemetry/context.js";
 import type { RunTelemetryV1 } from "../../src/core/telemetry/dto.js";
 import type { TelemetryRecord } from "../../src/core/telemetry/envelope.js";
 import { newRecordId } from "../../src/core/telemetry/ids.js";
-import { inspectRunTrustStatus } from "../../src/domains/evidence/trust-status.js";
-import { openCallJournal, readCallJournal } from "../../src/domains/telemetry/call-journal.js";
-import { storeTelemetryObject } from "../../src/domains/telemetry/objects.js";
 import {
 	telemetryObjectsDirectory,
 	telemetryRunDirectory,
 	telemetrySessionDirectory,
-} from "../../src/domains/telemetry/paths.js";
+} from "../../src/core/telemetry/paths.js";
+import { inspectRunTrustStatus } from "../../src/domains/evidence/trust-status.js";
+import { openCallJournal, readCallJournal } from "../../src/domains/telemetry/call-journal.js";
+import { storeTelemetryObject } from "../../src/domains/telemetry/objects.js";
 import { type JournalSource, journalSourceFromRead } from "../../src/domains/telemetry/read-model-sources.js";
 import { readRunRecord } from "../../src/domains/telemetry/run-record.js";
 import { readTelemetryScopeFiles, verifyTelemetryScope } from "../../src/domains/telemetry/seal.js";

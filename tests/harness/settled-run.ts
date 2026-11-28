@@ -12,12 +12,12 @@ import { fixtureEnvelope } from "./receipt.js";
 
 import type { WorkerTelemetryContext } from "../../src/core/telemetry/context.js";
 import { workerAgent } from "../../src/core/telemetry/context.js";
+import { telemetryRunDirectory } from "../../src/core/telemetry/paths.js";
 import type { RunUsageFacts } from "../../src/domains/dispatch/run-call-usage.js";
 import { finishRunResult, runSettledRecord, settleFinishedRun } from "../../src/domains/dispatch/run-settlement.js";
 import type { RunResultDraft } from "../../src/domains/dispatch/types.js";
 import { gatherRunAssessment } from "../../src/domains/evidence/assessment.js";
 import { openCallJournal, readCallJournal } from "../../src/domains/telemetry/call-journal.js";
-import { telemetryRunDirectory } from "../../src/domains/telemetry/paths.js";
 
 export async function writeSettledRun(
 	stateDir: string,

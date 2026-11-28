@@ -27,8 +27,8 @@ import { isRecord } from "../../core/type-guards.js";
  * before JSON parsing, so an oversized or adversarial frame costs a length
  * comparison rather than a parse.
  *
- * This module lives under src/worker because both the worker and the
- * orchestrator need it and src/worker may not value-import src/domains.
+ * This module lives under src/lib/worker-wire so the worker, orchestrator,
+ * and domains can share it without violating src/worker import boundaries.
  * Callers import the wire schema directly from here; orchestrator-only
  * attestation admission and bounded queue helpers live in
  * src/domains/dispatch/worker-protocol.ts.
@@ -415,12 +415,6 @@ export function parseAgentLedgerEntry(value: unknown): AgentLedgerEntry | null {
 			: { flowRestrictions: structuredClone(record.flowRestrictions as FlowRestrictionSet) }),
 		...(conflicts === undefined ? {} : { conflictsWith: [...(conflicts as string[])] }),
 	};
-}
-
-/** Stdin frame that pushes newly admitted entries toward one worker's mirror. */
-export interface AgentLedgerDeltaFrame {
-	type: "ledger_delta";
-	entries: ReadonlyArray<AgentLedgerEntry>;
 }
 
 /**
