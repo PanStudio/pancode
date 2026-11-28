@@ -237,435 +237,12 @@ export function validateSettings(raw: unknown): SettingsValidationResult {
 	}
 
 	if ("chat" in raw) validateChat(issues, raw.chat, settings);
-
 	if ("fleet" in raw) validateFleet(issues, raw.fleet, settings);
-
 	if ("context" in raw) validateContext(issues, raw.context, settings);
-
 	if ("systemOne" in raw) validateSystemOne(issues, raw.systemOne, settings);
-	if ("safety" in raw) {
-		if (!isRecord(raw.safety)) issues.add("safety", `expected a map, got ${describe(raw.safety)}`);
-		else {
-			const safety = raw.safety;
-			issues.unknownKeys("safety", safety, [
-				"autonomy",
-				"limits",
-				"review",
-				"resources",
-				"sandbox",
-				"egress",
-				"scratchRoots",
-				"sandboxPassEnv",
-				"liveCheckTargets",
-				"sandboxUnixSockets",
-				"sandboxUnconfinedLocalWorkers",
-				"sandboxCacheMaxGiB",
-				"homeReads",
-				"snapshots",
-				"validationWrappers",
-				"unattendedAfterSeconds",
-				"yoloAccepted",
-				"yoloConfinement",
-				"yoloUnconfinedAccepted",
-				"judge",
-			]);
-			if ("autonomy" in safety) {
-				const parsed = expectEnum(issues, "safety.autonomy", safety.autonomy, AUTONOMY_LEVELS);
-				if (parsed !== undefined) settings.safety.autonomy = parsed;
-			}
-			readSandboxOptions(issues, safety, settings);
-			if ("snapshots" in safety) {
-				const parsed = expectEnum(issues, "safety.snapshots", safety.snapshots, WORKSPACE_SNAPSHOT_MODES);
-				if (parsed !== undefined) settings.safety.snapshots = parsed;
-			}
-			if ("scratchRoots" in safety) {
-				const parsed = expectStringArray(issues, "safety.scratchRoots", safety.scratchRoots);
-				if (parsed !== undefined) {
-					settings.safety.scratchRoots = parsed.filter((root) => {
-						const problem = scratchRootProblem(root);
-						if (problem !== null) issues.add("safety.scratchRoots", `${root}: ${problem}`);
-						return problem === null;
-					});
-				}
-			}
-			if ("liveCheckTargets" in safety) {
-				const parsed = expectStringArray(issues, "safety.liveCheckTargets", safety.liveCheckTargets);
-				if (parsed !== undefined) {
-					settings.safety.liveCheckTargets = [
-						...new Set(
-							parsed.filter((id) => {
-								const target = settings.targets.find((candidate) => candidate.id === id);
-								const problem =
-									target === undefined
-										? "no target with this id"
-										: LIVE_CHECK_LOGIN_RUNTIMES.has(target.runtime)
-											? null
-											: `runtime ${target.runtime} has no login file PanCode can reveal (only ${[...LIVE_CHECK_LOGIN_RUNTIMES].join(", ")})`;
-								if (problem !== null) issues.add("safety.liveCheckTargets", `${id}: ${problem}`);
-								return problem === null;
-							}),
-						),
-					];
-				}
-			}
-			if ("sandboxPassEnv" in safety) {
-				const parsed = expectStringArray(issues, "safety.sandboxPassEnv", safety.sandboxPassEnv);
-				if (parsed !== undefined) {
-					settings.safety.sandboxPassEnv = parsed.filter((name) => {
-						const valid = /^[A-Za-z_][A-Za-z0-9_]*$/u.test(name);
-						if (!valid) issues.add("safety.sandboxPassEnv", `${name}: not an environment variable name`);
-						return valid;
-					});
-				}
-			}
-			if ("validationWrappers" in safety) {
-				const parsed = expectStringArray(issues, "safety.validationWrappers", safety.validationWrappers);
-				if (parsed !== undefined) {
-					settings.safety.validationWrappers = parsed.filter((entry) => {
-						const problem = validationWrapperProblem(entry);
-						if (problem !== null) issues.add("safety.validationWrappers", `${JSON.stringify(entry)}: ${problem}`);
-						return problem === null;
-					});
-				}
-			}
-			if ("sandboxCacheMaxGiB" in safety) {
-				const parsed = expectNumber(issues, "safety.sandboxCacheMaxGiB", safety.sandboxCacheMaxGiB, { min: 0 });
-				if (parsed !== undefined) settings.safety.sandboxCacheMaxGiB = parsed;
-			}
-			if ("yoloAccepted" in safety) {
-				const parsed = expectBoolean(issues, "safety.yoloAccepted", safety.yoloAccepted);
-				if (parsed !== undefined) settings.safety.yoloAccepted = parsed;
-			}
-			if ("yoloConfinement" in safety) {
-				const parsed = expectEnum(issues, "safety.yoloConfinement", safety.yoloConfinement, YOLO_CONFINEMENTS);
-				if (parsed !== undefined) settings.safety.yoloConfinement = parsed;
-			}
-			if ("yoloUnconfinedAccepted" in safety) {
-				const parsed = expectBoolean(issues, "safety.yoloUnconfinedAccepted", safety.yoloUnconfinedAccepted);
-				if (parsed !== undefined) settings.safety.yoloUnconfinedAccepted = parsed;
-			}
-			if ("unattendedAfterSeconds" in safety) {
-				const parsed = expectInteger(issues, "safety.unattendedAfterSeconds", safety.unattendedAfterSeconds, { min: 0 });
-				if (parsed !== undefined) settings.safety.unattendedAfterSeconds = parsed;
-			}
-			if ("judge" in safety) {
-				if (!isRecord(safety.judge)) issues.add("safety.judge", `expected a map, got ${describe(safety.judge)}`);
-				else {
-					const judge = safety.judge;
-					issues.unknownKeys("safety.judge", judge, ["enabled", "target", "model", "environment", "allow", "deny"]);
-					if ("enabled" in judge) {
-						const parsed = expectBoolean(issues, "safety.judge.enabled", judge.enabled);
-						if (parsed !== undefined) settings.safety.judge.enabled = parsed;
-					}
-					if ("target" in judge && judge.target !== null) {
-						const parsed = expectString(issues, "safety.judge.target", judge.target);
-						if (parsed !== undefined && settings.targets.some((target) => target.id === parsed))
-							settings.safety.judge.target = parsed;
-						else if (parsed !== undefined) issues.add("safety.judge.target", `unknown target '${parsed}'`);
-					}
-					if ("model" in judge && judge.model !== null) {
-						const parsed = expectString(issues, "safety.judge.model", judge.model);
-						if (parsed !== undefined) settings.safety.judge.model = parsed;
-					}
-					for (const key of ["environment", "allow", "deny"] as const) {
-						if (!(key in judge)) continue;
-						const parsed = expectStringArray(issues, `safety.judge.${key}`, judge[key]);
-						if (parsed !== undefined) settings.safety.judge[key] = parsed;
-					}
-				}
-			}
-			if ("limits" in safety) {
-				if (!isRecord(safety.limits)) issues.add("safety.limits", `expected a map, got ${describe(safety.limits)}`);
-				else {
-					const limits = safety.limits;
-					issues.unknownKeys("safety.limits", limits, [
-						"sessionCostUsd",
-						"chatToolCallsPerTurn",
-						"readBytesPerCall",
-						"observationBytesPerTurn",
-						"templateToolCallsPerTurnMax",
-						"templateObservationBytesPerTurnMax",
-						"workerResponseSeconds",
-						"autonomousToolCalls",
-						"autonomousMinutes",
-						"autonomousTokens",
-						"bashIdleSeconds",
-					]);
-					if ("sessionCostUsd" in limits) {
-						const parsed = expectNumber(issues, "safety.limits.sessionCostUsd", limits.sessionCostUsd, { min: 0 });
-						if (parsed !== undefined) settings.safety.limits.sessionCostUsd = parsed;
-					}
-					for (const key of [
-						"chatToolCallsPerTurn",
-						"readBytesPerCall",
-						"observationBytesPerTurn",
-						"workerResponseSeconds",
-					] as const) {
-						if (!(key in limits)) continue;
-						const parsed = expectInteger(issues, `safety.limits.${key}`, limits[key], { min: 1 });
-						if (parsed !== undefined) settings.safety.limits[key] = parsed;
-					}
-					for (const key of ["autonomousToolCalls", "autonomousMinutes", "autonomousTokens", "bashIdleSeconds"] as const) {
-						if (!(key in limits)) continue;
-						const parsed = expectInteger(issues, `safety.limits.${key}`, limits[key], { min: 0 });
-						if (parsed !== undefined) settings.safety.limits[key] = parsed;
-					}
-					for (const key of ["templateToolCallsPerTurnMax", "templateObservationBytesPerTurnMax"] as const) {
-						if (!(key in limits)) continue;
-						if (limits[key] === null) {
-							settings.safety.limits[key] = null;
-							continue;
-						}
-						const parsed = expectInteger(issues, `safety.limits.${key}`, limits[key], { min: 1 });
-						if (parsed !== undefined) settings.safety.limits[key] = parsed;
-					}
-				}
-			}
-			if ("resources" in safety) validateSafetyResources(issues, safety.resources, settings);
-			if ("review" in safety) validateSafetyReview(issues, safety.review, settings);
-		}
-	}
-
-	if ("interface" in raw) {
-		if (!isRecord(raw.interface)) issues.add("interface", `expected a map, got ${describe(raw.interface)}`);
-		else {
-			const ui = raw.interface;
-			issues.unknownKeys("interface", ui, [
-				"exitSummary",
-				"demo",
-				"outputDetail",
-				"smoothStreaming",
-				"mode",
-				"fullscreenScrollbar",
-				"terminalProgress",
-				"desktopNotifications",
-				"autoUpdate",
-				"guiTurnCapacity",
-				"panes",
-				"keybindings",
-			]);
-			if ("guiTurnCapacity" in ui) {
-				const parsed = expectInteger(issues, "interface.guiTurnCapacity", ui.guiTurnCapacity, { min: 1, max: 16 });
-				if (parsed !== undefined) settings.interface.guiTurnCapacity = parsed;
-			}
-			for (const key of ["terminalProgress", "desktopNotifications", "demo", "autoUpdate"] as const) {
-				if (!(key in ui)) continue;
-				const parsed = expectBoolean(issues, `interface.${key}`, ui[key]);
-				if (parsed !== undefined) (settings.interface as unknown as Record<string, unknown>)[key] = parsed;
-			}
-			if ("outputDetail" in ui) {
-				const style = normalizeOutputStyle(ui.outputDetail);
-				if (style) settings.interface.outputDetail = style;
-				else issues.add("interface.outputDetail", "expected compact, standard, or detailed");
-			}
-			if ("exitSummary" in ui) {
-				const style = normalizeExitSummaryStyle(ui.exitSummary);
-				if (style) settings.interface.exitSummary = style;
-				else issues.add("interface.exitSummary", "expected on or off");
-			}
-			for (const [key, allowed] of [
-				["smoothStreaming", ["off", "auto", "on"]],
-				["mode", ["regular", "fullscreen"]],
-				["fullscreenScrollbar", ["hidden", "auto", "always"]],
-			] as const) {
-				if (!(key in ui)) continue;
-				const parsed = expectEnum(issues, `interface.${key}`, ui[key], allowed);
-				if (parsed !== undefined) (settings.interface as unknown as Record<string, unknown>)[key] = parsed;
-			}
-			if ("panes" in ui) {
-				if (!isRecord(ui.panes)) issues.add("interface.panes", `expected a map, got ${describe(ui.panes)}`);
-				else {
-					const panes = ui.panes;
-					issues.unknownKeys("interface.panes", panes, ["notifications", "layout", "workers", "files"]);
-					if ("notifications" in panes) {
-						const parsed = expectEnum(issues, "interface.panes.notifications", panes.notifications, [
-							"failures",
-							"all",
-							"off",
-						] as const);
-						if (parsed !== undefined) settings.interface.panes.notifications = parsed;
-					}
-					if ("layout" in panes) {
-						const parsed = expectEnum(issues, "interface.panes.layout", panes.layout, ["off", "workers", "cockpit"] as const);
-						if (parsed !== undefined) settings.interface.panes.layout = parsed;
-					}
-					if ("workers" in panes) {
-						if (!isRecord(panes.workers))
-							issues.add("interface.panes.workers", `expected a map, got ${describe(panes.workers)}`);
-						else {
-							const workers = panes.workers;
-							issues.unknownKeys("interface.panes.workers", workers, ["ratio"]);
-							if ("ratio" in workers) {
-								const parsed = expectNumber(issues, "interface.panes.workers.ratio", workers.ratio, {
-									min: 0.05,
-									max: 0.5,
-								});
-								if (parsed !== undefined) settings.interface.panes.workers.ratio = parsed;
-							}
-						}
-					}
-					if ("files" in panes) {
-						if (!isRecord(panes.files)) issues.add("interface.panes.files", `expected a map, got ${describe(panes.files)}`);
-						else {
-							const files = panes.files;
-							issues.unknownKeys("interface.panes.files", files, ["enabled", "mode", "profile", "followCwd", "ratio"]);
-							for (const key of ["enabled", "followCwd"] as const) {
-								if (!(key in files)) continue;
-								const parsed = expectBoolean(issues, `interface.panes.files.${key}`, files[key]);
-								if (parsed !== undefined) settings.interface.panes.files[key] = parsed;
-							}
-							if ("mode" in files) {
-								const parsed = expectEnum(issues, "interface.panes.files.mode", files.mode, ["companion", "chooser"] as const);
-								if (parsed !== undefined) settings.interface.panes.files.mode = parsed;
-							}
-							if ("profile" in files) {
-								const parsed = expectEnum(issues, "interface.panes.files.profile", files.profile, ["managed", "user"] as const);
-								if (parsed !== undefined) settings.interface.panes.files.profile = parsed;
-							}
-							if ("ratio" in files) {
-								const parsed = expectNumber(issues, "interface.panes.files.ratio", files.ratio, { min: 0.05, max: 0.5 });
-								if (parsed !== undefined) settings.interface.panes.files.ratio = parsed;
-							}
-						}
-					}
-				}
-			}
-			if ("keybindings" in ui)
-				settings.interface.keybindings = validateKeybindings(issues, "interface.keybindings", ui.keybindings);
-		}
-	}
-
-	if ("integrations" in raw) {
-		if (!isRecord(raw.integrations)) issues.add("integrations", `expected a map, got ${describe(raw.integrations)}`);
-		else {
-			const integrations = raw.integrations;
-			issues.unknownKeys("integrations", integrations, [
-				"projectResources",
-				"externalAgents",
-				"runtimePlugins",
-				"hub",
-				"git",
-			]);
-			if ("projectResources" in integrations) {
-				if (!isRecord(integrations.projectResources))
-					issues.add("integrations.projectResources", `expected a map, got ${describe(integrations.projectResources)}`);
-				else {
-					issues.unknownKeys("integrations.projectResources", integrations.projectResources, ["trustProjectImports"]);
-					if ("trustProjectImports" in integrations.projectResources) {
-						const parsed = expectBoolean(
-							issues,
-							"integrations.projectResources.trustProjectImports",
-							integrations.projectResources.trustProjectImports,
-						);
-						if (parsed !== undefined) settings.integrations.projectResources.trustProjectImports = parsed;
-					}
-				}
-			}
-			if ("runtimePlugins" in integrations) {
-				const parsed = expectStringArray(issues, "integrations.runtimePlugins", integrations.runtimePlugins);
-				if (parsed !== undefined) settings.integrations.runtimePlugins = parsed;
-			}
-			if ("hub" in integrations) {
-				if (!isRecord(integrations.hub))
-					issues.add("integrations.hub", `expected a map, got ${describe(integrations.hub)}`);
-				else {
-					const hub = integrations.hub;
-					issues.unknownKeys("integrations.hub", hub, ["catalog", "remote", "confirmedRemote", "sync", "index"]);
-					for (const key of ["catalog", "remote", "confirmedRemote"] as const) {
-						if (!(key in hub)) continue;
-						const value = hub[key];
-						if (value !== null && typeof value !== "string")
-							issues.add(`integrations.hub.${key}`, `expected a string or null, got ${describe(value)}`);
-						else settings.integrations.hub[key] = value as string | null;
-					}
-					if ("sync" in hub) {
-						const parsed = expectBoolean(issues, "integrations.hub.sync", hub.sync);
-						if (parsed !== undefined) settings.integrations.hub.sync = parsed;
-					}
-					if ("index" in hub) {
-						if (typeof hub.index !== "string")
-							issues.add("integrations.hub.index", `expected a string, got ${describe(hub.index)}`);
-						else settings.integrations.hub.index = hub.index.trim();
-					}
-				}
-			}
-			if ("git" in integrations) {
-				if (!isRecord(integrations.git))
-					issues.add("integrations.git", `expected a map, got ${describe(integrations.git)}`);
-				else {
-					issues.unknownKeys("integrations.git", integrations.git, ["commitAttribution", "commitAuthor"]);
-					if ("commitAttribution" in integrations.git) {
-						const parsed = expectBoolean(issues, "integrations.git.commitAttribution", integrations.git.commitAttribution);
-						if (parsed !== undefined) settings.integrations.git.commitAttribution = parsed;
-					}
-					if ("commitAuthor" in integrations.git) {
-						const parsed = expectEnum(issues, "integrations.git.commitAuthor", integrations.git.commitAuthor, [
-							"auto",
-							"human",
-						] as const);
-						if (parsed !== undefined) settings.integrations.git.commitAuthor = parsed;
-					}
-				}
-			}
-			if ("externalAgents" in integrations) {
-				if (!isRecord(integrations.externalAgents))
-					issues.add("integrations.externalAgents", `expected a map, got ${describe(integrations.externalAgents)}`);
-				else {
-					const external = integrations.externalAgents;
-					issues.unknownKeys("integrations.externalAgents", external, ["entries", "defaults"]);
-					if ("defaults" in external) {
-						if (!isRecord(external.defaults))
-							issues.add("integrations.externalAgents.defaults", `expected a map, got ${describe(external.defaults)}`);
-						else {
-							const defaults = external.defaults;
-							issues.unknownKeys("integrations.externalAgents.defaults", defaults, [
-								"connectTimeoutMs",
-								"turnTimeoutMs",
-								"permissionTimeoutMs",
-								"toolGovernance",
-							]);
-							for (const key of ["connectTimeoutMs", "turnTimeoutMs", "permissionTimeoutMs"] as const) {
-								if (!(key in defaults)) continue;
-								const parsed = expectInteger(issues, `integrations.externalAgents.defaults.${key}`, defaults[key], {
-									min: key === "turnTimeoutMs" ? 0 : 1,
-									max: MAX_TIMER_DELAY_MS,
-								});
-								if (parsed !== undefined) settings.integrations.externalAgents.defaults[key] = parsed;
-							}
-							if ("toolGovernance" in defaults) {
-								const parsed = expectEnum(
-									issues,
-									"integrations.externalAgents.defaults.toolGovernance",
-									defaults.toolGovernance,
-									TOOL_GOVERNANCE,
-								);
-								if (parsed !== undefined) settings.integrations.externalAgents.defaults.toolGovernance = parsed;
-							}
-						}
-					}
-					if ("entries" in external) {
-						if (!Array.isArray(external.entries))
-							issues.add("integrations.externalAgents.entries", `expected a list, got ${describe(external.entries)}`);
-						else {
-							const seen = new Set<string>();
-							settings.integrations.externalAgents.entries = external.entries
-								.map((entry, index) =>
-									validateExternalAgent(
-										issues,
-										`integrations.externalAgents.entries[${index}]`,
-										entry,
-										settings.integrations.externalAgents.defaults,
-										seen,
-									),
-								)
-								.filter((entry): entry is ExternalAgent => entry !== null);
-						}
-					}
-				}
-			}
-		}
-	}
-
+	if ("safety" in raw) validateSafety(issues, raw.safety, settings);
+	if ("interface" in raw) validateInterface(issues, raw.interface, settings);
+	if ("integrations" in raw) validateIntegrations(issues, raw.integrations, settings);
 	if ("telemetry" in raw) validateTelemetry(issues, raw.telemetry, settings);
 	if ("report" in raw) validateReport(issues, raw.report, settings);
 	if ("prompts" in raw) validatePrompts(issues, raw.prompts, settings);
@@ -1437,6 +1014,430 @@ function validateContext(issues: Issues, value: unknown, settings: PancodeSettin
 							}
 						}
 						settings.context.semantic.inboxes = inboxes;
+					}
+				}
+			}
+		}
+	}
+}
+
+/** The `safety` section of validateSettings. */
+function validateSafety(issues: Issues, value: unknown, settings: PancodeSettings): void {
+	if (!isRecord(value)) issues.add("safety", `expected a map, got ${describe(value)}`);
+	else {
+		const safety = value;
+		issues.unknownKeys("safety", safety, [
+			"autonomy",
+			"limits",
+			"review",
+			"resources",
+			"sandbox",
+			"egress",
+			"scratchRoots",
+			"sandboxPassEnv",
+			"liveCheckTargets",
+			"sandboxUnixSockets",
+			"sandboxUnconfinedLocalWorkers",
+			"sandboxCacheMaxGiB",
+			"homeReads",
+			"snapshots",
+			"validationWrappers",
+			"unattendedAfterSeconds",
+			"yoloAccepted",
+			"yoloConfinement",
+			"yoloUnconfinedAccepted",
+			"judge",
+		]);
+		if ("autonomy" in safety) {
+			const parsed = expectEnum(issues, "safety.autonomy", safety.autonomy, AUTONOMY_LEVELS);
+			if (parsed !== undefined) settings.safety.autonomy = parsed;
+		}
+		readSandboxOptions(issues, safety, settings);
+		if ("snapshots" in safety) {
+			const parsed = expectEnum(issues, "safety.snapshots", safety.snapshots, WORKSPACE_SNAPSHOT_MODES);
+			if (parsed !== undefined) settings.safety.snapshots = parsed;
+		}
+		if ("scratchRoots" in safety) {
+			const parsed = expectStringArray(issues, "safety.scratchRoots", safety.scratchRoots);
+			if (parsed !== undefined) {
+				settings.safety.scratchRoots = parsed.filter((root) => {
+					const problem = scratchRootProblem(root);
+					if (problem !== null) issues.add("safety.scratchRoots", `${root}: ${problem}`);
+					return problem === null;
+				});
+			}
+		}
+		if ("liveCheckTargets" in safety) {
+			const parsed = expectStringArray(issues, "safety.liveCheckTargets", safety.liveCheckTargets);
+			if (parsed !== undefined) {
+				settings.safety.liveCheckTargets = [
+					...new Set(
+						parsed.filter((id) => {
+							const target = settings.targets.find((candidate) => candidate.id === id);
+							const problem =
+								target === undefined
+									? "no target with this id"
+									: LIVE_CHECK_LOGIN_RUNTIMES.has(target.runtime)
+										? null
+										: `runtime ${target.runtime} has no login file PanCode can reveal (only ${[...LIVE_CHECK_LOGIN_RUNTIMES].join(", ")})`;
+							if (problem !== null) issues.add("safety.liveCheckTargets", `${id}: ${problem}`);
+							return problem === null;
+						}),
+					),
+				];
+			}
+		}
+		if ("sandboxPassEnv" in safety) {
+			const parsed = expectStringArray(issues, "safety.sandboxPassEnv", safety.sandboxPassEnv);
+			if (parsed !== undefined) {
+				settings.safety.sandboxPassEnv = parsed.filter((name) => {
+					const valid = /^[A-Za-z_][A-Za-z0-9_]*$/u.test(name);
+					if (!valid) issues.add("safety.sandboxPassEnv", `${name}: not an environment variable name`);
+					return valid;
+				});
+			}
+		}
+		if ("validationWrappers" in safety) {
+			const parsed = expectStringArray(issues, "safety.validationWrappers", safety.validationWrappers);
+			if (parsed !== undefined) {
+				settings.safety.validationWrappers = parsed.filter((entry) => {
+					const problem = validationWrapperProblem(entry);
+					if (problem !== null) issues.add("safety.validationWrappers", `${JSON.stringify(entry)}: ${problem}`);
+					return problem === null;
+				});
+			}
+		}
+		if ("sandboxCacheMaxGiB" in safety) {
+			const parsed = expectNumber(issues, "safety.sandboxCacheMaxGiB", safety.sandboxCacheMaxGiB, { min: 0 });
+			if (parsed !== undefined) settings.safety.sandboxCacheMaxGiB = parsed;
+		}
+		if ("yoloAccepted" in safety) {
+			const parsed = expectBoolean(issues, "safety.yoloAccepted", safety.yoloAccepted);
+			if (parsed !== undefined) settings.safety.yoloAccepted = parsed;
+		}
+		if ("yoloConfinement" in safety) {
+			const parsed = expectEnum(issues, "safety.yoloConfinement", safety.yoloConfinement, YOLO_CONFINEMENTS);
+			if (parsed !== undefined) settings.safety.yoloConfinement = parsed;
+		}
+		if ("yoloUnconfinedAccepted" in safety) {
+			const parsed = expectBoolean(issues, "safety.yoloUnconfinedAccepted", safety.yoloUnconfinedAccepted);
+			if (parsed !== undefined) settings.safety.yoloUnconfinedAccepted = parsed;
+		}
+		if ("unattendedAfterSeconds" in safety) {
+			const parsed = expectInteger(issues, "safety.unattendedAfterSeconds", safety.unattendedAfterSeconds, { min: 0 });
+			if (parsed !== undefined) settings.safety.unattendedAfterSeconds = parsed;
+		}
+		if ("judge" in safety) {
+			if (!isRecord(safety.judge)) issues.add("safety.judge", `expected a map, got ${describe(safety.judge)}`);
+			else {
+				const judge = safety.judge;
+				issues.unknownKeys("safety.judge", judge, ["enabled", "target", "model", "environment", "allow", "deny"]);
+				if ("enabled" in judge) {
+					const parsed = expectBoolean(issues, "safety.judge.enabled", judge.enabled);
+					if (parsed !== undefined) settings.safety.judge.enabled = parsed;
+				}
+				if ("target" in judge && judge.target !== null) {
+					const parsed = expectString(issues, "safety.judge.target", judge.target);
+					if (parsed !== undefined && settings.targets.some((target) => target.id === parsed))
+						settings.safety.judge.target = parsed;
+					else if (parsed !== undefined) issues.add("safety.judge.target", `unknown target '${parsed}'`);
+				}
+				if ("model" in judge && judge.model !== null) {
+					const parsed = expectString(issues, "safety.judge.model", judge.model);
+					if (parsed !== undefined) settings.safety.judge.model = parsed;
+				}
+				for (const key of ["environment", "allow", "deny"] as const) {
+					if (!(key in judge)) continue;
+					const parsed = expectStringArray(issues, `safety.judge.${key}`, judge[key]);
+					if (parsed !== undefined) settings.safety.judge[key] = parsed;
+				}
+			}
+		}
+		if ("limits" in safety) {
+			if (!isRecord(safety.limits)) issues.add("safety.limits", `expected a map, got ${describe(safety.limits)}`);
+			else {
+				const limits = safety.limits;
+				issues.unknownKeys("safety.limits", limits, [
+					"sessionCostUsd",
+					"chatToolCallsPerTurn",
+					"readBytesPerCall",
+					"observationBytesPerTurn",
+					"templateToolCallsPerTurnMax",
+					"templateObservationBytesPerTurnMax",
+					"workerResponseSeconds",
+					"autonomousToolCalls",
+					"autonomousMinutes",
+					"autonomousTokens",
+					"bashIdleSeconds",
+				]);
+				if ("sessionCostUsd" in limits) {
+					const parsed = expectNumber(issues, "safety.limits.sessionCostUsd", limits.sessionCostUsd, { min: 0 });
+					if (parsed !== undefined) settings.safety.limits.sessionCostUsd = parsed;
+				}
+				for (const key of [
+					"chatToolCallsPerTurn",
+					"readBytesPerCall",
+					"observationBytesPerTurn",
+					"workerResponseSeconds",
+				] as const) {
+					if (!(key in limits)) continue;
+					const parsed = expectInteger(issues, `safety.limits.${key}`, limits[key], { min: 1 });
+					if (parsed !== undefined) settings.safety.limits[key] = parsed;
+				}
+				for (const key of ["autonomousToolCalls", "autonomousMinutes", "autonomousTokens", "bashIdleSeconds"] as const) {
+					if (!(key in limits)) continue;
+					const parsed = expectInteger(issues, `safety.limits.${key}`, limits[key], { min: 0 });
+					if (parsed !== undefined) settings.safety.limits[key] = parsed;
+				}
+				for (const key of ["templateToolCallsPerTurnMax", "templateObservationBytesPerTurnMax"] as const) {
+					if (!(key in limits)) continue;
+					if (limits[key] === null) {
+						settings.safety.limits[key] = null;
+						continue;
+					}
+					const parsed = expectInteger(issues, `safety.limits.${key}`, limits[key], { min: 1 });
+					if (parsed !== undefined) settings.safety.limits[key] = parsed;
+				}
+			}
+		}
+		if ("resources" in safety) validateSafetyResources(issues, safety.resources, settings);
+		if ("review" in safety) validateSafetyReview(issues, safety.review, settings);
+	}
+}
+
+/** The `interface` section of validateSettings. */
+function validateInterface(issues: Issues, value: unknown, settings: PancodeSettings): void {
+	if (!isRecord(value)) issues.add("interface", `expected a map, got ${describe(value)}`);
+	else {
+		const ui = value;
+		issues.unknownKeys("interface", ui, [
+			"exitSummary",
+			"demo",
+			"outputDetail",
+			"smoothStreaming",
+			"mode",
+			"fullscreenScrollbar",
+			"terminalProgress",
+			"desktopNotifications",
+			"autoUpdate",
+			"guiTurnCapacity",
+			"panes",
+			"keybindings",
+		]);
+		if ("guiTurnCapacity" in ui) {
+			const parsed = expectInteger(issues, "interface.guiTurnCapacity", ui.guiTurnCapacity, { min: 1, max: 16 });
+			if (parsed !== undefined) settings.interface.guiTurnCapacity = parsed;
+		}
+		for (const key of ["terminalProgress", "desktopNotifications", "demo", "autoUpdate"] as const) {
+			if (!(key in ui)) continue;
+			const parsed = expectBoolean(issues, `interface.${key}`, ui[key]);
+			if (parsed !== undefined) (settings.interface as unknown as Record<string, unknown>)[key] = parsed;
+		}
+		if ("outputDetail" in ui) {
+			const style = normalizeOutputStyle(ui.outputDetail);
+			if (style) settings.interface.outputDetail = style;
+			else issues.add("interface.outputDetail", "expected compact, standard, or detailed");
+		}
+		if ("exitSummary" in ui) {
+			const style = normalizeExitSummaryStyle(ui.exitSummary);
+			if (style) settings.interface.exitSummary = style;
+			else issues.add("interface.exitSummary", "expected on or off");
+		}
+		for (const [key, allowed] of [
+			["smoothStreaming", ["off", "auto", "on"]],
+			["mode", ["regular", "fullscreen"]],
+			["fullscreenScrollbar", ["hidden", "auto", "always"]],
+		] as const) {
+			if (!(key in ui)) continue;
+			const parsed = expectEnum(issues, `interface.${key}`, ui[key], allowed);
+			if (parsed !== undefined) (settings.interface as unknown as Record<string, unknown>)[key] = parsed;
+		}
+		if ("panes" in ui) {
+			if (!isRecord(ui.panes)) issues.add("interface.panes", `expected a map, got ${describe(ui.panes)}`);
+			else {
+				const panes = ui.panes;
+				issues.unknownKeys("interface.panes", panes, ["notifications", "layout", "workers", "files"]);
+				if ("notifications" in panes) {
+					const parsed = expectEnum(issues, "interface.panes.notifications", panes.notifications, [
+						"failures",
+						"all",
+						"off",
+					] as const);
+					if (parsed !== undefined) settings.interface.panes.notifications = parsed;
+				}
+				if ("layout" in panes) {
+					const parsed = expectEnum(issues, "interface.panes.layout", panes.layout, ["off", "workers", "cockpit"] as const);
+					if (parsed !== undefined) settings.interface.panes.layout = parsed;
+				}
+				if ("workers" in panes) {
+					if (!isRecord(panes.workers))
+						issues.add("interface.panes.workers", `expected a map, got ${describe(panes.workers)}`);
+					else {
+						const workers = panes.workers;
+						issues.unknownKeys("interface.panes.workers", workers, ["ratio"]);
+						if ("ratio" in workers) {
+							const parsed = expectNumber(issues, "interface.panes.workers.ratio", workers.ratio, {
+								min: 0.05,
+								max: 0.5,
+							});
+							if (parsed !== undefined) settings.interface.panes.workers.ratio = parsed;
+						}
+					}
+				}
+				if ("files" in panes) {
+					if (!isRecord(panes.files)) issues.add("interface.panes.files", `expected a map, got ${describe(panes.files)}`);
+					else {
+						const files = panes.files;
+						issues.unknownKeys("interface.panes.files", files, ["enabled", "mode", "profile", "followCwd", "ratio"]);
+						for (const key of ["enabled", "followCwd"] as const) {
+							if (!(key in files)) continue;
+							const parsed = expectBoolean(issues, `interface.panes.files.${key}`, files[key]);
+							if (parsed !== undefined) settings.interface.panes.files[key] = parsed;
+						}
+						if ("mode" in files) {
+							const parsed = expectEnum(issues, "interface.panes.files.mode", files.mode, ["companion", "chooser"] as const);
+							if (parsed !== undefined) settings.interface.panes.files.mode = parsed;
+						}
+						if ("profile" in files) {
+							const parsed = expectEnum(issues, "interface.panes.files.profile", files.profile, ["managed", "user"] as const);
+							if (parsed !== undefined) settings.interface.panes.files.profile = parsed;
+						}
+						if ("ratio" in files) {
+							const parsed = expectNumber(issues, "interface.panes.files.ratio", files.ratio, { min: 0.05, max: 0.5 });
+							if (parsed !== undefined) settings.interface.panes.files.ratio = parsed;
+						}
+					}
+				}
+			}
+		}
+		if ("keybindings" in ui)
+			settings.interface.keybindings = validateKeybindings(issues, "interface.keybindings", ui.keybindings);
+	}
+}
+
+/** The `integrations` section of validateSettings. */
+function validateIntegrations(issues: Issues, value: unknown, settings: PancodeSettings): void {
+	if (!isRecord(value)) issues.add("integrations", `expected a map, got ${describe(value)}`);
+	else {
+		const integrations = value;
+		issues.unknownKeys("integrations", integrations, [
+			"projectResources",
+			"externalAgents",
+			"runtimePlugins",
+			"hub",
+			"git",
+		]);
+		if ("projectResources" in integrations) {
+			if (!isRecord(integrations.projectResources))
+				issues.add("integrations.projectResources", `expected a map, got ${describe(integrations.projectResources)}`);
+			else {
+				issues.unknownKeys("integrations.projectResources", integrations.projectResources, ["trustProjectImports"]);
+				if ("trustProjectImports" in integrations.projectResources) {
+					const parsed = expectBoolean(
+						issues,
+						"integrations.projectResources.trustProjectImports",
+						integrations.projectResources.trustProjectImports,
+					);
+					if (parsed !== undefined) settings.integrations.projectResources.trustProjectImports = parsed;
+				}
+			}
+		}
+		if ("runtimePlugins" in integrations) {
+			const parsed = expectStringArray(issues, "integrations.runtimePlugins", integrations.runtimePlugins);
+			if (parsed !== undefined) settings.integrations.runtimePlugins = parsed;
+		}
+		if ("hub" in integrations) {
+			if (!isRecord(integrations.hub)) issues.add("integrations.hub", `expected a map, got ${describe(integrations.hub)}`);
+			else {
+				const hub = integrations.hub;
+				issues.unknownKeys("integrations.hub", hub, ["catalog", "remote", "confirmedRemote", "sync", "index"]);
+				for (const key of ["catalog", "remote", "confirmedRemote"] as const) {
+					if (!(key in hub)) continue;
+					const value = hub[key];
+					if (value !== null && typeof value !== "string")
+						issues.add(`integrations.hub.${key}`, `expected a string or null, got ${describe(value)}`);
+					else settings.integrations.hub[key] = value as string | null;
+				}
+				if ("sync" in hub) {
+					const parsed = expectBoolean(issues, "integrations.hub.sync", hub.sync);
+					if (parsed !== undefined) settings.integrations.hub.sync = parsed;
+				}
+				if ("index" in hub) {
+					if (typeof hub.index !== "string")
+						issues.add("integrations.hub.index", `expected a string, got ${describe(hub.index)}`);
+					else settings.integrations.hub.index = hub.index.trim();
+				}
+			}
+		}
+		if ("git" in integrations) {
+			if (!isRecord(integrations.git)) issues.add("integrations.git", `expected a map, got ${describe(integrations.git)}`);
+			else {
+				issues.unknownKeys("integrations.git", integrations.git, ["commitAttribution", "commitAuthor"]);
+				if ("commitAttribution" in integrations.git) {
+					const parsed = expectBoolean(issues, "integrations.git.commitAttribution", integrations.git.commitAttribution);
+					if (parsed !== undefined) settings.integrations.git.commitAttribution = parsed;
+				}
+				if ("commitAuthor" in integrations.git) {
+					const parsed = expectEnum(issues, "integrations.git.commitAuthor", integrations.git.commitAuthor, [
+						"auto",
+						"human",
+					] as const);
+					if (parsed !== undefined) settings.integrations.git.commitAuthor = parsed;
+				}
+			}
+		}
+		if ("externalAgents" in integrations) {
+			if (!isRecord(integrations.externalAgents))
+				issues.add("integrations.externalAgents", `expected a map, got ${describe(integrations.externalAgents)}`);
+			else {
+				const external = integrations.externalAgents;
+				issues.unknownKeys("integrations.externalAgents", external, ["entries", "defaults"]);
+				if ("defaults" in external) {
+					if (!isRecord(external.defaults))
+						issues.add("integrations.externalAgents.defaults", `expected a map, got ${describe(external.defaults)}`);
+					else {
+						const defaults = external.defaults;
+						issues.unknownKeys("integrations.externalAgents.defaults", defaults, [
+							"connectTimeoutMs",
+							"turnTimeoutMs",
+							"permissionTimeoutMs",
+							"toolGovernance",
+						]);
+						for (const key of ["connectTimeoutMs", "turnTimeoutMs", "permissionTimeoutMs"] as const) {
+							if (!(key in defaults)) continue;
+							const parsed = expectInteger(issues, `integrations.externalAgents.defaults.${key}`, defaults[key], {
+								min: key === "turnTimeoutMs" ? 0 : 1,
+								max: MAX_TIMER_DELAY_MS,
+							});
+							if (parsed !== undefined) settings.integrations.externalAgents.defaults[key] = parsed;
+						}
+						if ("toolGovernance" in defaults) {
+							const parsed = expectEnum(
+								issues,
+								"integrations.externalAgents.defaults.toolGovernance",
+								defaults.toolGovernance,
+								TOOL_GOVERNANCE,
+							);
+							if (parsed !== undefined) settings.integrations.externalAgents.defaults.toolGovernance = parsed;
+						}
+					}
+				}
+				if ("entries" in external) {
+					if (!Array.isArray(external.entries))
+						issues.add("integrations.externalAgents.entries", `expected a list, got ${describe(external.entries)}`);
+					else {
+						const seen = new Set<string>();
+						settings.integrations.externalAgents.entries = external.entries
+							.map((entry, index) =>
+								validateExternalAgent(
+									issues,
+									`integrations.externalAgents.entries[${index}]`,
+									entry,
+									settings.integrations.externalAgents.defaults,
+									seen,
+								),
+							)
+							.filter((entry): entry is ExternalAgent => entry !== null);
 					}
 				}
 			}

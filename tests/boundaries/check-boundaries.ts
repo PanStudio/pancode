@@ -783,7 +783,6 @@ const FUNCTION_LINE_EXEMPTIONS: ReadonlyMap<string, number> = new Map([
 	["src/cli/modes/print.ts#runHeadlessMainAgent", 856],
 	["src/cli/uninstall.ts#runUninstallCommand", 543],
 	["src/cli/upgrade.ts#runUpgradeCommand", 568],
-	["src/core/settings-validate.ts#validateSettings", 508],
 	["src/domains/dispatch/admission.ts#createCapacityAdmissionController", 547],
 	["src/domains/dispatch/execution-scheduler.ts#executePlan", 662],
 	["src/domains/dispatch/fleet-run.ts#runFleetHoldingWorkspace", 1043],
