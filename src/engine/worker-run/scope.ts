@@ -14,13 +14,17 @@
 import type { trackCallFetch } from "../../core/call-failure.js";
 import type { StructuredHelperResult } from "../../domains/agents/result-contract-types.js";
 import type { WorkerContextGuard } from "../../domains/context/worker/pressure.js";
+import type { createWorkerObservationStore } from "../../domains/context/worker/recall.js";
 import type { RunRole } from "../../domains/dispatch/obligation.js";
 import type { MiddlewareToolChoiceControl } from "../../domains/middleware/tool-choice-control.js";
 import type { ThinkingLevel } from "../../domains/providers/index.js";
 import type { FlowRestrictionSet } from "../../domains/safety/information-flow.js";
 import type { RunEffectsRecorder } from "../../domains/safety/run-effects.js";
+import type { seedRecallLineage } from "../../lib/worker-wire/context-seed.js";
+import type { resolveAgentTools } from "../../tools/agent-tools.js";
 import type { McpCapabilitySource } from "../../tools/gateway/index.js";
 import type { createEngineAgent } from "../agent.js";
+import type { createLoopGuardRegistration } from "../loop-guard.js";
 import type { createRunPhase, HandbackTrigger } from "../run-phase.js";
 import type { AgentEvent, AgentMessage } from "../types.js";
 import type { createWorkerCallTelemetry } from "../worker-call-telemetry.js";
@@ -112,4 +116,8 @@ export interface WorkerRunScope {
 	readonly noteShare: number;
 	readonly enterHandback: (bound: HandbackTrigger) => void;
 	readonly refreshWorkerOAuthKey: () => Promise<string | null>;
+	readonly tools: ReturnType<typeof resolveAgentTools>;
+	readonly observations: ReturnType<typeof createWorkerObservationStore>;
+	readonly seedLineage: ReturnType<typeof seedRecallLineage>;
+	readonly loopGuardRegistration: ReturnType<typeof createLoopGuardRegistration>;
 }

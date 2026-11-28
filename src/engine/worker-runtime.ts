@@ -15,37 +15,23 @@
 import { randomUUID } from "node:crypto";
 import { isWorkerToolCallCapExceededReason, isWorkerToolCallCapSynthesisReason } from "../core/guardrails.js";
 import { snapshotModelInfo } from "../core/model-tier.js";
-import { type ModelRouteRefusal, modelRouteGuarded, modelRouteRefusalMessage } from "../core/response-model-id.js";
+import { modelRouteGuarded } from "../core/response-model-id.js";
 import { observedToolCallOrigin, withTelemetryContext } from "../core/telemetry/context.js";
 import { telemetryHub } from "../core/telemetry/hub.js";
 import { ToolNames } from "../core/tool-names.js";
-import { resultContractReminder } from "../domains/agents/result-contract-repair.js";
-import { createWorkerContextGuard } from "../domains/context/worker/pressure.js";
 import { createWorkerObservationStore } from "../domains/context/worker/recall.js";
 import { workerEconomicsView } from "../domains/dispatch/economics-view.js";
-import { HANDBACK_CONTEXT_SHARE, HANDBACK_NOTE_SHARE, WALL_HANDBACK_SHARE } from "../domains/dispatch/handback.js";
-import type { RunRole } from "../domains/dispatch/obligation.js";
+import { WALL_HANDBACK_SHARE } from "../domains/dispatch/handback.js";
 import { createReadStreakRegistration } from "../domains/middleware/read-streak.js";
 import { createMiddlewareToolChoiceControl } from "../domains/middleware/tool-choice-control.js";
 import { openAuthStorage } from "../domains/providers/auth/index.js";
 import type { AuthResolution } from "../domains/providers/auth/storage.js";
 import { resolveEffectivePricing } from "../domains/providers/catalog.js";
-import { PROVIDER_PROBE_TIMEOUT_MS } from "../domains/providers/contract.js";
 import { acceptsImageInput } from "../domains/providers/image-input.js";
-import {
-	probedModelOffer,
-	resolveModelRuntimeCapabilitiesForModel,
-	type ThinkingLevel,
-} from "../domains/providers/index.js";
-import {
-	EMPTY_INFORMATION_FLOW_POLICY,
-	flowTransferRefusal,
-	mergeFlowRestrictions,
-	resolveModelDestination,
-} from "../domains/safety/information-flow.js";
+import { mergeFlowRestrictions } from "../domains/safety/information-flow.js";
 import { createProtectedArtifactsRegistration } from "../domains/safety/protected-artifacts-registration.js";
 import { sessionChangesTree } from "../domains/safety/run-effects.js";
-import { seededWorkerMessages, seedRecallLineage } from "../lib/worker-wire/context-seed.js";
+import { seedRecallLineage } from "../lib/worker-wire/context-seed.js";
 import { permissionHoldBackstopAt } from "../lib/worker-wire/protocol.js";
 import type { WorkerBudget } from "../lib/worker-wire/spec-contract.js";
 import { resolveAgentTools, type ToolTelemetry } from "../tools/agent-tools.js";
@@ -70,29 +56,22 @@ import { isLoopGuardSynthesisBackstopReason } from "./loop-guard-reasons.js";
 import { registerPancodeOAuthProviders } from "./oauth.js";
 import { supportsNamedToolChoice } from "./provider-payload.js";
 import { createRunPhase, type HandbackTrigger } from "./run-phase.js";
-import type { EngineModel } from "./types.js";
 import { createWorkerCallTelemetry } from "./worker-call-telemetry.js";
 import type { PancodeWorkerEvent } from "./worker-events.js";
 import { createWorkerExtensionHookRegistrations } from "./worker-extension-hooks.js";
-import { workerContractResponseFormatFor, workerResponseFormatFor } from "./worker-result-contract.js";
 import { subscribeWorkerEvents } from "./worker-run/events.js";
 import { createWorkerEvidence } from "./worker-run/evidence.js";
 import { finishWorkerRun, taskMessage } from "./worker-run/finish.js";
 import { createWorkerPermissions } from "./worker-run/permissions.js";
 import { createWorkerResult } from "./worker-run/result.js";
+import { createWorkerRound } from "./worker-run/round.js";
 import type { WorkerRunScope } from "./worker-run/scope.js";
 import { decodeWorkerSpec, prepareNativeWorker, workerProviderSupportsTools } from "./worker-run/spec.js";
 import { createWorkerStreamFn } from "./worker-run/stream.js";
 import type { WorkerEventEmit, WorkerRunHandle, WorkerRunInput } from "./worker-run-types.js";
-import { THRASH_CONTEXT_FRACTION } from "./worker-thrash-note.js";
 import { createWorkerToolRegistry } from "./worker-tools.js";
 
 export { workerProviderSupportsTools };
-
-function clampThinkingLevelForModel(model: EngineModel, requested: ThinkingLevel | undefined): ThinkingLevel {
-	const level = requested ?? "off";
-	return resolveModelRuntimeCapabilitiesForModel(model, level).thinking.effectiveLevel;
-}
 
 /** Return the admitted worker specification budget unchanged. */
 function resolveWorkerRuntimeBudget(input: Pick<WorkerRunInput, "budget">): WorkerBudget {
@@ -262,9 +241,19 @@ export function startWorkerRun(input: WorkerRunInput, emit: WorkerEventEmit): Wo
 		get refreshWorkerOAuthKey() {
 			return refreshWorkerOAuthKey;
 		},
+		get tools() {
+			return tools;
+		},
+		get observations() {
+			return observations;
+		},
+		get seedLineage() {
+			return seedLineage;
+		},
+		get loopGuardRegistration() {
+			return loopGuardRegistration;
+		},
 	};
-	const workShare = (role: RunRole): number => input.limits?.context.workShare ?? HANDBACK_CONTEXT_SHARE[role];
-	const noteShare = input.limits?.context.noteShare ?? HANDBACK_NOTE_SHARE;
 
 	// The credential the current request carries, so a server rejection refreshes
 	// exactly that token under the shared storage lock (#427).
@@ -575,109 +564,28 @@ export function startWorkerRun(input: WorkerRunInput, emit: WorkerEventEmit): Wo
 	if (tools.length === 0 && activeWorkerTools.length > 0) {
 		process.stderr.write(`[worker] warning: no tools resolved for allowed=[${activeWorkerTools.join(",")}]\n`);
 	}
-	const effectiveThinkingLevel = clampThinkingLevelForModel(
-		model,
-		input.runtimeResolution?.effectiveThinkingLevel ?? input.thinkingLevel,
-	);
-
-	const inheritedMessages = seededWorkerMessages(input.contextSeed);
-	const contextGuard = createWorkerContextGuard(observations.archive, {
-		aliasFloor: seedLineage.aliasFloor,
-		archivePath: observations.archivePath,
-		route: {
-			...(input.runtimeResolution?.modelTier !== undefined ? { modelTier: input.runtimeResolution.modelTier } : {}),
-			...(input.runtimeResolution?.promptCaching !== undefined
-				? { promptCaching: input.runtimeResolution.promptCaching }
-				: {}),
-		},
-		// Every fold decision is journaled under the run and forwarded on its receipt-bearing telemetry frame.
-		onDecision: (decision) => {
-			if (
-				scope.contextPressureWindow > 0 &&
-				decision.tokensBefore >= scope.contextPressureWindow * THRASH_CONTEXT_FRACTION
-			)
-				scope.contextPressureCrossed = true;
-			if (input.telemetryContext) telemetryHub().emit("context.fold", decision, input.telemetryContext);
-			// A committed fold removed results the loop guard's read coverage counts as shown (X5).
-			if (decision.cause === "working_set_evict")
-				loopGuardRegistration.evaluate({ hook: "on_compaction", metadata: { stage: "working_set_evict" } });
-		},
-	});
-	// The constraint rides samplingParams, which the completions adapter merges
-	// into the body after every named field.
-	const workerResponseFormat = workerResponseFormatFor(input);
-	// Cleared for the rest of the run when the server refuses the field, so a
-	// contract round falls back to its prompt rather than failing.
-	scope.contractResponseFormat = workerContractResponseFormatFor(input);
-	// The helper protocol names its own terminal tool, so only a prose-parsed contract carries the reminder.
-	const contractReminder =
-		input.resultContract !== undefined && !helperToolAvailable ? resultContractReminder(input.resultContract) : null;
-	/**
-	 * Row 384 before the call: a worker holds no target status, so a guarded target that lists live is asked once per
-	 * run, and a requested model its answer lacks is refused before any request, as a main turn's is.
-	 */
-	let modelOffer: Promise<ModelRouteRefusal | null> | null = null;
-	const modelOfferRefusal = (signal: AbortSignal | undefined): Promise<ModelRouteRefusal | null> => {
-		modelOffer ??= probedModelOffer(input.target, input.runtime, input.wireModelId, {
-			credentialsPresent: new Set(),
-			httpTimeoutMs: PROVIDER_PROBE_TIMEOUT_MS,
-			...(signal ? { signal } : {}),
-			...(input.apiKey ? { authToken: input.apiKey } : {}),
-		}).then((offer) =>
-			offer.kind === "not-offered"
-				? {
-						code: "model_unavailable",
-						target: input.target.id,
-						requested: input.wireModelId,
-						available: offer.available,
-					}
-				: null,
-		);
-		return modelOffer;
-	};
+	const {
+		workShare,
+		noteShare,
+		effectiveThinkingLevel,
+		inheritedMessages,
+		contextGuard,
+		workerResponseFormat,
+		contractReminder,
+		beforeStreamRequest,
+		initialState,
+	} = createWorkerRound(scope);
 	const streamFn = createWorkerStreamFn(scope);
 	const options: EngineAgentOptions = {
 		// Row 384 backstop: a provider that accepts the id and serves another model is refused at its first response.
 		refuseServedModelMismatch: () => modelRouteGuarded(input.runtime),
-		// The run's restrictions are judged against the target as configured for
-		// this run before each request, the same verdict the parent would reach.
-		beforeStreamRequest: async ({ options: streamOptions }) => {
-			const unavailable = await modelOfferRefusal(streamOptions?.signal);
-			if (unavailable !== null)
-				return { block: true, reason: modelRouteRefusalMessage(unavailable), modelRouteRefusal: unavailable };
-			workerTelemetry?.stage("admission", "start");
-			const reason = flowTransferRefusal(
-				safety.policy?.informationFlow?.() ?? EMPTY_INFORMATION_FLOW_POLICY,
-				scope.runFlow,
-				resolveModelDestination({
-					targetId: input.target.id,
-					runtimeId: input.runtime.id,
-					url: input.target.url ?? null,
-					model: input.wireModelId,
-				}),
-			);
-			workerTelemetry?.stage("admission", "end");
-			if (reason === null) return { block: false };
-			// A retry or failover on this target carries the same labels and meets
-			// the same refusal, so the parent must not spend another attempt on it.
-			if (!scope.flowBlockReported) {
-				scope.flowBlockReported = true;
-				emit({ type: "pancode_run_outcome", payload: { outcomeCode: "information_flow_blocked", detail: reason } });
-			}
-			return { block: true, reason };
-		},
+		beforeStreamRequest,
 		beforeToolCall,
 		finishTurn,
 		// Each round sends through engineStreamSimple, whose guard sees the evicted request.
 		delegateGuardsToolArguments: true,
 		streamFn,
-		initialState: {
-			systemPrompt: input.systemPrompt,
-			model,
-			thinkingLevel: effectiveThinkingLevel,
-			tools,
-			messages: inheritedMessages,
-		},
+		initialState,
 		getApiKey: async () => {
 			workerTelemetry?.stage("transform", "end");
 			// A key the parent handed over needs no resolution, so the call has no auth stage (#434).
