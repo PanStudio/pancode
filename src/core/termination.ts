@@ -16,10 +16,10 @@
  * controller stops the terminal before it calls shutdown(), and the signal path
  * stops it from a drain hook, which precedes persist. The renderer is gone, so
  * a diagnostic goes to stderr and is wrapped to the terminal width so it does
- * not overrun the frame the TUI just handed back.
+ * not overrun the frame the TUI just handed back (the wrapper is installed by
+ * src/interactive/terminal-lease.ts).
  */
 
-import { wrapTextWithAnsi } from "../engine/text-wrap.js";
 import { telemetryHub } from "./telemetry/hub.js";
 import { setTerminationPhase, type TerminationPhase, terminationPhase } from "./termination-phase.js";
 import { clampTimerDelayMs } from "./timers.js";
@@ -52,16 +52,26 @@ const SIGNAL_EXIT_CODES: Partial<Record<NodeJS.Signals, number>> = {
 	SIGTERM: 143,
 };
 
+/** ANSI-aware line wrapper for shutdown notices. Core cannot import the terminal engine, so the interactive terminal lease installs it; a run with no TUI writes notices unwrapped. */
+export type ShutdownTextWrapper = (text: string, width: number) => string[];
+
+let shutdownTextWrapper: ShutdownTextWrapper | null = null;
+
+export function setShutdownTextWrapper(wrapper: ShutdownTextWrapper | null): void {
+	shutdownTextWrapper = wrapper;
+}
+
 /**
  * Emit a shutdown notice on stderr, wrapped to the terminal width when stderr
- * or stdout is a TTY. Off a TTY the text goes out unwrapped, since a log
- * consumer wants one record per line.
+ * or stdout is a TTY and a wrapper is installed. Off a TTY the text goes out
+ * unwrapped, since a log consumer wants one record per line.
  */
 export function writeShutdownNotice(text: string): void {
 	const width = process.stderr.columns ?? process.stdout.columns;
 	// Stock wrapTextWithAnsi at width 0 or below returns one-character shards, so a
 	// non-positive or NaN columns value writes the text unwrapped.
-	const lines = width === undefined || !(width >= 1) ? [text] : wrapTextWithAnsi(text, width);
+	const lines =
+		width === undefined || !(width >= 1) || shutdownTextWrapper === null ? [text] : shutdownTextWrapper(text, width);
 	process.stderr.write(`${lines.join("\n")}\n`);
 }
 
