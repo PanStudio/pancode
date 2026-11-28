@@ -61,7 +61,7 @@ code.agents-mono {
 	flex-shrink: 0;
 	min-width: 26px;
 	min-height: 26px;
-	padding: 0 4px;
+	padding: 0 var(--space-1);
 	border: 0;
 	border-radius: var(--radius-sm);
 	background: transparent;
@@ -191,7 +191,7 @@ code.agents-mono {
 .agents-root__name {
 	font-size: var(--text-meta);
 	font-weight: 600;
-	padding-inline-start: 8px;
+	padding-inline-start: var(--space-2);
 }
 .agents-root__role {
 	min-width: 0;
@@ -203,7 +203,7 @@ code.agents-mono {
 }
 .agents-root .status-mark {
 	margin-left: auto;
-	padding-inline-end: 8px;
+	padding-inline-end: var(--space-2);
 }
 .agents-tree ol {
 	margin: 0;
@@ -309,12 +309,12 @@ code.agents-mono {
 	color: var(--ink-subtle);
 }
 .agents-node__record {
-	margin-top: 4px;
+	margin-top: var(--space-1);
 }
 .agents-node__detail {
 	display: grid;
 	gap: var(--space-3);
-	padding: var(--space-2) 8px var(--space-4) 20px;
+	padding: var(--space-2) var(--space-2) var(--space-4) var(--space-5);
 }
 .agents-node__detail dl {
 	display: grid;
