@@ -29,6 +29,16 @@ export { DISPATCH_INTENT_PATH_LIST_CAP, declaredScopeIntent } from "./intent.js"
 export type { RecordingReference } from "./recording.js";
 export { readRunRecording } from "./recording.js";
 export { runUsageFromCallRecords } from "./run-call-usage.js";
+export {
+	readDispatchHistory,
+	readFleetHistory,
+	readFleetHistoryRoot,
+	readRunHistoryEntries,
+	readRunHistoryEntry,
+	readRunInspection,
+	runHistoryCouncils,
+	runHistoryGates,
+} from "./run-history.js";
 export type { RunResultFacts } from "./run-result-facts.js";
 export {
 	readRunResultFacts,

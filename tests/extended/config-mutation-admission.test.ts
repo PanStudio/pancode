@@ -10,7 +10,10 @@ import { readStrictLayeredSettings } from "../../src/core/settings-layers.js";
 import { telemetryHub } from "../../src/core/telemetry/hub.js";
 import { AgentsDomainModule } from "../../src/domains/agents/module.js";
 import { ConfigDomainModule, createConfigDomainModule } from "../../src/domains/config/module.js";
+import { ExtensionsDomainModule } from "../../src/domains/extensions/module.js";
 import { ensurePancodeState } from "../../src/domains/install/index.js";
+import { PluginsDomainModule } from "../../src/domains/plugins/module.js";
+import { SafetyDomainModule } from "../../src/domains/safety/module.js";
 import { isolatePancodeEnv } from "../harness/scratch-env.js";
 
 test("config validates the actual mutation result before publishing or writing it", async () => {
@@ -21,7 +24,13 @@ test("config validates the actual mutation result before publishing or writing i
 		mkdirSync(cwd);
 		process.chdir(cwd);
 		ensurePancodeState();
-		const loaded = await loadDomains([ConfigDomainModule, AgentsDomainModule]);
+		const loaded = await loadDomains([
+			ConfigDomainModule,
+			SafetyDomainModule,
+			ExtensionsDomainModule,
+			PluginsDomainModule,
+			AgentsDomainModule,
+		]);
 		try {
 			const config = loaded.getContract("config");
 			ok(config?.update);
@@ -93,16 +102,25 @@ test("a boot-time hold keeps a watched settings write until the agents namespace
 		// Interactive boot turns the event loop between domain starts. A sibling
 		// write that names an external agent after a builtin recipe reaches the
 		// watcher before the agents domain exists to refuse it.
-		const loaded = await loadDomains([createConfigDomainModule(startup, { holdReloads: true }), AgentsDomainModule], {
-			async beforeEach() {
-				if (!existsSync(settingsPath())) return;
-				updateSettings((settings) => {
-					settings.integrations.externalAgents.entries = [{ id: "coder", command: "unstarted-fixture", args: [] }];
-				});
-				// Longer than the watcher's debounce, so the fire lands inside the hold.
-				await new Promise((settle) => setTimeout(settle, 400));
+		const loaded = await loadDomains(
+			[
+				createConfigDomainModule(startup, { holdReloads: true }),
+				SafetyDomainModule,
+				ExtensionsDomainModule,
+				PluginsDomainModule,
+				AgentsDomainModule,
+			],
+			{
+				async beforeEach() {
+					if (!existsSync(settingsPath())) return;
+					updateSettings((settings) => {
+						settings.integrations.externalAgents.entries = [{ id: "coder", command: "unstarted-fixture", args: [] }];
+					});
+					// Longer than the watcher's debounce, so the fire lands inside the hold.
+					await new Promise((settle) => setTimeout(settle, 400));
+				},
 			},
-		});
+		);
 		try {
 			const config = loaded.getContract("config");
 			ok(config?.releaseReloads);

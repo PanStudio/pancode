@@ -5,8 +5,6 @@ import { join } from "node:path";
 import { assertSafeId } from "../../core/safe-id.js";
 import { statStatePathSync } from "../../core/state-boundary.js";
 import { pancodeStateDir } from "../../core/xdg.js";
-import type { FleetRunRecord } from "../dispatch/index.js";
-import { councilTopologies, gateTopology, openLedger, readFleetRun, runEvidenceOf } from "../dispatch/index.js";
 import { readRunGateIndex } from "../evidence/index.js";
 import {
 	listRunTelemetryIds,
@@ -14,8 +12,12 @@ import {
 	runTelemetryDirectoryExists,
 	runTelemetryWrittenMs,
 } from "../session/index.js";
-import { runRowTelemetry } from "./read-model-runs.js";
-import { readRunRecord } from "./run-record.js";
+import { readRunRecord, runRowTelemetry } from "../telemetry/index.js";
+import { councilTopologies } from "./council-topology.js";
+import { gateTopology } from "./gate-topology.js";
+import { runEvidenceOf } from "./run-result-facts.js";
+import type { FleetRunRecord } from "./state.js";
+import { openLedger, readFleetRun } from "./state.js";
 
 /** Bound identity records before their domain readers open them; telemetry stays in its own run scopes (#434). */
 function containedRecord(root: string, ...parts: string[]): boolean {

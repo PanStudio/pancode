@@ -18,8 +18,8 @@ import {
 } from "../../domains/extensions/services/keys.js";
 import { createExtensionPaneHost, type ExtensionPaneHost } from "../../domains/extensions/services/pane.js";
 import type { MuxContract } from "../../domains/mux/contract.js";
-import { createDockKeyGate } from "../../domains/mux/dock-keys.js";
 import { type Keybinding, type KeyId, matchesKey } from "../../engine/tui.js";
+import { createDockKeyGate } from "../../lib/panes/dock-keys.js";
 import type { PancodeKeybindingManager } from "../keybinding-manager.js";
 import { createExtensionDockHost, type ExtensionDockHost } from "./extension-dock.js";
 import { WORKSPACE_FOCUS_KEY, WORKSPACE_LEAVE_KEY } from "./registry.js";

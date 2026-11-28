@@ -6,5 +6,5 @@ export const PromptsManifest: DomainManifest<"prompts"> = {
 	name: "prompts",
 	// agents: the compiled session prompt carries the fleet roster, so the
 	// recipe registry must be loaded before the first compile.
-	dependsOn: ["config", "context", "resources", "agents"],
+	dependsOn: ["config", "context", "resources", "agents", "interop"],
 };

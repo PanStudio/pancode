@@ -14,9 +14,9 @@ import {
 	writeExtensionDockFrame,
 } from "../../domains/extensions/dock-frame.js";
 import type { MuxContract } from "../../domains/mux/contract.js";
-import type { TapFileWatcher } from "../../domains/mux/tap-file.js";
-import { watchTapFile } from "../../domains/mux/tap-file.js";
 import { extensionViewerCommand } from "../../domains/mux/viewer-command.js";
+import type { TapFileWatcher } from "../../lib/panes/tap-file.js";
+import { watchTapFile } from "../../lib/panes/tap-file.js";
 import { renderView } from "./view-renderer.js";
 
 export interface ExtensionDockHost {

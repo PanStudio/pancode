@@ -35,8 +35,8 @@ import { asciiOnly, colorDepth } from "../core/terminal-preferences.js";
 import { type PancodeDirs, pancodeCacheDir, pancodeConfigDir, pancodeDataDir, pancodeStateDir } from "../core/xdg.js";
 import type { MuxContract, MuxPaneOpenFailure, MuxPaneRecord, MuxPaneRef } from "../domains/mux/index.js";
 import type { PanesWatchController, PanesWatchResult, PanesWorkersResult } from "../domains/mux/operations.js";
-import { type TapFileWatcher, watchTapFile } from "../domains/mux/tap-file.js";
 import { watchViewerCommand } from "../domains/mux/viewer-command.js";
+import { type TapFileWatcher, watchTapFile } from "../lib/panes/tap-file.js";
 
 /**
  * One selection file per state root, deliberately not per session: every
