@@ -672,7 +672,7 @@ describe("The hub browser behavior", () => {
 		state.review?.cancel();
 		equal(state.applied, 0);
 		equal(state.released, 1, "cancel releases the staged source");
-		match(state.notices.map(([, text]) => text).join(" "), /cancelled; nothing was written/);
+		match(state.notices.map(([, text]) => text).join(" "), /canceled; nothing was written/);
 	});
 
 	it("applies an accepted plan once and reports the session refresh separately", () => {
@@ -896,7 +896,7 @@ describe("The hub browser behavior", () => {
 		state.review?.cancel();
 		equal(state.imports, 0);
 		equal(state.importsReleased, 1);
-		match(state.notices.map(([, text]) => text).join(" "), /cancelled; nothing was written/);
+		match(state.notices.map(([, text]) => text).join(" "), /canceled; nothing was written/);
 	});
 
 	it("releases a pending review when the browser closes under it", () => {

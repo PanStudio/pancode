@@ -3531,7 +3531,7 @@ describe("tool classes", () => {
 		const head = (toolName: string, args: Record<string, unknown>) =>
 			stripTerminalSequences(renderToolSubline(settled(toolName, args, text("ok")), 200)[0] ?? "");
 		const cases: Array<[string, Record<string, unknown>, string]> = [
-			["steer", { run_id: "r1", action: "cancel" }, `${GLYPH.workerAgent} cancelled run r1 ✓`],
+			["steer", { run_id: "r1", action: "cancel" }, `${GLYPH.workerAgent} canceled run r1 ✓`],
 			["monitor", { mode: "wait", run_id: "r1" }, `${GLYPH.workerAgent} waited on run r1 ✓`],
 			["monitor", { mode: "collect", batch_id: "b7" }, `${GLYPH.workerAgent} collected batch b7 ✓`],
 			["dispatch", { list: true }, `${GLYPH.workerAgent} listed fleet agents ✓`],
