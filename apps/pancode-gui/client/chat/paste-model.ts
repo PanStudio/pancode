@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import { TURN_FILE_MAX_BYTES } from "../../contracts/runtime.js";
-import { decodeTextFile, type FileAttachment } from "./attachments-model.js";
+import { type Attachment, decodeTextFile, type FileAttachment } from "./attachments-model.js";
 import { PROMPT_TEXT_MAX_CHARACTERS } from "./composer-model.js";
 
 export const LARGE_PASTE_CHARACTERS = 8000;
@@ -9,6 +9,23 @@ export type PastePlan =
 	| { kind: "inline"; text: string; caret: number }
 	| { kind: "file"; file: Omit<FileAttachment, "id">; text: string; caret: number }
 	| { kind: "review"; reason: string; text: string; bytes: number };
+
+/** The pasted files that go as images, or none when the agent takes no images. */
+export function pastedImages<T extends { readonly type: string }>(files: readonly T[], canAttachImages: boolean): T[] {
+	return canAttachImages ? files.filter((file) => file.type.startsWith("image/")) : [];
+}
+
+/** A short paste that keeps the draft under the prompt limit is left to the browser. */
+export function pasteStaysNative(paste: string, draft: string): boolean {
+	return paste.length < LARGE_PASTE_CHARACTERS && paste.length + draft.length <= PROMPT_TEXT_MAX_CHARACTERS;
+}
+
+/** The first `pasted-text-N.txt` no attachment already carries. */
+export function pastedTextName(attachments: readonly Pick<Attachment, "name">[]): string {
+	let index = 1;
+	while (attachments.some((item) => item.name === `pasted-text-${index}.txt`)) index++;
+	return `pasted-text-${index}.txt`;
+}
 
 /** Never truncates. A long paste travels as the runtime's existing embedded text resource. */
 export function planPaste(

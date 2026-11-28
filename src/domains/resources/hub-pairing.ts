@@ -9,7 +9,7 @@
  */
 
 import type { PluginScope } from "../plugins/types.js";
-import { discoverHub, type HubEntry, hubEntryRef } from "./hub.js";
+import { discoverHub, type HubEntry } from "./hub.js";
 import { type HubCopyState, hubCopyState } from "./hub-inventory.js";
 import { type HubInstalledPack, listInstalledHubPacks } from "./hub-packs.js";
 import type { HubRequirementRef } from "./hub-types.js";
@@ -115,5 +115,3 @@ export function describeHubPair(self: Pick<HubEntry, "kind" | "name">, pair: Hub
 		? `Serves plugin ${pair.name}, available in the hub and not installed. No /${pair.name}:* takeover applies until it is installed; the extension's own /ext:${self.name}:* commands still work.`
 		: `Serves plugin ${pair.name}, which is not installed and not in the hub. No takeover applies; the extension's own /ext:${self.name}:* commands still work.`;
 }
-
-export { hubEntryRef };

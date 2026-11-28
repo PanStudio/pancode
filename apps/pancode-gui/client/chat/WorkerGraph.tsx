@@ -1,12 +1,13 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import { useQuery } from "@tanstack/react-query";
-import { type CSSProperties, memo, useEffect, useId, useMemo, useRef, useState } from "react";
+import { type CSSProperties, memo, useId, useMemo, useState } from "react";
 import { Link } from "react-router";
 import type { SessionSnapshot } from "../../contracts/sessions.js";
 import type { Client } from "../api/client.js";
 import { Icon } from "../design/icons.js";
 import { StatusMark, TONE_GLYPHS } from "../design/status.js";
+import { useCopy } from "../render/Markdown.js";
 import { requestReport } from "../report/report-events.js";
 import { failedRunReport } from "../report/report-model.js";
 import { useSessionWorkers } from "../shell/tasks.js";
@@ -40,33 +41,14 @@ const MAX_DEPTH = 4;
 
 /** The run id as an exact value the operator can carry to a terminal or a report. */
 function CopyRunId({ runId }: { runId: string }) {
-	const [state, setState] = useState<"idle" | "copied" | "failed">("idle");
-	const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
-	useEffect(
-		() => () => {
-			if (timer.current !== null) clearTimeout(timer.current);
-		},
-		[],
-	);
-	const copy = async () => {
-		let next: "copied" | "failed" = "failed";
-		try {
-			await navigator.clipboard.writeText(runId);
-			next = "copied";
-		} catch {
-			// A page served over plain http has no clipboard API; the id stays selectable as text.
-		}
-		setState(next);
-		if (timer.current !== null) clearTimeout(timer.current);
-		timer.current = setTimeout(() => setState("idle"), 1_600);
-	};
+	const [state, copy] = useCopy(runId);
 	return (
 		<span className="agents-runid">
 			<code title={runId}>{runId}</code>
 			<button
 				type="button"
 				className="agents-quiet"
-				onClick={() => void copy()}
+				onClick={copy}
 				aria-label={state === "copied" ? "Run id copied" : state === "failed" ? "Copy failed" : "Copy run id"}
 			>
 				{state === "idle" ? <Icon name="copy" /> : state === "copied" ? "Copied" : "Copy failed"}

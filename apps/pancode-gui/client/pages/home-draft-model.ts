@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { PROMPT_TEXT_MAX_CHARACTERS } from "../chat/prompt-limit.js";
+
 /** The first request belongs to one tab, independently of the page that currently shows it. */
 export interface FirstRequest {
 	readonly workspaceId: string;
@@ -54,7 +56,7 @@ export function decodeHomeDraft(raw: string | null): HomeDraft {
 				request.draftRevision < 0 ||
 				typeof request.exactTurnBody?.text !== "string" ||
 				!request.exactTurnBody.text.trim() ||
-				request.exactTurnBody.text.length > 32_000)
+				request.exactTurnBody.text.length > PROMPT_TEXT_MAX_CHARACTERS)
 		)
 			return EMPTY_HOME_DRAFT;
 		const textIssue =
@@ -102,6 +104,71 @@ export function acknowledgeFirstRequest(draft: HomeDraft, sent: FirstRequest): H
 		// A saturated or repaired counter cannot establish that no newer edit occurred.
 		text: draft.revision < Number.MAX_SAFE_INTEGER && draft.revision === sent.draftRevision ? "" : draft.text,
 		pending: null,
+	};
+}
+
+/** Why the draft cannot be used as written, if it cannot. */
+export function homeTextIssue(draft: Pick<HomeDraft, "text" | "textIssue">): string | null {
+	const most = HOME_DRAFT_TEXT_MAX_CHARACTERS.toLocaleString();
+	if (draft.textIssue === "too-large")
+		return `Drafts can contain up to ${most} characters. This edit was not applied; shorten the text and try again.`;
+	if (draft.textIssue === "restored-too-large")
+		return `The saved draft exceeded ${most} characters. Only its first ${most} characters were restored.`;
+	if (draft.textIssue === "invalid") return "The saved draft text could not be restored.";
+	if (draft.text.trim().length > PROMPT_TEXT_MAX_CHARACTERS)
+		return `A request can contain up to ${PROMPT_TEXT_MAX_CHARACTERS.toLocaleString("en-US")} characters. Shorten the draft before starting a session.`;
+	return null;
+}
+
+/**
+ * The workspace the next task lands in. A missing saved choice stays chosen as a recovery state; never send to a
+ * fallback project silently.
+ */
+export function homeWorkspaceId(
+	saved: string | null,
+	active: string | null | undefined,
+	listed: ReadonlyArray<{ id: string }>,
+): string | null {
+	return saved ?? active ?? listed[0]?.id ?? null;
+}
+
+/** A first request starts only with a usable connection, a listed workspace, a sendable text, and nothing in flight. */
+export function canStartFirstTask(state: {
+	ready: boolean;
+	setupPending: boolean;
+	workspacesLoaded: boolean;
+	workspaceListed: boolean;
+	text: string;
+	busy: boolean;
+	pending: boolean;
+}): boolean {
+	const text = state.text.trim();
+	return (
+		(state.ready || state.setupPending) &&
+		state.workspacesLoaded &&
+		state.workspaceListed &&
+		text !== "" &&
+		text.length <= PROMPT_TEXT_MAX_CHARACTERS &&
+		!state.busy &&
+		!state.pending
+	);
+}
+
+/** The setup steps the new-task screen still shows, and how many of them the stage counts as done. */
+export function homeOnboarding(state: {
+	setupLoaded: boolean;
+	ready: boolean;
+	workspacesLoaded: boolean;
+	listed: number;
+}): { needsSetup: boolean; needsWorkspace: boolean; onboarding: boolean; stageDone: number | null } {
+	const needsSetup = state.setupLoaded && !state.ready;
+	const needsWorkspace = state.workspacesLoaded && state.listed === 0;
+	return {
+		needsSetup,
+		needsWorkspace,
+		onboarding: needsSetup || needsWorkspace,
+		// Steps finish in order, so the caption names the first open one even when a later one is already done.
+		stageDone: state.setupLoaded && state.workspacesLoaded ? (state.ready ? (needsWorkspace ? 1 : 2) : 0) : null,
 	};
 }
 

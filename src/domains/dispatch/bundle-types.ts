@@ -162,7 +162,6 @@ export interface DispatchBundleOptions {
 	startAcpDelegationRun?: (input: AcpDelegationRunInput) => AcpDelegationRunHandle;
 	heartbeatSpec?: HeartbeatSpec;
 	heartbeatIntervalMs?: number;
-	resilienceCooldownMs?: number;
 	now?: () => number;
 	/** Monotonic clock for heartbeat age and ACP event-inactivity spans. */
 	monotonicNow?: () => number;

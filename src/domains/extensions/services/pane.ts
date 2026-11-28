@@ -28,7 +28,7 @@ import { packBinaryPath, parseBinaryArgs, parseBinaryEnv } from "./binaries.js";
 /** The dock slot extension panes share with the View dock. */
 const SLOT = "extension" as const;
 /** A pane asks for at most this many rows; more would crowd PanCode's own. */
-export const PANE_ROWS_MAX = 24;
+const PANE_ROWS_MAX = 24;
 const TITLE_MAX = 40;
 
 export type ExtensionPaneKey = "tap" | "double";

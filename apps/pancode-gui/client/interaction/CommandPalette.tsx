@@ -7,9 +7,9 @@
 
 import type { RefObject } from "react";
 import { Fragment, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { rankCommands } from "./command-palette-model.js";
 import { Keycaps } from "./Keycaps.js";
 import { formatKeybinding, KEYBINDINGS, type KeybindingId } from "./keybindings.js";
-import { prefixScore } from "./prefix-score.js";
 import { useListNavigation } from "./use-list-navigation.js";
 import "./interaction.css";
 
@@ -25,30 +25,6 @@ export interface Command {
 	/** False hides the row entirely; a command that cannot run is never shown greyed. */
 	readonly available: boolean;
 	run(): void;
-}
-
-/**
- * Prefix-by-word rather than the reference's substring rule, because a palette must feel like a
- * launcher. Ties break on the order the caller composed, then alphabetically, so the ranking is
- * stable between keystrokes.
- */
-function rankCommands(commands: readonly Command[], query: string): Command[] {
-	const needle = query.trim();
-	return commands
-		.filter((command) => command.available)
-		.map((command, index) => ({
-			command,
-			index,
-			score: prefixScore([command.title, command.group, ...(command.keywords ?? [])], needle),
-		}))
-		.filter((scored) => scored.score > 0)
-		.sort(
-			(left, right) =>
-				right.score - left.score ||
-				left.index - right.index ||
-				left.command.title.localeCompare(right.command.title, "en-US"),
-		)
-		.map((scored) => scored.command);
 }
 
 export function CommandPaletteBody({

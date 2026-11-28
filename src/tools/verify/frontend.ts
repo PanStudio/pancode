@@ -19,8 +19,6 @@ import type { ToolResult, ToolResultDetails } from "../tool-spec.js";
 import { truncateUtf8 } from "../truncate-utf8.js";
 import { BROWSER_MODES } from "./surface.js";
 
-export { BROWSER_MODES } from "./surface.js";
-
 type BrowserMode = (typeof BROWSER_MODES)[number];
 
 type CheckStatus = "pass" | "warn" | "fail" | "skip";

@@ -25,7 +25,6 @@ import {
 import { pluginContentDigest } from "./integrity.js";
 
 export type PluginCatalogEntry = HubPackEntry;
-export type { HubRowSource, HubTier };
 
 export interface PluginSource {
 	root: string;

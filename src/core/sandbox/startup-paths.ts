@@ -12,7 +12,7 @@ import type { SandboxBackend, SandboxMaskedPath } from "./types.js";
  * skills and project instructions), Codex and Gemini project config, direnv, project MCP servers, submodules,
  * git and ripgrep config.
  */
-export const PROTECTED_STARTUP_NAMES = [
+const PROTECTED_STARTUP_NAMES = [
 	".vscode",
 	".idea",
 	".cursor",
@@ -30,7 +30,7 @@ export const PROTECTED_STARTUP_NAMES = [
 ] as const;
 
 /** Shell startup files, protected when a writable root is the home directory. */
-export const PROTECTED_HOME_NAMES = [".bashrc", ".bash_profile", ".zshrc", ".zprofile", ".profile"] as const;
+const PROTECTED_HOME_NAMES = [".bashrc", ".bash_profile", ".zshrc", ".zprofile", ".profile"] as const;
 
 const PROTECTED_STARTUP_SET: ReadonlySet<string> = new Set(PROTECTED_STARTUP_NAMES.map((name) => name.toLowerCase()));
 const PROTECTED_HOME_SET: ReadonlySet<string> = new Set(PROTECTED_HOME_NAMES.map((name) => name.toLowerCase()));

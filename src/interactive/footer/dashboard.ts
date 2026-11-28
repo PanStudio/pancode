@@ -43,7 +43,7 @@ import { type ExtensionFact, extensionFactsKey } from "./extension-facts.js";
 import type { FleetBand } from "./fleet-band.js";
 import { getCurrentBranch } from "./git.js";
 import type { ComposerKeyContext, KeyHintFacts } from "./key-hints.js";
-import type { Notification, NotificationCenter } from "./notifications.js";
+import type { Notification } from "./notifications.js";
 import type { FooterTelemetry } from "./spend.js";
 import { renderStatusLineParts } from "./status-line.js";
 import {
@@ -67,8 +67,6 @@ export function capabilityLabels(caps: CapabilityFlags | null): string[] {
 		out.push(`ctx ${Math.round(caps.contextWindow / 1000)}k`);
 	return out.slice(0, 5);
 }
-
-export type { ToolTallySnapshot } from "./widgets.js";
 
 /** Whether Alt+U has opened the dashboard; never a presentation tier. */
 export type FooterDashboardMode = "closed" | "open";
@@ -135,8 +133,6 @@ export interface FooterDashboardDeps {
 	fleetBand?: FleetBand;
 	/** Transient context-operation progress band mounted between the Fleet band and the Deck / Status bar. */
 	contextProgress?: Component;
-	/** Fallback visibility probe when `fleetBand` is mounted externally. */
-	isFleetBandVisible?: () => boolean;
 	/** True while `/fleet` owns the dock (auto-hides deck and suppresses footer worker count). */
 	isFleetBoardOpen?: () => boolean;
 	dismissKeyLabel?: string;
@@ -448,7 +444,7 @@ export function buildFooterDashboard(deps: FooterDashboardDeps): FooterDashboard
 			compactDoorCounted = true;
 			setImmediate(() => recordLessonShown("compact:keys"));
 		}
-		const fleetBandVisible = deps.fleetBand ? deps.fleetBand.isVisible() : deps.isFleetBandVisible?.() === true;
+		const fleetBandVisible = deps.fleetBand?.isVisible() === true;
 		const workspace = deps.getWorkspaceLine?.(width) ?? null;
 		const extensionFacts = deps.getExtensionFacts?.() ?? [];
 		const baseState = projectFooterRenderState(snapshot, {
@@ -546,5 +542,3 @@ export function buildFooterDashboard(deps: FooterDashboardDeps): FooterDashboard
 		},
 	};
 }
-
-export type { NotificationCenter };

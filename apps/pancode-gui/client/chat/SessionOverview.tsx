@@ -7,37 +7,42 @@ import { Link } from "react-router";
 import { routes } from "../../contracts/runtime-routes.js";
 import type { Client } from "../api/client.js";
 import { emptyInput } from "../api/client.js";
-import { formatDuration } from "../api/clock.js";
 import { sessionBoardQuery, sessionTreeQuery, workspacesQuery } from "../api/queries.js";
 import type { IconName } from "../design/icons.js";
 import { Icon } from "../design/icons.js";
 import { StatusMark } from "../design/status.js";
 import { countRender } from "../render/render-probe.js";
 import { PancodePulse, PULSE_SIZE } from "../shell/PancodeMark.js";
-import { isHeld, STATE_LABELS, taskState, taskTitle } from "../shell/shell-model.js";
+import { activeWork, isHeld, STATE_LABELS, taskTitle } from "../shell/shell-model.js";
 import { Explained } from "../telemetry/Explained.js";
 import { boardView, type PlanRow } from "./board-model.js";
 import { branchView } from "./branch-model.js";
-import { changeCounts, summarizeChanges } from "./changes-model.js";
+import { changeCounts, changeLine, summarizeChanges } from "./changes-model.js";
 import { FLEET_STATE_LABELS, FLEET_STATE_TONES, fleetEvidence, foldFleetRuns, isLiveRun } from "./fleet-facts.js";
 import { summarizeHealth } from "./health.js";
-import { contextMeter, taskOverview } from "./overview-model.js";
+import {
+	activityLine,
+	agentsLine,
+	boardLine,
+	contextMeter,
+	evidenceLine,
+	findingsText,
+	forkPointsLine,
+	gitLine,
+	healthSummary,
+	moreSteps,
+	taskOverview,
+	taskStateWord,
+	turnsLine,
+} from "./overview-model.js";
 import { ProjectTrustNotice } from "./ProjectTrustNotice.js";
 import type { PaneSession, PaneView } from "./pane-model.js";
 import { RunRecordLine } from "./RunRecordLine.js";
 import type { RouteFacts } from "./route.js";
 import { modelSessionFacts, sessionFacts } from "./session-facts-model.js";
-import {
-	settledTurns,
-	spendLine,
-	useContextLedger,
-	useSessionCapabilities,
-	useSessionUsage,
-	useTelemetrySession,
-} from "./session-telemetry.js";
-import { sessionSpend } from "./session-usage-model.js";
+import { useContextLedger, useSessionCapabilities, useSessionUsage, useTelemetrySession } from "./session-telemetry.js";
+import { sessionSpend, settledTurns, spendLine } from "./session-usage-model.js";
 import { livePlanView, planCancellation } from "./telemetry-model.js";
-import { isStoppedEarly, turnEnding } from "./turns.js";
 
 function PlanGlyph({ tone }: { tone: PlanRow["tone"] }) {
 	if (tone === "success")
@@ -177,14 +182,9 @@ export function SessionOverview({
 		enabled: active && more,
 	});
 	const workspaceNames = new Map((workspaces.data ?? []).map((item) => [item.id, item.name]));
-	const activity = (sessions.data ?? [])
-		.filter(isHeld)
-		.map((item) => ({ session: item, state: taskState(item) }))
-		.filter(({ state }) => state === "working" || state === "waiting" || state === "starting" || state === "approval");
+	const work = activeWork((sessions.data ?? []).filter(isHeld));
+	const activity = work.items;
 	const otherActivity = activity.filter((item) => item.session.id !== session.id);
-	const workingCount = activity.filter((item) => item.state === "working" || item.state === "starting").length;
-	const queuedCount = activity.filter((item) => item.state === "waiting").length;
-	const approvalCount = activity.filter((item) => item.state === "approval").length;
 	const capabilities = useSessionCapabilities(client, session.id, active && open);
 	const settled = settledTurns(session.turns);
 	// The keys the drill-ins use, so opening one after the column costs no second request.
@@ -214,29 +214,13 @@ export function SessionOverview({
 	const evidence = useMemo(() => fleetEvidence(session.fleet), [session.fleet]);
 	const live = runs.filter(isLiveRun);
 	const records = runs.filter((run) => run.record);
-	const last = session.turns.at(-1);
 	const working = open && (overview.running || !!session.contextWork?.active);
-	const state =
-		session.state === "parked"
-			? "Paused"
-			: session.contextWork?.active && open
-				? "Context work"
-				: overview.running
-					? "Working"
-					: last?.queued
-						? "Waiting for a slot"
-						: last?.status === "failed"
-							? "Failed"
-							: last?.status === "cancelled"
-								? "Stopped"
-								: last
-									? isStoppedEarly(turnEnding(last))
-										? "Stopped early"
-										: "Complete"
-									: "Not started";
+	const state = taskStateWord(session, overview.running);
 	const done = plan?.rows.filter((row) => row.tone === "success").length ?? 0;
 	const openTasks = view?.tasks.filter((task) => task.actions.length > 0).length ?? 0;
 	const decisions = view?.activeDecisions.length ?? 0;
+	const boardFacts = boardLine(openTasks, decisions);
+	const changed = changeLine(changes);
 	// A task that is not open has no usage read; the cold telemetry route folds its journal instead (#434).
 	const cold = useTelemetrySession(client, session.id, active && more && !open);
 	const spend = sessionSpend({
@@ -247,15 +231,7 @@ export function SessionOverview({
 	const used = spendLine(spend);
 	const healthSection =
 		health.rows.length > 0 ? (
-			<Section
-				id="pane-health"
-				title="Health"
-				icon="shield"
-				summary={
-					health.attention ? "Needs attention" : `${health.rows.length} ${health.rows.length === 1 ? "report" : "reports"}`
-				}
-				expanded={health.attention}
-			>
+			<Section id="pane-health" title="Health" icon="shield" summary={healthSummary(health)} expanded={health.attention}>
 				{health.rows.map((row) => (
 					<p key={row.id} className="pane-card__facts">
 						<StatusMark tone={row.tone} label={row.label} {...(row.detail ? { detail: row.detail } : {})} />
@@ -279,16 +255,7 @@ export function SessionOverview({
 					</span>
 				</header>
 				<p className="pane-goal">{title}</p>
-				{overview.turns > 0 ? (
-					<p className="pane-card__facts">
-						{[
-							`${overview.turns} ${overview.turns === 1 ? "turn" : "turns"}`,
-							overview.elapsedMs >= 1000 ? formatDuration(overview.elapsedMs) : null,
-						]
-							.filter(Boolean)
-							.join(" · ")}
-					</p>
-				) : null}
+				{overview.turns > 0 ? <p className="pane-card__facts">{turnsLine(overview)}</p> : null}
 			</section>
 			{session.telemetry?.trust?.ignored.length ? (
 				<Section id="pane-trust" title="Project trust" icon="shield">
@@ -317,9 +284,9 @@ export function SessionOverview({
 			>
 				{changes.files.length > 0 ? (
 					<p className="pane-changes-line">
-						{changes.applied > 0 ? `${changes.applied} ${changes.applied === 1 ? "file" : "files"} changed` : null}
+						{changed.applied}
 						<span className="sr-only">{changeCounts(changes)}</span>
-						{changes.pending > 0 ? `${changes.applied > 0 ? " · " : ""}${changes.pending} waiting for approval` : null}
+						{changed.pending}
 					</p>
 				) : (
 					<p className="pane-empty">No edits reported here yet.</p>
@@ -368,20 +335,9 @@ export function SessionOverview({
 					<p className="pane-card__facts">{planCancellation(session.telemetry?.plan)}</p>
 				) : null}
 				{capabilities.data?.board && plan && plan.rows.length > 5 ? (
-					<p className="pane-card__facts">
-						{plan.rows.length - 5} more {plan.rows.length === 6 ? "step" : "steps"} in the full plan.
-					</p>
+					<p className="pane-card__facts">{moreSteps(plan.rows.length, 5)}</p>
 				) : null}
-				{openTasks > 0 || decisions > 0 ? (
-					<p className="pane-card__facts">
-						{[
-							openTasks > 0 ? `${openTasks} ${openTasks === 1 ? "task" : "tasks"} of yours` : null,
-							decisions > 0 ? `${decisions} ${decisions === 1 ? "decision" : "decisions"}` : null,
-						]
-							.filter(Boolean)
-							.join(" · ")}
-					</p>
-				) : null}
+				{boardFacts !== null ? <p className="pane-card__facts">{boardFacts}</p> : null}
 			</Section>
 
 			{session.telemetry?.plan?.truncated ? <p className="pane-hint">The plan shows its first 100 steps.</p> : null}
@@ -392,14 +348,7 @@ export function SessionOverview({
 					icon="fleet"
 					{...(runs.length === 0 ? { summary: "None dispatched" } : {})}
 					open={() => onOpen("agents")}
-					aside={
-						runs.length > 0 ? (
-							<span className="pane-card__state">
-								{live.length > 0 ? `${live.length} live · ` : ""}
-								{runs.length} {runs.length === 1 ? "run" : "runs"}
-							</span>
-						) : null
-					}
+					aside={runs.length > 0 ? <span className="pane-card__state">{agentsLine(live.length, runs.length)}</span> : null}
 				>
 					{runs.length === 0 ? (
 						<p className="pane-empty">No agents dispatched yet.</p>
@@ -424,13 +373,7 @@ export function SessionOverview({
 					id="pane-evidence"
 					title="Evidence"
 					icon="evidence"
-					aside={
-						<span className="pane-card__state">
-							{records.length > 0
-								? `${records.length} ${records.length === 1 ? "record" : "records"}`
-								: `${evidence.length} ${evidence.length === 1 ? "bundle" : "bundles"}`}
-						</span>
-					}
+					aside={<span className="pane-card__state">{evidenceLine(records.length, evidence.length)}</span>}
 				>
 					{records
 						.slice(-6)
@@ -451,10 +394,7 @@ export function SessionOverview({
 										label={row.firstPassSuccess ? "First pass" : "Retried"}
 									/>
 									<span>
-										<strong>{agent}</strong>{" "}
-										{row.findingCount === null
-											? "findings not reported"
-											: `${row.findingCount} ${row.findingCount === 1 ? "finding" : "findings"}`}
+										<strong>{agent}</strong> {findingsText(row.findingCount)}
 									</span>
 									<span className="pane-evidence__links">
 										<Link to={`/evidence/${encodeURIComponent(row.runId)}`}>Evidence</Link>
@@ -602,9 +542,7 @@ export function SessionOverview({
 								open={() => onOpen("branches")}
 								aside={
 									(branches?.branchPoints ?? 0) > 0 ? (
-										<span className="pane-card__state">
-											{branches?.branchPoints} {branches?.branchPoints === 1 ? "fork point" : "fork points"}
-										</span>
+										<span className="pane-card__state">{forkPointsLine(branches?.branchPoints ?? 0)}</span>
 									) : null
 								}
 							>
@@ -624,20 +562,12 @@ export function SessionOverview({
 							id="pane-activity"
 							title="PanCode activity"
 							icon="running"
-							summary={
-								sessions.data
-									? `${workingCount} working · ${queuedCount} queued${approvalCount > 0 ? ` · ${approvalCount} need approval` : ""}`
-									: sessions.error
-										? "Unavailable"
-										: "Loading…"
-							}
+							summary={sessions.data ? activityLine(work) : sessions.error ? "Unavailable" : "Loading…"}
 							expanded={activity.length > 0 || !!sessions.error}
 						>
 							{sessions.data ? (
 								<>
-									<p className="pane-card__facts">
-										{workingCount} working · {queuedCount} queued{approvalCount > 0 ? ` · ${approvalCount} need approval` : ""}
-									</p>
+									<p className="pane-card__facts">{activityLine(work)}</p>
 									{otherActivity.length > 0 ? (
 										<ul className="pane-agents">
 											{otherActivity.map((item) => (
@@ -669,22 +599,7 @@ export function SessionOverview({
 								<p className="pane-path" title={workspace.cwd}>
 									<bdi dir="ltr">{workspace.cwd}</bdi>
 								</p>
-								<p className="pane-card__facts">
-									{workspace.isGit
-										? [
-												workspace.branch ?? "Detached HEAD",
-												workspace.dirty === null
-													? "Working tree not reported"
-													: workspace.dirty
-														? "Uncommitted changes"
-														: "Clean working tree",
-												workspace.ahead ? `${workspace.ahead} ahead` : null,
-												workspace.behind ? `${workspace.behind} behind` : null,
-											]
-												.filter(Boolean)
-												.join(" · ")
-										: "No Git repository"}
-								</p>
+								<p className="pane-card__facts">{gitLine(workspace)}</p>
 							</Section>
 						) : null}
 					</div>

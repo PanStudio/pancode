@@ -41,6 +41,15 @@ const liveTimers: RefreshTimers = {
 	},
 };
 
+/** The cached queue read for an engine's entry list, split into the steer and follow-up queues it carries. */
+export function queueSnapshot(entries: NonNullable<QueueSnapshot["entries"]>): QueueSnapshot {
+	return {
+		steer: entries.filter((entry) => entry.kind === "steer").map((entry) => entry.text),
+		followUp: entries.filter((entry) => entry.kind === "follow-up").map((entry) => entry.text),
+		entries,
+	};
+}
+
 export function subscribe(
 	client: Client,
 	queries: QueryClient,
@@ -313,11 +322,7 @@ export function subscribe(
 				invalidate.add("session-overview");
 				const { resource, entries } = event.payload;
 				void queries.cancelQueries({ queryKey: ["session-queue", resource], exact: true });
-				queries.setQueryData<QueueSnapshot>(["session-queue", resource], {
-					steer: entries.filter((entry) => entry.kind === "steer").map((entry) => entry.text),
-					followUp: entries.filter((entry) => entry.kind === "follow-up").map((entry) => entry.text),
-					entries,
-				});
+				queries.setQueryData<QueueSnapshot>(["session-queue", resource], queueSnapshot(entries));
 			}
 			if (event.type === "programs.changed") invalidate.add("tools");
 			// A coalesced telemetry_update re-reads the moved topics for its session; nothing is folded here (#434).

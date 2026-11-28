@@ -34,7 +34,6 @@ import { capabilityArgumentShape, gatewayExamples } from "./guidance.js";
 import type { McpCapabilitySource, McpLaunchOptions, McpServerListing } from "./mcp-capability-types.js";
 import { misplacedFieldHint } from "./misplaced-fields.js";
 
-export { GATEWAY_FIND_SELF_CAP_BYTES } from "./caps.js";
 export type { McpCapabilitySource } from "./mcp-capability-types.js";
 
 /**

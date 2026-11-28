@@ -2,8 +2,8 @@
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import type { SessionOverviewItem } from "../../contracts/session-overview.js";
 import type { SessionSummary } from "../../contracts/sessions.js";
+import { matchesText } from "../design/text-match.js";
 import type { TaskRow } from "../shell/shell-model.js";
-import { matchesText } from "./run-inspection-model.js";
 
 export const PROJECT_TASK_FILTERS = ["all", "open", "attention", "saved"] as const;
 export type ProjectTaskFilter = (typeof PROJECT_TASK_FILTERS)[number];

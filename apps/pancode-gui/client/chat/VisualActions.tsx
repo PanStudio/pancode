@@ -2,6 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import { useEffect, useId, useRef, useState } from "react";
 import { Icon } from "../design/icons.js";
+import { RetryAlert } from "../design/run-inspection.js";
 import { Dialog } from "../interaction/Dialog.js";
 import type { CommandFields, CommandPlan } from "./command-model.js";
 import { planCommand } from "./command-model.js";
@@ -143,12 +144,9 @@ export function VisualActions({
 						</p>
 					) : null}
 					{error ? (
-						<p className="visual-actions__note" role="alert">
-							Some actions could not be loaded. {error}{" "}
-							<button type="button" onClick={onRetry}>
-								Try again
-							</button>
-						</p>
+						<RetryAlert retry={onRetry} className="visual-actions__note">
+							Some actions could not be loaded. {error}
+						</RetryAlert>
 					) : null}
 					<div className="visual-actions__groups">
 						{ACTION_GROUPS.map((group) => {

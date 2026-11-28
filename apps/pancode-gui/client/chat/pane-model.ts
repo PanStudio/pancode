@@ -34,6 +34,11 @@ export function paneViewLabel(view: PaneView): string {
 	return PANE_VIEWS.find((entry) => entry.id === view)?.label ?? "Session";
 }
 
+/** A view's name in the pane: the root takes the caller's wording, and artifacts are the task's files. */
+export function paneTitle(view: PaneView, rootTitle: string): string {
+	return view === ROOT_VIEW ? rootTitle : view === "artifacts" ? "Session files" : paneViewLabel(view);
+}
+
 /**
  * The slice of a session the pane reads. Text deltas leave it unchanged through query structural
  * sharing, so a streaming answer does not re-render the pane.

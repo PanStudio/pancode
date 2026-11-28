@@ -7,6 +7,7 @@ import { useNavigate } from "react-router";
 import type { Client } from "../api/client.js";
 import { heldSessionQuery } from "../api/session-query.js";
 import { Icon } from "../design/icons.js";
+import { useMediaQuery } from "../design/use-media-query.js";
 import { DeferredViewBoundary } from "../interaction/DeferredView.js";
 import { KEYBINDINGS, matchesKeybinding } from "../interaction/keybindings.js";
 import { useShortcutLayer } from "../interaction/use-shortcut.js";
@@ -21,6 +22,7 @@ import {
 	PANE_VIEWS,
 	type PaneView,
 	paneGate,
+	paneTitle,
 	paneViewLabel,
 	ROOT_VIEW,
 	selectPaneSession,
@@ -30,6 +32,7 @@ import { openRoutePicker } from "./RoutePicker.js";
 import type { RouteFacts } from "./route.js";
 import { needsTrustReview } from "./session-facts-model.js";
 import { selectSessionPanel } from "./session-panel-model.js";
+import { settledTurns } from "./session-usage-model.js";
 import "./pane.css";
 import "./pane-inspection.css";
 import { sessionCapabilitiesQuery } from "../api/queries.js";
@@ -79,7 +82,7 @@ export const SessionPane = memo(function SessionPane({
 	const aside = useRef<HTMLElement>(null);
 	const slot = useShell()?.asideSlot ?? null;
 	const dialog = useRef<HTMLDialogElement>(null);
-	const [wide, setWide] = useState(() => typeof window === "undefined" || matchMedia(ASIDE_DOCK_QUERY).matches);
+	const wide = useMediaQuery(ASIDE_DOCK_QUERY, true);
 	const [visited, setVisited] = useState(() => ({ sessionId, views: new Set<PaneView>(open ? [view] : []) }));
 	useEffect(() => {
 		setVisited((previous) => {
@@ -87,13 +90,6 @@ export const SessionPane = memo(function SessionPane({
 			return !open || previous.views.has(view) ? previous : { sessionId, views: new Set([...previous.views, view]) };
 		});
 	}, [open, view, sessionId]);
-	useEffect(() => {
-		const query = matchMedia(ASIDE_DOCK_QUERY);
-		const change = () => setWide(query.matches);
-		query.addEventListener("change", change);
-		change();
-		return () => query.removeEventListener("change", change);
-	}, []);
 	useShortcutLayer("dialog", open && !wide);
 	// A drill-in hides the button that opened it, so focus moves to the view's title and Escape keeps
 	// reaching the pane. The first render leaves focus alone; only a change of view moves it.
@@ -243,7 +239,7 @@ export const SessionPane = memo(function SessionPane({
 								sessionId={pane.id}
 								sessionOpen={pane.state === "open"}
 								capabilities={capabilities.data}
-								settledTurns={pane.turns.filter((turn) => turn.status !== "running").length}
+								settledTurns={settledTurns(pane.turns)}
 								running={pane.turns.at(-1)?.status === "running"}
 							/>
 						</Suspense>
@@ -257,7 +253,7 @@ export const SessionPane = memo(function SessionPane({
 						sessionId={pane.id}
 						open={open && pane.state === "open" && view === "artifacts"}
 						capabilities={capabilities.data}
-						settled={pane.turns.filter((turn) => turn.status !== "running").length}
+						settled={settledTurns(pane.turns)}
 					/>
 				);
 			case "changes":
@@ -275,7 +271,7 @@ export const SessionPane = memo(function SessionPane({
 					sessionId: pane.id,
 					sessionOpen: pane.state === "open",
 					capabilities: capabilities.data,
-					settledTurns: pane.turns.filter((turn) => turn.status !== "running").length,
+					settledTurns: settledTurns(pane.turns),
 				};
 				if (id === "context")
 					return (
@@ -323,7 +319,7 @@ export const SessionPane = memo(function SessionPane({
 				) : null}
 				<h2 className="pane__title" id={`${headId}-title`} tabIndex={-1}>
 					<Icon name={PANE_VIEWS.find((entry) => entry.id === view)?.icon ?? "sessions"} />
-					{view === ROOT_VIEW ? "Session details" : view === "artifacts" ? "Session files" : paneViewLabel(view)}
+					{paneTitle(view, "Session details")}
 				</h2>
 				<button
 					type="button"
@@ -346,7 +342,7 @@ export const SessionPane = memo(function SessionPane({
 						<optgroup key={group.label} label={group.label}>
 							{group.views.map((id) => (
 								<option key={id} value={id}>
-									{id === ROOT_VIEW ? "Session overview" : id === "artifacts" ? "Session files" : paneViewLabel(id)}
+									{paneTitle(id, "Session overview")}
 								</option>
 							))}
 						</optgroup>

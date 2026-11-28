@@ -34,12 +34,7 @@ import { AcpAuthRequiredError, AcpError, AcpProcessError, AcpTimeoutError, acpEr
 import { AcpEventMapper } from "./event-mapper.js";
 import { legacyModelRequest, offeredChoices, peerSelectOption } from "./peer-config-options.js";
 import { AcpToolMediator } from "./tool-mediator.js";
-import {
-	type AcpForceTerminationResult,
-	type AcpJsonRpcTransport,
-	createStdioTransport,
-	type StdioTransportOptions,
-} from "./transport.js";
+import { type AcpForceTerminationResult, createStdioTransport, type StdioTransportOptions } from "./transport.js";
 import type {
 	AcpInitializeResponse,
 	AcpPromptResponse,
@@ -1033,5 +1028,3 @@ export function startAcpDelegationRun(input: AcpDelegationRunInput): AcpDelegati
 		toolCallLog: () => mediator.snapshot().toolCallLog,
 	};
 }
-
-export type { AcpJsonRpcTransport };

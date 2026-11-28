@@ -28,11 +28,6 @@ import { findPinnedProgram } from "./registry.js";
 export interface ProgramRemoveOptions {
 	/** Vendor root override. Defaults to the data root's `tools` directory. */
 	root?: string;
-	/**
-	 * How old a staging directory must be before it counts as abandoned.
-	 * Defaults to `STALE_STAGING_MS`. Tests set it; nothing else should need to.
-	 */
-	staleStagingMs?: number;
 }
 
 /**
@@ -123,7 +118,7 @@ export function removeVersions(id: string, keep: string | null, options: Program
 	}
 	// Before the rmdir below, so an install killed weeks ago cannot keep the tool
 	// directory alive after every version of it is gone.
-	const staleStaging = sweepStaleStaging(dir, options.staleStagingMs ?? STALE_STAGING_MS);
+	const staleStaging = sweepStaleStaging(dir, STALE_STAGING_MS);
 	if (keep === null && failed.length === 0) {
 		// The tool is gone, so its directory is litter. `rmdir` takes it only when
 		// it is empty, so a staging directory young enough to belong to a running

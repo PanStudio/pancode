@@ -9,12 +9,13 @@ import { type Client, problemCode } from "../api/client.js";
 import { formatTime } from "../api/clock.js";
 import { sessionHistoryQuery } from "../api/queries.js";
 import { liveElsewhereLabel } from "../chat/live-elsewhere-model.js";
+import { FilterChips, InventoryEmpty } from "../design/filter-chips.js";
 import { Icon } from "../design/icons.js";
 import { InventoryMore } from "../interaction/InventoryMore.js";
 import { useInventoryWindow } from "../interaction/use-inventory-window.js";
 import { HomeAside } from "../shell/HomeAside.js";
 import { InlineRename } from "../shell/InlineRename.js";
-import { PancodeEmptyMark, PancodePulse, PULSE_SIZE } from "../shell/PancodeMark.js";
+import { PancodePulse, PULSE_SIZE } from "../shell/PancodeMark.js";
 import {
 	answeredInOverview,
 	READY_LABEL,
@@ -232,19 +233,15 @@ export function Sessions({ client }: { client: Client }) {
 							</select>
 						</label>
 					</div>
-					<nav className="taskpage__filters" aria-label="Project session activity">
-						{PROJECT_TASK_FILTERS.map((item) => (
-							<button
-								type="button"
-								key={item}
-								aria-pressed={filter === item}
-								onClick={() => set("status", item === "all" ? "" : item)}
-							>
-								{FILTER_NAMES[item]}
-								<span>{item === "saved" && !history.data ? "—" : inventory.counts[item]}</span>
-							</button>
-						))}
-					</nav>
+					<FilterChips
+						className="taskpage__filters"
+						label="Project session activity"
+						filters={PROJECT_TASK_FILTERS}
+						names={FILTER_NAMES}
+						value={filter}
+						count={(item) => (item === "saved" && !history.data ? null : inventory.counts[item])}
+						onSelect={(item) => set("status", item)}
+					/>
 					{loading ? (
 						<p className="taskpage__note" role="status">
 							Reading this project's work…
@@ -308,38 +305,27 @@ export function Sessions({ client }: { client: Client }) {
 							})}
 						</ul>
 					) : !loading && workspace.data && (history.data || overview.data) ? (
-						<div className="taskpage__empty">
-							<PancodeEmptyMark />
-							<h2>
-								{query || filter !== "all"
+						<InventoryEmpty
+							className="taskpage__empty"
+							heading="h2"
+							title={
+								query || filter !== "all"
 									? "No sessions match this view"
 									: history.error
 										? "No open sessions here"
-										: "Your next discovery starts here"}
-							</h2>
-							<p>
-								{query || filter !== "all"
-									? "Try another search or activity filter."
-									: history.error
-										? "No open sessions were reported. Saved conversations may still exist in the unavailable history."
-										: "Start a session to begin working in this project."}
-							</p>
-							{query || filter !== "all" ? (
-								<button type="button" onClick={() => setSearch({})}>
-									Clear filters
-								</button>
-							) : (
-								<button
-									type="button"
-									className="primary"
-									disabled={!workspace.data}
-									onClick={() => actions.newTask(workspaceId)}
-								>
-									Start a session
-									<Icon name="plus" />
-								</button>
-							)}
-						</div>
+										: "Your next discovery starts here"
+							}
+							filtered={!!query || filter !== "all"}
+							onClear={() => setSearch({})}
+							onStart={() => actions.newTask(workspaceId)}
+							startDisabled={!workspace.data}
+						>
+							{query || filter !== "all"
+								? "Try another search or activity filter."
+								: history.error
+									? "No open sessions were reported. Saved conversations may still exist in the unavailable history."
+									: "Start a session to begin working in this project."}
+						</InventoryEmpty>
 					) : null}
 					{loading ? null : inventory.shown.length || !inventory.counts.all ? (
 						<InventoryMore

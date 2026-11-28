@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import type { IconName } from "../design/icons.js";
-import { matchesText } from "../pages/run-inspection-model.js";
+import { matchesText } from "../design/text-match.js";
 import { SETTINGS_SECTIONS } from "./shell-model.js";
 
 const GROUPS = [

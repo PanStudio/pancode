@@ -18,7 +18,7 @@ import { ageHorizonPolicy } from "./age-horizon.js";
 import { resolveComposedPolicy } from "./compose.js";
 import { structuralPolicy, structuralV2Policy } from "./structural.js";
 
-export { ageHorizonPolicy, structuralPolicy, structuralV2Policy };
+export { structuralV2Policy };
 
 export function resolveWorkingSetPolicy(id: WorkingSetPolicyId): WorkingSetPolicy {
 	if (id === "age-horizon") return ageHorizonPolicy;

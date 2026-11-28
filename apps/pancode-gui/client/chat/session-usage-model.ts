@@ -11,6 +11,7 @@ import {
 } from "../../../../src/core/views/usage-words.js";
 import type { AgentCapabilities } from "../../contracts/capabilities.js";
 import type { LiveUsage } from "../../contracts/session-telemetry.js";
+import type { SessionSnapshot } from "../../contracts/sessions.js";
 import type { SessionUsage } from "../../contracts/usage.js";
 import type { SessionTelemetryV1 } from "../../contracts/wire.js";
 import { formatTime } from "../api/clock.js";
@@ -18,6 +19,23 @@ import type { StatusTone } from "../design/status.js";
 import type { Explainable } from "../telemetry/quantity-model.js";
 
 const BARE_COUNT = /^≥?~?\d[\d,]*$/;
+
+type Turns = SessionSnapshot["turns"];
+
+/** How many of the retained turns have settled. The projection keeps only the newest turns, so this stops at its cap. */
+export const settledTurns = (turns: Turns): number => turns.filter((turn) => turn.status !== "running").length;
+
+/**
+ * Changes on every settle, which is when the ledger and the accounting can have moved, and has no ceiling: the id
+ * of the newest settled turn. A count of settled turns stops moving once the projection drops its oldest turns.
+ */
+export function settledKey(turns: Turns): string {
+	for (let index = turns.length - 1; index >= 0; index--) {
+		const turn = turns[index];
+		if (turn && turn.status !== "running") return turn.id;
+	}
+	return "none";
+}
 
 /**
  * A token figure with its unit, in the terminal's words: the read model's coverage clause is dropped, so
@@ -79,6 +97,11 @@ export function chipFigures(spend: Spend): { tokens: string | null; cost: string
 		tokens: spend.known.tokens && spend.tokens !== null ? tokensText(spend.tokens, "tok") : null,
 		cost: spend.known.cost ? spend.cost : null,
 	};
+}
+
+export function spendLine(spend: Spend): string | null {
+	const parts = [spend.tokens === null ? null : tokensText(spend.tokens), spend.cost].filter(Boolean);
+	return parts.length > 0 ? parts.join(" · ") : null;
 }
 
 /** The context chip's words: the journaled share when it was measured, else the live ledger's own percent. */

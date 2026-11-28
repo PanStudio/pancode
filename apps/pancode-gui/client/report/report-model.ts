@@ -296,3 +296,18 @@ export function failedRunReport(
 export function keySends(key: string, focus: "field" | "send-button" | "other"): boolean {
 	return focus === "send-button" && (key === "Enter" || key === " ");
 }
+
+/** The steps the tab strip offers; the duplicate check and the sent receipt are reached only by sending. */
+export const REPORT_TABS = ["review", "attach", "send"] as const;
+
+export function reportTabLabel(step: (typeof REPORT_TABS)[number]): string {
+	return step === "review" ? "Review" : step === "attach" ? "Attach" : "Send";
+}
+
+/** The ids to send unmasked once one chip flips; a locked mask is never among them. */
+export function unmaskedAfterToggle(masks: ProblemReportView["masks"], id: string): string[] {
+	return masks
+		.filter((other) => (other.id === id ? other.masked : !other.masked))
+		.filter((other) => !other.locked)
+		.map((other) => other.id);
+}

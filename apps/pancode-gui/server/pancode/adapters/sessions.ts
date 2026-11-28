@@ -2,9 +2,10 @@
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import { existsSync, readdirSync, realpathSync } from "node:fs";
 import { hostname } from "node:os";
-import { isAbsolute, join, relative, resolve, sep } from "node:path";
+import { join, relative, resolve } from "node:path";
 import { safeIso, safeStoredString } from "../../../../../src/acp/server-bounds.js";
 import { listableSessionId, sessionListFields } from "../../../../../src/acp/session-list-row.js";
+import { relativePathEscapes } from "../../../../../src/core/path-containment.js";
 import { pancodeStateDir } from "../../../../../src/core/xdg.js";
 import {
 	endAbandonedSession,
@@ -26,18 +27,14 @@ export function preflightLedger() {
 	if (!existsSync(directory)) return false;
 	const root = realpathSync(state);
 	const inspect = (path: string, depth: number) => {
-		const resolved = realpathSync(path),
-			part = relative(root, resolved);
-		if (part === ".." || part.startsWith(`..${sep}`) || isAbsolute(part))
+		if (relativePathEscapes(relative(root, realpathSync(path))))
 			throw new AppProblem("validation", "Session storage escapes its state directory.");
 		if (depth > 0)
 			for (const child of readdirSync(path, { withFileTypes: true })) {
 				const target = join(path, child.name);
 				if (child.isDirectory()) inspect(target, depth - 1);
 				else {
-					const file = realpathSync(target),
-						diff = relative(root, file);
-					if (diff === ".." || diff.startsWith(`..${sep}`) || isAbsolute(diff))
+					if (relativePathEscapes(relative(root, realpathSync(target))))
 						throw new AppProblem("validation", "Session storage escapes its state directory.");
 				}
 			}
