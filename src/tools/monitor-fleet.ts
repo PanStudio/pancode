@@ -141,14 +141,11 @@ export async function monitorFleetRoot(input: {
 			message: `monitor: fleet root '${rootId}' has not sealed (state=${view.state}); try mode="status" or mode="wait"`,
 		};
 	}
-	const json = truncateUtf8(
-		JSON.stringify(view.document, null, 2),
-		DOCUMENT_MAX_BYTES,
-		"\n[fleet_end document truncated]",
-	);
-	return {
-		kind: "ok",
-		output: [...fleetEndLines(view.document), "", json].join("\n"),
-		details: { ...viewDetails(view), mode },
-	};
+	return { kind: "ok", output: fleetEndAnswer(view.document), details: { ...viewDetails(view), mode } };
+}
+
+/** A sealed root's answer to the model: the fleet_end summary lines, then the document itself, bounded. */
+export function fleetEndAnswer(document: Readonly<Record<string, unknown>>): string {
+	const json = truncateUtf8(JSON.stringify(document, null, 2), DOCUMENT_MAX_BYTES, "\n[fleet_end document truncated]");
+	return [...fleetEndLines(document), "", json].join("\n");
 }

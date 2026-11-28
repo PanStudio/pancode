@@ -22,8 +22,18 @@ export function bindPlaybookTask(
 	return { vars: { ...vars, task } };
 }
 
-/** Why a task cannot start this playbook (its prompt has no `{{task}}`), or null when it can. */
-export function playbookTaskRefusal(playbook: { name: string; body: string }, task: string | undefined): string | null {
-	if (task === undefined || playbookPromptVariables(playbook.body).includes("task")) return null;
-	return `playbook '${playbook.name}' takes no task: its prompt has no {{task}}; pass its variables with --var`;
+/**
+ * Why a task cannot start this playbook (its prompt has no `{{task}}`), or null when it can. `varsVia` names
+ * where the surface takes variables: `--var` for the command line and the slash command, `playbook.vars` for dispatch.
+ */
+export function playbookTaskRefusal(
+	playbook: { name: string; body: string },
+	task: string | undefined,
+	varsVia = "--var",
+): string | null {
+	if (task === undefined) return null;
+	const variables = playbookPromptVariables(playbook.body);
+	if (variables.includes("task")) return null;
+	const names = variables.length > 0 ? ` (${variables.join(", ")})` : "";
+	return `playbook '${playbook.name}' takes no task: its prompt has no {{task}}; pass its variables${names} with ${varsVia}`;
 }
