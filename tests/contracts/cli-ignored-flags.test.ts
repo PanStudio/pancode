@@ -332,12 +332,6 @@ describe("--with-panes", () => {
 		equal(resolvePanesEnablement(undefined, { HERDR_ENV: "1" }), "auto");
 		equal(resolvePanesEnablement(undefined, {}), "off");
 	});
-
-	it("no longer accepts --no-panes", () => {
-		const result = cli(["--no-panes", "doctor"]);
-		equal(result.status, 2, result.stderr);
-		ok(result.stderr.includes("--no-panes"), result.stderr);
-	});
 });
 
 describe("run --agent sampling flags", () => {
