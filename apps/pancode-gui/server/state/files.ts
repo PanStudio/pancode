@@ -2,9 +2,9 @@
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import { randomUUID } from "node:crypto";
 import { mkdir, readdir, readFile, realpath, rename, unlink, writeFile } from "node:fs/promises";
-import { isAbsolute, join, relative, sep } from "node:path";
+import { join, relative } from "node:path";
 import { setTimeout } from "node:timers/promises";
-import { ownerIdentity, ownerState } from "../pancode/http-shims.js";
+import { ownerIdentity, ownerState, relativePathEscapes } from "../pancode/http-shims.js";
 import { AppProblem } from "../services/problem.js";
 
 /** A bakery claim. `host`, `pidNs` and `bootId` are absent on claims from before they were recorded. */
@@ -63,7 +63,7 @@ export class AppFiles {
 		await mkdir(path, { recursive: true });
 		const root = await realpath(path),
 			part = relative(state, root);
-		if (part === ".." || part.startsWith(`..${sep}`) || isAbsolute(part))
+		if (relativePathEscapes(part))
 			throw new AppProblem("validation", "Application state directory escapes its configured root.");
 		return root;
 	}
@@ -72,8 +72,7 @@ export class AppFiles {
 		try {
 			const file = await realpath(join(root, `${name}.json`)),
 				part = relative(root, file);
-			if (part === ".." || part.startsWith(`..${sep}`) || isAbsolute(part))
-				throw new AppProblem("validation", "Web state file escapes its directory.");
+			if (relativePathEscapes(part)) throw new AppProblem("validation", "Web state file escapes its directory.");
 			return JSON.parse(await readFile(file, "utf8")) as unknown;
 		} catch (error) {
 			if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
