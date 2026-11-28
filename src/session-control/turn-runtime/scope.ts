@@ -12,13 +12,18 @@
 
 import type { CacheRequestStructure } from "../../core/cache-telemetry.js";
 import type { ModelRouteRefusal } from "../../core/response-model-id.js";
+import type { FailureCause } from "../../core/telemetry/enums.js";
+import type { TelemetryCall } from "../../core/telemetry/producer.js";
 import type { CallSettled } from "../../core/telemetry/schemas.js";
 import type { CacheBaseline } from "../../domains/telemetry/cache-physics.js";
+import type { TelemetrySessionLease } from "../../domains/telemetry/session-journals.js";
+import type { createRequestStructures } from "../../engine/request-structure.js";
 import type { EngineModel } from "../../engine/types.js";
 import type { ToolFinishEvent } from "../../tools/agent-tools.js";
+import type { AttemptReceipt, RequestCursor } from "../attempt-receipt.js";
 import type { ExpectedColdReason } from "../turn-context.js";
 import type { RunningCallWait, TurnRuntime, TurnRuntimeDeps } from "../turn-runtime-types.js";
-import type { ChatLoopTarget } from "../turn-state.js";
+import type { AgentRuntime, ChatLoopTarget } from "../turn-state.js";
 
 /** The admission outcome the tool registry settled for one call, kept until the call's end event. */
 export type SettledToolOutcome = Pick<
@@ -78,4 +83,39 @@ export interface TurnRuntimeScope {
 	readonly synthesizeModel: (target: ChatLoopTarget) => EngineModel;
 	readonly ensureReasoningProbe: (target: ChatLoopTarget) => void;
 	readonly emitThinkingClampNotice: (resolution: ChatLoopTarget["runtimeResolution"]) => void;
+}
+
+type RequestStructures = ReturnType<typeof createRequestStructures>;
+
+/** What one attempt handed Pi, digested only at settle so the hashing stays off the send path (#434). */
+export interface AttemptRequest {
+	/** The ledger as admission prepared this request (SPEC §1.1), or as a portable fallback rewrote it. */
+	cursor: RequestCursor | null;
+	model: Parameters<RequestStructures>[0];
+	context: Parameters<RequestStructures>[1];
+	compiled: Parameters<RequestStructures>[2];
+	coldReasons: ExpectedColdReason[];
+	receipt: Pick<AttemptReceipt, "toolChoice" | "tail" | "fallback" | "codex">;
+}
+
+/**
+ * The shared state of one agent build.
+ *
+ * buildAgentRuntime builds one scope per agent and hands it to the modules that define the agent's hooks. The same
+ * rules hold as for TurnRuntimeScope: mutable build state lives here as plain fields, read and written as `scope.x`
+ * at the use site, and consts the builder declares later are getters over its own bindings.
+ */
+export interface AgentBuildScope {
+	readonly rt: TurnRuntimeScope;
+	modelCall: TelemetryCall | undefined;
+	journalLease: TelemetrySessionLease | undefined;
+	settledAttempts: CallSettled[];
+	attemptRequest: AttemptRequest | undefined;
+	/** The harness cause of a clean stop the post-tool guard threw, read once by the failure it produced. */
+	guardStopCause: FailureCause | null;
+	// The user turn the run started under, so a call a steer moved to its own entry settles with it (bt-26 N2h).
+	runTurnId: string | null;
+	readonly requestStructure: RequestStructures;
+	readonly currentRun: () => boolean;
+	readonly localRuntime: AgentRuntime;
 }

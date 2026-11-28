@@ -12,19 +12,15 @@ import { outputLimitCutOffToolCallIds } from "../../core/assistant-output.js";
 import type { BackendCompletionTimings } from "../../core/cache-telemetry.js";
 import { classifyCallFailure, trackCallFetch } from "../../core/call-failure.js";
 import { gatewayRoutingObservationFromRecord, gatewayRoutingObservationLabel } from "../../core/gateway-routing.js";
-import { isHostAuthored, rememberMessageCalls } from "../../core/message-accounting.js";
+import { isHostAuthored } from "../../core/message-accounting.js";
 import { applyModelAdmission, type ModelAdmissionEvent } from "../../core/model-admission.js";
 import { projectTargetOrigin } from "../../core/project-target-urls.js";
 import { modelRouteGuarded, modelRouteRefusalMessage } from "../../core/response-model-id.js";
-import { requestedThinking } from "../../core/telemetry/call-effort.js";
-import { mainAgent } from "../../core/telemetry/context.js";
-import type { FailureCause } from "../../core/telemetry/enums.js";
 import { telemetryHub } from "../../core/telemetry/hub.js";
 import { factKnownValue } from "../../core/telemetry/known.js";
 import type { BudgetAlertPayload } from "../../core/telemetry/live-events.js";
-import { pricesCalls, unreportedUsageNotice } from "../../core/telemetry/pricing.js";
-import { beginCall, type TelemetryCall, telemetryCaptures } from "../../core/telemetry/producer.js";
-import type { CallSettled } from "../../core/telemetry/schemas.js";
+import { pricesCalls } from "../../core/telemetry/pricing.js";
+import { telemetryCaptures } from "../../core/telemetry/producer.js";
 import { normalizeTokenUsage } from "../../core/token-split.js";
 import { ToolNames } from "../../core/tool-names.js";
 import { effectiveToolCall, gatewayChainReceipts } from "../../core/tool-surface.js";
@@ -32,8 +28,7 @@ import { runCapStopCode } from "../../core/turn-constraints.js";
 import { requestFits } from "../../domains/context/budget/request-fit.js";
 import { observationTracing, traceObservation } from "../../domains/memory/observation-events.js";
 import type { MiddlewareToolChoiceControl } from "../../domains/middleware/index.js";
-import { calculatePricingCostUsd, resolveEffectivePricing } from "../../domains/providers/catalog.js";
-import { acceptsImageInput } from "../../domains/providers/image-input.js";
+import { resolveEffectivePricing } from "../../domains/providers/catalog.js";
 import {
 	applyModelCapabilityPatch,
 	canonicalEndpointKey,
@@ -41,7 +36,6 @@ import {
 	refineRuntimeTargetWithModelHints,
 	targetRequiresAuth,
 } from "../../domains/providers/index.js";
-import { journalAccountQuota, quotaReadingFromMessage } from "../../domains/quota/index.js";
 import {
 	SessionCostCeilingError,
 	sessionCeilingReached,
@@ -49,15 +43,8 @@ import {
 } from "../../domains/scheduling/budget.js";
 import type { HostInsertSource } from "../../domains/session/entries.js";
 import { missingOutputRefusal } from "../../domains/session/output-obligations.js";
-import { PROMPT_MANIFEST_VERSION } from "../../domains/session/prompt-manifest.js";
 import { type RetrySettings, recordFirstTokenMs, routeFirstTokenSamples } from "../../domains/session/retry.js";
-import { cachePhysics, journaledStructure, serverTimedUsage } from "../../domains/telemetry/cache-physics.js";
-import {
-	callSettlementFromMessage,
-	type InterruptedUsageEstimate,
-	reportedModelFromMessage,
-} from "../../domains/telemetry/call-facts.js";
-import type { TelemetrySessionLease } from "../../domains/telemetry/session-journals.js";
+import { callSettlementFromMessage, reportedModelFromMessage } from "../../domains/telemetry/call-facts.js";
 import { type createEngineAgent, enginePinnedPrefix, providerFallbackOf } from "../../engine/agent.js";
 import { engineMainStreamSimple } from "../../engine/api-registry.js";
 import { readDiffusionFrame } from "../../engine/apis/diffusion-frames.js";
@@ -87,7 +74,7 @@ import {
 	finishSiblingRefusal,
 	withoutReplyResult,
 } from "../../tools/finish.js";
-import { type AttemptReceipt, carriedCheckpoints, type RequestCursor } from "../attempt-receipt.js";
+import type { RequestCursor } from "../attempt-receipt.js";
 import {
 	type AssistantCallTiming,
 	type BackendCacheVerdict,
@@ -128,12 +115,13 @@ import {
 } from "../repetition-detector.js";
 import type { ModelRequestFacts } from "../status-types.js";
 import { assessToolProseLoop, runtimeNarratesToolCalls, shouldAssessToolProse } from "../tool-prose-loop.js";
-import { type ExpectedColdReason, OVERSIZED_RESULT_STOP } from "../turn-context.js";
+import { OVERSIZED_RESULT_STOP } from "../turn-context.js";
 import { stalledRequestEnd } from "../turn-recovery.js";
 import { MODEL_SLOTS_SAMPLE_MS, modelRequestSlots, stallAbortReason } from "../turn-runtime-wait.js";
 import type { AgentRuntime, ChatLoopTarget, PreInvocationStage } from "../turn-state.js";
+import { createCallTelemetry } from "./calls.js";
 import { TurnAdmissionError } from "./errors.js";
-import type { TurnRuntimeScope } from "./scope.js";
+import type { AgentBuildScope, TurnRuntimeScope } from "./scope.js";
 
 const LOCAL_API_KEY_FALLBACK = "pancode-local-target";
 /** The reason a reply cut off by shutdown carries in place of the transport's abort text (bt-26). */
@@ -312,313 +300,41 @@ function buildAgentRuntime(rt: TurnRuntimeScope, inputs: AgentBuildInputs): Agen
 
 	let getCurrentAgentSignal: () => AbortSignal | undefined = () => undefined;
 	const gatewaySessionId = target.runtime.id === "litellm" ? deps.sessionId?.() : undefined;
+	const scope: AgentBuildScope = {
+		rt,
+		modelCall: undefined,
+		journalLease: undefined,
+		settledAttempts: [],
+		attemptRequest: undefined,
+		guardStopCause: null,
+		runTurnId: null,
+		get requestStructure() {
+			return requestStructure;
+		},
+		get currentRun() {
+			return currentRun;
+		},
+		get localRuntime() {
+			return localRuntime;
+		},
+	};
 	// message_start can follow response headers. Keep each invocation's
 	// monotonic anchor before that wait, including custom stream delegates.
 	let apiCallStartedAt: number | null = null;
 	let callTracking: ReturnType<typeof trackCallFetch> | null = null;
-	let modelCall: TelemetryCall | undefined;
-	let journalLease: TelemetrySessionLease | undefined;
-	let settledAttempts: CallSettled[] = [];
 	const requestStructure = createRequestStructures();
-	// What each attempt handed Pi, digested only at settle so the hashing stays off the send path (#434).
-	let attemptRequest:
-		| {
-				/** The ledger as admission prepared this request (SPEC §1.1), or as a portable fallback rewrote it. */
-				cursor: RequestCursor | null;
-				model: Parameters<typeof requestStructure>[0];
-				context: Parameters<typeof requestStructure>[1];
-				compiled: Parameters<typeof requestStructure>[2];
-				coldReasons: ExpectedColdReason[];
-				receipt: Pick<AttemptReceipt, "toolChoice" | "tail" | "fallback" | "codex">;
-		  }
-		| undefined;
 	let admittedCursor: RequestCursor | null = null;
 	// The input admission passed on after an overflow fold; the provider-bound copy pins it.
 	let pinnedInputTokens: number | null = null;
-	/**
-	 * Cache physics against the previous request on the same key. Every attempt the provider saw advances the
-	 * baseline, hidden #426 retries included, so the ledger's #423 shortfall, which only persisted replies
-	 * advance, can differ from rePrefilledTokens until the ledger copy retires (#434).
-	 */
-	const withCachePhysics = (
-		settlement: ReturnType<typeof callSettlementFromMessage>,
-		message: AgentMessage,
-		attemptId: string | undefined,
-	): ReturnType<typeof callSettlementFromMessage> => {
-		const request = attemptRequest;
-		attemptRequest = undefined;
-		const sent = settlement.disposition !== "never_sent";
-		// A cooldown reset closed the Codex socket before this call, so its own full frame rebuilt the continuation;
-		// an auth reset closed it after, so the next call's does. The SSE pin has no measured reset behind it (#423).
-		const recovery = settlement.transport.recovery?.action;
-		const reasons: ExpectedColdReason[] = [
-			...new Set([
-				...(request?.coldReasons ?? []),
-				...(recovery === "cooldown_reset" ? ["transport_reset" as const] : []),
-			]),
-		];
-		if (!sent) rt.carriedColdReasons = [...new Set([...rt.carriedColdReasons, ...reasons])];
-		if (recovery === "auth_reset")
-			rt.carriedColdReasons = [...new Set([...rt.carriedColdReasons, "transport_reset" as const])];
-		const generation = context.cacheGeneration?.() ?? 0;
-		if (generation !== rt.cacheBaselineGeneration) {
-			rt.cacheBaselines.clear();
-			rt.cacheBaselineGeneration = generation;
-		}
-		const resolution = localRuntime.runtimeResolution;
-		const key = JSON.stringify([
-			localRuntime.targetId,
-			request?.model.api ?? localRuntime.agent.state.model.api,
-			localRuntime.wireModelId,
-		]);
-		let structure: ReturnType<typeof requestStructure> | undefined;
-		try {
-			structure = request ? requestStructure(request.model, request.context, request.compiled) : undefined;
-		} catch {
-			// A request PanCode cannot digest leaves its cache facts unobserved; telemetry never fails the call (#434).
-		}
-		const backend = (message as { backendTimings?: BackendCompletionTimings }).backendTimings;
-		// A server whose usage omits cache reads its own timings report is judged by those timings (#434).
-		const timed = serverTimedUsage(settlement, backend);
-		const physics = cachePhysics({
-			settlement: timed ? { ...settlement, usage: timed } : settlement,
-			structure,
-			previous: rt.cacheBaselines.get(key),
-			pricing: resolveEffectivePricing(resolution.target, resolution.runtime, resolution.wireModelId),
-		});
-		if (physics.baseline) rt.cacheBaselines.set(key, physics.baseline);
-		else rt.cacheBaselines.delete(key);
-		const journalKey = JSON.stringify([deps.sessionId?.() ?? null, key]);
-		const prior = rt.journaledStructures.get(journalKey);
-		const journaled = structure ? journaledStructure(structure, prior?.structure, prior?.attemptId) : undefined;
-		if (structure) rt.journaledStructures.set(journalKey, { structure, ...(attemptId ? { attemptId } : {}) });
-		// The receipt is taken at send, beside the structure, for an attempt the provider saw (F14).
-		const receipt: AttemptReceipt | undefined =
-			sent && request?.cursor && journaled
-				? {
-						cursor: { hwm: request.cursor.hwm, leaf: request.cursor.leaf },
-						...(request.cursor.owner ? { owner: request.cursor.owner } : {}),
-						route: {
-							...(resolution.modelTier !== undefined ? { modelTier: resolution.modelTier } : {}),
-							...(resolution.promptCaching !== undefined ? { promptCaching: resolution.promptCaching } : {}),
-							images: acceptsImageInput({ modelInput: request.model.input }),
-							midConversation:
-								(request.model.compat as { supportsMidConvoSystemMessages?: boolean } | undefined)
-									?.supportsMidConvoSystemMessages === true,
-						},
-						...request.receipt,
-						...(request.cursor.continuityAtMs !== undefined ? { continuityAtMs: request.cursor.continuityAtMs } : {}),
-						records: request.cursor.records,
-						checkpoints: carriedCheckpoints(request.context),
-					}
-				: undefined;
-		const usage = (message as { usage?: Record<string, unknown> }).usage ?? {};
-		const verdict =
-			settlement.disposition === "settled" && typeof usage.input === "number" && typeof usage.cacheRead === "number"
-				? backendCacheVerdict(
-						usage.input,
-						usage.cacheRead,
-						typeof usage.cacheWrite === "number" ? usage.cacheWrite : 0,
-						backend,
-						usage.cacheReadField === "sent" || usage.cacheReadField === "omitted" ? usage.cacheReadField : undefined,
-					)
-				: "unknown";
-		return {
-			...settlement,
-			cache: {
-				...settlement.cache,
-				...physics.cache,
-				...(timed ? { uncachedPrefillTokens: timed.input } : {}),
-				expectedColdReasons: sent ? reasons : [],
-				verdict,
-				...(journaled ? { structure: journaled } : {}),
-				...(receipt ? { receipt } : {}),
-			},
-		};
-	};
-	// A call the producer relabels never sent, because its stages never reached the send, leaves its expected cold
-	// reasons to the next call the provider sees, as one the runtime already knew was unsent does (#434).
-	const carryRelabelledReasons = (
-		settlement: ReturnType<typeof callSettlementFromMessage>,
-		facts: CallSettled | undefined,
-	): void => {
-		if (facts?.disposition === "never_sent" && settlement.disposition !== "never_sent")
-			rt.carriedColdReasons = [...new Set([...rt.carriedColdReasons, ...settlement.cache.expectedColdReasons])];
-	};
-	const recordSettledCall = (
-		facts: CallSettled | undefined,
-		owner: TelemetrySessionLease["context"] | undefined,
-	): void => {
-		if (facts) {
-			settledAttempts.push(facts);
-			deps.onModelCallSettled?.(facts);
-		}
-		if (!facts || !deps.telemetry || owner?.sessionId !== deps.sessionOrigin?.()?.id) return;
-		// A call belongs to the turn its lease was taken for, never to whichever turn is active when it settles,
-		// including a stream that settles after its run ended (#434).
-		const turnId = owner?.turnId && (rt.steeredTurns.get(owner.turnId) ?? owner.turnId);
-		if (turnId) rt.turnCalls.set(turnId, [...(rt.turnCalls.get(turnId) ?? []), facts]);
-		if (!currentRun()) return;
-	};
-	// Who stopped an aborted reply when the route did not: its message and its call settlement name the same cause.
-	// An actor flag counts only while its reason is live, so a later harness stop never inherits an earlier Esc (x7-3).
-	/** The harness cause of a clean stop the post-tool guard threw, read once by the failure it produced. */
-	let guardStopCause: FailureCause | null = null;
-	const harnessAbortCause = (): FailureCause | undefined =>
-		state.routeMove !== null
-			? "route_moved"
-			: state.activeInterruptReason !== null && state.activeInterruptByOperator
-				? "operator_cancel"
-				: state.activeInterruptReason !== null && state.activeInterruptByTriage
-					? "triage_stop"
-					: state.activeInterruptReason !== null && state.activeInterruptByAutonomy
-						? "autonomy_stop"
-						: state.activeInterruptReason !== null && state.activeInterruptByJobClock
-							? "job_clock"
-							: state.activeInterruptReason !== null && state.activeInterruptByLoopGuard
-								? "loop_guard"
-								: state.repetitionAbortReason !== null
-									? "repetition"
-									: rt.disposed
-										? "shutdown"
-										: undefined;
-	const settleModelCall = async (
-		message: AgentMessage,
-		unreported: InterruptedUsageEstimate | null = null,
-	): Promise<boolean> => {
-		const call = modelCall;
-		const lease = journalLease;
-		modelCall = undefined;
-		journalLease = undefined;
-		if (call) {
-			Object.assign(message, { callId: call.callId, attemptId: call.attemptId });
-			// Under a cap, a call with no reported usage is priced from its request size at the route's rates, so the cap
-			// still trips; an uncapped session prices nothing extra.
-			const capped = deps.getSettings().safety.limits.sessionCostUsd > 0;
-			const aborted = (message as { stopReason?: unknown }).stopReason === "aborted";
-			let interrupted = capped || aborted ? unreported : null;
-			const resolution = localRuntime.runtimeResolution;
-			const { rates } = resolveEffectivePricing(resolution.target, resolution.runtime, resolution.wireModelId);
-			if (unreported && capped && rates) interrupted = { ...unreported, usd: calculatePricingCostUsd(rates, unreported) };
-			const quota = quotaReadingFromMessage(message, localRuntime.runtimeId, localRuntime.targetId);
-			const settlement = withCachePhysics(
-				callSettlementFromMessage(
-					message,
-					{ ...resolution, rates },
-					message.role === "assistant" && message.stopReason === "aborted" ? harnessAbortCause() : undefined,
-					interrupted,
-				),
-				message,
-				call.attemptId,
-			);
-			const facts = call.settle(
-				{
-					...settlement,
-					...(quota ? { quota: { provider: quota.provider, windows: quota.windows, source: quota.source } } : {}),
-				},
-				reportedModelFromMessage(message),
-			);
-			carryRelabelledReasons(settlement, facts);
-			if (
-				settlement.pricing.usd.kind === "estimated" &&
-				settlement.pricing.usd.method === "prompt-side-only" &&
-				capped &&
-				// PanCode cut an aborted call short, so its missing usage is no provider's omission (bt-deep 11).
-				!aborted &&
-				!rt.unreportedUsageSessions.has(deps.sessionOrigin?.()?.id ?? "")
-			) {
-				rt.unreportedUsageSessions.add(deps.sessionOrigin?.()?.id ?? "");
-				deps.emitNotice(unreportedUsageNotice(localRuntime.targetId), "warning");
-			}
-			recordSettledCall(facts, lease?.context);
-			if (quota && facts) journalAccountQuota(quota);
-			rememberMessageCalls(message, settledAttempts);
-		}
-		await lease?.release();
-		// A minted call id is not accounting: only a journal that opened holds the call's spend, so a call under a
-		// lease that failed to open stays under the in-run cost guard (#434).
-		return call !== undefined && lease?.journaled === true;
-	};
-	// A round the loop moves past without an assistant message still settles its attempt, so no call.started stays
-	// open and no lease is held past the run (#434, R9). It has no ledger row, so a never-sent one is counted here.
-	const abandonModelCall = async (): Promise<void> => {
-		const call = modelCall;
-		const lease = journalLease;
-		modelCall = undefined;
-		journalLease = undefined;
-		attemptRequest = undefined;
-		if (call) {
-			recordSettledCall(
-				call.abandon(
-					state.activeInterruptReason !== null && state.activeInterruptByOperator
-						? "operator_cancel"
-						: state.activeInterruptReason !== null && state.activeInterruptByTriage
-							? "triage_stop"
-							: state.activeInterruptReason !== null && state.activeInterruptByAutonomy
-								? "autonomy_stop"
-								: state.activeInterruptReason !== null && state.activeInterruptByJobClock
-									? "job_clock"
-									: state.activeInterruptReason !== null && state.activeInterruptByLoopGuard
-										? "loop_guard"
-										: "internal",
-				),
-				lease?.context,
-			);
-		}
-		await lease?.release();
-	};
-	// The journal's call for the next model response of this run (#434).
-	const openModelCall = async (): Promise<void> => {
-		const origin = deps.sessionOrigin?.();
-		if (!origin || !deps.telemetry?.acquireTelemetrySession) return;
-		const leaseTurnId = state.activeUserTurnId;
-		if (runTurnId !== null && leaseTurnId !== null && leaseTurnId !== runTurnId)
-			rt.steeredTurns.set(leaseTurnId, rt.steeredTurns.get(runTurnId) ?? runTurnId);
-		journalLease = await deps.telemetry.acquireTelemetrySession(origin, mainAgent(origin.id), leaseTurnId ?? undefined);
-		const compiled = context.compiledSessionPrompt?.();
-		const compile = context.promptCompileRecord?.();
-		const objects = await journalLease.storeRequestObjects?.({
-			...(compiled ? { prompt: { ...compiled, ...(compile ? { compile } : {}) } } : {}),
-			tools: localRuntime.agent.state.tools.map(({ name, description, parameters }) => ({
-				name,
-				description,
-				parameters,
-			})),
-		});
-		const choice = middlewareToolChoice.current();
-		const textOnly = state.synthesisToolLock || choice.kind === "none";
-		modelCall = beginCall(
-			{
-				...(objects && Object.keys(objects).length > 0 ? { objects } : {}),
-				target: {
-					targetId: localRuntime.targetId,
-					runtimeId: localRuntime.runtimeId,
-					api: localRuntime.agent.state.model.api,
-					requestedModel: localRuntime.wireModelId,
-					reportedModel: { kind: "unknown", reason: "not-observed" },
-				},
-				roundKind: textOnly ? "text-only" : choice.kind === "required" ? "required" : "normal",
-				toolChoice: textOnly ? "none" : choice.kind === "required" ? { name: choice.toolName } : "auto",
-				...requestedThinking(localRuntime.agent.state.thinkingLevel),
-			},
-			journalLease.context,
-		);
-		if (objects?.promptStructure && compiled)
-			journalLease.recordPromptCompiled?.(
-				objects.promptStructure,
-				{
-					layoutVersion: PROMPT_MANIFEST_VERSION,
-					tokenEstimate: Math.max(0, Math.round(compiled.tokenEstimate)),
-					sections: compiled.sections.length,
-					...(compile ? { compiledAt: compile.at, previousHash: compile.previousHash } : {}),
-					...(localRuntime.agent.state.thinkingLevel
-						? { thinkingLevel: String(localRuntime.agent.state.thinkingLevel) }
-						: {}),
-				},
-				{ ...journalLease.context, callId: modelCall.callId, attemptId: modelCall.attemptId },
-			);
-		modelCall.stage("transform", "start");
-	};
+	const {
+		withCachePhysics,
+		carryRelabelledReasons,
+		recordSettledCall,
+		harnessAbortCause,
+		settleModelCall,
+		abandonModelCall,
+		openModelCall,
+	} = createCallTelemetry(scope);
 	let apiCallFirstDeltaAt: number | null = null;
 	// Ends the request in flight on the first-token watchdog's verdict; set per request, cleared when it settles (MD11).
 	let cutStalledRequest: ((reason: string) => void) | null = null;
@@ -652,15 +368,13 @@ function buildAgentRuntime(rt: TurnRuntimeScope, inputs: AgentBuildInputs): Agen
 	};
 	rt.clearCurrentWatchdog();
 	let runIdentity = deps.turnIdentity?.();
-	// The user turn the run started under, so a call a steer moved to its own entry settles with it (bt-26 N2h).
-	let runTurnId: string | null = null;
 	const currentRun = (): boolean => runIdentity === deps.turnIdentity?.();
 	// One span covers Pi's whole pre-invocation gate; `waitedOn` names the ceiling that held it, so a
 	// budget wait reads as admission and never as a stall (#424, #434).
 	const stageAdmission =
 		(admit: (request: Parameters<StreamAdmission>[0], hold: AdmissionHold) => ReturnType<StreamAdmission>) =>
 		async (request: Parameters<StreamAdmission>[0]): Promise<Awaited<ReturnType<StreamAdmission>>> => {
-			const call = modelCall;
+			const call = scope.modelCall;
 			const hold: AdmissionHold = {};
 			call?.stage("admission", "start");
 			try {
@@ -701,20 +415,21 @@ function buildAgentRuntime(rt: TurnRuntimeScope, inputs: AgentBuildInputs): Agen
 				(request) => {
 					const serial = ++requestSerial;
 					const retry = invokedAttempt;
-					if (retry && modelCall)
-						modelCall =
-							modelCall.nextAttempt({ toolChoice: request.options?.toolChoice === "none" ? "none" : "auto" }) ?? modelCall;
+					if (retry && scope.modelCall)
+						scope.modelCall =
+							scope.modelCall.nextAttempt({ toolChoice: request.options?.toolChoice === "none" ? "none" : "auto" }) ??
+							scope.modelCall;
 					invokedAttempt = true;
-					const attempt = modelCall;
+					const attempt = scope.modelCall;
 					// The first attempt's send opened at onStreamInvocation; a #426 retry opens its own here.
 					attempt?.stage("send", "start");
 					deps.onModelRequestSent?.(
-						attempt && journalLease
+						attempt && scope.journalLease
 							? {
 									callId: attempt.callId,
 									attemptId: attempt.attemptId,
 									attempt: attempt.attempt,
-									context: journalLease.context,
+									context: scope.journalLease.context,
 								}
 							: null,
 					);
@@ -765,7 +480,7 @@ function buildAgentRuntime(rt: TurnRuntimeScope, inputs: AgentBuildInputs): Agen
 					if (attempt) {
 						const fallback = providerFallbackOf(request.options);
 						const codex = (request.options as { codexConfiguration?: CodexConfiguration } | undefined)?.codexConfiguration;
-						attemptRequest = {
+						scope.attemptRequest = {
 							// A portable fallback wrote its record after admission; the request renders through it.
 							cursor: fallback !== undefined ? (deps.requestCursor?.() ?? admittedCursor) : admittedCursor,
 							receipt: {
@@ -820,7 +535,7 @@ function buildAgentRuntime(rt: TurnRuntimeScope, inputs: AgentBuildInputs): Agen
 				},
 				localRuntime.targetId,
 				(message) => {
-					if (!modelCall) return;
+					if (!scope.modelCall) return;
 					const terminal = terminalFailureFromAssistantMessage(message);
 					const reported = normalizeTokenUsage((message.usage ?? {}) as unknown as Record<string, unknown>).observed;
 					const failure = terminal
@@ -831,11 +546,11 @@ function buildAgentRuntime(rt: TurnRuntimeScope, inputs: AgentBuildInputs): Agen
 					const settlement = withCachePhysics(
 						callSettlementFromMessage({ ...message, ...(failure ? { failure } : {}) }, { ...resolution, rates }),
 						message,
-						modelCall.attemptId,
+						scope.modelCall.attemptId,
 					);
-					const facts = modelCall.settle(settlement, reportedModelFromMessage(message));
+					const facts = scope.modelCall.settle(settlement, reportedModelFromMessage(message));
 					carryRelabelledReasons(settlement, facts);
-					recordSettledCall(facts, journalLease?.context);
+					recordSettledCall(facts, scope.journalLease?.context);
 				},
 			);
 		},
@@ -889,7 +604,7 @@ function buildAgentRuntime(rt: TurnRuntimeScope, inputs: AgentBuildInputs): Agen
 			state.finishReplyRefused = true;
 			const active = state.activeUserTurnId;
 			// Keyed like turnCalls (bt-26 N2h): a refusal after a steer settles under the user turn the run started under.
-			const refusedTurn = active && (rt.steeredTurns.get(active) ?? runTurnId ?? active);
+			const refusedTurn = active && (rt.steeredTurns.get(active) ?? scope.runTurnId ?? active);
 			if (refusedTurn) rt.bareFinishRefusals.set(refusedTurn, (rt.bareFinishRefusals.get(refusedTurn) ?? 0) + 1);
 			rt.protocolRetryCalls.add(toolCall.id);
 			return { block: true, reason: FINISH_WITHOUT_REPLY_REFUSAL };
@@ -1024,12 +739,12 @@ function buildAgentRuntime(rt: TurnRuntimeScope, inputs: AgentBuildInputs): Agen
 									);
 									state.modelRequest = parked;
 								},
-								...(modelCall && journalLease
+								...(scope.modelCall && scope.journalLease
 									? {
 											telemetry: {
-												...journalLease.context,
-												callId: modelCall.callId,
-												attemptId: modelCall.attemptId,
+												...scope.journalLease.context,
+												callId: scope.modelCall.callId,
+												attemptId: scope.modelCall.attemptId,
 											},
 										}
 									: {}),
@@ -1088,7 +803,7 @@ function buildAgentRuntime(rt: TurnRuntimeScope, inputs: AgentBuildInputs): Agen
 			apiCallStartedAt = performance.now();
 			apiCallFirstDeltaAt = null;
 			outputHeld = false;
-			modelCall?.stage("send", "start");
+			scope.modelCall?.stage("send", "start");
 			// The request is out, so its first token is held to the route's first-token limit from now; the run's
 			// timer was armed for the mid-stream window, which a calibrated hosted route undercuts (MD11).
 			const retry = deps.retrySettings();
@@ -1101,7 +816,7 @@ function buildAgentRuntime(rt: TurnRuntimeScope, inputs: AgentBuildInputs): Agen
 		authResolvedByHost: true,
 		getApiKey: async () => {
 			// Pi converts the conversation between turn_start and this call; that is the transform stage (#434).
-			const call = modelCall;
+			const call = scope.modelCall;
 			call?.stage("transform", "end");
 			placeholderKeySent = !targetRequiresAuth(
 				localRuntime.runtimeResolution.target,
@@ -1269,7 +984,7 @@ function buildAgentRuntime(rt: TurnRuntimeScope, inputs: AgentBuildInputs): Agen
 
 	handle.agent.prepareNextTurnWithContext = async (_completed, signal?: AbortSignal) => {
 		stallSuspendDepth += 1;
-		guardStopCause = null;
+		scope.guardStopCause = null;
 		// Host messages queued during the tool batch (X6). Taken now, so a cancel, a throw or an early return below
 		// drops them unrecorded; they enter the ledger only where they enter the outgoing context.
 		const hostMessages = deps.queueHandOver?.takeHostMessages?.() ?? [];
@@ -1300,7 +1015,7 @@ function buildAgentRuntime(rt: TurnRuntimeScope, inputs: AgentBuildInputs): Agen
 				})
 				.catch((error: unknown) => {
 					// PanCode's guard, not the route, ended the turn (CLI-3).
-					if (error instanceof Error && error.name === OVERSIZED_RESULT_STOP) guardStopCause = "oversized_tool_result";
+					if (error instanceof Error && error.name === OVERSIZED_RESULT_STOP) scope.guardStopCause = "oversized_tool_result";
 					throw error;
 				});
 			if (!currentRun() || signal?.aborted || state.activeInterruptReason !== null) return undefined;
@@ -1488,7 +1203,7 @@ function buildAgentRuntime(rt: TurnRuntimeScope, inputs: AgentBuildInputs): Agen
 	const onAgentEvent = async (event: AgentEvent): Promise<void> => {
 		if (event.type === "agent_start") {
 			runIdentity = deps.turnIdentity?.();
-			runTurnId = state.activeUserTurnId;
+			scope.runTurnId = state.activeUserTurnId;
 			// The last run's request says nothing about this one until this one is sent.
 			state.modelRequest = null;
 		}
@@ -1505,8 +1220,8 @@ function buildAgentRuntime(rt: TurnRuntimeScope, inputs: AgentBuildInputs): Agen
 			// The last request's facts say nothing about this turn's until its own request goes out.
 			state.modelRequest = null;
 			await abandonModelCall();
-			settledAttempts = [];
-			attemptRequest = undefined;
+			scope.settledAttempts = [];
+			scope.attemptRequest = undefined;
 			await openModelCall();
 		}
 		// Every span below is measured on the monotonic frame, so an NTP
@@ -1661,9 +1376,9 @@ function buildAgentRuntime(rt: TurnRuntimeScope, inputs: AgentBuildInputs): Agen
 					terminal.stopReason === "aborted" && state.streamStallReason === null
 						? harnessAbortCause()
 						: terminal.stopReason === "error"
-							? (guardStopCause ?? undefined)
+							? (scope.guardStopCause ?? undefined)
 							: undefined;
-				guardStopCause = null;
+				scope.guardStopCause = null;
 				Object.assign(message, {
 					failure:
 						!failure.invoked && preInvocationStage === "budget admission"
@@ -1779,7 +1494,7 @@ function buildAgentRuntime(rt: TurnRuntimeScope, inputs: AgentBuildInputs): Agen
 			const hasDelta = hasAssistantGenerationDelta(publicEvent.assistantMessageEvent);
 			if (hasDelta && apiCallFirstDeltaAt === null) {
 				apiCallFirstDeltaAt = eventClock;
-				modelCall?.mark("firstToken");
+				scope.modelCall?.mark("firstToken");
 				// The route's first-token limit adapts to what this process has seen it do (MD11).
 				if (apiCallStartedAt !== null && !outputHeld)
 					recordFirstTokenMs(localRuntime.targetId, localRuntime.wireModelId, eventClock - apiCallStartedAt);
