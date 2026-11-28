@@ -109,7 +109,11 @@ const SESSION_STAGES: ReadonlyArray<readonly [name: string, roots: ReadonlyArray
  * src/core/settings-controls.ts stopped importing the providers domain, guards
  * alone grouped them with telemetry call-fact and store modules the rows never
  * run (61 files and 1,689,457 B against 57 and 1,654,992 B; 52 and 1,601,087 B
- * rooted).
+ * rooted). It roots the assignment store and the fleet event journal the rows
+ * read too: after the install and programs moves, guards alone put them in a
+ * file whose import of src/domains/system-one/julia-tokenizer.ts loaded
+ * src/core/pinned-asset.ts beside src/domains/context/index.ts (45 files
+ * against 39 and 1,521,183 B rooted).
  */
 const EXACT_PATHS: ReadonlyArray<readonly [name: string, roots: ReadonlyArray<string>]> = [
 	// The workspace launcher: the launch stage plus what starts the pane host and the session inside it.
@@ -160,6 +164,8 @@ const EXACT_PATHS: ReadonlyArray<readonly [name: string, roots: ReadonlyArray<st
 			"src/domains/telemetry/read-model-runs.ts",
 			"src/domains/telemetry/read-model-usage.ts",
 			"src/domains/dispatch/budget-envelope.ts",
+			"src/domains/dispatch/assignment-store.ts",
+			"src/domains/dispatch/fleet-event-journal.ts",
 		],
 	],
 ];
