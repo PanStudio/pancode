@@ -10,6 +10,7 @@ import {
 	mainSandboxWriteHint,
 	readOnlyMainSandboxPolicy,
 } from "../../core/sandbox/main-session.js";
+import type { ResourceLimits } from "../../core/sandbox/types.js";
 import { declaredVerificationScripts, VERIFICATION_SCRIPT_FAMILY_HINT } from "../../core/verification-scripts.js";
 import { runVectorTool } from "../safe-exec.js";
 import type { ToolResult } from "../tool-spec.js";
@@ -219,6 +220,8 @@ export function listChecks(cwdArg: string | undefined): ToolResult {
 export interface VerifyRunOptions {
 	signal?: AbortSignal;
 	shellSandbox?: MainSandboxPolicy;
+	/** `safety.resources.main` ceilings for each command a check starts. */
+	resourceLimits?: ResourceLimits;
 	/**
 	 * The checkout a declared check's cwd, reference and baseline resolve against; the process working directory when
 	 * absent. A caller running a check in another checkout passes it here rather than changing the process directory.
@@ -236,9 +239,12 @@ function verifyCheckEnv(extra?: Record<string, string>): Record<string, string> 
 }
 
 /** The main-session sandbox's write hint for a contained check's failed output, on its own line, or "". */
-function sandboxHint(output: string, options: VerifyRunOptions | undefined): string {
+function sandboxHint(output: string, options: VerifyRunOptions | undefined, resourceNote?: string): string {
 	const hint = options?.shellSandbox === undefined ? null : mainSandboxWriteHint(output, options.shellSandbox);
-	return hint === null ? "" : `\n${hint}`;
+	return [resourceNote ?? null, hint]
+		.filter((line): line is string => line !== null)
+		.map((line) => `\n${line}`)
+		.join("");
 }
 
 /**
@@ -835,6 +841,7 @@ async function runJudgedCheck(
 					cwd,
 					workspaceRoot,
 					...(options?.shellSandbox !== undefined ? { shellSandbox: options.shellSandbox } : {}),
+					...(options?.resourceLimits !== undefined ? { resourceLimits: options.resourceLimits } : {}),
 					...(options?.signal !== undefined ? { signal: options.signal } : {}),
 				});
 	const runCount = numeric?.repeat ?? 1;
@@ -856,6 +863,7 @@ async function runJudgedCheck(
 				env: verifyCheckEnv(numeric?.seed !== undefined ? { [numeric.seed.env]: numeric.seed.value } : undefined),
 				...(options?.signal !== undefined ? { signal: options.signal } : {}),
 				...(options?.shellSandbox !== undefined ? { shellSandbox: options.shellSandbox } : {}),
+				...(options?.resourceLimits !== undefined ? { resourceLimits: options.resourceLimits } : {}),
 			});
 		} catch (error) {
 			return { kind: "error", message: `verify: ${runLabel}${error instanceof Error ? error.message : String(error)}` };
@@ -880,7 +888,7 @@ async function runJudgedCheck(
 		}
 		if (result.exitCode !== 0) {
 			const tail = `${result.stdout}${result.stderr}`.trim().slice(-2_000);
-			const hint = sandboxHint(`${result.stdout}\n${result.stderr}`, options);
+			const hint = sandboxHint(`${result.stdout}\n${result.stderr}`, options, result.resourceNote);
 			return {
 				kind: "error",
 				message: `verify: ${runLabel}${check.kind} command exited with code ${result.exitCode ?? "?"} before judgement: ${tail}${hint}`,
@@ -987,6 +995,7 @@ async function runReproduceCheck(check: DeclaredCheck, options?: VerifyRunOption
 		workspaceRoot: options?.workspaceRoot ?? process.cwd(),
 		...(options?.signal !== undefined ? { signal: options.signal } : {}),
 		...(options?.shellSandbox !== undefined ? { shellSandbox: options.shellSandbox } : {}),
+		...(options?.resourceLimits !== undefined ? { resourceLimits: options.resourceLimits } : {}),
 	});
 	return reproduceToolResult(outcome);
 }
@@ -1023,6 +1032,7 @@ async function runBrowserDeclaredCheck(
 	options?: VerifyRunOptions,
 ): Promise<ToolResult> {
 	const { runBrowserCheck } = await import("./browser.js");
+	// Browser checks run without safety.resources ceilings; they use their own loopback/container isolation.
 	const outcome = await runBrowserCheck(check, cwd, {
 		workspaceRoot: options?.workspaceRoot ?? process.cwd(),
 		...(options?.signal !== undefined ? { signal: options.signal } : {}),
