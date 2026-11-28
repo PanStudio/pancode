@@ -4,9 +4,9 @@
 /** The board's items: council member folding, earlier-session grouping, and the selectable rows. */
 import { parseCouncilReport } from "../domains/agents/index.js";
 import { NEVER_STARTED_WORDS, workerFailureHeadline } from "../domains/dispatch/failure-headline.js";
-import { sanitizeCallTargetText, sanitizeMultilineDisplayText } from "../domains/safety/call-target.js";
-import { redactStreamingSecretString } from "../domains/safety/redaction.js";
 import { truncateToWidth, visibleWidth } from "../engine/tui.js";
+import { sanitizeCallTargetText, sanitizeMultilineDisplayText } from "../lib/call-target/call-target.js";
+import { redactStreamingSecretString } from "../lib/secrets/redaction.js";
 import { COUNCIL_SYNTHESIS_LABEL } from "../session-control/council.js";
 import type { CouncilGroupView, CouncilMemberView } from "./council-grid.js";
 import {

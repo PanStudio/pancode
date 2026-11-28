@@ -47,7 +47,7 @@ const httpModules = new Map([
 	// The approval card reads the scope out of the session option the engine names with this prefix.
 	["src/domains/safety/escape-scope.ts", new Set(["ESCAPE_SCOPE_OPTION_PREFIX"])],
 	// A file preview withholds the same secret names the agent's read tool and shell sandbox refuse.
-	["src/domains/safety/secret-paths.ts", new Set(["WORKSPACE_SECRET_PATHS"])],
+	["src/lib/secrets/secret-paths.ts", new Set(["WORKSPACE_SECRET_PATHS"])],
 ]);
 // The read-model DTO schemas and types cross into the browser contract through wire-shims (#434). dto.ts keeps a
 // typebox-only value-import closure, which the closure test below holds for the whole contract directory.

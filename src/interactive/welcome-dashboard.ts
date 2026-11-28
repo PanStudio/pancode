@@ -9,10 +9,10 @@ import { asciiOnly } from "../core/terminal-preferences.js";
 import { markProjectSeen, projectSeen } from "../core/welcome-seen.js";
 import type { ContextState } from "../domains/context/index.js";
 import type { ProvidersContract, TargetStatus } from "../domains/providers/index.js";
-import { effectiveYoloConfinement } from "../domains/safety/autonomy.js";
-import { sanitizeCallTargetText } from "../domains/safety/call-target.js";
 import type { WorkspaceSnapshot } from "../domains/session/workspace/index.js";
 import { type Component, type Keybinding, truncateToWidth, visibleWidth, wrapTextWithAnsi } from "../engine/tui.js";
+import { effectiveYoloConfinement } from "../lib/autonomy/autonomy.js";
+import { sanitizeCallTargetText } from "../lib/call-target/call-target.js";
 import { brandMark, GLYPH, meter, type PancodeTheme, padAnsi, pancodeTheme, wordmarkName } from "./theme/index.js";
 import { skinEpoch } from "./theme/tokens.js";
 import {

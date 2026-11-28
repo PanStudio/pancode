@@ -11,11 +11,11 @@ import { stripSkillInstallOfferTag } from "../core/skill-activation.js";
 import { ToolNames } from "../core/tool-names.js";
 import { isRecord } from "../core/type-guards.js";
 import { pancodeStateDir } from "../core/xdg.js";
-import { type AutonomyExposure, DEFAULT_AUTONOMY_EXPOSURE } from "../domains/safety/autonomy.js";
 import { classifyDecisionPresentation, decisionFactsForAnswer } from "../domains/safety/decision-presentation.js";
 import { ESCAPE_SCOPE_OPTION_PREFIX } from "../domains/safety/escape-scope.js";
 import { namesLeavingSandbox } from "../domains/safety/sandbox-escape.js";
 import { StringEnum } from "../engine/ai.js";
+import { type AutonomyExposure, DEFAULT_AUTONOMY_EXPOSURE } from "../lib/autonomy/autonomy.js";
 import type {
 	AskUserToolPolicy,
 	AskUserTranscriptAnswer,

@@ -12,7 +12,7 @@ import { incompleteInstallationAcpAdvice } from "../../core/incomplete-installat
 import { buildSafeToolEnv } from "../../core/safe-exec.js";
 import { MAX_TIMER_DELAY_MS } from "../../core/timers.js";
 import { isRecord } from "../../core/type-guards.js";
-import { redactSecretString } from "../../domains/safety/redaction.js";
+import { redactSecretString } from "../../lib/secrets/redaction.js";
 import {
 	ACP_INTERNAL_ERROR_MESSAGE,
 	ACP_METHOD_NOT_FOUND_MESSAGE,

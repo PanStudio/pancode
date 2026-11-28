@@ -21,9 +21,9 @@ import {
 	JUDGE_GATE_PROMPT,
 } from "../../src/domains/dispatch/gate-role-prompts.js";
 import type { RunResultOutput } from "../../src/domains/dispatch/types.js";
-import { mapAutonomy } from "../../src/domains/safety/autonomy.js";
 import { createSafetyPolicyEngine } from "../../src/domains/safety/policy-engine.js";
 import { loadProjectSafetyPolicy } from "../../src/domains/safety/project-policy.js";
+import { mapAutonomy } from "../../src/lib/autonomy/autonomy.js";
 import { renderCompeteJudgeTask } from "../../src/tools/compete-judge-task.js";
 import { readTool } from "../../src/tools/read.js";
 import { isolatePancodeEnv } from "../harness/scratch-env.js";

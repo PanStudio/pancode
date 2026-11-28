@@ -11,8 +11,8 @@
  */
 
 import type { SkillSurfaceChange } from "../../core/skill-activation.js";
-import { sanitizeCallTargetText } from "../../domains/safety/call-target.js";
 import { visibleWidth, wrapTextWithAnsi } from "../../engine/tui.js";
+import { sanitizeCallTargetText } from "../../lib/call-target/call-target.js";
 import { functionText, GLYPH, pancodeTheme } from "../theme/index.js";
 
 const theme = pancodeTheme();

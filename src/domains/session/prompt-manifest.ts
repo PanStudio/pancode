@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
+
+import { PROJECT_PRELOAD_MODES } from "../../core/telemetry/session-vocabulary.js";
 import { pancodeStateDir } from "../../core/xdg.js";
-import { PROJECT_PRELOAD_MODES, type ProjectPreloadClass } from "../prompts/preload.js";
+import type { ProjectPreloadClass } from "../prompts/preload.js";
 import { readSessionPromptCompiles } from "../telemetry/index.js";
 import type { SessionMeta } from "./contract.js";
 

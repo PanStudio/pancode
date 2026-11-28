@@ -4,7 +4,7 @@ import { performance } from "node:perf_hooks";
 import { tokenUsageCounts } from "../../core/token-split.js";
 import { ToolNames } from "../../core/tool-names.js";
 import { isRecord } from "../../core/type-guards.js";
-import { describeCallAction } from "../../domains/safety/call-target.js";
+import { describeCallAction } from "../../lib/call-target/call-target.js";
 import type { AgentEvent, AgentMessage } from "../types.js";
 import type { PancodeWorkerEvent } from "../worker-events.js";
 import { mapAcpToolCall } from "./tool-mediator.js";

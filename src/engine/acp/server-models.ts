@@ -14,9 +14,9 @@ import type { ProvidersContract } from "../../domains/providers/contract.js";
 import { isOrchestratorEligibleRuntime } from "../../domains/providers/eligibility.js";
 import { modelIdsForStatus } from "../../domains/providers/model-discovery.js";
 import { resolveRuntimeTarget } from "../../domains/providers/runtime-resolution.js";
-import { DEFAULT_AUTONOMY_LEVEL, isAutonomyLevel, type YoloConfinement } from "../../domains/safety/autonomy.js";
-import { sanitizeCallTargetText } from "../../domains/safety/call-target.js";
-import { redactSecretString } from "../../domains/safety/redaction.js";
+import { DEFAULT_AUTONOMY_LEVEL, isAutonomyLevel, type YoloConfinement } from "../../lib/autonomy/autonomy.js";
+import { sanitizeCallTargetText } from "../../lib/call-target/call-target.js";
+import { redactSecretString } from "../../lib/secrets/redaction.js";
 import { AcpRequestError } from "./errors.js";
 import {
 	boundString,

@@ -3,10 +3,10 @@
 import { type BoardFact, tierPolicy, tierRevision } from "../core/presentation-tier.js";
 import { USAGE_NOT_MEASURED, usageLineFigure } from "../core/views/usage-words.js";
 import { foregroundStreamUsage } from "../domains/providers/index.js";
-import { sanitizeCallTargetText } from "../domains/safety/call-target.js";
 import type { TelemetrySnapshot } from "../domains/telemetry/index.js";
 import type { Component } from "../engine/tui.js";
 import { truncateToWidth, visibleWidth } from "../engine/tui.js";
+import { sanitizeCallTargetText } from "../lib/call-target/call-target.js";
 import { councilGroupBody } from "./council-grid.js";
 import {
 	type DispatchBoardItem,

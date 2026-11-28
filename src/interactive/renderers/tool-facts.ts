@@ -6,7 +6,7 @@ import { isSkillLoadRefusal, type SkillLoadRefusal } from "../../core/skill-acti
 import { ToolNames } from "../../core/tool-names.js";
 import { isRecord } from "../../core/type-guards.js";
 import { formatSize } from "../../core/views/tool-words.js";
-import { sanitizeCallTargetText } from "../../domains/safety/call-target.js";
+import { sanitizeCallTargetText } from "../../lib/call-target/call-target.js";
 import { isGatewayChain } from "../../tools/gateway-display.js";
 import type { ResolvedToolRow } from "../../tools/presentation.js";
 import { effectiveToolCall } from "../../tools/surface.js";

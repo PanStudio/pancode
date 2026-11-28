@@ -11,7 +11,7 @@ import type { PackageIdentity } from "../../../core/package-identity.js";
 import { runCommandVector } from "../../../core/safe-exec.js";
 import { ownerTelemetryContext } from "../../../core/telemetry/context.js";
 import { telemetryHub } from "../../../core/telemetry/hub.js";
-import { isSecretArgKey, redactSecretString } from "../../safety/redaction.js";
+import { isSecretArgKey, redactSecretString } from "../../../lib/secrets/redaction.js";
 import { BINARY_RUN_LIMITS, type PackBinaryRunRequest, packBinaryPath, packBinarySha256 } from "./binaries.js";
 
 export interface PackBinaryRunResult {

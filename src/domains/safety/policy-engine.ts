@@ -15,6 +15,12 @@ import { mainSandboxWritableRoots, type YoloScriptSandboxState } from "../../cor
 import { shellJoin } from "../../core/shell-quote.js";
 import { ToolNames } from "../../core/tool-names.js";
 import { pancodeConfigDir } from "../../core/xdg.js";
+import { effectiveScratchRoots } from "../../lib/scratch-roots/scratch-roots.js";
+import {
+	conditionalSecretPaths,
+	pancodeControlPaths,
+	pancodeCredentialStorePaths,
+} from "../../lib/secrets/secret-paths.js";
 import { resolveProjectVerifierExecutionCwd } from "../../tools/verify/catalog.js";
 import { resolveVerifyCall, verifyResolutionArgv } from "../../tools/verify/resolve.js";
 import { prepareVerifyArguments } from "../../tools/verify/surface.js";
@@ -170,9 +176,7 @@ import { formatRejection, type RejectionMessage } from "./rejection-feedback.js"
 import { ROUTING_PIN_HINT } from "./routing-settings.js";
 import { getCachedBaseRuleset } from "./rule-pack-loader.js";
 import { SANDBOX_ESCAPE_REASON, SANDBOX_ESCAPE_RULE_ID } from "./sandbox-escape.js";
-import { effectiveScratchRoots } from "./scratch-roots.js";
 import { commandMoveBases, type ScriptLine } from "./script-shell.js";
-import { conditionalSecretPaths, pancodeControlPaths, pancodeCredentialStorePaths } from "./secret-paths.js";
 import {
 	invokesSettingsMutation,
 	SETTINGS_AUTHORITY_REASON,

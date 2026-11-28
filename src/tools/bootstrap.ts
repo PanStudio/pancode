@@ -15,8 +15,8 @@ import {
 	type McpElicitationHost,
 } from "../domains/gateway/mcp/index.js";
 import type { PanesOperations } from "../domains/mux/operations.js";
-import type { AutonomyLevel } from "../domains/safety/autonomy.js";
 import type { DecisionLedgerEntry } from "../domains/session/entries.js";
+import type { AutonomyLevel } from "../lib/autonomy/autonomy.js";
 import type { BrowserTool } from "./browser/index.js";
 import { browserToolSurface } from "./browser/surface.js";
 import { builtin, toolPromptHintsForNames } from "./builtin-tool-catalog.js";

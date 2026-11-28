@@ -13,7 +13,6 @@ import type { ReadRecallPort } from "../domains/context/working-set/reread.js";
 import type { BudgetEconomicsPort } from "../domains/dispatch/contract.js";
 import type { VisionSidecar } from "../domains/providers/vision-sidecar.js";
 import type { LoadSkillsInput } from "../domains/resources/index.js";
-import type { AutonomyLevel } from "../domains/safety/autonomy.js";
 import type { SessionContract } from "../domains/session/contract.js";
 import type { DecisionBoardStore } from "../domains/session/decision-board.js";
 import type { SessionEntry } from "../domains/session/entries.js";
@@ -21,6 +20,7 @@ import { createTaskBoardStore, type TaskBoardStore } from "../domains/session/ta
 import type { WorkspaceSnapshot } from "../domains/session/workspace/index.js";
 import type { UserTasksStore } from "../domains/user-tasks/store.js";
 import type { ImageContent } from "../engine/types.js";
+import type { AutonomyLevel } from "../lib/autonomy/autonomy.js";
 import type { AgentLedgerPort } from "../worker/protocol.js";
 import { createArtifactTool } from "./artifact.js";
 import { type AskUserHandler, createAskUserTool } from "./ask-user.js";

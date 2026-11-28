@@ -22,7 +22,6 @@ import { createMiddlewareToolChoiceControl } from "../../src/domains/middleware/
 import type { CompletionFact, MiddlewareEffect, MiddlewareHookInput } from "../../src/domains/middleware/types.js";
 import { renderSessionPostureUpdate } from "../../src/domains/prompts/compiler.js";
 import { loadFragments } from "../../src/domains/prompts/fragment-loader.js";
-import { admissionAutonomy, effectiveYoloConfinement } from "../../src/domains/safety/autonomy.js";
 import {
 	createAutonomyWindow,
 	describeOpenDecision,
@@ -48,6 +47,7 @@ import {
 	YOLO_UNCONFINED_ACCEPT_LABEL,
 	YOLO_UNCONFINED_DECLINE_LABEL,
 } from "../../src/interactive/yolo-activation.js";
+import { admissionAutonomy, effectiveYoloConfinement } from "../../src/lib/autonomy/autonomy.js";
 import { createTurnMiddleware } from "../../src/session-control/turn-middleware.js";
 import { type AgentRuntime, createTurnState } from "../../src/session-control/turn-state.js";
 import { createRegistry } from "../../src/tools/registry.js";

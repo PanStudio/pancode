@@ -2,8 +2,8 @@
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 
 import { isRecord } from "../../core/type-guards.js";
-import { sanitizeCallTargetText } from "../../domains/safety/call-target.js";
 import { visibleWidth } from "../../engine/tui.js";
+import { sanitizeCallTargetText } from "../../lib/call-target/call-target.js";
 import { CLASS_NOUNS, type ToolClass } from "../../tools/presentation.js";
 /** Compact transcript grouping: which settled calls fold together, the folded group row, and the body test. */
 import { cardHead, cardRows } from "../card.js";

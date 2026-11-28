@@ -10,7 +10,7 @@
  */
 
 import { sha256Hex } from "../../core/hash.js";
-import { createRedactionTally, redactSecretsPreservingMarkers } from "../evidence/redact.js";
+import { createRedactionTally, redactSecretsPreservingMarkers } from "../../lib/secrets/redact.js";
 import {
 	type CommandSegment,
 	diagnosticInvocation,

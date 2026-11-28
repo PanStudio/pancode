@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 
 import { DRAFT_LABELS } from "../../core/views/draft-words.js";
-import { redactFinalUrlCredentials, redactUrlCredentials } from "../../domains/safety/redaction.js";
+import { redactFinalUrlCredentials, redactUrlCredentials } from "../../lib/secrets/redaction.js";
 import type { AcpAsideAnswer, AcpDraftOutcome } from "./types-views.js";
 
 export { ACP_ASIDE_ASK_METHOD, ACP_ASIDE_CANCEL_METHOD, ACP_ASIDE_DRAFT_METHOD, ACP_ASIDE_META_KEY } from "./types.js";

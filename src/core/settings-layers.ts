@@ -26,12 +26,7 @@ import { existsSync, lstatSync } from "node:fs";
 import { join } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import { parse as parseYaml } from "yaml";
-import {
-	type AutonomyLevel,
-	autonomyRank,
-	DEFAULT_AUTONOMY_LEVEL,
-	isAutonomyLevel,
-} from "../domains/safety/autonomy.js";
+import { type AutonomyLevel, autonomyRank, DEFAULT_AUTONOMY_LEVEL, isAutonomyLevel } from "../lib/autonomy/autonomy.js";
 import {
 	applySettingsDelta,
 	type PancodeSettings,

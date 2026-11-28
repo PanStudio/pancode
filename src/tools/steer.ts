@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import type { AbortReason, DispatchContract } from "../domains/dispatch/contract.js";
 import { dispatchOwnerOf, dispatchOwnership, owningSessionPhrase } from "../domains/dispatch/ownership.js";
-import type { AutonomyLevel } from "../domains/safety/autonomy.js";
+import type { AutonomyLevel } from "../lib/autonomy/autonomy.js";
 import type { ToolInvokeOptions } from "./registry-contract.js";
 import { steerToolSurface } from "./steer-surface.js";
 import type { ToolResult, ToolSpec } from "./tool-spec.js";

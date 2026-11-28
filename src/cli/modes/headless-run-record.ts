@@ -30,10 +30,10 @@ import type {
 	RunStatus,
 	ToolCallStat,
 } from "../../domains/dispatch/types.js";
-import { createRedactionTally, redactSecretsText } from "../../domains/evidence/redact.js";
-import { redactSecretString } from "../../domains/safety/redaction.js";
 import { telemetryRunDirectory, telemetrySessionDirectory } from "../../domains/telemetry/paths.js";
 import { readPiMonoVersion } from "../../engine/pi-mono-names.js";
+import { createRedactionTally, redactSecretsText } from "../../lib/secrets/redact.js";
+import { redactSecretString } from "../../lib/secrets/redaction.js";
 import type { ChatLoop, ChatLoopRunSnapshot } from "../../session-control/chat-loop.js";
 import { truncateUtf8 } from "../../tools/truncate-utf8.js";
 import type { HeadlessMainAgentRunStats } from "./headless-run-types.js";

@@ -56,11 +56,11 @@ import { canonicalizeWireModelId } from "../domains/providers/index.js";
 import { ProvidersDomainModule } from "../domains/providers/module.js";
 import { ResourcesDomainModule } from "../domains/resources/module.js";
 import { SafetyDomainModule } from "../domains/safety/module.js";
-import { redactSecretString } from "../domains/safety/redaction.js";
 import { SchedulingDomainModule } from "../domains/scheduling/module.js";
 import { SessionDomainModule } from "../domains/session/module.js";
 import { TelemetryDomainModule } from "../domains/telemetry/module.js";
 import { runsCost, runsTotal } from "../domains/telemetry/read-model-cost.js";
+import { redactSecretString } from "../lib/secrets/redaction.js";
 import { armInternalDispatchDeadline } from "./internal-dispatch.js";
 import { createCliWorkerHooks } from "./worker-extension-hooks.js";
 

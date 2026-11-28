@@ -19,8 +19,8 @@ import {
 } from "../../src/core/restart-intent.js";
 import { firePendingModelRestart, nextModelRestartChain, setRestartHost } from "../../src/core/restart-request.js";
 import { ToolNames } from "../../src/core/tool-names.js";
-import { describeCallTarget } from "../../src/domains/safety/call-target.js";
 import { createInteractiveRestart, restartPreflight } from "../../src/interactive/interactive-restart.js";
+import { describeCallTarget } from "../../src/lib/call-target/call-target.js";
 import { parseSlashCommand } from "../../src/session-control/slash-commands.js";
 import { validateBuiltinToolPolicy } from "../../src/tools/policy.js";
 import { createRestartSessionTool, restartSessionWorkspaceRefusal } from "../../src/tools/restart-session.js";

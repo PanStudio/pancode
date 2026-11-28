@@ -25,7 +25,7 @@ import {
 } from "../domains/dispatch/gate-role-prompts.js";
 import { narrowDispatchIntentToReadOnly } from "../domains/dispatch/intent.js";
 import type { RunResult } from "../domains/dispatch/types.js";
-import type { AutonomyLevel } from "../domains/safety/autonomy.js";
+import type { AutonomyLevel } from "../lib/autonomy/autonomy.js";
 import { buildCompeteJudgePacket, renderCompeteJudgeTask } from "./compete-judge-task.js";
 import {
 	type CandidateWorktree,

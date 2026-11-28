@@ -9,7 +9,7 @@
  */
 import { spawn } from "node:child_process";
 import { isRecord } from "../../core/type-guards.js";
-import { withContainedYoloPin } from "../safety/autonomy.js";
+import { withContainedYoloPin } from "../../lib/autonomy/autonomy.js";
 import { costFromPricing } from "./budget.js";
 import {
 	RESEARCH_OPEN_DECISION_LIMIT,

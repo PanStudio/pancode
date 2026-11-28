@@ -44,7 +44,7 @@ import {
 	type Skill,
 	type SkillMcpOrigin,
 } from "../../domains/resources/index.js";
-import type { AutonomyLevel } from "../../domains/safety/autonomy.js";
+import type { AutonomyLevel } from "../../lib/autonomy/autonomy.js";
 import type { McpCapabilitySource } from "../gateway/mcp-capability-types.js";
 import { finalizeObservation, type ObservationReservation } from "../observation.js";
 import type { ToolInvokeOptions } from "../registry-contract.js";

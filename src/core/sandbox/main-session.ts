@@ -15,7 +15,7 @@ import {
 } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import path from "node:path";
-import type { YoloConfinement } from "../../domains/safety/autonomy.js";
+import type { YoloConfinement } from "../../lib/autonomy/autonomy.js";
 import { canonicalizePath } from "../path-canonical.js";
 import { isSameOrDescendant, relativePathEscapes } from "../path-containment.js";
 import { renderCount } from "../telemetry/render.js";

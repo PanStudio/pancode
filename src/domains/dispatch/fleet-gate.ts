@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
-import { sanitizeCallTargetText } from "../safety/call-target.js";
+import { sanitizeCallTargetText } from "../../lib/call-target/call-target.js";
 import { CODE_STEP_EXCERPT_MAX_BYTES } from "./code-step.js";
 import type { ReviewGateDecision } from "./gate-decisions.js";
 

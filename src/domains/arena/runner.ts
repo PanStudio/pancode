@@ -18,6 +18,7 @@ import { gitExecFileSync } from "../../core/internal-git-run.js";
 import { ensureProjectIgnore } from "../../core/project-root.js";
 import { runCommandVector, type SafeCommandResult } from "../../core/safe-exec.js";
 import { safeResourceWrite } from "../../core/safe-resource-write.js";
+import { withContainedYoloPin } from "../../lib/autonomy/autonomy.js";
 import {
 	type CandidateWorktree,
 	type CompeteGroupOwnership,
@@ -32,7 +33,6 @@ import {
 import { type DeclaredCheck, PROJECT_VERIFIER_CATALOG_RELATIVE_PATH } from "../../tools/verify/catalog.js";
 import { resolveVerifyCall, type VerifyResolution } from "../../tools/verify/resolve.js";
 import { type PancodeLaunch, type RunEnvPolicy, runEnv } from "../extensions/services/run-env.js";
-import { withContainedYoloPin } from "../safety/autonomy.js";
 import { blindOrder, labelForContender, newArenaSeed } from "./blind.js";
 import { contenderWrites, readArenaStream, readNumstat } from "./facts.js";
 import { arenaRoot, contenderDiffPath, contenderStreamPath, matchDir, newArenaMatchId, writeMatch } from "./store.js";

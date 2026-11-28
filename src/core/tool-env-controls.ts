@@ -8,7 +8,7 @@ import {
 	isAutonomyLevel,
 	YOLO_CONFINEMENT_PIN_ENV,
 	yoloConfinementPinned,
-} from "../domains/safety/autonomy.js";
+} from "../lib/autonomy/autonomy.js";
 
 /**
  * Names the autonomy a `pancode` started from a tool command may take at most, so a delegated run never gets more

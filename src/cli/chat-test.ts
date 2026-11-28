@@ -10,7 +10,7 @@
 import { proxyForUrl } from "../core/proxy-env.js";
 import type { RuntimeDescriptor } from "../domains/providers/types/runtime-descriptor.js";
 import type { TargetDescriptor } from "../domains/providers/types/target-descriptor.js";
-import { redactSecretString } from "../domains/safety/redaction.js";
+import { redactSecretString } from "../lib/secrets/redaction.js";
 
 export const CHAT_TEST_TIMEOUT_MS = 15_000;
 

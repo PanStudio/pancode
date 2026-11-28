@@ -6,8 +6,8 @@ import { tierPolicy } from "../core/presentation-tier.js";
 import { USAGE_NOT_MEASURED } from "../core/views/usage-words.js";
 import { plainOutcomeLabel, refusedCallsWords } from "../domains/dispatch/failure-headline.js";
 import { formatOpenDecision } from "../domains/safety/autonomy-window.js";
-import { sanitizeCallTargetText } from "../domains/safety/call-target.js";
 import { truncateToWidth, visibleWidth, wrapTextWithAnsi } from "../engine/tui.js";
+import { sanitizeCallTargetText } from "../lib/call-target/call-target.js";
 import type { ExitSpend, ExitSummarySnapshot } from "./exit-summary-collector.js";
 import {
 	brandMark,

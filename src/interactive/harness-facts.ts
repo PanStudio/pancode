@@ -20,7 +20,6 @@ import { type Missing, missingFromTargetStatus } from "../domains/lifecycle/setu
 import type { TaskMemoryOperatorStatus } from "../domains/memory/index.js";
 import type { ProvidersContract, RuntimeTier, TargetHealthStatus, TargetStatus } from "../domains/providers/index.js";
 import { modelResidencyForStatus, resolveModelRuntimeCapabilitiesForProviders } from "../domains/providers/index.js";
-import { effectiveYoloConfinement } from "../domains/safety/autonomy.js";
 import type { AutonomyStatus } from "../domains/safety/autonomy-window.js";
 import type { LocalCapacity } from "../domains/scheduling/local-capacity.js";
 import type { ContextUsageBreakdown, ContextUsageSnapshot } from "../domains/session/context-accounting.js";
@@ -29,6 +28,7 @@ import type { TaskBoardSnapshot } from "../domains/session/task-board.js";
 import type { WorkspaceSnapshot } from "../domains/session/workspace/index.js";
 import type { TelemetryView } from "../domains/telemetry/contract.js";
 import type { TokenThroughputSnapshot } from "../domains/telemetry/index.js";
+import { effectiveYoloConfinement } from "../lib/autonomy/autonomy.js";
 import { normalizeRetrySettings } from "../session-control/chat-loop-policy.js";
 import type { AgentStatus, TurnSummary } from "../session-control/status-types.js";
 import type { TurnPreparationPhase, TurnPreparationStep } from "../session-control/turn-state.js";

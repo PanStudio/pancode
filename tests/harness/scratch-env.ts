@@ -35,7 +35,7 @@ import { join } from "node:path";
 import { AUTONOMY_CEILING_ENV } from "../../src/core/bash-exec.js";
 import { EXTENSION_RUN_DEPTH_ENV } from "../../src/core/tool-env-controls.js";
 import { resetXdgCache } from "../../src/core/xdg.js";
-import { YOLO_CONFINEMENT_PIN_ENV } from "../../src/domains/safety/autonomy.js";
+import { YOLO_CONFINEMENT_PIN_ENV } from "../../src/lib/autonomy/autonomy.js";
 
 /**
  * The keys a PanCode session writes into its tool commands' environment. A test

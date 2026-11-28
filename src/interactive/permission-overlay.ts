@@ -38,7 +38,7 @@ import { factRows, GLYPH, pancodeTheme, positionRow, rule, sectionRule } from ".
 import { skinEpoch } from "./theme/tokens.js";
 
 export { type AskAxis, askAxis } from "../domains/safety/approval-axis.js";
-export { describeCallTarget, sanitizeCallTargetText } from "../domains/safety/call-target.js";
+export { describeCallTarget, sanitizeCallTargetText } from "../lib/call-target/call-target.js";
 export type { ApprovalRequestView } from "../session-control/approval-request-view.js";
 export {
 	MUTATION_PREVIEW_KEY,

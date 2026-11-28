@@ -4,6 +4,7 @@
 import type { SandboxAvailability } from "../../core/sandbox/types.js";
 import type { DispatchRunIdentity } from "../../core/telemetry/live-events.js";
 import type { AcpDelegationRunHandle, AcpDelegationRunInput } from "../../engine/acp/adapter.js";
+import type { AutonomyLevel } from "../../lib/autonomy/autonomy.js";
 import type { AskUserHandler } from "../../tools/ask-user.js";
 import type { WorkerBudget, WorkerPromptMessage } from "../../worker/spec-contract.js";
 import type { WorkerDecisionBinding } from "../../worker/stdin-demux.js";
@@ -12,7 +13,6 @@ import type { AgentAudience, AgentCapabilityClass } from "../agents/spec.js";
 import type { ConfigContract } from "../config/contract.js";
 import type { CapabilityGate } from "../middleware/capability-gate.js";
 import type { QuotaProvider } from "../quota/types.js";
-import type { AutonomyLevel } from "../safety/autonomy.js";
 import type { GitHookDriftGuard } from "../safety/hook-drift.js";
 import type { FlowRestrictionSet, WorkerFlowPolicyInput } from "../safety/information-flow.js";
 import type { ProtectedArtifactState } from "../safety/protected-artifacts.js";

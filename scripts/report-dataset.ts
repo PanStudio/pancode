@@ -30,7 +30,6 @@ import { fileURLToPath } from "node:url";
 import { Value } from "typebox/value";
 import type { SegmentHeader, TelemetryRecord } from "../src/core/telemetry/envelope.js";
 import { encodeTelemetryLine, scanTelemetrySegment } from "../src/core/telemetry/segment.js";
-import { createRedactionTally, redactSecretsText } from "../src/domains/evidence/index.js";
 import { REPORT_ID } from "../src/domains/report/draft.js";
 import {
 	canaryScan,
@@ -48,6 +47,7 @@ import {
 	verifyShareArchive,
 } from "../src/domains/telemetry/index.js";
 import type { ShareScopeSource } from "../src/domains/telemetry/share.js";
+import { createRedactionTally, redactSecretsText } from "../src/lib/secrets/redact.js";
 
 const EXPORTER_VERSION = 1;
 /** Below this many admitted bundles a release is too small to hide anyone in. */

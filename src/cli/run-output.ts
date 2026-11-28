@@ -9,8 +9,8 @@ import {
 } from "../domains/dispatch/failure-headline.js";
 import { failedChecks, gateVerdict, sealedReport } from "../domains/dispatch/gate-verdict.js";
 import type { RunResult, SafetyBlockedAttempt } from "../domains/dispatch/types.js";
-import { sanitizeCallTargetText } from "../domains/safety/call-target.js";
-import { holdCutOffText, redactUrlCredentials } from "../domains/safety/redaction.js";
+import { sanitizeCallTargetText } from "../lib/call-target/call-target.js";
+import { holdCutOffText, redactUrlCredentials } from "../lib/secrets/redaction.js";
 import {
 	responseModelIdWords,
 	runGatewayRoutingLabel,

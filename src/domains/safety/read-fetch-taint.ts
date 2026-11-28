@@ -5,7 +5,7 @@ import {
 	HOME_AGENT_SECRET_RELATIVE_PATHS,
 	HOME_SECRET_RELATIVE_PATHS,
 	WORKSPACE_SECRET_PATHS,
-} from "./secret-paths.js";
+} from "../../lib/secrets/secret-paths.js";
 
 /**
  * Read-then-fetch taint. Once a call that reads a secret-bearing file is

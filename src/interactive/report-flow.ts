@@ -5,9 +5,9 @@
  * Loaded on first use, with the report domain behind it, so a session that never reports pays nothing at boot.
  */
 
-import { formatBundleSummary } from "../cli/report-bundle.js";
 import { editTextExternally, resolveExternalEditor } from "../core/external-editor.js";
 import { canOpenBrowser, openBrowser } from "../core/open-browser.js";
+import { formatBundleSummary } from "../domains/report/bundle-flow.js";
 import {
 	applyReportEdit,
 	type BuiltBundle,

@@ -29,11 +29,11 @@ import {
 import { fleetNodeTaskBrief } from "../../domains/dispatch/fleet-node-prompt.js";
 import { trustStateWord, trustVerdict, validationClause } from "../../domains/evidence/trust-projection.js";
 import type { CanonicalTrustStatus } from "../../domains/evidence/trust-status.js";
-import { sanitizeCallTargetText } from "../../domains/safety/call-target.js";
-import { redactSecretString } from "../../domains/safety/redaction.js";
 import type { WorkerAction } from "../../domains/telemetry/worker-progress.js";
 import { stripDeadToolCallMarkup } from "../../engine/loop-guard.js";
 import { truncateToWidth, visibleWidth } from "../../engine/tui.js";
+import { sanitizeCallTargetText } from "../../lib/call-target/call-target.js";
+import { redactSecretString } from "../../lib/secrets/redaction.js";
 import { COUNCIL_SEALED_REPORT_AGENT_ID, COUNCIL_SYNTHESIS_LABEL } from "../../session-control/council.js";
 import {
 	type WorkerEntryState as StreamWorkerEntryState,

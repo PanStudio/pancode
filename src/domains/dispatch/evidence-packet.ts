@@ -11,7 +11,7 @@
  */
 
 import { sha256Hex } from "../../core/hash.js";
-import { createRedactionTally, redactSecretsText } from "../evidence/redact.js";
+import { createRedactionTally, redactSecretsText } from "../../lib/secrets/redact.js";
 import { failsTheSameOnBase, hostCheckNotRunNote } from "./host-verification-note.js";
 import type { RunGatePacket, RunResult } from "./types.js";
 

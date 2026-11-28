@@ -5,10 +5,10 @@ import type { DispatchContract } from "../../domains/dispatch/contract.js";
 import { withoutLandCardClause } from "../../domains/dispatch/merge-gate.js";
 import { type RunCallUsage, runUsageFromCallRecords } from "../../domains/dispatch/run-call-usage.js";
 import { isTerminalRunEnvelope, type RunEnvelope, type RunOutcome } from "../../domains/dispatch/types.js";
-import { sanitizeCallTargetText } from "../../domains/safety/call-target.js";
 import { readCallJournalSync } from "../../domains/telemetry/call-journal.js";
 import { telemetryRunDirectory } from "../../domains/telemetry/paths.js";
 import { READ_MODEL_FOLD } from "../../domains/telemetry/read-model.js";
+import { sanitizeCallTargetText } from "../../lib/call-target/call-target.js";
 import type { SettledRunEnvelope } from "./run-json-schema-v2.js";
 
 const SETTLE_POLL_MS = 500;

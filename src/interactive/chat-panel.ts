@@ -6,19 +6,19 @@ import { sanitizeAssistantProse } from "../core/assistant-prose.js";
 import type { OutputStyle } from "../core/defaults.js";
 import { isNarrationSummary } from "../core/narration-summary.js";
 import { ToolNames } from "../core/tool-names.js";
-import { sanitizeCallTargetText, sanitizeMultilineDisplayText } from "../domains/safety/call-target.js";
+import type { ViewArtifact } from "../domains/session/view-artifacts.js";
+import type { TelemetryView } from "../domains/telemetry/contract.js";
+import { settledPrefixLength } from "../engine/apis/diffusion-frames.js";
+import { type Component, stripTerminalSequences, truncateToWidth, wrapTextWithAnsi } from "../engine/tui.js";
+import type { AgentMessage } from "../engine/types.js";
+import { sanitizeCallTargetText, sanitizeMultilineDisplayText } from "../lib/call-target/call-target.js";
 import {
 	holdCutOffText,
 	holdUnresolvedStrings,
 	holdUnresolvedUserinfo,
 	messageStopCompleted,
 	redactSecretString,
-} from "../domains/safety/redaction.js";
-import type { ViewArtifact } from "../domains/session/view-artifacts.js";
-import type { TelemetryView } from "../domains/telemetry/contract.js";
-import { settledPrefixLength } from "../engine/apis/diffusion-frames.js";
-import { type Component, stripTerminalSequences, truncateToWidth, wrapTextWithAnsi } from "../engine/tui.js";
-import type { AgentMessage } from "../engine/types.js";
+} from "../lib/secrets/redaction.js";
 import type { ChatLoopEvent, RetryStatusPayload } from "../session-control/chat-loop.js";
 import {
 	classifyTurnEnding,

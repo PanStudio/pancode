@@ -15,7 +15,6 @@ import type {
 } from "../domains/middleware/types.js";
 import type { ActionClass, ClassifierCall } from "../domains/safety/action-classifier.js";
 import type { AdmissionGitContext, AdmissionPrincipal, ApprovalAuthority } from "../domains/safety/admission.js";
-import type { AutonomyExposure, AutonomyLevel } from "../domains/safety/autonomy.js";
 import type { OpenDecisionKind } from "../domains/safety/autonomy-window.js";
 import type { SafetyContract, SafetyDecision } from "../domains/safety/contract.js";
 import type { DecisionPresentation } from "../domains/safety/decision-presentation.js";
@@ -26,6 +25,7 @@ import type { FlowRestrictionSet } from "../domains/safety/information-flow.js";
 import type { SafetyJudgeSeat } from "../domains/safety/safety-judge.js";
 import type { SessionCodeConsent } from "../domains/safety/session-code-consent.js";
 import type { WorkspaceSnapshotOutcome, WorkspaceSnapshotRequest } from "../domains/workspace-snapshots/store.js";
+import type { AutonomyExposure, AutonomyLevel } from "../lib/autonomy/autonomy.js";
 import type { DispatchPlanView } from "./dispatch-plan.js";
 import type { ToolResult, ToolSpec } from "./tool-spec.js";
 

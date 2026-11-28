@@ -10,7 +10,7 @@ import type {
 } from "../core/telemetry/live-events.js";
 import type { NotificationLevel } from "../core/views/notice-words.js";
 import { NEVER_STARTED_WORDS, plainOutcomeLabel, workerFailureHeadline } from "../domains/dispatch/failure-headline.js";
-import { sanitizeCallTargetText } from "../domains/safety/call-target.js";
+import { sanitizeCallTargetText } from "../lib/call-target/call-target.js";
 import { readWorkerRunResultFacts } from "../session-control/worker-run-results.js";
 import {
 	type AgentTraitLookup,

@@ -3,10 +3,10 @@
 
 import { GLYPH } from "../core/glyphs.js";
 import type { NoticeLevel } from "../core/views/notice-words.js";
-import { sanitizeCallTargetText } from "../domains/safety/call-target.js";
 import type { SessionContract, SessionEntry } from "../domains/session/index.js";
 import { suggestSessionName } from "../domains/session/names.js";
 import { filterEntriesToActivePath } from "../domains/session/tree/active-path.js";
+import { sanitizeCallTargetText } from "../lib/call-target/call-target.js";
 import type { AskUserHandler } from "../tools/ask-user.js";
 
 export interface SessionRenameDeps {

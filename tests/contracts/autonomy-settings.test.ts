@@ -11,7 +11,7 @@ import { DEFAULT_SETTINGS } from "../../src/core/defaults.js";
 import { applyControlValue } from "../../src/core/settings-controls.js";
 import { readLayeredSettings } from "../../src/core/settings-layers.js";
 import { captureProjectSurface, recordProjectSurfaceTrust } from "../../src/core/workspace-trust.js";
-import { autonomyFromUserInput } from "../../src/domains/safety/autonomy.js";
+import { autonomyFromUserInput } from "../../src/lib/autonomy/autonomy.js";
 import { isolatePancodeEnv } from "../harness/scratch-env.js";
 
 test("the user settings loader accepts only default and yolo autonomy", async (t) => {

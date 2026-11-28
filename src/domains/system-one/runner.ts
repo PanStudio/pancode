@@ -12,7 +12,7 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import { randomUUID } from "node:crypto";
 import type { EventPayload } from "../../core/telemetry/events.js";
 import { telemetryHub } from "../../core/telemetry/hub.js";
-import { createRedactionTally } from "../evidence/redact.js";
+import { createRedactionTally } from "../../lib/secrets/redact.js";
 import type { Formation, FormedRequest } from "./formation.js";
 import { formRequest } from "./formation.js";
 import { exactBoundFor } from "./profiles.js";

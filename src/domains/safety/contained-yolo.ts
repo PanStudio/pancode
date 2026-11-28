@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import { readSettings } from "../../core/config.js";
 import { autonomyCeilingRefusal, yoloRootRefusal } from "../../core/yolo-host.js";
-import { effectiveYoloConfinement } from "./autonomy.js";
+import { effectiveYoloConfinement } from "../../lib/autonomy/autonomy.js";
 
 /**
  * Why `research`, `arena`, `campaign` or an extension's run service cannot hand its agent runs yolo here, or null

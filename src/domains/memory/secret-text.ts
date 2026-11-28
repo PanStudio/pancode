@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
-import { createRedactionTally, redactSecretsText } from "../evidence/redact.js";
-import { isEnvReference, redactSecretString, redactToolArgs } from "../safety/redaction.js";
+
+import { createRedactionTally, redactSecretsText } from "../../lib/secrets/redact.js";
+import { isEnvReference, redactSecretString, redactToolArgs } from "../../lib/secrets/redaction.js";
 
 declare const memoryRouteTextBrand: unique symbol;
 /**

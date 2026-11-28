@@ -32,8 +32,8 @@ import {
 	type HubPairs,
 	type HubProvidedResource,
 } from "../../domains/resources/index.js";
-import { sanitizeCallTargetText, sanitizeMultilineDisplayText } from "../../domains/safety/call-target.js";
 import { wrapTextWithAnsi } from "../../engine/tui.js";
+import { sanitizeCallTargetText, sanitizeMultilineDisplayText } from "../../lib/call-target/call-target.js";
 import { displaySafe } from "../display-safe.js";
 import {
 	chip,

@@ -13,12 +13,12 @@ import { getRuntimeRegistry } from "../domains/providers/registry.js";
 import { targetRootUrl } from "../domains/providers/runtimes/common/local-synth.js";
 import type { ProbeContext, ProbeResult, RuntimeDescriptor } from "../domains/providers/types/runtime-descriptor.js";
 import type { TargetDescriptor } from "../domains/providers/types/target-descriptor.js";
-import { effectiveYoloConfinement } from "../domains/safety/autonomy.js";
 import {
 	describeHostCapacity,
 	observeHostCapacityFacts,
 	resolveLocalConcurrency,
 } from "../domains/scheduling/local-capacity.js";
+import { effectiveYoloConfinement } from "../lib/autonomy/autonomy.js";
 import { ConfigureNavigation, type ConfigurePrompts } from "./configure-prompts.js";
 import {
 	applyTarget,

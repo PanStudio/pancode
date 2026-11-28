@@ -8,7 +8,7 @@ import { ALL_TOOL_NAMES, type ToolName, ToolNames } from "../../src/core/tool-na
 import type { TurnConstraints } from "../../src/core/turn-constraints.js";
 import { type CompiledSessionPrompt, compile, compileWorker } from "../../src/domains/prompts/compiler.js";
 import { loadFragments } from "../../src/domains/prompts/fragment-loader.js";
-import type { AutonomyLevel } from "../../src/domains/safety/autonomy.js";
+import type { AutonomyLevel } from "../../src/lib/autonomy/autonomy.js";
 import { toolPromptHintsForNames } from "../../src/tools/builtin-tool-catalog.js";
 
 const table = loadFragments();

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0 AND MIT
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 // Split from slash-commands.ts, which adapts pi-coding-agent's BUILTIN_SLASH_COMMANDS registry.
-import { acceptanceFromTaskFlags } from "../../cli/tasks.js";
+import { acceptanceFromTaskFlags } from "../../domains/dispatch/task-acceptance.js";
 import { formatUserTaskHandoff } from "../../domains/user-tasks/handoff.js";
 import type { BuiltinSlashCommand } from "../slash-command-types.js";
 import { shareWorkerRun } from "./run.js";

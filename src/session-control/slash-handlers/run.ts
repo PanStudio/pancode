@@ -23,8 +23,8 @@ import {
 	type SecondOpinionCandidate,
 	secondOpinionIndependence,
 } from "../../domains/providers/model-lineage.js";
-import type { AutonomyLevel } from "../../domains/safety/autonomy.js";
 import { activeDecisionRefs } from "../../domains/session/decision-board.js";
+import type { AutonomyLevel } from "../../lib/autonomy/autonomy.js";
 import {
 	buildCouncilDispatchArgs,
 	COUNCIL_SYNTHESIS_LABEL,

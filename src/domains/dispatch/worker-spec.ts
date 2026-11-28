@@ -21,6 +21,7 @@ import { workerAgent } from "../../core/telemetry/context.js";
 import type { ToolName } from "../../core/tool-names.js";
 import { toolSurfaceSources, workerTurnConstraints } from "../../core/turn-constraints.js";
 import { attestedToolSchemaSignature } from "../../engine/worker-tools.js";
+import type { AutonomyLevel } from "../../lib/autonomy/autonomy.js";
 import { shareTaskWorktreeDependencies } from "../../tools/task-worktree-dependencies.js";
 import { parseWorkerContextSeed } from "../../worker/context-seed.js";
 import { WORKER_STDIN_FRAME_MAX_BYTES, workerStaticHead } from "../../worker/protocol.js";
@@ -44,7 +45,6 @@ import type { normalizeAgentSpec } from "../agents/spec.js";
 import type { ConfigContract } from "../config/contract.js";
 import type { MiddlewareContract } from "../middleware/contract.js";
 import { type RuntimeDescriptor, runtimeTargetSnapshot } from "../providers/index.js";
-import type { AutonomyLevel } from "../safety/autonomy.js";
 import {
 	compileWorkerFlowPolicy,
 	type FlowRestrictionSet,

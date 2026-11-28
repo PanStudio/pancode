@@ -31,7 +31,7 @@ import { isSkillActivation, type PendingSkillToolPolicy, type SkillActivation } 
 import { PROTECTED_ARTIFACT_SOURCES, type ProtectedArtifactSource } from "../../core/telemetry/session-vocabulary.js";
 import type { PancodeTurnRecord } from "../../engine/session.js";
 import type { AgentMessage, ProviderCheckpointHandle } from "../../engine/types.js";
-import { AUTONOMY_EXPOSURES, type AutonomyExposure } from "../safety/autonomy.js";
+import { AUTONOMY_EXPOSURES, type AutonomyExposure } from "../../lib/autonomy/autonomy.js";
 import type {
 	ContinuityCheckpointPayload,
 	ContinuityCommitEntry,

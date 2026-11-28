@@ -8,10 +8,10 @@
  */
 
 import { RETRY_STATUS_PHASES } from "../../core/telemetry/session-vocabulary.js";
-import type { AutonomyLevel, YoloConfinement } from "../../domains/safety/autonomy.js";
 import { autonomyModeReadout, autonomyWindowReadout } from "../../domains/safety/autonomy-readout.js";
 import type { AutonomyStatus } from "../../domains/safety/autonomy-window.js";
-import { sanitizeCallTargetText } from "../../domains/safety/call-target.js";
+import type { AutonomyLevel, YoloConfinement } from "../../lib/autonomy/autonomy.js";
+import { sanitizeCallTargetText } from "../../lib/call-target/call-target.js";
 import {
 	createAssistantGenerationTiming,
 	liveThroughput,

@@ -25,12 +25,12 @@ import type { DispatchRunIdentity, ForeignRunObservedPayload } from "../../core/
 import { unobservedRunUsageFacts } from "../../core/telemetry/pricing.js";
 import { type RunUsageFacts, RunUsageFactsSchema } from "../../core/telemetry/schemas.js";
 import { truncateToWidth } from "../../engine/tui-primitives.js";
+import { sanitizeCallTargetText } from "../../lib/call-target/call-target.js";
 import type { AgentAudience } from "../agents/spec.js";
 import { cloneRunToolBudgetEnvelope, type RunToolBudgetEnvelope } from "../dispatch/budget-envelope.js";
 import type { DispatchSnapshot } from "../dispatch/contract.js";
 import type { DispatchRequestOrigin, RunKind } from "../dispatch/types.js";
 import { summarizeTrustStatus } from "../evidence/trust-projection.js";
-import { sanitizeCallTargetText } from "../safety/call-target.js";
 import type {
 	TelemetryRunProjection,
 	TelemetryRunReaderBinder,

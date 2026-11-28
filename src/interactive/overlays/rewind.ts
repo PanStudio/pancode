@@ -8,7 +8,6 @@
  */
 
 import { tierPolicy } from "../../core/presentation-tier.js";
-import { sanitizeCallTargetText } from "../../domains/safety/call-target.js";
 import type {
 	RewindOutcome,
 	RewindPlan,
@@ -19,6 +18,7 @@ import type {
 } from "../../domains/workspace-snapshots/index.js";
 import type { Component, OverlayHandle, TUI } from "../../engine/tui.js";
 import { isKeyRelease, matchesKey, truncateToWidth, visibleWidth, wrapTextWithAnsi } from "../../engine/tui.js";
+import { sanitizeCallTargetText } from "../../lib/call-target/call-target.js";
 import { displaySafe } from "../display-safe.js";
 import { clockLocal, dateLocal } from "../format-time.js";
 import {

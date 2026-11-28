@@ -8,9 +8,9 @@
 
 import { listStateDirectory } from "../../core/state-boundary.js";
 import type { RunTelemetryV1 } from "../../core/telemetry/dto.js";
+import { sanitizeCallTargetText } from "../../lib/call-target/call-target.js";
 import { isBaselineValidation } from "../agents/result-contract-builder-report.js";
 import { reviewFindings } from "../agents/result-contract-gate.js";
-import { sanitizeCallTargetText } from "../safety/call-target.js";
 import { isDecisionRecord } from "../session/entries.js";
 import { telemetryRunsDirectory } from "../telemetry/paths.js";
 import { readRunRecordAsync } from "../telemetry/run-record.js";

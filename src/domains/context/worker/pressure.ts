@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import { assistantMessageNeverSent } from "../../../core/assistant-model.js";
+import { DEFAULT_WORKING_SET_SETTINGS } from "../../../core/defaults.js";
 import type { ContextFoldPayload } from "../../../core/telemetry/live-events.js";
 import type { AgentMessage } from "../../../engine/types.js";
 import { effectiveToolCall } from "../../../tools/surface.js";
@@ -8,7 +9,6 @@ import { estimateAgentContextBreakdown, estimateAgentMessageTokens } from "../..
 import type { EvictedItem } from "../../session/entries.js";
 import type { FoldCheckpoint } from "../fold/contract.js";
 import { withinRearmBand } from "../working-set/checkpoint.js";
-import { DEFAULT_WORKING_SET_SETTINGS } from "../working-set/defaults.js";
 import type { MarkerReason } from "../working-set/marker.js";
 import { renderMarker } from "../working-set/marker.js";
 import { contextHash, messageToolCalls } from "./snapshot.js";

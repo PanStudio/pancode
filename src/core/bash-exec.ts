@@ -5,7 +5,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import type { Socket } from "node:net";
 import { performance } from "node:perf_hooks";
 import { StringDecoder } from "node:string_decoder";
-import { holdUnresolvedUserinfo, isSecretArgKey } from "../domains/safety/redaction.js";
+import { holdUnresolvedUserinfo, isSecretArgKey } from "../lib/secrets/redaction.js";
 import { AI_AGENT_NAME } from "./agent-environment.js";
 import { bashShellEnvironment, bashShellPath } from "./bash-shell.js";
 import {

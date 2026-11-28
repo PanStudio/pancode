@@ -2,8 +2,8 @@
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import { ok, strictEqual } from "node:assert/strict";
 import { it } from "node:test";
-import { createRedactionTally } from "../../src/domains/evidence/redact.js";
 import { redactTelemetryValue } from "../../src/domains/telemetry/objects.js";
+import { createRedactionTally } from "../../src/lib/secrets/redact.js";
 
 it("a settings snapshot keeps the apiKeyEnvVar name and still withholds credential values", () => {
 	const settings = {

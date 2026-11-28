@@ -15,9 +15,9 @@ import { budgetLimitWords } from "../domains/dispatch/budget-envelope.js";
 import { reviewFindingsWords, workerFailureHeadline } from "../domains/dispatch/failure-headline.js";
 import { describeWriteBoundaryAttributionDowngrade } from "../domains/dispatch/write-boundary.js";
 import { plainTrustVerdict } from "../domains/evidence/trust-projection.js";
-import { sanitizeCallTargetText } from "../domains/safety/call-target.js";
 import type { WorkerProgressSnapshot } from "../domains/telemetry/worker-progress.js";
 import { truncateToWidth, visibleWidth, wrapTextWithAnsi } from "../engine/tui.js";
+import { sanitizeCallTargetText } from "../lib/call-target/call-target.js";
 import { planCardBody } from "./dispatch-plan-card.js";
 import {
 	actionPhrase,

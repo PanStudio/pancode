@@ -2,11 +2,11 @@
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import { isAbsolute, sep } from "node:path";
 import { ToolNames } from "../core/tool-names.js";
-import { redactCommandOutputSecrets } from "../domains/evidence/redact.js";
 import type { ClassifierCall } from "../domains/safety/action-classifier.js";
-import { describeCallTarget } from "../domains/safety/call-target.js";
 import type { SafetyDecision } from "../domains/safety/contract.js";
-import { redactSecretString } from "../domains/safety/redaction.js";
+import { describeCallTarget } from "../lib/call-target/call-target.js";
+import { redactCommandOutputSecrets } from "../lib/secrets/redact.js";
+import { redactSecretString } from "../lib/secrets/redaction.js";
 import { WORKER_REFUSAL_LIMIT_PREFIX } from "../worker/spec-contract.js";
 
 const REFUSED_COMMAND_MAX_CHARS = 200;

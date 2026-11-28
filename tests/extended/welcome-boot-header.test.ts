@@ -300,7 +300,7 @@ test("route faults outrank project-context guidance", () => {
 /**
  * True when no C0 control byte or DEL survived into a rendered line. Written as
  * a scan rather than a regex literal so no control character appears in source,
- * the same reason domains/safety/call-target.ts builds its patterns dynamically.
+ * the same reason lib/call-target/call-target.ts builds its patterns dynamically.
  * Applied per line: a rendered line is a single row and must contain no line
  * break of its own.
  */

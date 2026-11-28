@@ -4,9 +4,9 @@
 import { isRecord } from "../../core/type-guards.js";
 import { reviewDiffStat } from "../../core/views/diff-rows.js";
 import { formatSize } from "../../core/views/tool-words.js";
-import { sanitizeMultilineDisplayText } from "../../domains/safety/call-target.js";
-import { holdUnresolvedUserinfo, redactSecretString } from "../../domains/safety/redaction.js";
 import { stripTerminalSequences } from "../../engine/tui.js";
+import { sanitizeMultilineDisplayText } from "../../lib/call-target/call-target.js";
+import { holdUnresolvedUserinfo, redactSecretString } from "../../lib/secrets/redaction.js";
 import { toolResultPresentationText } from "../../tools/result-disposition.js";
 /** Tool result text: command-status envelopes, killed output, model notes, diffs, and the output blocks. */
 import { cardRows } from "../card.js";

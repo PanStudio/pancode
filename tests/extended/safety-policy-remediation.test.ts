@@ -7,9 +7,9 @@ import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { pancodeConfigDir } from "../../src/core/xdg.js";
-import { mapAutonomy } from "../../src/domains/safety/autonomy.js";
 import { createSafetyPolicyEngine } from "../../src/domains/safety/policy-engine.js";
 import { loadProjectSafetyPolicy } from "../../src/domains/safety/project-policy.js";
+import { mapAutonomy } from "../../src/lib/autonomy/autonomy.js";
 import { telemetryCall } from "../harness/telemetry-view.js";
 
 const root = mkdtempSync(join(tmpdir(), "s1-policy-"));

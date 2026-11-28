@@ -18,10 +18,10 @@ import {
 	turnAllowsTool,
 	turnDelegatesTool,
 } from "../core/turn-constraints.js";
-import type { AutonomyLevel } from "../domains/safety/autonomy.js";
 import { JOB_CONDITION_LIMIT, jobExecutionTimeoutMs, normalizeJobSpec } from "../domains/scheduling/index.js";
 import type { JobController, JobExecutionContext, JobRunResult } from "../domains/scheduling/job-types.js";
 import { StringEnum } from "../engine/ai.js";
+import type { AutonomyLevel } from "../lib/autonomy/autonomy.js";
 import {
 	attestJobCommand,
 	canonicalJobCwd,

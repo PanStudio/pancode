@@ -3,8 +3,8 @@
 
 import { sha256Hex } from "../core/hash.js";
 import { isRecord } from "../core/type-guards.js";
-import { createRedactionTally, redactSecretsText } from "../domains/evidence/redact.js";
-import { CUT_TRIM_LIMIT_CHARS, cutHeadGuard, dropShortCutHead } from "../domains/safety/redaction.js";
+import { createRedactionTally, redactSecretsText } from "../lib/secrets/redact.js";
+import { CUT_TRIM_LIMIT_CHARS, cutHeadGuard, dropShortCutHead } from "../lib/secrets/redaction.js";
 import type { ToolPresentationPolicy } from "./presentation.js";
 import type { ToolResult, ToolResultDetails, ToolSpec } from "./tool-spec.js";
 import { byteLength } from "./truncate-utf8.js";

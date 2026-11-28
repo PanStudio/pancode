@@ -15,7 +15,6 @@ import { memoryCarried, memorySectionBlocks, memorySectionDelta } from "../domai
 import type { CompiledSessionPrompt, SessionPromptInputs } from "../domains/prompts/compiler.js";
 import type { ContextWindowSource } from "../domains/providers/index.js";
 import type { LocalModelQuirks } from "../domains/providers/types/local-model-quirks.js";
-import { effectiveYoloConfinement } from "../domains/safety/autonomy.js";
 import { PROMPT_MANIFEST_VERSION } from "../domains/session/prompt-manifest.js";
 import { activePath, findLastEntry } from "../domains/session/tree/active-path.js";
 import {
@@ -25,6 +24,7 @@ import {
 	setEngineSystemPrompt,
 } from "../engine/agent.js";
 import { providerCheckpointCompatibility } from "../engine/ai.js";
+import { effectiveYoloConfinement } from "../lib/autonomy/autonomy.js";
 import { capabilityArgumentShape, capabilityStarterArgs } from "../tools/gateway/guidance.js";
 import { TOOL_PLANES } from "../tools/policy.js";
 import { declaredCheckIds } from "../tools/verify/resolve.js";

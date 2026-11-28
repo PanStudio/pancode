@@ -13,7 +13,6 @@ import type { TurnConstraints } from "../core/turn-constraints.js";
 import { snapshotTurnConstraints, toolSurfaceSources, turnAllowsTool } from "../core/turn-constraints.js";
 import { UNTRUSTED_CONTENT_BANNER } from "../core/untrusted-content.js";
 import { evaluateAdmission } from "../domains/safety/admission.js";
-import type { AutonomyLevel } from "../domains/safety/autonomy.js";
 import type { SafetyContract } from "../domains/safety/contract.js";
 import { jobPendingConditions } from "../domains/scheduling/index.js";
 import type {
@@ -23,6 +22,7 @@ import type {
 	JobRunnerPorts,
 	JobRunResult,
 } from "../domains/scheduling/job-types.js";
+import type { AutonomyLevel } from "../lib/autonomy/autonomy.js";
 import type { ChatLoop } from "../session-control/chat-loop.js";
 import { attestJobCommand, jobCommandEffect } from "../tools/job-command.js";
 

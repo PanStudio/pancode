@@ -20,7 +20,7 @@ import { sha256Hex } from "../../src/core/hash.js";
 import { sandboxAvailability } from "../../src/core/sandbox/availability.js";
 import { mainSandboxPolicy } from "../../src/core/sandbox/main-session.js";
 import { pancodeConfigDir, pancodeStateDir } from "../../src/core/xdg.js";
-import { effectiveScratchRoots } from "../../src/domains/safety/scratch-roots.js";
+import { effectiveScratchRoots } from "../../src/lib/scratch-roots/scratch-roots.js";
 import { currentProcessLease } from "../../src/tools/process-lease.js";
 import {
 	type DeclaredReproduce,

@@ -5,15 +5,15 @@ import type { PermissionRequestedPayload } from "../core/telemetry/live-events.j
 import { ToolNames } from "../core/tool-names.js";
 import type { DispatchContract } from "../domains/dispatch/contract.js";
 import type { ActionClass, ClassifierCall } from "../domains/safety/action-classifier.js";
-import {
-	operatorCallArgs,
-	sanitizeCallTargetText,
-	WORKER_CALL_TARGET_MAX_CHARS,
-} from "../domains/safety/call-target.js";
 import { COMMAND_CONSEQUENCE_MAX_SEVERE, fitConsequenceLine } from "../domains/safety/command-consequence.js";
 import type { SafetyDecision } from "../domains/safety/contract.js";
 import { decisionActionClass } from "../domains/safety/decision-presentation.js";
 import { UNATTENDED_DECIDED_BY, unattendedPermissionReason } from "../domains/safety/unattended.js";
+import {
+	operatorCallArgs,
+	sanitizeCallTargetText,
+	WORKER_CALL_TARGET_MAX_CHARS,
+} from "../lib/call-target/call-target.js";
 import {
 	approvalRequestTask,
 	axisViewFromId,

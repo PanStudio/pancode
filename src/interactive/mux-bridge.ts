@@ -26,7 +26,7 @@ import type { TelemetryHub } from "../core/telemetry/hub.js";
 import type { AgentStatusChangedPayload, DispatchRunIdentity } from "../core/telemetry/live-events.js";
 import { NEVER_STARTED_WORDS, plainOutcomeLabel, workerFailureHeadline } from "../domains/dispatch/failure-headline.js";
 import type { MuxContract, MuxLog } from "../domains/mux/index.js";
-import { sanitizeCallTargetText } from "../domains/safety/call-target.js";
+import { sanitizeCallTargetText } from "../lib/call-target/call-target.js";
 
 /** Trailing-edge window for the self-report; matches `WAIT_POLL_MS`. */
 export const MUX_BRIDGE_THROTTLE_MS = 250;

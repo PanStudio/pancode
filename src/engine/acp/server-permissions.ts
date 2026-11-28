@@ -10,13 +10,11 @@ import type { TelemetryHub } from "../../core/telemetry/hub.js";
 import type { PermissionRequestedPayload, PermissionResolvedPayload } from "../../core/telemetry/live-events.js";
 import { ToolNames } from "../../core/tool-names.js";
 import { isRecord } from "../../core/type-guards.js";
-import { DEFAULT_AUTONOMY_LEVEL } from "../../domains/safety/autonomy.js";
 import {
 	describeMainCallConsequences,
 	mainCallExposure,
 	mainCallReach,
 } from "../../domains/safety/call-consequence.js";
-import { describeCallTarget, sanitizeCallTargetText } from "../../domains/safety/call-target.js";
 import { COMMAND_CONSEQUENCE_MAX_SEVERE } from "../../domains/safety/command-consequence.js";
 import type { DecisionPresentation, TrustedDecisionFacts } from "../../domains/safety/decision-presentation.js";
 import {
@@ -25,8 +23,10 @@ import {
 	decisionFactsForPermission,
 } from "../../domains/safety/decision-presentation.js";
 import { escapeScopeOptionLabel } from "../../domains/safety/escape-scope.js";
-import { redactUrlCredentials } from "../../domains/safety/redaction.js";
 import type { SessionContract } from "../../domains/session/contract.js";
+import { DEFAULT_AUTONOMY_LEVEL } from "../../lib/autonomy/autonomy.js";
+import { describeCallTarget, sanitizeCallTargetText } from "../../lib/call-target/call-target.js";
+import { redactUrlCredentials } from "../../lib/secrets/redaction.js";
 import { mutationFacts, sessionApprovalTask } from "../../session-control/approval-request-facts.js";
 import type { ApprovalRequestView, MutationFacts } from "../../session-control/approval-request-view.js";
 import { resolvePermission } from "../../session-control/index.js";

@@ -5,8 +5,8 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, wr
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, it } from "node:test";
-import { mapAutonomy } from "../../src/domains/safety/autonomy.js";
 import { createSafetyPolicyEngine } from "../../src/domains/safety/policy-engine.js";
+import { mapAutonomy } from "../../src/lib/autonomy/autonomy.js";
 import { verifyTool } from "../../src/tools/verify/index.js";
 import { collectedNoTests } from "../../src/tools/verify/scripts.js";
 import { discoverToolchainChecks } from "../../src/tools/verify/toolchain-checks.js";

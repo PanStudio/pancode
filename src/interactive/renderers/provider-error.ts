@@ -2,9 +2,9 @@
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import { stripVTControlCharacters } from "node:util";
 import { GLYPH } from "../../core/glyphs.js";
-import { redactSecretsText } from "../../domains/evidence/redact.js";
 import { describeMissing, missingFromFailedCall } from "../../domains/lifecycle/setup-status.js";
-import { redactStreamingSecretString, redactUrlCredentials } from "../../domains/safety/redaction.js";
+import { redactSecretsText } from "../../lib/secrets/redact.js";
+import { redactStreamingSecretString, redactUrlCredentials } from "../../lib/secrets/redaction.js";
 
 const SCAN_LIMIT = 8_192;
 const DISPLAY_LIMIT = 600;

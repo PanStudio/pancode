@@ -1,12 +1,5 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
-export {
-	type AutonomyDisposition,
-	type AutonomyExposure,
-	type AutonomyLevel,
-	autonomyFromUserInput,
-	modelMayActivateSkills,
-} from "./autonomy.js";
 export type { SafetyContract, SafetyDecision } from "./contract.js";
 export type {
 	FinishContractAssessment,

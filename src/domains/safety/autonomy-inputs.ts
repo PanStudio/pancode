@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import { ToolNames } from "../../core/tool-names.js";
+import type { AutonomyExposure, AutonomyMappingOptions } from "../../lib/autonomy/autonomy.js";
+import { DEFAULT_AUTONOMY_EXPOSURE } from "../../lib/autonomy/autonomy.js";
 import type { ClassifierCall } from "./action-classifier.js";
 import { webFetchIsOutward } from "./action-classifier.js";
-import type { AutonomyExposure, AutonomyMappingOptions } from "./autonomy.js";
-import { DEFAULT_AUTONOMY_EXPOSURE } from "./autonomy.js";
 import type { SafetyDecision } from "./contract.js";
 
 /**

@@ -2,9 +2,9 @@
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 
 import { isRecord } from "../core/type-guards.js";
-import type { AutonomyLevel } from "../domains/safety/autonomy.js";
-import { isAutonomyLevel } from "../domains/safety/autonomy.js";
 import type { SessionEntry } from "../domains/session/entries.js";
+import type { AutonomyLevel } from "../lib/autonomy/autonomy.js";
+import { isAutonomyLevel } from "../lib/autonomy/autonomy.js";
 
 export const POSTURE_GENERATION = "pancode_posture_generation";
 export const POSTURE_UPDATE = "pancode_posture_update";

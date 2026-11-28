@@ -6,6 +6,7 @@ import type { PricingSum } from "../../core/telemetry/pricing.js";
 import type { QuotaAccess, QuotaOverage, RunUsageFacts } from "../../core/telemetry/schemas.js";
 import type { DeclaredCheckKind, GrantExecution } from "../../core/telemetry/session-vocabulary.js";
 import type { TurnConstraints } from "../../core/turn-constraints.js";
+import type { AutonomyLevel } from "../../lib/autonomy/autonomy.js";
 import type { NumericTolerance } from "../../tools/verify/numeric.js";
 import type { PerfBudgetSpec } from "../../tools/verify/perf.js";
 import type { DeclaredReproduce } from "../../tools/verify/reproduce.js";
@@ -14,7 +15,6 @@ import type { AgentAutomationAuthority, AgentSpec, AgentTrait } from "../agents/
 import type { WorkerContextSeed } from "../context/worker/contract.js";
 import type { ActionClass } from "../safety/action-classifier.js";
 import type { ApprovalAuthority } from "../safety/admission.js";
-import type { AutonomyLevel } from "../safety/autonomy.js";
 import type { ProtectedArtifactState } from "../safety/protected-artifacts.js";
 import type {
 	WorkerMcpAttestation,

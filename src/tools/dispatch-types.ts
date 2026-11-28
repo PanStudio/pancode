@@ -5,8 +5,8 @@ import type { AgentSpec } from "../domains/agents/spec.js";
 import type { WorkerContextSnapshot } from "../domains/context/worker/contract.js";
 import type { DispatchContract, DispatchRequest } from "../domains/dispatch/contract.js";
 import type { AgentRoleFactsResolver } from "../domains/dispatch/execution-role.js";
-import type { AutonomyLevel } from "../domains/safety/autonomy.js";
 import type { DecisionLedgerEntry } from "../domains/session/entries.js";
+import type { AutonomyLevel } from "../lib/autonomy/autonomy.js";
 import type {
 	CandidateWorktree,
 	CompeteGroupOwnership,

@@ -12,7 +12,7 @@ export type { ExtensionCapabilityEnvelope, ExtensionHookDeclaration } from "@pan
 export { capabilityEnvelope, envelopeDigest, extensionToolName, RUNTIME_V2_LIMITS } from "@pancode/sdk/pack";
 export type { ExtensionsContract } from "./contract.js";
 export { loadManifestFromRoot } from "./discovery.js";
-export { reviewExtensionEnvelope } from "./envelope-review.js";
+export { ENVELOPE_SEAT_BELT, envelopeLines, reviewExtensionEnvelope } from "./envelope-review.js";
 export type { McpToolOwnerLookup } from "./hook-tool-match.js";
 export { extensionHookToolMatcher } from "./hook-tool-match.js";
 export {

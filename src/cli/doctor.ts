@@ -34,20 +34,20 @@ import { describeMissing } from "../domains/lifecycle/setup-status.js";
 import type { ProvidersContract } from "../domains/providers/contract.js";
 import { copilotContextTierLabel } from "../domains/providers/types/target-descriptor.js";
 import { withFrontmatterCacheReadOnly } from "../domains/resources/skills/frontmatter-cache.js";
-import {
-	type AutonomyLevel,
-	DEFAULT_AUTONOMY_LEVEL,
-	effectiveYoloConfinement,
-	type YoloConfinement,
-} from "../domains/safety/autonomy.js";
 import { SCHEDULER_CLIS } from "../domains/safety/containment.js";
-import { droppedScratchRoots, effectiveScratchRoots } from "../domains/safety/scratch-roots.js";
 import {
 	describeHostCapacity,
 	observeHostCapacityFacts,
 	resolveLocalConcurrency,
 } from "../domains/scheduling/local-capacity.js";
 import { workspaceSnapshotRepositoryPresent } from "../domains/workspace-snapshots/store.js";
+import {
+	type AutonomyLevel,
+	DEFAULT_AUTONOMY_LEVEL,
+	effectiveYoloConfinement,
+	type YoloConfinement,
+} from "../lib/autonomy/autonomy.js";
+import { droppedScratchRoots, effectiveScratchRoots } from "../lib/scratch-roots/scratch-roots.js";
 import { classifyDefaultTarget, describeVerdict, firstMissing } from "./default-target.js";
 import { copilotSignInReport } from "./doctor-copilot.js";
 import { dispatchAdmissionFindings } from "./doctor-dispatch-admission.js";

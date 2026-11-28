@@ -13,7 +13,6 @@ import { openLedger } from "../domains/dispatch/state.js";
 import type { RunEnvelope } from "../domains/dispatch/types.js";
 import { readRunGateIndex, readRunTrust } from "../domains/evidence/run-trust.js";
 import { formatTrustSummaryLine } from "../domains/evidence/trust-projection.js";
-import { sanitizeCallTargetText } from "../domains/safety/call-target.js";
 import { loadRunCallsTelemetrySource } from "../domains/session/telemetry-source.js";
 import type { SettledRunRecord } from "../domains/telemetry/index.js";
 import { readRunRecord } from "../domains/telemetry/index.js";
@@ -21,6 +20,7 @@ import { runAggregateModel } from "../domains/telemetry/read-model-cost.js";
 import { runCallsReport } from "../domains/telemetry/read-model-reports.js";
 import { runTelemetry } from "../domains/telemetry/read-model-runs.js";
 import { truncateToWidth } from "../engine/tui-primitives.js";
+import { sanitizeCallTargetText } from "../lib/call-target/call-target.js";
 import type { fleetInspectionScope } from "./fleet-project-scope.js";
 import { contractReportOf, sealedReportAnswer } from "./run-output.js";
 
