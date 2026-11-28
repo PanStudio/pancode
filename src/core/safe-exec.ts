@@ -11,7 +11,14 @@ import {
 } from "./git-commit-attribution.js";
 import { relativePathEscapes } from "./path-containment.js";
 import { bridgeEgress, type EgressReport, egressStdio } from "./sandbox/egress/bridge.js";
-import { type MainSandboxPolicy, planMainSandboxSpawn } from "./sandbox/main-session.js";
+import {
+	launchFacts,
+	type SandboxLaunchLabel,
+	type SandboxLaunchRecord,
+	sandboxLaunch,
+	writeDeniedHint,
+} from "./sandbox/launch-record.js";
+import { type MainSandboxPolicy, planMainSandboxSpawn, sandboxWriteRefused } from "./sandbox/main-session.js";
 import { signalSandboxPayload } from "./sandbox/signal.js";
 import { planSandboxedSpawn } from "./sandbox/worker-process.js";
 import { clampTimerDelayMs } from "./timers.js";
@@ -92,6 +99,8 @@ export interface SafeCommandResult {
 	failure?: string | null;
 	/** A proxied sandboxed command's network: the origins it tried and what its proxy answered. */
 	egress?: EgressReport;
+	/** What the sandbox policy decided for this launch and how it settled; absent when no policy applied. */
+	sandbox?: SandboxLaunchRecord;
 }
 
 /**
@@ -138,6 +147,8 @@ export interface RunCommandVectorOptions {
 	typedGitWritablePaths?: ReadonlyArray<string>;
 	/** Set for a contained main-session call (run_script, verify): it runs in the main-session sandbox with this policy. */
 	shellSandbox?: MainSandboxPolicy;
+	/** Names what launched the command in its sandbox record; absent, the record says `command`. */
+	launchLabel?: SandboxLaunchLabel;
 	output?: SafeCommandOutputSink;
 	/**
 	 * Milliseconds between SIGTERM and SIGKILL when the runner stops the
@@ -560,8 +571,11 @@ export function runCommandVector(
 				: undefined;
 		const sandbox =
 			containedPlan ?? planSandboxedSpawn({ argv: [file, ...args] }, cwd, options.typedGitWritablePaths, { bridge: true });
+		const facts = sandbox.launch === undefined ? undefined : launchFacts(sandbox.launch, "command", options.launchLabel);
+		const launch = sandboxLaunch(facts);
 		if (sandbox.kind === "refused") {
 			settled = true;
+			const record = launch.settle({ outcome: "refused" });
 			resolve({
 				file,
 				args: [...args],
@@ -578,6 +592,7 @@ export function runCommandVector(
 				startedAt,
 				launched: false,
 				failure: sandbox.message,
+				...(record !== undefined ? { sandbox: record } : {}),
 			});
 			return;
 		}
@@ -688,6 +703,17 @@ export function runCommandVector(
 			child.unref();
 			egress?.close();
 			const output = captured();
+			const report = egress === null ? undefined : egress.report(exitCode);
+			const outcome = spawnError !== undefined || !launched ? "launch-failed" : "ran";
+			const record = launch.settle({
+				outcome,
+				exitCode,
+				...(report !== undefined ? { egress: report } : {}),
+				hint:
+					outcome === "ran"
+						? writeDeniedHint(facts, exitCode, () => `${output.stderr}\n${output.stdout}`, sandboxWriteRefused)
+						: null,
+			});
 			resolve({
 				file,
 				args: [...args],
@@ -713,7 +739,8 @@ export function runCommandVector(
 						: pipeDrainIncomplete
 							? "output pipe draining incomplete after leader exit; logs may be incomplete and escaped processes are not contained"
 							: null,
-				...(egress === null ? {} : { egress: egress.report(exitCode) }),
+				...(report !== undefined ? { egress: report } : {}),
+				...(record !== undefined ? { sandbox: record } : {}),
 			});
 		};
 
@@ -813,6 +840,8 @@ export interface StagingCommandOptions {
 	env?: Record<string, string>;
 	timeoutMs: number;
 	maxOutputBytes?: number;
+	/** Names what launched the command in its sandbox record; absent, the record says `staging`. */
+	launchLabel?: SandboxLaunchLabel;
 }
 
 /**
@@ -831,7 +860,12 @@ export function runStagingCommandSync(
 ): string {
 	const cwd = resolveSafeCwd(options.cwd);
 	const sandbox = planSandboxedSpawn({ argv: [file, ...args] }, cwd);
-	if (sandbox.kind === "refused") throw new Error(sandbox.message);
+	const facts = sandbox.launch === undefined ? undefined : launchFacts(sandbox.launch, "staging", options.launchLabel);
+	const launch = sandboxLaunch(facts);
+	if (sandbox.kind === "refused") {
+		launch.settle({ outcome: "refused" });
+		throw new Error(sandbox.message);
+	}
 	// `detached` makes the child lead its own process group; Node honors it for spawnSync
 	// although its typings omit it, so the options travel as a variable.
 	const spawnOptions = {
@@ -850,6 +884,14 @@ export function runStagingCommandSync(
 		spawnOptions,
 	);
 	if (sandbox.kind === "sandboxed") sandbox.afterExit();
+	const spawnFailed = result.pid === undefined || result.pid === 0;
+	launch.settle({
+		outcome: spawnFailed ? "launch-failed" : "ran",
+		exitCode: result.status,
+		hint: spawnFailed
+			? null
+			: writeDeniedHint(facts, result.status, () => `${result.stderr ?? ""}\n${result.stdout ?? ""}`, sandboxWriteRefused),
+	});
 	// The leader is reaped, so what is left in its group is only what it started.
 	if (result.pid !== undefined && process.platform !== "win32") {
 		try {

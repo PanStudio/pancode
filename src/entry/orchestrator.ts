@@ -1828,6 +1828,7 @@ export async function bootOrchestrator(options: BootOptions = {}): Promise<BootR
 				readOnlySandbox: sandbox && availability.backend === "bwrap",
 			};
 		},
+		sandboxState: () => ({ mode: getCurrentSettings().safety.sandbox, backend: sandboxAvailability().backend }),
 		currentSessionId: () => session?.current()?.id,
 		...mainShellSandboxSettings(() => getCurrentSettings()),
 		mutationEpoch: (turnId) => loopGuard.mutationEpoch(turnId),

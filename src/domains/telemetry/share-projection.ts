@@ -623,6 +623,28 @@ export const SHARE_EVENT_PROJECTIONS: { readonly [N in ShareableEventName]: Payl
 		tool: "tool",
 		extension: { id: "name", version: "token", scope: "token", contentDigest: "id", generation: "keep" },
 	},
+	"sandbox.launched": {
+		...keep(
+			"caller",
+			"launcher",
+			"confinement",
+			"why",
+			"backend",
+			"outcome",
+			"exitCode",
+			"network",
+			"dropped",
+			"shed",
+			"listeningPorts",
+			"hint",
+		),
+		integration: "name",
+		destinations: {
+			...keep("port", "decision", "reason", "source", "viaUpstream", "count", "hostClipped"),
+			host: "host",
+		},
+	},
+	"sandbox.uncontained": keep("caller", "why", "mode", "backend"),
 	"extension.binary_ran": {
 		...keep("sha256", "via", "parent", "outcome", "reasonCode", "exitCode", "argCount", "durationMs"),
 		extension: { id: "name", version: "token", scope: "token", contentDigest: "id" },

@@ -16,7 +16,14 @@ import {
 import { SAFE_EXEC_PIPE_DRAIN_BOUND_MS } from "./safe-exec.js";
 import { bridgeEgress, type EgressReport, egressStdio } from "./sandbox/egress/bridge.js";
 import { holdsNamedCredential, knownSecretValues, scrubSandboxEnv } from "./sandbox/env-scrub.js";
-import { type MainSandboxPolicy, planMainSandboxSpawn } from "./sandbox/main-session.js";
+import {
+	launchFacts,
+	type SandboxLaunchLabel,
+	type SandboxLaunchRecord,
+	sandboxLaunch,
+	writeDeniedHint,
+} from "./sandbox/launch-record.js";
+import { type MainSandboxPolicy, planMainSandboxSpawn, sandboxWriteRefused } from "./sandbox/main-session.js";
 import { signalSandboxPayload } from "./sandbox/signal.js";
 import type { SandboxEnvPolicy } from "./sandbox/types.js";
 import { planSandboxedSpawn } from "./sandbox/worker-process.js";
@@ -56,6 +63,8 @@ export interface BashCommandResult extends Partial<BashStreamByteCounts> {
 	timeoutLimit?: BashTimeoutLimit;
 	/** A proxied sandboxed command's network: the origins it tried and what its proxy answered. */
 	egress?: EgressReport;
+	/** What the sandbox policy decided for this launch and how it settled; absent when no policy applied. */
+	sandbox?: SandboxLaunchRecord;
 }
 
 export interface BashTimeoutLimit {
@@ -89,6 +98,8 @@ export interface RunBashCommandOptions {
 	onOutput?: BashOutputListener;
 	/** Set by the bash tool for a contained main-session call: it runs in the main-session sandbox with this policy. */
 	shellSandbox?: MainSandboxPolicy;
+	/** Names what launched the command in its sandbox record; absent, the record says `shell`. */
+	launchLabel?: SandboxLaunchLabel;
 	/** Called with the shell's pid once it is spawned; off Windows the pid is also its process group id. */
 	onSpawn?: (pid: number) => void;
 	/**
@@ -618,7 +629,12 @@ export async function runBashCommand(command: string, options: RunBashCommandOpt
 			: undefined;
 	const sandbox =
 		containedPlan ?? planSandboxedSpawn({ argv: shellArgv }, options.cwd ?? process.cwd(), [], { bridge: true });
-	if (sandbox.kind === "refused") return notSpawnedResult(sandbox.message);
+	const facts = sandbox.launch === undefined ? undefined : launchFacts(sandbox.launch, "shell", options.launchLabel);
+	const launch = sandboxLaunch(facts);
+	if (sandbox.kind === "refused") {
+		const record = launch.settle({ outcome: "refused" });
+		return { ...notSpawnedResult(sandbox.message), ...(record !== undefined ? { sandbox: record } : {}) };
+	}
 	const egressPlan = sandbox.kind === "sandboxed" ? sandbox.egress : undefined;
 	// A sandboxed command reaches the network without a judgment, so its
 	// environment loses every credential variable before the sandbox starts;
@@ -661,8 +677,20 @@ export async function runBashCommand(command: string, options: RunBashCommandOpt
 		});
 		// A proxied command's network is PanCode's proxy, served from here until the command exits.
 		const egress = egressPlan === undefined ? null : bridgeEgress(child, egressPlan);
-		const egressField = (code: number | null): { egress?: EgressReport } =>
-			egress === null ? {} : { egress: egress.report(code) };
+		const egressField = (
+			code: number | null,
+			outcome: "ran" | "launch-failed",
+			output: () => string,
+		): { egress?: EgressReport; sandbox?: SandboxLaunchRecord } => {
+			const report = egress === null ? undefined : egress.report(code);
+			const record = launch.settle({
+				outcome,
+				exitCode: code,
+				...(report !== undefined ? { egress: report } : {}),
+				hint: outcome === "ran" ? writeDeniedHint(facts, code, output, sandboxWriteRefused) : null,
+			});
+			return { ...(report !== undefined ? { egress: report } : {}), ...(record !== undefined ? { sandbox: record } : {}) };
+		};
 		if (child.pid !== undefined) options.onSpawn?.(child.pid);
 		const groupId = process.platform !== "win32" ? child.pid : undefined;
 		if (groupId !== undefined) liveCommandGroups.add(groupId);
@@ -832,7 +860,7 @@ export async function runBashCommand(command: string, options: RunBashCommandOpt
 				aborted,
 				timedOut,
 				...stopLimitField(),
-				...egressField(null),
+				...egressField(null, "launch-failed", () => ""),
 			});
 		});
 		child.on("close", (code, signalName) => {
@@ -863,7 +891,7 @@ export async function runBashCommand(command: string, options: RunBashCommandOpt
 				aborted,
 				timedOut,
 				...stopLimitField(),
-				...egressField(code),
+				...egressField(code, "ran", () => `${finalOutput.stderr}\n${finalOutput.stdout}`),
 			});
 		});
 	});

@@ -159,6 +159,8 @@ import {
 	CompletionEvaluatedSchema,
 	LoopBlockedSchema,
 	SafetyJudgedSchema,
+	SandboxLaunchedSchema,
+	SandboxUncontainedSchema,
 	ToolBudgetExceededSchema,
 	ToolDecidedSchema,
 	ToolSettledSchema,
@@ -425,6 +427,8 @@ export const EVENTS = {
 	}),
 	"tool.settled": journal(ToolSettledSchema, { tier: "operational", cc: "content-free" }),
 	"tool.decided": journal(ToolDecidedSchema, { tier: "accountability", cc: "content-free", scope: "session" }),
+	"sandbox.launched": journal(SandboxLaunchedSchema, { tier: "accountability", cc: "structural" }),
+	"sandbox.uncontained": journal(SandboxUncontainedSchema, { tier: "accountability", cc: "content-free" }),
 	"approval.requested": journal(ApprovalRequestedSchema, {
 		tier: "accountability",
 		cc: "content-free",

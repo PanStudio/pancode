@@ -4,7 +4,7 @@
 import type { EgressCallerSettings } from "../core/defaults.js";
 import type { ModelRunInfo } from "../core/model-tier.js";
 import type { MainSandboxPolicy, YoloScriptSandboxState } from "../core/sandbox/main-session.js";
-import type { SandboxEnvPolicy, UnixSocketMode } from "../core/sandbox/types.js";
+import type { SandboxBackend, SandboxEnvPolicy, SandboxMode, UnixSocketMode } from "../core/sandbox/types.js";
 import type { PendingSkillToolPolicy } from "../core/skill-activation.js";
 import type { ToolName } from "../core/tool-names.js";
 import type { TurnConstraints } from "../core/turn-constraints.js";
@@ -89,6 +89,11 @@ export interface RegistryDeps {
 	 * off); a read-only session's shell calls run in it at either level.
 	 */
 	containment?: () => { sandbox: boolean; snapshots: boolean; readOnlySandbox?: boolean };
+	/**
+	 * `safety.sandbox` and the backend probed here, read when a bash or run_script call runs without the main-session
+	 * sandbox: the session journal records once per reason that its shell ran uncontained. Wired beside `containment`.
+	 */
+	sandboxState?: () => { mode: SandboxMode; backend: SandboxBackend | null };
 	/**
 	 * Whether nobody will answer a park, read per call: the operator's contained
 	 * yolo (ob-yolo D1). Admission and the safety judge run exactly as at

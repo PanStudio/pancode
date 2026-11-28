@@ -178,7 +178,7 @@ function bashResultDetails(
 		observedStderrBytes: result.observedStderrBytes,
 		retainedStdoutBytes: result.retainedStdoutBytes,
 		retainedStderrBytes: result.retainedStderrBytes,
-		...(result.egress === undefined ? {} : { egress: result.egress.receipts }),
+		...(result.sandbox === undefined ? {} : { sandbox: result.sandbox }),
 	};
 }
 

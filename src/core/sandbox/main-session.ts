@@ -32,6 +32,7 @@ import type { EgressBridgePlan } from "./egress/bridge.js";
 import { EGRESS_PROXY_PORT, egressProxyEnv } from "./egress/setup.js";
 import { mainSandboxEnvPolicy } from "./env-scrub.js";
 import { buildSandboxInvocation } from "./invocation.js";
+import type { SandboxPlanFacts } from "./launch-record.js";
 import { withMountAliases } from "./mount-aliases.js";
 import { holdSandboxCacheLease, sandboxCacheDir } from "./sandbox-cache.js";
 import { missingBaselineLine } from "./seccomp.js";
@@ -820,7 +821,7 @@ export function mainSandboxInvocationSpec(
 	};
 }
 
-export type MainSandboxSpawnPlan =
+export type MainSandboxSpawnPlan = (
 	| {
 			kind: "sandboxed";
 			file: string;
@@ -830,7 +831,11 @@ export type MainSandboxSpawnPlan =
 			/** Proxied: spawn with `egressStdio` and serve the launch with `bridgeEgress`. */
 			egress?: EgressBridgePlan;
 	  }
-	| { kind: "refused"; message: string };
+	| { kind: "refused"; message: string }
+) & {
+	/** What the launch record says about this launch, refused or run. */
+	launch: SandboxPlanFacts;
+};
 
 /** The main session's contained-shell settings, as the tool registry reads them for each contained call. */
 export function mainShellSandboxSettings(
@@ -885,6 +890,29 @@ export function planMainSandboxSpawn(
 		bridge?: boolean;
 	} = {},
 ): MainSandboxSpawnPlan {
+	const launch: SandboxPlanFacts = {
+		caller: policy.readOnly === true ? "main-read-only" : "main",
+		confinement: "sandboxed",
+		why: "main-policy",
+		backend: availability.available ? availability.backend : null,
+		network: mainLaunchEgress(policy, availability.backend, options.bridge === true),
+	};
+	return { ...planMainSandboxLaunch(policy, command, cwd, availability, options), launch };
+}
+
+type MainSandboxLaunch = MainSandboxSpawnPlan extends infer Plan
+	? Plan extends MainSandboxSpawnPlan
+		? Omit<Plan, "launch">
+		: never
+	: never;
+
+function planMainSandboxLaunch(
+	policy: MainSandboxPolicy,
+	command: SandboxCommand,
+	cwd: string,
+	availability: SandboxAvailability,
+	options: { bridge?: boolean },
+): MainSandboxLaunch {
 	if (!availability.available || availability.backend === null || availability.executable === null) {
 		return {
 			kind: "refused",
@@ -1229,6 +1257,11 @@ function sweepMainSandboxGitFiles(absent: ReadonlyArray<string>): string[] {
 }
 
 const WRITE_REFUSED = /\b(?:EROFS|EACCES|EPERM)\b|Read-only file system|Permission denied|Operation not permitted/u;
+
+/** A contained command's output reads like the sandbox refused a write: a heuristic, never proof. */
+export function sandboxWriteRefused(output: string): boolean {
+	return WRITE_REFUSED.test(output);
+}
 
 function displayWritableRoots(roots: ReadonlyArray<string>): string {
 	const rootSet = new Set(roots);
