@@ -1210,6 +1210,7 @@ const WORKER_SANDBOX_KEYS = new Set([
 	"unixSockets",
 	"maskSettings",
 	"backendExpected",
+	"probedBackend",
 	"egress",
 	"unconfined",
 	"homeReads",
@@ -1246,6 +1247,8 @@ function validateWorkerSandbox(value: unknown): void {
 		throw new Error("WorkerSpec.sandbox.maskSettings must be true when present");
 	if (sandbox.backendExpected !== undefined && sandbox.backendExpected !== true)
 		throw new Error("WorkerSpec.sandbox.backendExpected must be true when present");
+	if (sandbox.probedBackend !== undefined)
+		validateProbedBackend(sandbox.probedBackend, sandbox.backendExpected === true);
 	if (sandbox.egress !== undefined) {
 		if (sandbox.network !== true) throw new Error("WorkerSpec.sandbox.egress needs network true");
 		validateWorkerEgress(sandbox.egress);
@@ -1266,6 +1269,19 @@ function validateWorkerHomeReads(value: unknown): void {
 	}
 	for (const [index, name] of readStringArray(homeReads.toolchains, `${source}.toolchains`).entries())
 		readEnum(name, `${source}.toolchains[${index}]`, HOME_READ_TOOLCHAINS);
+}
+
+/** A host probe's working backend: only beside `backendExpected`, at an absolute binary. */
+function validateProbedBackend(value: unknown, backendExpected: boolean): void {
+	const source = "WorkerSpec.sandbox.probedBackend";
+	if (!backendExpected) throw new Error(`${source} needs backendExpected`);
+	const probed = readRecord(value, source);
+	exactKeys(probed, ["backend", "executable", "networkIsolation"], source);
+	const backend = readEnum(probed.backend, `${source}.backend`, ["bwrap", "seatbelt"] as const);
+	if (typeof probed.executable !== "string" || !isAbsolute(probed.executable) || probed.executable.includes("\0"))
+		throw new Error(`${source}.executable must be an absolute path`);
+	if (probed.networkIsolation !== undefined && (probed.networkIsolation !== true || backend !== "bwrap"))
+		throw new Error(`${source}.networkIsolation must be true when present and only for bwrap`);
 }
 
 /** The proxied worker's grants: canonical host:port origins, and the operator's upstream proxy only from this host. */
@@ -1509,6 +1525,8 @@ export function parseWorkerSpec(value: unknown): WorkerSpec {
 			throw new Error("WorkerSpec.sandbox.network disagrees with the envelope's network.shell");
 		if ((sandbox.unconfined === true) !== (envelope.sandbox.unconfined === true))
 			throw new Error("WorkerSpec.sandbox.unconfined disagrees with the envelope's sandbox.unconfined");
+		if (sandbox.probedBackend !== undefined && sandbox.probedBackend.backend !== envelope.sandbox.backend)
+			throw new Error("WorkerSpec.sandbox.probedBackend disagrees with the envelope's sandbox.backend");
 		const unreadable = envelope.read.outside.filter((root) => !(sandbox.readableRoots ?? []).includes(root));
 		if (unreadable.length > 0)
 			throw new Error(`WorkerSpec.sandbox cannot read the envelope's outside roots: ${unreadable.join(", ")}`);

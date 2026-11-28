@@ -8,7 +8,13 @@ import { isSameOrDescendant } from "../path-containment.js";
 import { buildBwrapInvocation, DEFAULT_BWRAP_PATH, SECCOMP_FILTER_STDIN } from "./bwrap.js";
 import { buildSeatbeltInvocation, SEATBELT_EXECUTABLE } from "./seatbelt.js";
 import { SECCOMP_COVERED_MACHINES, sandboxFilterProgram } from "./seccomp.js";
-import type { SandboxAvailability, SandboxInvocation, SandboxMode } from "./types.js";
+import type {
+	ProbedSandboxBackend,
+	SandboxAvailability,
+	SandboxBackend,
+	SandboxInvocation,
+	SandboxMode,
+} from "./types.js";
 
 const PROBE_TIMEOUT_MS = 5000;
 
@@ -128,6 +134,16 @@ function bwrapProbe(bwrap: string, network: boolean): SandboxInvocation {
 
 type Detected = { availability: SandboxAvailability; timedOut: boolean };
 
+/** A backend whose probes all passed, as {@link detect} and an adopted probe both state it. */
+function fullBackend(backend: SandboxBackend, executable: string): SandboxAvailability {
+	return {
+		available: true,
+		backend,
+		executable,
+		reason: backend === "seatbelt" ? "seatbelt profile is unverified on macOS" : null,
+	};
+}
+
 /**
  * Null when bubblewrap loads the full seccomp program here, which proves the
  * kernel accepts it; else why not. The program travels on stdin, so the probe
@@ -204,10 +220,7 @@ function detect(platform: NodeJS.Platform, env: NodeJS.ProcessEnv, osrelease?: s
 		const seccomp = seccompFailure(bwrap);
 		return {
 			availability: {
-				available: true,
-				backend: "bwrap",
-				executable: bwrap,
-				reason: null,
+				...fullBackend("bwrap", bwrap),
 				...(seccomp.failure !== null ? { degraded: seccomp.failure } : {}),
 			},
 			timedOut: seccomp.timedOut,
@@ -245,15 +258,7 @@ function detect(platform: NodeJS.Platform, env: NodeJS.ProcessEnv, osrelease?: s
 				timedOut,
 			};
 		}
-		return {
-			availability: {
-				available: true,
-				backend: "seatbelt",
-				executable: SEATBELT_EXECUTABLE,
-				reason: "seatbelt profile is unverified on macOS",
-			},
-			timedOut: false,
-		};
+		return { availability: fullBackend("seatbelt", SEATBELT_EXECUTABLE), timedOut: false };
 	}
 	return {
 		availability: {
@@ -289,6 +294,43 @@ export function sandboxAvailability(
 /** The host answer once a probe has landed, else null. Never probes, so a render path can read it. */
 export function probedSandboxAvailability(): SandboxAvailability | null {
 	return cached;
+}
+
+/**
+ * The full backend this process's probes found, for a local worker to adopt (`WorkerSandboxSpec.probedBackend`);
+ * null before any probe, or when the backend is missing or partial. Never probes.
+ */
+export function probedSandboxBackend(): ProbedSandboxBackend | null {
+	if (cached === null || !cached.available || cached.backend === null || cached.executable === null) return null;
+	if (cached.degraded !== undefined) return null;
+	return {
+		backend: cached.backend,
+		executable: cached.executable,
+		...(cached.backend === "bwrap" && cachedNetIsolation === null ? { networkIsolation: true as const } : {}),
+	};
+}
+
+/**
+ * Take a local orchestrator's probe as this process's answer, when nothing here has probed yet. The binary must
+ * still match this host's own trusted bwrap lookup and seccomp support; anything else leaves the process to probe
+ * for itself. A working backend only adds confinement, so a stale answer fails a launch rather than widening one.
+ * True when adopted.
+ */
+export function adoptProbedSandboxBackend(probed: ProbedSandboxBackend): boolean {
+	if (cached !== null) return false;
+	if (probed.backend === "bwrap") {
+		if (process.platform !== "linux" || wslKind() === "wsl1") return false;
+		const found = findBwrap(process.env);
+		if (!("path" in found) || found.path !== probed.executable) return false;
+		if (sandboxFilterProgram({ unixSockets: true }) === null || !SECCOMP_COVERED_MACHINES.has(machine())) return false;
+		cached = fullBackend("bwrap", found.path);
+		cachedNetIsolation = probed.networkIsolation === true ? null : undefined;
+		return true;
+	}
+	if (process.platform !== "darwin" || probed.executable !== SEATBELT_EXECUTABLE || !executable(SEATBELT_EXECUTABLE))
+		return false;
+	cached = fullBackend("seatbelt", SEATBELT_EXECUTABLE);
+	return true;
 }
 
 /**

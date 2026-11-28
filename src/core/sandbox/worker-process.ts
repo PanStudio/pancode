@@ -7,7 +7,7 @@ import { PANCODE_ARTIFACT_DIR, PANCODE_PROJECT_DIR } from "../artifact-paths.js"
 import { canonicalizePath } from "../path-canonical.js";
 import { isSameOrDescendant, relativePathEscapes } from "../path-containment.js";
 import { pancodeConfigPath } from "../xdg.js";
-import { sandboxAvailability, sandboxNetworkIsolation, wslKind } from "./availability.js";
+import { adoptProbedSandboxBackend, sandboxAvailability, sandboxNetworkIsolation, wslKind } from "./availability.js";
 import type { EgressBridgePlan } from "./egress/bridge.js";
 import { egressGrants } from "./egress/policy.js";
 import { EGRESS_PROXY_PORT, egressProxyEnv } from "./egress/setup.js";
@@ -49,6 +49,8 @@ let socketFallbackReported = false;
  */
 export function configureWorkerProcessSandbox(spec: WorkerSandboxSpec | undefined, confinesWrites = false): void {
 	active = spec ?? null;
+	// The orchestrator probed this host moments ago; its working backend stands in for a second probe here.
+	if (spec?.backendExpected === true && spec.probedBackend !== undefined) adoptProbedSandboxBackend(spec.probedBackend);
 	envelopeConfinesWrites = spec !== undefined && confinesWrites;
 	unavailableReported = false;
 	socketFallbackReported = false;

@@ -3,6 +3,7 @@
 
 import { type TelemetryContext, workerAgent } from "../../core/telemetry/context.js";
 import { endpointIdentityHash } from "../../lib/worker-wire/protocol.js";
+import { type CheckoutRootLookup, checkoutRootLookup } from "../../tools/task-worktree.js";
 import { isHoareResultContract } from "../agents/result-contract-types.js";
 import { normalizeAgentSpec } from "../agents/spec.js";
 import { workspaceStoreTags } from "../store/index.js";
@@ -58,13 +59,14 @@ export function createRouteSelection(rt: DispatchRuntime) {
 		settings: EffectiveSettings = getEffectiveSettings(),
 		mode: JointRouteResolverInput["mode"] = "shadow",
 		agentIntent?: Parameters<typeof agentRouteCandidates>[0]["intentOverride"],
+		checkoutRoot: CheckoutRootLookup = checkoutRootLookup(),
 	): { input: JointRouteResolverInput; resolution: DispatchPlanTaskResolution } {
 		let resolution: DispatchPlanTaskResolution;
 		try {
-			resolution = rt.preview.previewFixed(req, settings);
+			resolution = rt.preview.previewFixed(req, settings, checkoutRoot);
 		} catch (error) {
 			if (placedNode === undefined) throw error;
-			resolution = { ...rt.preview.previewFixed({ ...req, node: "local" }, settings), node: placedNode };
+			resolution = { ...rt.preview.previewFixed({ ...req, node: "local" }, settings, checkoutRoot), node: placedNode };
 		}
 		const role: RouteRoleInput = { executionRole: withAttemptRole(req.executionRole, req.lineage?.attempt ?? 0) };
 		if (req.systemPrompt !== undefined) role.personaPrompt = req.systemPrompt;
@@ -141,6 +143,7 @@ export function createRouteSelection(rt: DispatchRuntime) {
 				const probed = rt.preview.previewFixed(
 					{ ...candidateRequest, target: target.targetId, model: target.modelId, node: node.nodeId },
 					settings,
+					checkoutRoot,
 				);
 				const candidateRole: RouteRoleInput = { executionRole: agent.executionRole };
 				if (candidateRequest.systemPrompt !== undefined) candidateRole.personaPrompt = candidateRequest.systemPrompt;
@@ -178,8 +181,9 @@ export function createRouteSelection(rt: DispatchRuntime) {
 	function preview(
 		req: DispatchRequest,
 		settings: EffectiveSettings = getEffectiveSettings(),
+		checkoutRoot: CheckoutRootLookup = checkoutRootLookup(),
 	): DispatchPlanTaskResolution {
-		const fixed = rt.preview.previewFixed(req, settings);
+		const fixed = rt.preview.previewFixed(req, settings, checkoutRoot);
 		const recipe = agents.get(req.agentId);
 		return planActiveRoute({
 			request: req,
@@ -188,8 +192,9 @@ export function createRouteSelection(rt: DispatchRuntime) {
 			failover: rt.retry.failoverModeFor(req),
 			fixed,
 			maxAttempts: rt.retry.workersMaxRetries(settings) + 1,
-			resolveDecision: () => resolveJointRoute(jointRouteInput(req, undefined, settings, "active").input).decision,
-			preview: (request) => rt.preview.previewFixed(request, settings),
+			resolveDecision: () =>
+				resolveJointRoute(jointRouteInput(req, undefined, settings, "active", undefined, checkoutRoot).input).decision,
+			preview: (request) => rt.preview.previewFixed(request, settings, checkoutRoot),
 		});
 	}
 
@@ -202,13 +207,15 @@ export function createRouteSelection(rt: DispatchRuntime) {
 		req: DispatchRequest,
 		settings: EffectiveSettings = getEffectiveSettings(),
 	): DispatchPlanTaskResolution {
-		return withPreviewAdmission(req, preview(req, settings), settings);
+		const checkoutRoot = checkoutRootLookup();
+		return withPreviewAdmission(req, preview(req, settings, checkoutRoot), settings, checkoutRoot);
 	}
 
 	function withPreviewAdmission(
 		req: DispatchRequest,
 		resolution: DispatchPlanTaskResolution,
 		settings: EffectiveSettings,
+		checkoutRoot: CheckoutRootLookup = checkoutRootLookup(),
 	): DispatchPlanTaskResolution {
 		const routed: DispatchRequest = { ...req, agentId: resolution.agentId };
 		const checkedAtRun: string[] = [];
@@ -243,13 +250,14 @@ export function createRouteSelection(rt: DispatchRuntime) {
 			const pinned = rt.preview.previewFixedStages(
 				{ ...routed, target: resolution.targetId, model: resolution.wireModelId, node: resolution.node.id },
 				settings,
+				checkoutRoot,
 			);
 			if (pinned.pricing !== null && !budgetExemptRoute(pinned.pricing)) {
 				if (scheduling.admitPaidRequest === undefined || options?.budgetWaitForRaise !== true) throw ceiling;
 				checkedAtRun.push("session cost ceiling reached: the run waits for a raise");
 			}
 		}
-		const forecasts = previewForecasts(routed, resolution, settings);
+		const forecasts = previewForecasts(routed, resolution, settings, checkoutRoot);
 		return {
 			...resolution,
 			...(checkedAtRun.length === 0 ? {} : { checkedAtRun }),
@@ -267,12 +275,13 @@ export function createRouteSelection(rt: DispatchRuntime) {
 		req: DispatchRequest,
 		resolution: DispatchPlanTaskResolution,
 		settings: EffectiveSettings,
+		checkoutRoot: CheckoutRootLookup = checkoutRootLookup(),
 	): NonNullable<DispatchPlanTaskResolution["forecasts"]> | null {
 		let decision: RouteDecisionV1;
 		try {
 			decision =
 				resolution.routeApproval?.decision ??
-				resolveJointRoute(jointRouteInput(req, undefined, settings, "shadow").input).decision;
+				resolveJointRoute(jointRouteInput(req, undefined, settings, "shadow", undefined, checkoutRoot).input).decision;
 		} catch {
 			return null;
 		}
@@ -300,19 +309,24 @@ export function createRouteSelection(rt: DispatchRuntime) {
 
 	const planAgentSelection: DispatchContract["planAgentSelection"] = (input) => {
 		const settings = getEffectiveSettings();
+		const checkoutRoot = checkoutRootLookup();
 		const selection = materializeAgentPlanSelection(input, {
 			resolve: (request, mode, intent) =>
-				resolveJointRoute(jointRouteInput(request, undefined, settings, mode, intent).input).decision,
-			preview: (request) => rt.preview.previewFixed(request, settings),
+				resolveJointRoute(jointRouteInput(request, undefined, settings, mode, intent, checkoutRoot).input).decision,
+			preview: (request) => rt.preview.previewFixed(request, settings, checkoutRoot),
 			getAgentSpec: (agentId) => agents.getSpec(agentId),
 		});
-		return { ...selection, resolution: withPreviewAdmission(input.request, selection.resolution, settings) };
+		return {
+			...selection,
+			resolution: withPreviewAdmission(input.request, selection.resolution, settings, checkoutRoot),
+		};
 	};
 
 	function routeCandidates(req: DispatchRequest): ReadonlyArray<DispatchFailoverCandidate> {
 		const settings = getEffectiveSettings();
-		const planned = preview(req, settings);
-		const input = jointRouteInput(req, undefined, settings, "shadow").input;
+		const checkoutRoot = checkoutRootLookup();
+		const planned = preview(req, settings, checkoutRoot);
+		const input = jointRouteInput(req, undefined, settings, "shadow", undefined, checkoutRoot).input;
 		const decision = planned.routeApproval?.decision ?? resolveJointRoute(input).decision;
 		const ordered = planned.routeApproval
 			? [decision.selected, ...decision.approvedFallbacks]
@@ -334,8 +348,9 @@ export function createRouteSelection(rt: DispatchRuntime) {
 		req: DispatchRequest,
 		placedNode?: RunNodeIdentity,
 		settings: EffectiveSettings = getEffectiveSettings(),
+		checkoutRoot: CheckoutRootLookup = checkoutRootLookup(),
 	): RouteObservationHandle {
-		const { input } = jointRouteInput(req, placedNode, settings, "shadow");
+		const { input } = jointRouteInput(req, placedNode, settings, "shadow", undefined, checkoutRoot);
 		let decision: RouteDecisionV1;
 		try {
 			const started = process.hrtime.bigint();
