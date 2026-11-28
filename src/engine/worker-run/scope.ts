@@ -15,9 +15,12 @@ import type { trackCallFetch } from "../../core/call-failure.js";
 import type { StructuredHelperResult } from "../../domains/agents/result-contract-types.js";
 import type { FlowRestrictionSet } from "../../domains/safety/information-flow.js";
 import type { McpCapabilitySource } from "../../tools/gateway/index.js";
+import type { createEngineAgent } from "../agent.js";
 import type { createRunPhase } from "../run-phase.js";
 import type { ActiveEscalation } from "../worker-escalation.js";
 import type { WorkerEventEmit, WorkerRunInput } from "../worker-run-types.js";
+import type { createWorkerToolRegistry } from "../worker-tools.js";
+import type { prepareNativeWorker } from "./spec.js";
 
 export interface WorkerRunScope {
 	readonly input: WorkerRunInput;
@@ -64,4 +67,9 @@ export interface WorkerRunScope {
 	contractResponseFormat: Record<string, unknown> | undefined;
 	permissionFailure: boolean;
 	activeEscalation: ActiveEscalation | null;
+	readonly registry: ReturnType<typeof createWorkerToolRegistry>;
+	readonly agent: ReturnType<typeof createEngineAgent>["agent"];
+	readonly safety: ReturnType<typeof prepareNativeWorker>["safety"];
+	readonly contractCwd: string;
+	readonly helperForcedChoiceAvailable: boolean;
 }
