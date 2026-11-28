@@ -86,9 +86,8 @@ export function prepareAdmissionCall(spec: ToolSpec | undefined, call: Classifie
 	}
 }
 
-/** The files a call sends off the host; a spec that cannot read its arguments names none. */
 /** The approval card's line on where the call's host process runs, or null; a throwing spec shows none. */
-export function hostLaunchNoteOf(spec: ToolSpec | undefined): string | null {
+function hostLaunchNoteOf(spec: ToolSpec | undefined): string | null {
 	try {
 		return spec?.hostLaunchNote?.() ?? null;
 	} catch {
@@ -96,6 +95,16 @@ export function hostLaunchNoteOf(spec: ToolSpec | undefined): string | null {
 	}
 }
 
+/** The approval card's consequence lines: each file the call sends off the host, then where its process runs. */
+export function approvalConsequencesOf(
+	spec: ToolSpec | undefined,
+	args: Record<string, unknown> | undefined,
+): string[] {
+	const launchNote = hostLaunchNoteOf(spec);
+	return [...outboundFilesOf(spec, args).map((file) => file.consequence), ...(launchNote !== null ? [launchNote] : [])];
+}
+
+/** The files a call sends off the host; a spec that cannot read its arguments names none. */
 export function outboundFilesOf(spec: ToolSpec | undefined, args: Record<string, unknown> | undefined): OutboundFile[] {
 	if (spec?.outboundFiles === undefined) return [];
 	try {

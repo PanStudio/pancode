@@ -83,11 +83,6 @@ const WHY_WORDS: Record<SandboxLaunchWhy, string> = {
 	"read-admitted": "read admission checks each path it reads",
 };
 
-/** The reason a label gives, in words. */
-export function hostLaunchWhyWords(why: SandboxLaunchWhy): string {
-	return WHY_WORDS[why];
-}
-
 /** One short phrase for a label, as a tool description and an approval card show it. */
 export function hostLaunchPhrase(label: HostLaunchLabel): string {
 	const why = WHY_WORDS[label.why];

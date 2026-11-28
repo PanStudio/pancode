@@ -19,6 +19,7 @@ import { basename, join } from "node:path";
 import { after, test } from "node:test";
 import { runBashCommand } from "../../src/core/bash-exec.js";
 import { readSettings } from "../../src/core/config.js";
+import { runCommandVector } from "../../src/core/safe-exec.js";
 import { sandboxAvailability, sandboxNetworkIsolation } from "../../src/core/sandbox/availability.js";
 import { buildBwrapInvocation } from "../../src/core/sandbox/bwrap.js";
 import { egressResultNote } from "../../src/core/sandbox/egress/bridge.js";
@@ -31,6 +32,13 @@ import {
 import { createEgressProxy, type EgressReceipt } from "../../src/core/sandbox/egress/proxy.js";
 import { EGRESS_UNGRANTED } from "../../src/core/sandbox/egress/setup.js";
 import { planHomeReads } from "../../src/core/sandbox/home-reads.js";
+import { notConfinedLabel, sandboxedLabel, uncontainedLabel } from "../../src/core/sandbox/host-launch.js";
+import {
+	collectHostLaunches,
+	seamLaunchLabel,
+	seamOrHostLaunch,
+	settleHostLaunch,
+} from "../../src/core/sandbox/host-launch-record.js";
 import {
 	emptySandboxLaunchTally,
 	recordUncontainedShell,
@@ -39,7 +47,14 @@ import {
 	sandboxLaunchRecord,
 	tallySandboxLaunch,
 } from "../../src/core/sandbox/launch-record.js";
-import { mainLaunchEgress, mainSandboxPolicy, planMainSandboxSpawn } from "../../src/core/sandbox/main-session.js";
+import {
+	confinedIntegrationPolicy,
+	documentReaderLaunch,
+	mainLaunchEgress,
+	mainSandboxPolicy,
+	optInLaunch,
+	planMainSandboxSpawn,
+} from "../../src/core/sandbox/main-session.js";
 import { buildSeatbeltInvocation } from "../../src/core/sandbox/seatbelt.js";
 import { WORKER_SANDBOX_SPEC_VERSION, type WorkerSandboxSpec } from "../../src/core/sandbox/types.js";
 import { resolveWorkerSandboxSpec } from "../../src/core/sandbox/worker-policy.js";
@@ -49,7 +64,7 @@ import {
 	planSandboxedSpawn,
 } from "../../src/core/sandbox/worker-process.js";
 import { formatControlValue, hasRedactedControlCredentials } from "../../src/core/settings-controls.js";
-import { readLayeredSettings } from "../../src/core/settings-layers.js";
+import { layeredConfineList, readLayeredSettings } from "../../src/core/settings-layers.js";
 import type { TelemetryContext } from "../../src/core/telemetry/context.js";
 import { telemetryContexts } from "../../src/core/telemetry/context-store.js";
 import { attachJournalRoute } from "../../src/core/telemetry/hub.js";
@@ -1112,6 +1127,94 @@ test("safety.egress is user-set, a project may only lower a mode, and the launch
 	assert.equal(mainLaunchEgress(proxied, "seatbelt", true), "open");
 	assert.equal(mainLaunchEgress({ network: true }, "bwrap", true), "open");
 	assert.equal(mainLaunchEgress({ network: false, egress: proxied.egress }, "bwrap", true), "off");
+});
+
+test("safety.confine is user-set, a project may only add to it, and an opt-in launch says where it ran (P8)", async (t) => {
+	const userFile = join(pancodeHome.dir, "config", "settings.yaml");
+	const workspace = realpathSync(mkdtempSync(join(tmpdir(), "pancode-confine-")));
+	mkdirSync(join(workspace, ".pancode"), { recursive: true });
+	mkdirSync(join(pancodeHome.dir, "config"), { recursive: true });
+	try {
+		assert.deepEqual(readSettings().safety.confine, []);
+		writeFileSync(userFile, "version: 2\nsafety:\n  confine: [shell]\n");
+		assert.throws(() => readSettings(), /safety\.confine/u);
+		writeFileSync(userFile, "version: 2\nsafety:\n  confine: ['mcp:docs', jobs, jobs]\n");
+		assert.deepEqual(readSettings().safety.confine, ["mcp:docs", "jobs"]);
+		writeFileSync(join(workspace, ".pancode", "settings.local.yaml"), "safety:\n  confine: [git]\n");
+		const snapshot = captureProjectSurface(workspace, "settings");
+		if (!snapshot.contentHash) throw new Error("missing project settings hash");
+		recordProjectSurfaceTrust(workspace, "settings", snapshot.contentHash);
+		assert.deepEqual([...layeredConfineList(workspace)].sort(), ["git", "jobs", "mcp:docs"]);
+	} finally {
+		writeFileSync(userFile, "version: 2\n");
+	}
+
+	assert.deepEqual(optInLaunch("job", "jobs", []), {
+		label: { launcher: "job", integration: "jobs", confinement: "unconfined", why: "not-opted-in" },
+		confined: false,
+	});
+	const listed = optInLaunch("mcp-stdio", "mcp:docs", ["mcp:docs"]);
+	const availability = sandboxAvailability();
+	if (availability.available)
+		assert.deepEqual(listed, { label: sandboxedLabel("mcp-stdio", "confine-opt-in", "mcp:docs"), confined: true });
+	else assert.match("refused" in listed ? listed.refused : "", /remove it from safety\.confine to run it unconfined/u);
+	assert.deepEqual(documentReaderLaunch("sqlite", workspace, "off").label, uncontainedLabel("sqlite", "sandbox-off"));
+
+	// A host launch journals one record, the same one its result carries; a seam's own record is not journaled again.
+	const journaled: unknown[] = [];
+	attachJournalRoute({
+		journal(name, payload) {
+			if (name !== "sandbox.launched") return false;
+			journaled.push(payload);
+			return true;
+		},
+		dropped() {},
+	});
+	const { value: record, launches } = await collectHostLaunches(async () => {
+		const host = settleHostLaunch(notConfinedLabel("extension-binary", "extension:demo"), {
+			outcome: "ran",
+			exitCode: 3,
+		});
+		seamOrHostLaunch(host, uncontainedLabel("search", "read-admitted"), { exitCode: 0 });
+		return host;
+	});
+	assert.deepEqual(journaled, [record]);
+	assert.deepEqual(launches, [record, record]);
+	assert.equal(record.launcher, "extension-binary");
+	assert.equal(record.integration, "extension:demo");
+	assert.equal(record.confinement, "unconfined");
+	assert.equal(record.why, "not-opted-in");
+	assert.equal(record.outcome, "ran");
+
+	if (!availability.available || availability.backend !== "bwrap") {
+		t.skip(`bubblewrap sandbox unavailable: ${availability.reason ?? "unsupported platform"}`);
+		rmSync(workspace, { recursive: true, force: true });
+		return;
+	}
+	// A confined integration writes its tree and nothing outside it, with the network off, and records why.
+	const outside = realpathSync(mkdtempSync(join(tmpdir(), "pancode-confine-outside-")));
+	t.after(() => {
+		rmSync(workspace, { recursive: true, force: true });
+		rmSync(outside, { recursive: true, force: true });
+	});
+	const label = sandboxedLabel("job", "confine-opt-in", "jobs");
+	const result = await runCommandVector(
+		"sh",
+		["-c", `echo in > ${join(workspace, "in.txt")}; echo out > ${join(outside, "out.txt")}`],
+		{
+			cwd: workspace,
+			workspaceRoot: workspace,
+			shellSandbox: confinedIntegrationPolicy({ workspace, scratchRoots: [], stateDirs: [], network: "off" }),
+			launchLabel: seamLaunchLabel(label),
+		},
+	);
+	assert.notEqual(result.exitCode, 0);
+	assert.ok(existsSync(join(workspace, "in.txt")));
+	assert.ok(!existsSync(join(outside, "out.txt")));
+	assert.equal(result.sandbox?.confinement, "sandboxed");
+	assert.equal(result.sandbox?.why, "confine-opt-in");
+	assert.equal(result.sandbox?.integration, "jobs");
+	assert.deepEqual(result.sandbox?.network, { mode: "off", observed: false });
 });
 
 test("egress proxy refuses mismatched Host headers, screens IPv4-translated IPv6, and redacts upstreamProxy control values (P3)", async (t) => {

@@ -253,7 +253,7 @@ export type HookLaunch = { label: HostLaunchLabel; policy?: MainSandboxPolicy } 
  * main-session sandbox, network off, when `safety.confine` names `hooks`;
  * otherwise on the host, as before, and labelled so.
  */
-export function hookLaunch(
+function hookLaunch(
 	origin: UserHookOrigin | undefined,
 	workspaceRoot: string,
 	confine: ReadonlyArray<string>,

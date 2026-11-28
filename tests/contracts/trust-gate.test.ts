@@ -4,10 +4,12 @@ import { deepStrictEqual, match, ok, strictEqual, throws } from "node:assert/str
 import { spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { type AddressInfo, createServer } from "node:net";
 import { join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { settingsPath } from "../../src/core/config.js";
+import { sandboxAvailability } from "../../src/core/sandbox/availability.js";
 import { readLayeredSettings } from "../../src/core/settings-layers.js";
 import {
 	approveOperatorProjectInstall,
@@ -604,11 +606,17 @@ test("S3-02: a registered command hook receives a safe environment and preserves
 		);
 		const hook = loaded.hooks[0];
 		ok(hook);
+		const receipts: Array<{ confinement?: string }> = [];
 		const registration = userHookToRegistration(hook, {
-			recordReceipt: () => undefined,
+			recordReceipt: (receipt) => receipts.push(receipt),
 			runCommand: spawnSyncCommandRunner(),
 		});
 		const effects = registration.evaluate({ hook: "after_tool", toolName: "read" });
+		// The operator's own hook is operator authority: it runs on the host and its receipt says so (P8).
+		deepStrictEqual(
+			receipts.map((receipt) => receipt.confinement),
+			["host"],
+		);
 		const effect = effects[0];
 		ok(effect?.kind === "annotate_tool_result");
 		const env = JSON.parse(effect.message) as NodeJS.ProcessEnv;
@@ -617,6 +625,36 @@ test("S3-02: a registered command hook receives a safe environment and preserves
 		strictEqual(env.PATH, process.env.PATH);
 		strictEqual(env.HOME, process.env.HOME);
 		strictEqual(env.PANCODE_GIT_COMMITS_ENABLED, "0");
+
+		// A project hook runs on the host, labelled so, until safety.confine names hooks; then it runs contained,
+		// network off. The listener's backlog completes a host connect while this thread waits on the hook.
+		const listener = createServer();
+		await new Promise<void>((resolve) => listener.listen(0, "127.0.0.1", resolve));
+		const port = (listener.address() as AddressInfo).port;
+		const dial = [
+			process.execPath,
+			"-e",
+			`require("node:net").connect(${port}, "127.0.0.1").on("connect", () => process.exit(0)).on("error", () => process.exit(3))`,
+		];
+		const workspace = join(home.dir, "workspace");
+		mkdirSync(workspace, { recursive: true });
+		try {
+			const host = spawnSyncCommandRunner(workspace, () => [])(dial, { timeoutMs: 10_000, origin: "project" });
+			strictEqual(host.code, 0, host.stderr);
+			strictEqual(host.launch?.confinement, "unconfined");
+			strictEqual(host.launch?.why, "not-opted-in");
+			const confined = spawnSyncCommandRunner(workspace, () => ["hooks"])(dial, { timeoutMs: 10_000, origin: "project" });
+			if (sandboxAvailability().available) {
+				strictEqual(confined.code, 3, confined.stderr);
+				strictEqual(confined.launch?.confinement, "sandboxed");
+				strictEqual(confined.launch?.why, "confine-opt-in");
+			} else {
+				match(confined.stderr, /safety\.confine/u);
+				strictEqual(confined.launch, undefined);
+			}
+		} finally {
+			listener.close();
+		}
 	} finally {
 		home.restore();
 	}

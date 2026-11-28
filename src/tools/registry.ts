@@ -84,9 +84,9 @@ import {
 } from "./read-fan-out.js";
 import {
 	applyRegisteredToolClassification,
+	approvalConsequencesOf,
 	disposeAdmissionArgs,
 	hookLanding,
-	hostLaunchNoteOf,
 	outboundFilesOf,
 	prepareAdmissionCall,
 	prepareToolArgs,
@@ -2118,12 +2118,7 @@ export function createRegistry(deps: RegistryDeps): ToolRegistry {
 			const loopReason = rejected();
 			return { kind: "blocked", reason: loopReason ?? abortReason, decision: outcome.decision };
 		}
-		const admittedSpec = tools.get(admissionCall.tool as ToolName);
-		const launchNote = hostLaunchNoteOf(admittedSpec);
-		const consequence = [
-			...outboundFilesOf(admittedSpec, admissionCall.args).map((file) => file.consequence),
-			...(launchNote !== null ? [launchNote] : []),
-		];
+		const consequence = approvalConsequencesOf(tools.get(admissionCall.tool as ToolName), admissionCall.args);
 		return new Promise<RegistryVerdict>((resolve) => {
 			const meta: PermissionRequiredMeta = {
 				requestId: nextApprovalRequestId(),

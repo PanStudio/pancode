@@ -783,7 +783,7 @@ const FUNCTION_LINE_EXEMPTIONS: ReadonlyMap<string, number> = new Map([
 	["src/cli/modes/print.ts#runHeadlessMainAgent", 856],
 	["src/cli/uninstall.ts#runUninstallCommand", 543],
 	["src/cli/upgrade.ts#runUpgradeCommand", 568],
-	["src/core/settings-validate.ts#validateSettings", 1288],
+	["src/core/settings-validate.ts#validateSettings", 1279],
 	["src/domains/dispatch/admission.ts#createCapacityAdmissionController", 547],
 	["src/domains/dispatch/execution-scheduler.ts#executePlan", 662],
 	["src/domains/dispatch/fleet-run.ts#runFleetHoldingWorkspace", 1043],
@@ -837,8 +837,8 @@ const FUNCTION_LINE_EXEMPTIONS: ReadonlyMap<string, number> = new Map([
 	["src/tools/dispatch-compete.ts#runCompete", 543],
 	["src/tools/dispatch-runner.ts#runDispatchTool", 550],
 	["src/tools/gateway/index.ts#createGatewayTool", 875],
-	["src/tools/gateway/mcp-capabilities.ts#createMcpCapabilitySource", 1680],
-	["src/tools/registry.ts#createRegistry", 2340],
+	["src/tools/gateway/mcp-capabilities.ts#createMcpCapabilitySource", 1673],
+	["src/tools/registry.ts#createRegistry", 2338],
 ]);
 
 function memberNameText(name: ts.PropertyName | ts.BindingName, tree: ts.SourceFile): string {

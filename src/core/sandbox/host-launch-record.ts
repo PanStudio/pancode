@@ -10,14 +10,12 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import { sandboxAvailability } from "./availability.js";
 import type { HostLaunchLabel } from "./host-launch.js";
 import {
-	labelLaunch,
-	launchTelemetryContext,
-	recordSandboxLaunch,
+	launchFacts,
 	type SandboxLaunchFacts,
 	type SandboxLaunchLabel,
 	type SandboxLaunchRecord,
 	type SandboxPlanFacts,
-	sandboxLaunchRecord,
+	sandboxLaunch,
 } from "./launch-record.js";
 import type { EgressMode, SandboxLaunchOutcome } from "./types.js";
 import { workerSandboxConfigured } from "./worker-process.js";
@@ -26,12 +24,12 @@ import { workerSandboxConfigured } from "./worker-process.js";
  * The facts of a launch: the planner's under the label's launcher and integration, or the label's own. A sandboxed
  * label with no plan at hand (a pane the terminal starts) names the host's backend and its policy's network.
  */
-export function hostLaunchFacts(
+function hostLaunchFacts(
 	label: HostLaunchLabel,
 	plan?: SandboxPlanFacts,
 	sandboxedNetwork: EgressMode = "off",
 ): SandboxLaunchFacts {
-	if (plan !== undefined) return labelLaunch({ ...plan, launcher: label.launcher }, label);
+	if (plan !== undefined) return launchFacts(plan, label.launcher, label);
 	const sandboxed = label.confinement === "sandboxed";
 	return {
 		caller: workerSandboxConfigured() ? "worker" : "main",
@@ -73,8 +71,7 @@ export function settleHostLaunch(
 	settled: { outcome: SandboxLaunchOutcome; exitCode?: number | null },
 	plan?: SandboxPlanFacts,
 ): SandboxLaunchRecord {
-	const record = sandboxLaunchRecord(hostLaunchFacts(label, plan), settled);
-	recordSandboxLaunch(record, launchTelemetryContext());
+	const record = sandboxLaunch(hostLaunchFacts(label, plan)).settle(settled) as SandboxLaunchRecord;
 	collected.getStore()?.push(record);
 	return record;
 }

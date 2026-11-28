@@ -315,7 +315,7 @@ function mainEgressFacts(availability: ReturnType<typeof sandboxAvailability>): 
  * the operator's own work that runs on the host. A confined entry this host
  * cannot sandbox warns, since that integration then refuses to start.
  */
-export function hostLaunchersFinding(workspaceRoot: string): DoctorFinding {
+function hostLaunchersFinding(workspaceRoot: string): DoctorFinding {
 	const confine = layeredConfineList(workspaceRoot);
 	const backend = sandboxAvailability();
 	const refused = confine.length > 0 && !backend.available;

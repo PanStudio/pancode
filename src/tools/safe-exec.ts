@@ -189,7 +189,7 @@ export async function runVectorTool(
  * a network hook then fails), and on the host, as before and labelled so,
  * when it does not. `workspace` is the session's tree.
  */
-export function typedGitLaunch(
+function typedGitLaunch(
 	workspace: string = process.cwd(),
 	confine: ReadonlyArray<string> = layeredConfineList(workspace),
 ): { label: HostLaunchLabel; policy?: MainSandboxPolicy } | { refused: string } {
