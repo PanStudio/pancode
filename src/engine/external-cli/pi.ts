@@ -9,7 +9,7 @@ import { assertToolProfileEnforceable } from "../../tools/profiles.js";
 import type { AgentMessage } from "../types.js";
 import type { WorkerEventEmit, WorkerRunHandle, WorkerRunInput, WorkerRunResult } from "../worker-run-types.js";
 import type { JsonlCliConnector, JsonlCliDependencies, JsonlCliState } from "./jsonl-runner.js";
-import { emptyCliUsage, finiteUsage, startJsonlCliRun } from "./jsonl-runner.js";
+import { cliWorkOrderPrompt, emptyCliUsage, finiteUsage, startJsonlCliRun } from "./jsonl-runner.js";
 
 export const PI_CLI_DEFAULT_MODEL = "pi-cli-default";
 
@@ -196,15 +196,7 @@ export const PI_CLI_CONNECTOR: JsonlCliConnector = {
 	binary: "pi",
 	configDirEnv: "PI_CODING_AGENT_DIR",
 	args: buildPiCliArgs,
-	prompt(input) {
-		return [
-			input.systemPrompt.trim(),
-			...(input.dynamicPromptMessages ?? []).map((message) => message.body.trim()),
-			input.task.trim(),
-		]
-			.filter(Boolean)
-			.join("\n\n");
-	},
+	prompt: cliWorkOrderPrompt,
 	requireTerminalEvent: true,
 	onEvent(event, state, append, observeUsage) {
 		if (event.type === "session" && typeof event.id === "string") {

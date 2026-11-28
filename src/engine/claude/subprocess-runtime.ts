@@ -88,7 +88,7 @@ function finite(value: unknown): number {
 	return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : 0;
 }
 
-function normalizeUsage(raw: unknown, totalCostUsd = 0): Usage {
+export function normalizeClaudeUsage(raw: unknown, totalCostUsd = 0): Usage {
 	const record = typeof raw === "object" && raw !== null ? (raw as Record<string, unknown>) : {};
 	const input =
 		finite(record.input_tokens) +
@@ -183,7 +183,7 @@ function buildAssistantMessage(input: {
 		api: "claude-code-subprocess",
 		provider: "anthropic",
 		model: input.model,
-		usage: normalizeUsage(input.result?.usage, finite(input.result?.total_cost_usd)),
+		usage: normalizeClaudeUsage(input.result?.usage, finite(input.result?.total_cost_usd)),
 		stopReason: input.aborted ? "aborted" : failed ? "error" : "stop",
 		timestamp: Date.now(),
 	} as AgentMessage & { role: "assistant" };

@@ -8,7 +8,7 @@ import {
 } from "../../domains/providers/runtimes/external-cli-policy.js";
 import { assertToolProfileEnforceable } from "../../tools/profiles.js";
 import type { WorkerRunInput } from "../worker-run-types.js";
-import { emptyCliUsage, finiteUsage, type JsonlCliConnector } from "./jsonl-runner.js";
+import { cliWorkOrderPrompt, emptyCliUsage, finiteUsage, type JsonlCliConnector } from "./jsonl-runner.js";
 
 export const OPENCODE_CLI_DEFAULT_MODEL = "opencode-cli-default";
 
@@ -29,15 +29,7 @@ export const OPENCODE_CLI_CONNECTOR: JsonlCliConnector = {
 	configDirEnv: "OPENCODE_CONFIG_DIR",
 	extraEnv: referencedOpenCodeCredentials,
 	args: buildOpenCodeCliArgs,
-	prompt(input) {
-		return [
-			input.systemPrompt.trim(),
-			...(input.dynamicPromptMessages ?? []).map((message) => message.body.trim()),
-			input.task.trim(),
-		]
-			.filter(Boolean)
-			.join("\n\n");
-	},
+	prompt: cliWorkOrderPrompt,
 	// OpenCode's run command emits text/step/error events and then exits on session idle.
 	requireTerminalEvent: false,
 	onEvent(event, state, append, observeUsage) {

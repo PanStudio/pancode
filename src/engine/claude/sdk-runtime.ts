@@ -35,7 +35,7 @@ import { redactSecretString } from "../../lib/secrets/redaction.js";
 import { toolCallFacts } from "../../tools/agent-tools.js";
 import { WORKER_EXIT_PERMISSION_REQUIRED, type WorkerBudget } from "../../worker/spec-contract.js";
 import { bindExternalUsage } from "../external-call-telemetry.js";
-import type { AgentEvent, AgentMessage, Usage } from "../types.js";
+import type { AgentEvent, AgentMessage } from "../types.js";
 import {
 	WORKER_REFUSAL_REPORT_BLOCK,
 	WORKER_REFUSAL_REPORT_DIRECTIVE,
@@ -47,6 +47,7 @@ import { createWorkerSafety } from "../worker-tools.js";
 import { claudeSdkBridgedTools, createPancodeToolBridge } from "./pancode-tool-bridge.js";
 import { loadClaudeAgentSdk } from "./sdk-module.js";
 import { isClaudeCodeSessionId } from "./session-id.js";
+import { buildClaudeCodePrompt, normalizeClaudeUsage } from "./subprocess-runtime.js";
 import {
 	CLAUDE_SDK_PANCODE_SERVER,
 	type ClaudeToolPermissionDecision,
@@ -66,12 +67,6 @@ function sdkUserTextMessage(text: string, shouldQuery: boolean): SDKUserMessage 
 		shouldQuery,
 		timestamp: new Date().toISOString(),
 	};
-}
-
-function buildClaudeSdkPrompt(input: WorkerRunInput): string {
-	const parts = (input.dynamicPromptMessages ?? []).map((message) => message.body.trim()).filter(Boolean);
-	parts.push(input.task);
-	return parts.join("\n\n");
 }
 
 class ClaudeSdkInput implements AsyncIterableIterator<SDKUserMessage> {
@@ -188,10 +183,6 @@ function systemPromptForInput(input: WorkerRunInput): NonNullable<Options["syste
 	return { type: "preset", preset: "claude_code", append };
 }
 
-function finite(value: unknown): number {
-	return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : 0;
-}
-
 /** The SDK prices its own calls from a client-side table, so its total is a peer estimate, never a bill (#434). */
 function telemetryUsage(raw: unknown, totalCostUsd?: number): Record<string, unknown> {
 	const usage = coerceToolInput(raw);
@@ -202,48 +193,6 @@ function telemetryUsage(raw: unknown, totalCostUsd?: number): Record<string, unk
 		cacheWrite: usage.cache_creation_input_tokens,
 		costUsd: totalCostUsd,
 		...(totalCostUsd === undefined ? {} : { pricedBy: "catalog" }),
-	};
-}
-
-function normalizeUsage(raw: unknown, totalCostUsd = 0): Usage {
-	const record = typeof raw === "object" && raw !== null ? (raw as Record<string, unknown>) : {};
-	const cacheCreation =
-		finite(record.cache_creation_input_tokens) +
-		finite(record.cacheCreationInputTokens) +
-		finite(record.cacheWrite) +
-		finite(record.cacheWriteTokens);
-	const cacheRead =
-		finite(record.cache_read_input_tokens) +
-		finite(record.cacheReadInputTokens) +
-		finite(record.cacheRead) +
-		finite(record.cacheReadTokens);
-	const input =
-		finite(record.input_tokens) +
-		finite(record.inputTokens) +
-		finite(record.input) +
-		finite(record.prompt_tokens) +
-		finite(record.promptTokens);
-	const output =
-		finite(record.output_tokens) +
-		finite(record.outputTokens) +
-		finite(record.output) +
-		finite(record.completion_tokens) +
-		finite(record.completionTokens);
-	const totalTokens = input + output + cacheRead + cacheCreation;
-	const cost = finite(totalCostUsd) + finite(record.costUSD) + finite(record.cost_usd);
-	return {
-		input,
-		output,
-		cacheRead,
-		cacheWrite: cacheCreation,
-		totalTokens,
-		cost: {
-			input: 0,
-			output: 0,
-			cacheRead: 0,
-			cacheWrite: 0,
-			total: cost,
-		},
 	};
 }
 
@@ -296,7 +245,7 @@ function contentFromSdkMessage(message: unknown): AgentMessage & { role: "assist
 		api: "claude-agent-sdk",
 		provider: "anthropic",
 		model: "",
-		usage: normalizeUsage(null),
+		usage: normalizeClaudeUsage(null),
 		stopReason: "stop",
 		timestamp: Date.now(),
 	} as unknown as AgentMessage & { role: "assistant" };
@@ -352,7 +301,7 @@ function buildAssistantMessage(input: {
 	aborted: boolean;
 	errorMessage?: string | undefined;
 }): AgentMessage & { role: "assistant" } {
-	const usage = { ...normalizeUsage(input.result?.usage, input.result?.total_cost_usd ?? 0), pancodeSdkAggregate: true };
+	const usage = { ...normalizeClaudeUsage(input.result?.usage, input.result?.total_cost_usd ?? 0), pancodeSdkAggregate: true };
 	const message: AgentMessage & { role: "assistant" } = {
 		role: "assistant",
 		content: [{ type: "text", text: input.text }],
@@ -679,7 +628,7 @@ export function startClaudeSdkWorkerRun(input: WorkerRunInput, emit: WorkerEvent
 	}
 	const abortController = new AbortController();
 	const prompt = new ClaudeSdkInput();
-	prompt.push(sdkUserTextMessage(buildClaudeSdkPrompt(input), true));
+	prompt.push(sdkUserTextMessage(buildClaudeCodePrompt(input), true));
 	let pendingTurns = 1;
 	let finished = false;
 	let authFailure: string | undefined;
@@ -867,7 +816,7 @@ export function startClaudeSdkWorkerRun(input: WorkerRunInput, emit: WorkerEvent
 					payload: bindExternalUsage(
 						{
 							callIndex: ++callIndex,
-							usage: normalizeTokenUsage({ ...normalizeUsage(call.usage) }),
+							usage: normalizeTokenUsage({ ...normalizeClaudeUsage(call.usage) }),
 							model: input.wireModelId,
 							...(call.model ? { responseModel: call.model } : {}),
 							...(call.responseId ? { responseId: call.responseId } : {}),

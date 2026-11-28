@@ -9,6 +9,7 @@ import { asRecord } from "../../core/type-guards.js";
 import { codexSubprocessPermissionConfig } from "../../domains/providers/runtimes/external-cli-policy.js";
 import { assertToolProfileEnforceable } from "../../tools/profiles.js";
 import { bindExternalUsage } from "../external-call-telemetry.js";
+import { cliWorkOrderPrompt, finiteUsage } from "../external-cli/jsonl-runner.js";
 import {
 	createProcessTreeTerminator,
 	EXTERNAL_PROCESS_KILL_GRACE_MS,
@@ -33,16 +34,6 @@ export interface CodexRuntimeDependencies {
 	killGraceMs?: number;
 }
 
-export function buildCodexExecPrompt(input: WorkerRunInput): string {
-	return [
-		input.systemPrompt.trim(),
-		...(input.dynamicPromptMessages ?? []).map((message) => message.body.trim()),
-		input.task.trim(),
-	]
-		.filter(Boolean)
-		.join("\n\n");
-}
-
 /** `codex exec -` reads the work order from stdin; prompt text never enters argv. */
 export function buildCodexExecArgs(input: WorkerRunInput): string[] {
 	assertToolProfileEnforceable(input.toolProfile, "codex-cli");
@@ -58,18 +49,12 @@ export function buildCodexExecArgs(input: WorkerRunInput): string[] {
 	return args;
 }
 
-function finite(value: unknown): number {
-	return typeof value === "number" && Number.isFinite(value) && value >= 0
-		? Math.min(value, Number.MAX_SAFE_INTEGER)
-		: 0;
-}
-
 function normalizeUsage(raw: unknown): Usage {
 	const usage = asRecord(raw);
-	const totalInput = finite(usage?.input_tokens);
-	const cacheRead = Math.min(totalInput, finite(usage?.cached_input_tokens));
-	const cacheWrite = Math.min(totalInput - cacheRead, finite(usage?.cache_write_input_tokens));
-	const output = finite(usage?.output_tokens);
+	const totalInput = finiteUsage(usage?.input_tokens);
+	const cacheRead = Math.min(totalInput, finiteUsage(usage?.cached_input_tokens));
+	const cacheWrite = Math.min(totalInput - cacheRead, finiteUsage(usage?.cache_write_input_tokens));
+	const output = finiteUsage(usage?.output_tokens);
 	const result: Usage & { reasoningTokens?: number } = {
 		input: totalInput - cacheRead - cacheWrite,
 		output,
@@ -78,7 +63,7 @@ function normalizeUsage(raw: unknown): Usage {
 		totalTokens: totalInput + output,
 		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
 	};
-	const reasoning = finite(usage?.reasoning_output_tokens);
+	const reasoning = finiteUsage(usage?.reasoning_output_tokens);
 	if (reasoning > 0) result.reasoningTokens = reasoning;
 	return result;
 }
@@ -224,7 +209,7 @@ export function startCodexCliWorkerRun(
 	if (input.signal?.aborted === true) throw input.signal.reason;
 	const sourceEnv = dependencies.environment ?? process.env;
 	const args = buildCodexExecArgs(input);
-	const prompt = buildCodexExecPrompt(input);
+	const prompt = cliWorkOrderPrompt(input);
 	const cwd = resolveSafeCwd(input.cwd, dependencies.workspaceRoot ?? process.cwd());
 	const child: CodexChildProcess = spawn(dependencies.binary ?? CODEX_BINARY, args, {
 		cwd,

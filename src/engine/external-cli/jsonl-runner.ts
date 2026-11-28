@@ -64,6 +64,17 @@ const MAX_LINE_BYTES = 1024 * 1024;
 const MAX_STREAM_BYTES = 8 * 1024 * 1024;
 const MAX_RESPONSE_BYTES = 4 * 1024 * 1024;
 
+/** The work order an external CLI reads on stdin: system prompt, dynamic messages, then the task. */
+export function cliWorkOrderPrompt(input: WorkerRunInput): string {
+	return [
+		input.systemPrompt.trim(),
+		...(input.dynamicPromptMessages ?? []).map((message) => message.body.trim()),
+		input.task.trim(),
+	]
+		.filter(Boolean)
+		.join("\n\n");
+}
+
 export function finiteUsage(value: unknown): number {
 	return typeof value === "number" && Number.isFinite(value) && value >= 0
 		? Math.min(value, Number.MAX_SAFE_INTEGER)
