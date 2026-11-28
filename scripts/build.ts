@@ -4,8 +4,10 @@ import { spawn } from "node:child_process";
 import { stripVTControlCharacters } from "node:util";
 import { buildColor, buildVerbose } from "./build-output.js";
 
-// Loading through tsx keeps tsup from writing a temporary bundled config into
-// the checkout. Build and watch share the same entry and asset policy.
+// `pnpm run build`: tsup, then the source pack, the code map and the
+// preparsed YAML. Loading through tsx keeps tsup from writing a temporary
+// bundled config into the checkout. Build and watch share the same entry and
+// asset policy; watch rebuilds the bundles only.
 if (process.argv.includes("--build-worker")) {
 	const [{ build }, { default: config }] = await Promise.all([import("tsup"), import("../tsup.config.js")]);
 	if (typeof config === "function" || Array.isArray(config)) throw new Error("Expected one root build configuration.");
@@ -73,4 +75,10 @@ if (process.argv.includes("--build-worker")) {
 	if (pending) emit(pending);
 	if (code !== 0 && !verbose && transcript) process.stderr.write(present(transcript));
 	process.exitCode = code;
+	// The code map indexes the final source pack, so the steps run in this order.
+	if (code === 0 && !process.argv.includes("--watch")) {
+		await import("./build-source-pack.js");
+		await import("./build-codewiki-asset.js");
+		await import("./build-preparsed-yaml.js");
+	}
 }

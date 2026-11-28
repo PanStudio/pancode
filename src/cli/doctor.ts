@@ -2,15 +2,18 @@
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import path from "node:path";
 import { readSettings } from "../core/config.js";
-import { DEFAULT_SETTINGS, type EgressSettings } from "../core/defaults.js";
+import { DEFAULT_SETTINGS, type EgressSettings, type HomeReadsSettings } from "../core/defaults.js";
 import { canonicalizePath } from "../core/path-canonical.js";
 import { proxyEnvSummary } from "../core/proxy-env.js";
 import { sandboxAvailability, sandboxNetworkIsolation } from "../core/sandbox/availability.js";
 import { egressGrants, redactedUpstreamProxy } from "../core/sandbox/egress/policy.js";
+import { homeReadList } from "../core/sandbox/home-read-roots.js";
+import { homeReadsLine, planHomeReads } from "../core/sandbox/home-reads.js";
 import {
 	type MainSandboxEgressFacts,
 	mainSandboxLine,
 	mainSandboxPolicy,
+	mainSandboxWritableRoots,
 	mainShellContained,
 	yoloScriptSandboxState,
 	yoloShellState,
@@ -20,6 +23,7 @@ import { discoverSecretMasks } from "../core/sandbox/secret-files.js";
 import { hostSandboxStatus, sandboxStatusLine } from "../core/sandbox/status.js";
 import type { SandboxMode, UnixSocketMode } from "../core/sandbox/types.js";
 import { unixSocketHostState } from "../core/sandbox/unix-sockets.js";
+import { physicalSandboxPath } from "../core/sandbox/worker-process.js";
 import { type LayeredSettings, readLayeredSettings, settingsSourceFor } from "../core/settings-layers.js";
 import { reportInvalidInstallRecordsAsRows } from "../domains/extensions/index.js";
 import { resolveOnPath } from "../domains/interop/detect.js";
@@ -263,6 +267,44 @@ export function shellSandboxFinding(workspaceRoot: string): DoctorFinding {
 			unixSockets,
 			mainEgressFacts(availability),
 		),
+	};
+}
+
+/**
+ * `safety.homeReads` on this host: each caller's mode and, when the main
+ * session's is listed, what its contained commands in this workspace would
+ * see. A plan that would refuse every command warns.
+ */
+function homeReadsFinding(workspaceRoot: string): DoctorFinding {
+	let setting: HomeReadsSettings;
+	try {
+		setting = readLayeredSettings(workspaceRoot).settings.safety.homeReads;
+	} catch {
+		// An unreadable settings file has its own doctor row; judge with the default.
+		setting = DEFAULT_SETTINGS.safety.homeReads;
+	}
+	const availability = sandboxAvailability();
+	const list = homeReadList(setting, "main");
+	const backend = mainShellContained(configuredSandboxMode(), availability) ? availability.backend : null;
+	const workspace = physicalSandboxPath(canonicalizePath(workspaceRoot) ?? workspaceRoot);
+	const scratchRoots = effectiveScratchRoots(configuredScratchRoots(), workspaceRoot);
+	const plan =
+		list === undefined || backend === null
+			? null
+			: planHomeReads({
+					list,
+					backend,
+					admitted: [...new Set([workspace, ...mainSandboxWritableRoots(workspace, scratchRoots).map(physicalSandboxPath)])],
+					cwd: workspace,
+				});
+	return {
+		ok: true,
+		name: "home reads",
+		level: plan instanceof Error || (list !== undefined && backend === null) ? "warn" : "ok",
+		detail:
+			list !== undefined && backend === null
+				? `${homeReadsLine(setting, null)}; the main session's commands are not contained here, so nothing is hidden from them`
+				: homeReadsLine(setting, plan),
 	};
 }
 
@@ -584,6 +626,7 @@ async function collectFindings(options: DoctorCollectOptions): Promise<DoctorFin
 				sandboxStatusFinding(),
 				resourceLimitsFinding(),
 				shellSandboxFinding(workspaceRoot),
+				homeReadsFinding(workspaceRoot),
 				...schedulerClientFindings(),
 			];
 	// Task worktrees live in the workspace too. The sweep reads claims and asks

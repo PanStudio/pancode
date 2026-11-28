@@ -113,7 +113,14 @@ export async function verifyAttemptOnHost(rt: DispatchRuntime, attempt: Finalizi
 		settlement === undefined
 			? await runHostVerification(hostVerificationInput)
 			: await settlement.arrive(hostVerificationInput);
-	await compareHostVerificationBase({ verification: hostVerification, request: req, slot: hostVerificationSlot });
+	await compareHostVerificationBase({
+		verification: hostVerification,
+		request: req,
+		slot: hostVerificationSlot,
+		...(hostVerificationSandboxPolicy?.homeReads !== undefined
+			? { homeReads: hostVerificationSandboxPolicy.homeReads }
+			: {}),
+	});
 	// One settle snapshot serves the test-removal check and the receipt; nothing between them writes the checkout.
 	const checkoutBefore = lifecycle.runtimeKind === "subprocess" ? checkoutBaseline : null;
 	const checkoutAfter = checkoutBaseline === null ? null : await snapshotCheckoutSince(checkoutBaseline, lifecycle.cwd);

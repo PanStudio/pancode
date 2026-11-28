@@ -19,6 +19,8 @@ import type { ModelTier } from "./model-tier.js";
 import type {
 	EgressMode,
 	EgressPresetName,
+	HomeReadMode,
+	HomeReadToolchain,
 	ResourceLimitSettings,
 	SandboxMode,
 	UnixSocketMode,
@@ -861,6 +863,12 @@ export interface SafetySettings {
 	 */
 	sandboxCacheMaxGiB: number;
 	/**
+	 * What sandboxed commands may read under the operator's home, per caller.
+	 * `roots` and `toolchains` are read only from the operator's own settings
+	 * file; a project layer may only move a mode to `listed`.
+	 */
+	homeReads: HomeReadsSettings;
+	/**
 	 * Workspace snapshots before the main agent mutates a Git work tree: auto
 	 * snapshots before each turn's first mutating call and before every
 	 * destructive one, and `/rewind` restores files from them; off takes none.
@@ -915,6 +923,17 @@ export interface SafetySettings {
 	 * operator's own settings file.
 	 */
 	judge: SafetyJudgeSettings;
+}
+
+/** `safety.homeReads`: `listed` hides the home and WSL's Windows drives and shows back only named roots. */
+export interface HomeReadsSettings {
+	/** The main session's contained commands, host verification included. */
+	main: HomeReadMode;
+	/** Dispatched workers' sandboxed commands, on whichever host they run. */
+	workers: HomeReadMode;
+	/** Absolute paths, or `~/` paths in the running host's home, shown back read-only under `listed`. */
+	roots: string[];
+	toolchains: HomeReadToolchain[];
 }
 
 /** One caller's shell egress: its mode and, for `proxied`, the exact origins it may reach. */
@@ -1126,6 +1145,12 @@ export const DEFAULT_SETTINGS = {
 		sandboxUnixSockets: "block" as UnixSocketMode,
 		sandboxUnconfinedLocalWorkers: false,
 		sandboxCacheMaxGiB: 4,
+		homeReads: {
+			main: "open",
+			workers: "open",
+			roots: [] as string[],
+			toolchains: [] as HomeReadToolchain[],
+		} as HomeReadsSettings,
 		snapshots: "auto" as WorkspaceSnapshotMode,
 		validationWrappers: [] as string[],
 		unattendedAfterSeconds: 300,

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import path from "node:path";
 import { sandboxCommandArgv } from "./bwrap.js";
 import type { SandboxInvocation, SandboxInvocationSpec } from "./types.js";
 
@@ -89,6 +90,16 @@ function buildSeatbeltProfile(spec: SandboxInvocationSpec): { profile: string; p
 		"MASKED_FILE",
 		spec.maskedPaths.filter((mask) => mask.kind === "file").map((mask) => mask.path),
 	);
+	const restriction = spec.readRestriction;
+	const shownRoots = restriction === undefined ? [] : seatbeltShownRoots(spec);
+	const hidden = define("HIDDEN_DIR", restriction?.hidden ?? []);
+	const shown = define("SHOWN_ROOT", shownRoots);
+	const shownLinkPaths = (restriction?.links ?? []).map((link) => link.path);
+	const shownLinks = define("SHOWN_LINK", shownLinkPaths);
+	const shownAncestors = define(
+		"SHOWN_ANCESTOR",
+		restriction === undefined ? [] : ancestorsUnder([...shownRoots, ...shownLinkPaths], restriction.hidden),
+	);
 	const lines = [...SEATBELT_BASE_POLICY];
 	// Temporary directories: macOS resolves /tmp to /private/tmp and gives each
 	// user a per-session TMPDIR under /private/var/folders.
@@ -109,6 +120,14 @@ function buildSeatbeltProfile(spec: SandboxInvocationSpec): { profile: string; p
 		);
 	}
 	if (gitWritable > 0) lines.push(`(allow file-write* ${paramRule("GIT_WRITABLE_PATH", gitWritable)})`);
+	// UNVERIFIED: a read restriction denies the hidden trees, then re-allows what shows back and lets path lookup
+	// stat the directories on the way to it. The masks below still win over both.
+	if (hidden > 0) {
+		lines.push(`(deny file-read* ${paramRule("HIDDEN_DIR", hidden)})`);
+		if (shown > 0) lines.push(`(allow file-read* ${paramRule("SHOWN_ROOT", shown)})`);
+		if (shownLinks > 0) lines.push(`(allow file-read* ${literalRule("SHOWN_LINK", shownLinks)})`);
+		if (shownAncestors > 0) lines.push(`(allow file-read-metadata ${literalRule("SHOWN_ANCESTOR", shownAncestors)})`);
+	}
 	// A later matching rule takes precedence in SBPL, so masks come last, with revealed subtrees re-opened before file masks.
 	if (maskedDirs > 0) lines.push(`(deny file-read* file-write* ${paramRule("MASKED_DIR", maskedDirs)})`);
 	if (revealedRead > 0) lines.push(`(allow file-read* ${paramRule("REVEAL_READ", revealedRead)})`);
@@ -119,6 +138,36 @@ function buildSeatbeltProfile(spec: SandboxInvocationSpec): { profile: string; p
 	if (spec.network) lines.push("(allow network*)", "(allow system-socket)");
 	if (spec.denyUnixSockets === true) lines.push(...seatbeltUnixSocketRules(spec.network));
 	return { profile: lines.join("\n"), params };
+}
+
+/** Every root a restricted command still reads: what the restriction shows back and the roots the run was given. */
+function seatbeltShownRoots(spec: SandboxInvocationSpec): string[] {
+	return [
+		...new Set(
+			[
+				spec.cwd,
+				...(spec.readRestriction?.exposed ?? []),
+				...spec.writableRoots,
+				...(spec.gitWritablePaths ?? []),
+				...(spec.readableRoots ?? []),
+				...spec.maskedPaths.flatMap((mask) => (mask.reveal ?? []).map((entry) => entry.target)),
+			].map((entry) => (entry.length > 1 ? entry.replace(/\/+$/u, "") : entry)),
+		),
+	];
+}
+
+/** The directories between each hidden root and a root shown inside it, the hidden root included. */
+function ancestorsUnder(roots: ReadonlyArray<string>, hidden: ReadonlyArray<string>): string[] {
+	const out = new Set<string>();
+	for (const root of roots) {
+		const dir = hidden.find((entry) => root !== entry && root.startsWith(`${entry}/`));
+		if (dir === undefined) continue;
+		for (let parent = path.posix.dirname(root); parent.length >= dir.length; parent = path.posix.dirname(parent)) {
+			out.add(parent);
+			if (parent === dir) break;
+		}
+	}
+	return [...out];
 }
 
 /** Pure `sandbox-exec` argv. Environment changes ride the caller's spawn env. */

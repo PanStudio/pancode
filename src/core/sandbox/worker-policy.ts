@@ -5,6 +5,7 @@ import path from "node:path";
 import { sandboxUsable } from "./availability.js";
 import {
 	type EgressMode,
+	type HomeReadList,
 	type ResourceLimits,
 	type SandboxAvailability,
 	type SandboxBackend,
@@ -35,6 +36,8 @@ export interface WorkerSandboxPolicyInput {
 	env?: SandboxEnvPolicy;
 	/** `safety.sandboxUnixSockets`; absent blocks them. */
 	unixSockets?: UnixSocketMode;
+	/** `safety.homeReads` when the workers' mode is `listed`; absent reads the whole home. */
+	homeReads?: HomeReadList;
 }
 
 /** Paths inside a writable root that stay read-only, as in Codex's workspace-write mode. */
@@ -95,6 +98,9 @@ export function resolveWorkerSandboxSpec(input: WorkerSandboxPolicyInput): Worke
 		...(secretEnv.length > 0 ? { secretEnv: [...secretEnv] } : {}),
 		...(input.unixSockets !== undefined && input.unixSockets !== "block" ? { unixSockets: input.unixSockets } : {}),
 		...(input.env?.maskSettings === true ? { maskSettings: true as const } : {}),
+		...(input.homeReads !== undefined
+			? { homeReads: { roots: [...input.homeReads.roots], toolchains: [...input.homeReads.toolchains] } }
+			: {}),
 	};
 }
 
@@ -246,7 +252,11 @@ export function workerSandboxLine(spec: WorkerSandboxSpec | undefined, availabil
 	const backend = seatbelt ? "seatbelt (experimental, unverified macOS profile)" : availability.backend;
 	const partial =
 		availability.degraded !== undefined ? ` It is partial: no seccomp baseline (${availability.degraded}).` : "";
-	return `Shell sandbox: ${backend}.${partial} Commands you run can write ${writes}; .git and .pancode stay read-only; ${workerNetworkPhrase(spec, availability)}; credential variables are unset and secret files such as .env and private keys cannot be read, so name a command that needs one in your result instead of working around it.${seed}`;
+	const home =
+		spec.homeReads !== undefined
+			? " The home directory is hidden from your commands except your own roots and the paths the operator listed."
+			: "";
+	return `Shell sandbox: ${backend}.${partial} Commands you run can write ${writes}; .git and .pancode stay read-only; ${workerNetworkPhrase(spec, availability)}; credential variables are unset and secret files such as .env and private keys cannot be read, so name a command that needs one in your result instead of working around it.${home}${seed}`;
 }
 
 function workerNetworkPhrase(spec: WorkerSandboxSpec, availability: SandboxAvailability): string {

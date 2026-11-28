@@ -1080,6 +1080,7 @@ async function runProofCheck(
 			workspace: process.cwd(),
 			scratchRoots: [],
 			scratchDir: scratch,
+			...(options?.shellSandbox?.homeReads !== undefined ? { homeReads: options.shellSandbox.homeReads } : {}),
 		});
 		const result = await runVectorTool(
 			"verify",

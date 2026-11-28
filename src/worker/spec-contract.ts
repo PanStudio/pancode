@@ -12,7 +12,9 @@ import {
 	RUNTIME_KINDS,
 } from "../core/runtime-vocabulary.js";
 import { originKey, parseEgressAllowEntry, upstreamProxyProblem } from "../core/sandbox/egress/policy.js";
+import { homeReadRootProblem } from "../core/sandbox/home-read-roots.js";
 import {
+	HOME_READ_TOOLCHAINS,
 	RESOURCE_LIMIT_KEYS,
 	RESOURCE_LIMIT_MAX,
 	WORKER_SANDBOX_SPEC_VERSION,
@@ -1210,6 +1212,7 @@ const WORKER_SANDBOX_KEYS = new Set([
 	"backendExpected",
 	"egress",
 	"unconfined",
+	"homeReads",
 ]);
 
 function readAbsolutePaths(value: unknown, source: string): void {
@@ -1249,6 +1252,20 @@ function validateWorkerSandbox(value: unknown): void {
 	}
 	if (sandbox.unconfined !== undefined && (sandbox.unconfined !== true || sandbox.mode === "required"))
 		throw new Error("WorkerSpec.sandbox.unconfined must be true when present and only under mode auto");
+	if (sandbox.homeReads !== undefined) validateWorkerHomeReads(sandbox.homeReads);
+}
+
+/** Roots are checked as spelled; the worker expands `~/` in its own host's home. */
+function validateWorkerHomeReads(value: unknown): void {
+	const source = "WorkerSpec.sandbox.homeReads";
+	const homeReads = readRecord(value, source);
+	exactKeys(homeReads, ["roots", "toolchains"], source);
+	for (const [index, root] of readStringArray(homeReads.roots, `${source}.roots`).entries()) {
+		const problem = homeReadRootProblem(root);
+		if (problem !== null) throw new Error(`${source}.roots[${index}] ${problem}`);
+	}
+	for (const [index, name] of readStringArray(homeReads.toolchains, `${source}.toolchains`).entries())
+		readEnum(name, `${source}.toolchains[${index}]`, HOME_READ_TOOLCHAINS);
 }
 
 /** The proxied worker's grants: canonical host:port origins, and the operator's upstream proxy only from this host. */

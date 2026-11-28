@@ -14,13 +14,13 @@
  * npm's own dependency tree out of this repository. It never reads or writes
  * `.pancode/`: a found, cached, or checked-in index would describe some
  * other tree, and `state.json` carries timestamps and mtimeMs fingerprints
- * that must never enter the tarball. Wired into `pnpm run build` after tsup and
+ * that must never enter the tarball. Run by scripts/build.ts after tsup and
  * the source pack, so the grammars it loads are the vendored ones and the pack
  * membership is final. Stored gzipped: code_nav inflates it once per process,
  * and the 5 MB of JSON costs under 1 MB on disk.
  */
 import { execFileSync } from "node:child_process";
-import { mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import { gzipSync, constants as zlibConstants } from "node:zlib";
@@ -56,9 +56,6 @@ const codewiki = await buildCodewiki(
 );
 mkdirSync(dirname(target), { recursive: true });
 writeFileSync(target, gzipSync(serializeCodewiki(codewiki), { level: zlibConstants.Z_BEST_COMPRESSION }));
-// Remove the superseded generated assets when rebuilding an existing dist.
-rmSync(join(root, "dist", "assets", "codemap.json"), { force: true });
-rmSync(join(root, "dist", "assets", "codewiki.json"), { force: true });
 if (buildVerbose()) {
 	process.stdout.write(
 		`build-codewiki-asset: ${codewiki.files.length} files, ${codewiki.symbols.length} symbols, ${codewiki.edges.length} edges -> dist/assets/codemap.json.gz\n`,
