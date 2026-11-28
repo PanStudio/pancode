@@ -153,10 +153,7 @@ function playbookDetachRefusal(preview: FleetRunPreview): string | null {
  * steps, workspace-writing steps, and dynamic plan steps (whose spliced steps can write); a capability allowlist
  * refuses worktree isolation and host code steps, which execute outside worker tool admission.
  */
-function playbookCeilingRefusal(
-	preview: FleetRunPreview,
-	turnConstraints: TurnConstraints | undefined,
-): string | null {
+function playbookCeilingRefusal(preview: FleetRunPreview, turnConstraints: TurnConstraints | undefined): string | null {
 	if (turnConstraints?.readOnly === true) {
 		if (preview.plan.isolation === "worktree") {
 			return `dispatch: playbook '${preview.name}' uses worktree isolation and cannot run under a read-only ceiling. Nothing was dispatched`;

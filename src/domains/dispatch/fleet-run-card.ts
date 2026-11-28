@@ -210,9 +210,7 @@ function fleetRunCardStepLabel(step: Pick<FleetRunCardStep, "stepId" | "loop">):
 }
 
 /** Who runs a step, as one word: the agent, the command, or the prior result a resume replays. */
-function fleetRunCardStepRunner(
-	step: Pick<FleetRunCardStep, "replayed" | "kind" | "commandId" | "agentId">,
-): string {
+function fleetRunCardStepRunner(step: Pick<FleetRunCardStep, "replayed" | "kind" | "commandId" | "agentId">): string {
 	if (step.replayed === true) return "replay";
 	if (step.kind === "code") return step.commandId ?? "?";
 	return step.agentId ?? "?";
