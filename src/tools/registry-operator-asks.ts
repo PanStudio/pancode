@@ -5,6 +5,7 @@ import type { EgressOrigin } from "../core/sandbox/egress/policy.js";
 import { egressGrants, originKey } from "../core/sandbox/egress/policy.js";
 import type { MainSandboxPolicy } from "../core/sandbox/main-session.js";
 import { ToolNames } from "../core/tool-names.js";
+import { SHELL_EGRESS_RULE_ID } from "../core/views/approval-words.js";
 import type { ClassifierCall } from "../domains/safety/action-classifier.js";
 import { evaluateAdmission } from "../domains/safety/admission.js";
 import type { SafetyDecision } from "../domains/safety/contract.js";
@@ -14,7 +15,6 @@ import { PARK_ABORT_REASON } from "./registry-verdicts.js";
 
 /** How long a contained command's connection waits on the operator's egress answer before it is refused. */
 const EGRESS_ASK_TIMEOUT_MS = 120_000;
-const EGRESS_ASK_RULE_ID = "shell-egress";
 const DENY_HINT = "Denying is remembered for this session.";
 
 /** A call parked on the approval queue for an ask only the operator answers. */
@@ -99,7 +99,7 @@ export function createShellEgress(
 			effects: [call],
 			safety: deps.safety,
 			autonomy: "default",
-			confirmationRuleId: EGRESS_ASK_RULE_ID,
+			confirmationRuleId: SHELL_EGRESS_RULE_ID,
 			confirmationText: { detail, hints: [DENY_HINT] },
 		});
 		if (admission.kind !== "ask") {
@@ -109,18 +109,18 @@ export function createShellEgress(
 		const decision: SafetyDecision = {
 			...admission.decision,
 			kind: "ask",
-			confirmationRuleId: EGRESS_ASK_RULE_ID,
+			confirmationRuleId: SHELL_EGRESS_RULE_ID,
 			rejection: { short: `Sandboxed command wants network access: ${key}`, detail, hints: [DENY_HINT] },
 		};
 		const meta: PermissionRequiredMeta = {
 			requestId: queue.nextRequestId(),
-			axis: `net:${EGRESS_ASK_RULE_ID}`,
+			axis: `net:${SHELL_EGRESS_RULE_ID}`,
 			approvalAuthority: "operator",
 			...(options?.sessionId !== undefined ? { sessionId: options.sessionId } : {}),
 			...(options?.turnId !== undefined ? { turnId: options.turnId } : {}),
 			...(options?.toolCallId !== undefined ? { toolCallId: options.toolCallId } : {}),
 		};
-		const reasonCode = `confirmation:${EGRESS_ASK_RULE_ID}`;
+		const reasonCode = `confirmation:${SHELL_EGRESS_RULE_ID}`;
 		return new Promise<boolean>((resolve) => {
 			const timer = setTimeout(
 				() => queue.cancel(meta.requestId, "nobody answered the network access ask in time"),

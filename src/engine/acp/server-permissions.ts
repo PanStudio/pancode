@@ -10,6 +10,7 @@ import type { TelemetryHub } from "../../core/telemetry/hub.js";
 import type { PermissionRequestedPayload, PermissionResolvedPayload } from "../../core/telemetry/live-events.js";
 import { ToolNames } from "../../core/tool-names.js";
 import { isRecord } from "../../core/type-guards.js";
+import { SHELL_EGRESS_RULE_ID } from "../../core/views/approval-words.js";
 import {
 	describeMainCallConsequences,
 	mainCallExposure,
@@ -750,7 +751,7 @@ export function installPermissionBridge(input: {
 										redactUrlCredentials(
 											decision.kind === "ask" && decision.confirmationRuleId === "dispatch-external-read"
 												? `Scout read-only root: ${describeCallTarget(call.tool, call.args)}`
-												: decision.kind === "ask" && decision.confirmationRuleId === "shell-egress"
+												: decision.kind === "ask" && decision.confirmationRuleId === SHELL_EGRESS_RULE_ID
 													? decision.rejection.short
 													: (planTitle ?? permissionTitle(call.tool, clippedCallCommand(call, decision))),
 										),
