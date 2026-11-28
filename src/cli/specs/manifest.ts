@@ -220,11 +220,7 @@ export const NESTED_LEAVES: ReadonlyArray<readonly [string, string, string]> = [
 		"list built-in, plugin, user and project playbooks with validation status",
 		"playbook list [--json]",
 	],
-	[
-		"playbook new",
-		"copy a built-in playbook into .pancode/playbooks/",
-		"playbook new <name> --from <builtin> [--json]",
-	],
+	["playbook new", "copy a built-in playbook into .pancode/playbooks/", "playbook new <name> --from <builtin> [--json]"],
 	[
 		"playbook validate",
 		"run a playbook's execution preflight without side effects",
