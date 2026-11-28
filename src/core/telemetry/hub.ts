@@ -17,7 +17,7 @@ import type { EventName, EventPayload, PreimageData, PreimageEventName } from ".
  *
  * Violate the invariant and shutdown.* ordering or banner timing will drift.
  */
-export type TelemetryListener<N extends EventName = EventName> = (
+type TelemetryListener<N extends EventName = EventName> = (
 	payload: EventPayload<N>,
 	/** The context the emit named; absent when it named none, so a reader of whose event this is must allow for that. */
 	context?: TelemetryContext,
@@ -65,7 +65,7 @@ export interface TelemetryHub {
  * through termination, never pulls the registry's schemas into the first frame (#434). Early emissions wait in a
  * bounded queue until the producer can classify their durability and scope; overflow is accounted by that route.
  */
-export interface JournalRoute {
+interface JournalRoute {
 	journal(
 		name: EventName,
 		payload: unknown,

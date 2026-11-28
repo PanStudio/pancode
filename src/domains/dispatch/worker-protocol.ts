@@ -27,13 +27,8 @@ import {
 
 export type {
 	AgentLedgerBody,
-	AgentLedgerBodyParse,
-	AgentLedgerDeltaFrame,
-	AgentLedgerEntry,
-	AgentLedgerPort,
 	WorkerAdmitFrame,
 	WorkerAttestation,
-	WorkerControlFrame,
 	WorkerExtensionHook,
 	WorkerGrantRequestFrame,
 	WorkerHookEffect,
@@ -41,30 +36,18 @@ export type {
 	WorkerHookResultFrame,
 	WorkerHookRun,
 	WorkerModelLoad,
-	WorkerResourceFacts,
-	WorkerResourceValue,
 } from "../../worker/protocol.js";
 export {
-	AGENT_LEDGER_CLAIM_MAX_CHARS,
-	AGENT_LEDGER_EVIDENCE_MAX_CHARS,
-	AGENT_LEDGER_INTENT_MAX_CHARS,
-	AGENT_LEDGER_PATH_MAX_CHARS,
-	AGENT_LEDGER_SCOPE_ENTRY_MAX_CHARS,
-	AGENT_LEDGER_SCOPE_MAX_ENTRIES,
 	CONTROL_FRAME_PREFIX,
-	encodeControlFrame,
 	endpointIdentityHash,
-	isAgentLedgerEntryId,
 	isControlLine,
 	isReceiptBearingFrame,
-	parseAgentLedgerBody,
 	parseBulkFrame,
 	parseControlFrame,
 	parseWorkerHookRequest,
 	toolSignatureOf,
 	WORKER_ANNOUNCE_DEADLINE_MS,
 	WORKER_BULK_FRAME_MAX_BYTES,
-	WORKER_CONTROL_FRAME_MAX_BYTES,
 	WORKER_EVENT_QUEUE_MAX_FRAMES,
 	WORKER_HOOK_REQUEST_EVENT,
 	WORKER_PROTOCOL_VERSION,
@@ -72,8 +55,6 @@ export {
 	WORKER_STDIN_QUEUE_MAX_BYTES,
 	WORKER_STDOUT_FAILURE_MARKER,
 	WORKER_STDOUT_INCOMPLETE_MARKER,
-	withinFrameBudget,
-	workerSpecDigest,
 } from "../../worker/protocol.js";
 
 import { sha256Hex } from "../../core/hash.js";

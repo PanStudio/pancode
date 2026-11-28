@@ -12,7 +12,7 @@ import { gitExecFile, gitExecFileSync } from "./internal-git-run.js";
  * already hold one pass it straight through; callers without one get a local
  * time-budgeted default. Core cannot import the domain type, by boundary.
  */
-export interface WorkspaceEnumerationTick {
+interface WorkspaceEnumerationTick {
 	tick(): Promise<void>;
 }
 
@@ -34,15 +34,15 @@ function createDefaultTick(budgetMs = DEFAULT_YIELD_BUDGET_MS): WorkspaceEnumera
 const GIT_OUTPUT_LIMIT_BYTES = 128 * 1024 * 1024;
 const MAX_ENUMERATION_DIAGNOSTIC_PATH_CHARS = 200;
 
-export interface WorkspaceFallbackLimits {
+interface WorkspaceFallbackLimits {
 	maxVisitedEntries: number;
 	maxDepth: number;
 	maxPathBytes: number;
 	maxDurationMs: number;
 }
 
-export type WorkspaceFallbackLimitKind = "entries" | "depth" | "path-bytes" | "time";
-export type WorkspaceEnumerationOperation = "open-root" | "read-directory" | "open-directory" | "inspect-entry";
+type WorkspaceFallbackLimitKind = "entries" | "depth" | "path-bytes" | "time";
+type WorkspaceEnumerationOperation = "open-root" | "read-directory" | "open-directory" | "inspect-entry";
 
 const DEFAULT_WORKSPACE_FALLBACK_LIMITS: Readonly<WorkspaceFallbackLimits> = Object.freeze({
 	maxVisitedEntries: 100_000,
@@ -96,7 +96,7 @@ const ENUMERATION_OPERATION_LABELS: Readonly<Record<WorkspaceEnumerationOperatio
  * Only a bounded workspace-relative path and a validated system error code are
  * retained; arbitrary filesystem error text is deliberately not propagated.
  */
-export class WorkspaceEnumerationIncompleteError extends Error {
+class WorkspaceEnumerationIncompleteError extends Error {
 	readonly code = "WORKSPACE_ENUMERATION_INCOMPLETE";
 	readonly operation: WorkspaceEnumerationOperation;
 	readonly path: string;
@@ -264,7 +264,7 @@ function gitVisibleFiles(cwd: string, candidates?: ReadonlyArray<string>): GitLi
 }
 
 /** Bounds on the async listing's `git ls-files`: a deadline, and a signal that stops it. */
-export interface WorkspaceGitListingOptions {
+interface WorkspaceGitListingOptions {
 	timeoutMs?: number;
 	signal?: AbortSignal;
 }

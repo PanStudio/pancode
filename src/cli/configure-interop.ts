@@ -15,11 +15,11 @@ import {
 	interopUnofferedReasons,
 	renderProposalEntry,
 } from "../domains/interop/index.js";
+import { printOk } from "./argv.js";
 import { askYesNo } from "./ask.js";
 import { railPrefix } from "./configure-target.js";
 import { createLifecyclePresenter, type LifecyclePresenter, shortenPath } from "./lifecycle-presenter.js";
 import { canSelect, promptMultiSelect } from "./select.js";
-import { printOk } from "./shared.js";
 
 /** What a peer can and cannot see, in the words the operator decides with. */
 const PEER_TRUST_NOTE =

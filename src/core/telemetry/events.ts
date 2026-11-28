@@ -169,7 +169,7 @@ import {
  * context names and delivered live; a `live` event reaches in-process subscribers only. The hub
  * (src/core/telemetry/hub.ts) is the one emit path for both.
  */
-export interface JournalDefinition<S extends TSchema = TSchema> {
+interface JournalDefinition<S extends TSchema = TSchema> {
 	readonly durability: "journal";
 	readonly version: number;
 	readonly schema: S;
@@ -191,7 +191,7 @@ export interface JournalDefinition<S extends TSchema = TSchema> {
 }
 
 /** The payload exists only in the type system; live events carry no runtime schema. */
-export interface LiveDefinition<P> {
+interface LiveDefinition<P> {
 	readonly durability: "live";
 	readonly payload?: P;
 }

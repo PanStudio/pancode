@@ -167,7 +167,7 @@ function compactUtc(now: Date): string {
 }
 
 /** `<YYYYMMDDTHHMMSSZ>-<6 hex>`: readable and unique; ordering comes from the manifest, not the id. */
-export function newRunId(now: Date = new Date()): string {
+function newRunId(now: Date = new Date()): string {
 	return `${compactUtc(now)}-${randomBytes(3).toString("hex")}`;
 }
 

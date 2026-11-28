@@ -321,14 +321,14 @@ export type AcpToolKind =
  */
 export type AcpToolCallStatus = (typeof ACP_V1_TOOL_CALL_STATUSES)[number];
 
-export interface AcpJsonRpcRequest {
+interface AcpJsonRpcRequest {
 	jsonrpc: "2.0";
 	id: string | number;
 	method: string;
 	params?: unknown;
 }
 
-export interface AcpJsonRpcNotification {
+interface AcpJsonRpcNotification {
 	jsonrpc: "2.0";
 	method: string;
 	params?: unknown;
@@ -352,13 +352,13 @@ export interface AcpJsonRpcFailure {
 
 export type AcpJsonRpcMessage = AcpJsonRpcRequest | AcpJsonRpcNotification | AcpJsonRpcSuccess | AcpJsonRpcFailure;
 
-export interface AcpImplementationInfo {
+interface AcpImplementationInfo {
 	name?: string;
 	title?: string;
 	version?: string;
 }
 
-export interface AcpAuthMethod {
+interface AcpAuthMethod {
 	id: string;
 	name: string;
 	description?: string;
@@ -373,28 +373,6 @@ export interface AcpInitializeResponse {
 	agentInfo?: AcpImplementationInfo;
 	authMethods?: AcpAuthMethod[];
 }
-
-export interface AcpSessionInfo {
-	sessionId: string;
-	cwd: string;
-	title?: string;
-	updatedAt?: string;
-	_meta?: Record<string, unknown>;
-}
-
-export interface AcpContentText {
-	type: "text";
-	text: string;
-}
-
-export interface AcpContentResourceLink {
-	type: "resource_link";
-	uri: string;
-	name: string;
-	mimeType?: string;
-}
-
-export type AcpContentBlock = AcpContentText | AcpContentResourceLink | Record<string, unknown>;
 
 /** ACP v1 `ToolCallLocation` (schema v1.23.0). */
 export interface AcpToolCallLocation {
@@ -425,7 +403,7 @@ export interface AcpSessionUpdateParams {
 	_meta?: Record<string, unknown>;
 }
 
-export type AcpPermissionOptionKind = "allow_once" | "allow_always" | "reject_once" | "reject_always" | string;
+type AcpPermissionOptionKind = "allow_once" | "allow_always" | "reject_once" | "reject_always" | string;
 
 export interface AcpPermissionOption {
 	optionId: string;
@@ -439,7 +417,7 @@ export interface AcpRequestPermissionParams {
 	options?: AcpPermissionOption[];
 }
 
-export type AcpPermissionOutcome = { outcome: "selected"; optionId: string } | { outcome: "cancelled" };
+type AcpPermissionOutcome = { outcome: "selected"; optionId: string } | { outcome: "cancelled" };
 
 export interface AcpRequestPermissionResponse {
 	outcome: AcpPermissionOutcome;
@@ -489,32 +467,11 @@ export interface AcpSessionResultMeta {
 	resumed: boolean;
 	replayed?: { turns: number; truncated: boolean };
 }
-/** `_meta["pancode/turn"]` on a `session/prompt` result. */
-export interface AcpTurnMeta {
-	model?: string;
-	target?: string;
-	ttftMs?: number;
-	outputTokensPerSecond?: number;
-}
-/** `_meta["pancode/toolTiming"]` on a terminal `tool_call_update`. */
-export interface AcpToolTimingMeta {
-	durationMs: number;
-}
-/** `_meta["pancode/replay"]` on a replayed `session/update` frame. */
-export interface AcpReplayMeta {
-	turn?: number;
-	run?: boolean;
-	stopReason?: string;
-	/** The ledger's time for the request that opened a replayed turn, and for its newest entry. */
-	startedAt?: string;
-	finishedAt?: string;
-}
 
 export const sessionId = Type.String({ minLength: 1, maxLength: 128 });
 export const sessionParams = { sessionId };
 export const queuedKind = Type.Union([Type.Literal("steer"), Type.Literal("follow-up")]);
 export const AcpSessionParams = Type.Object(sessionParams, closed);
-export type AcpSessionParams = Static<typeof AcpSessionParams>;
 
 export const AcpEmptyResult = Type.Object({}, closed);
 export type AcpEmptyResult = Static<typeof AcpEmptyResult>;
@@ -566,8 +523,8 @@ export type AcpUsageMeta = Static<typeof AcpUsageMetaSchema>;
 function displaysOf(schema: { properties: Record<string, unknown> }) {
 	return Type.Object(Object.fromEntries(Object.keys(schema.properties).map((key) => [key, Type.String()])), closed);
 }
-export const TurnUsageDisplaysSchema = displaysOf(TurnQuantitiesSchema);
-export const SessionUsageDisplaysSchema = displaysOf(SessionUsageQuantitiesSchema);
+const TurnUsageDisplaysSchema = displaysOf(TurnQuantitiesSchema);
+const SessionUsageDisplaysSchema = displaysOf(SessionUsageQuantitiesSchema);
 /**
  * `_meta["pancode/usage"]` unless the client asked for the full form: each quantity as the read model's display of
  * it, which words an unknown or partial count, so it still never reads as zero. A client that sends
@@ -590,14 +547,11 @@ export const AcpTurnMetaSchema = Type.Object(
 	},
 	closed,
 );
-export const AcpToolTimingMetaSchema = Type.Object({ durationMs: Type.Integer({ minimum: 0 }) }, closed);
 export const AcpInitializeResultSchema = Type.Object(
 	{ protocolVersion: Type.Literal(1) },
 	{ additionalProperties: true },
 );
-export type AcpInitializeResult = Static<typeof AcpInitializeResultSchema>;
 export const AcpSessionIdentitySchema = Type.Object({ sessionId }, { additionalProperties: true });
-export type AcpSessionIdentity = Static<typeof AcpSessionIdentitySchema>;
 export const AcpPromptResultSchema = Type.Object(
 	{
 		stopReason: Type.Union([
@@ -617,4 +571,3 @@ export const AcpPromptResultSchema = Type.Object(
 	},
 	{ additionalProperties: true },
 );
-export type AcpPromptResult = Static<typeof AcpPromptResultSchema>;

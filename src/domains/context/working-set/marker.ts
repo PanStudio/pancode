@@ -26,7 +26,7 @@
  */
 
 import { formatSize } from "../../../engine/truncate.js";
-import type { EvictionReason, WorkingSetRef } from "./contract.js";
+import type { EvictionReason, WorkingSetRef } from "../../session/entries.js";
 
 /** Characters of the original body the marker keeps as a preview. */
 const PREVIEW_LIMIT = 120;

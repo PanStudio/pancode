@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import { ToolNames } from "./tool-names.js";
+import { asRecord } from "./type-guards.js";
 
 export const EXPLORATION_TOOL_NAMES = new Set<string>([
 	ToolNames.Read,
@@ -23,12 +24,6 @@ export function isReadOnlyCall(toolName: string, args: Readonly<Record<string, u
 
 function stringValue(value: unknown): string | null {
 	return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
-}
-
-function recordValue(value: unknown): Readonly<Record<string, unknown>> | null {
-	return value !== null && typeof value === "object" && !Array.isArray(value)
-		? (value as Readonly<Record<string, unknown>>)
-		: null;
 }
 
 /**
@@ -59,7 +54,7 @@ function ordinaryDispatchAgents(args: Readonly<Record<string, unknown>> | undefi
 			}
 		}
 	}
-	if (recordValue(tasks) !== null || typeof tasks === "string") tasks = [tasks];
+	if (asRecord(tasks) !== null || typeof tasks === "string") tasks = [tasks];
 	if (tasks === undefined && typeof args.task === "string") tasks = [{ task: args.task }];
 	if (!Array.isArray(tasks) || tasks.length === 0) return null;
 
@@ -71,7 +66,7 @@ function ordinaryDispatchAgents(args: Readonly<Record<string, unknown>> | undefi
 			agents.push(sharedAgent);
 			continue;
 		}
-		const record = recordValue(task);
+		const record = asRecord(task);
 		if (!record || stringValue(record.task) === null) return null;
 		// Task-local agent/agent_id overrides the shared default. `agentId` is
 		// intentionally ignored because the production parser does not accept it.

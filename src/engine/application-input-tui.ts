@@ -16,9 +16,9 @@ import type { TUI, TuiInputListener, TuiInputListenerResult, WheelScrollLines } 
 import { isKeyRelease, TuiAltScreen, TuiMainScreen } from "@earendil-works/pi-tui";
 import { WheelScrollAccelerator } from "@earendil-works/pi-tui/dist/wheel-scroll.js";
 
-export type ApplicationInputPolicy = (data: string) => TuiInputListenerResult;
+type ApplicationInputPolicy = (data: string) => TuiInputListenerResult;
 
-export interface ApplicationInputHost {
+interface ApplicationInputHost {
 	/**
 	 * Install the one application policy ahead of every other input listener.
 	 * Key releases are dropped before it runs, and bracketed paste reaches it as

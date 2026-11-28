@@ -783,7 +783,7 @@ const FUNCTION_LINE_EXEMPTIONS: ReadonlyMap<string, number> = new Map([
 	["src/cli/modes/print.ts#runHeadlessMainAgent", 856],
 	["src/cli/uninstall.ts#runUninstallCommand", 543],
 	["src/cli/upgrade.ts#runUpgradeCommand", 568],
-	["src/core/settings-validate.ts#validateSettings", 1291],
+	["src/core/settings-validate.ts#validateSettings", 1288],
 	["src/domains/dispatch/admission.ts#createCapacityAdmissionController", 547],
 	["src/domains/dispatch/execution-scheduler.ts#executePlan", 662],
 	["src/domains/dispatch/fleet-run.ts#runFleetHoldingWorkspace", 1043],
@@ -827,9 +827,9 @@ const FUNCTION_LINE_EXEMPTIONS: ReadonlyMap<string, number> = new Map([
 	["src/session-control/turn-context-compaction.ts#createTurnContextCompaction", 1033],
 	["src/session-control/turn-context-compaction.ts#createTurnContextCompaction.performAutoCompact", 737],
 	["src/session-control/turn-context-prompt.ts#createTurnContextPrompt", 588],
-	["src/session-control/turn-context.ts#createTurnContext", 2789],
+	["src/session-control/turn-context.ts#createTurnContext", 2787],
 	["src/session-control/turn-middleware.ts#createTurnMiddleware", 823],
-	["src/session-control/turn-recovery.ts#createTurnRecovery", 681],
+	["src/session-control/turn-recovery.ts#createTurnRecovery", 676],
 	["src/session-control/turn-runtime.ts#createTurnRuntime", 2222],
 	["src/session-control/turn-runtime.ts#createTurnRuntime.ensureRuntime", 1812],
 	["src/session-control/turn-runtime.ts#createTurnRuntime.ensureRuntime.onAgentEvent", 530],
@@ -838,7 +838,7 @@ const FUNCTION_LINE_EXEMPTIONS: ReadonlyMap<string, number> = new Map([
 	["src/tools/dispatch-runner.ts#runDispatchTool", 550],
 	["src/tools/gateway/index.ts#createGatewayTool", 875],
 	["src/tools/gateway/mcp-capabilities.ts#createMcpCapabilitySource", 1680],
-	["src/tools/registry.ts#createRegistry", 2342],
+	["src/tools/registry.ts#createRegistry", 2340],
 ]);
 
 function memberNameText(name: ts.PropertyName | ts.BindingName, tree: ts.SourceFile): string {

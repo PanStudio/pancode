@@ -50,13 +50,3 @@ export function runtimeEnforcement(runtime: Pick<RuntimeDescriptor, "kind" | "en
 export function readOnlyWorkAdmitted(runtime: { enforcement: RuntimeEnforcement; readOnlySandbox?: boolean }): boolean {
 	return runtime.enforcement.perCallMediation || runtime.readOnlySandbox === true;
 }
-
-/** The same rule read from a descriptor, for a caller choosing a runtime before admission sees it. */
-export function runtimeAdmitsReadOnlyWork(
-	runtime: Pick<RuntimeDescriptor, "kind" | "enforcement" | "readOnlySandbox">,
-): boolean {
-	return readOnlyWorkAdmitted({
-		enforcement: runtimeEnforcement(runtime),
-		readOnlySandbox: runtime.readOnlySandbox === "os",
-	});
-}

@@ -114,11 +114,6 @@ export function readSettledRun(stateDir: string, runId: string): SettledRunRecor
 	return run?.settled ? (run as SettledRunRecord) : null;
 }
 
-export async function readSettledRunAsync(stateDir: string, runId: string): Promise<SettledRunRecord | null> {
-	const run = await readRunRecordAsync(stateDir, runId);
-	return run?.settled ? (run as SettledRunRecord) : null;
-}
-
 /**
  * The run's settled record when its seal verifies and, given a cited identity, when its run.settled digest is that
  * identity; anything else is not evidence a reader may act on (#434).

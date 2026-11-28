@@ -6,7 +6,7 @@
  * same bytes always agree.
  */
 
-export type CHeaderLanguage = "c" | "c++";
+type CHeaderLanguage = "c" | "c++";
 
 /** `.h` is the only extension whose language depends on file content. */
 export function isAmbiguousHeaderPath(path: string): boolean {

@@ -3,7 +3,7 @@
 import { THINKING_LEVELS, type ThinkingLevel } from "../core/defaults.js";
 import { markHostAuthored } from "../core/message-accounting.js";
 import type { ResolvedThinkingCapability } from "../domains/providers/model-runtime-capabilities.js";
-import type { AgentMessage } from "../engine/types.js";
+import { type AgentMessage, zeroUsage } from "../engine/types.js";
 
 /**
  * A local reasoning model can spend its whole output cap thinking and stop on
@@ -35,12 +35,7 @@ export function thinkingLengthRecoveryMessages(origin: {
 			content: [{ type: "toolCall", id, name: THINKING_LENGTH_RECOVERY_TOOL, arguments: {} }],
 			stopReason: "toolUse",
 			usage: {
-				input: 0,
-				output: 0,
-				cacheRead: 0,
-				cacheWrite: 0,
-				totalTokens: 0,
-				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+				...zeroUsage(),
 				// PanCode wrote this message; no provider was called for it.
 				callInvoked: false,
 			},

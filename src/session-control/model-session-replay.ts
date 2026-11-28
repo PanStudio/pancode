@@ -45,7 +45,7 @@ export interface ContinuityReplayContext extends Partial<FoldOwner> {
 	nowMs?: number;
 }
 
-export interface ModelReplayOptions extends RehydrateChatPanelOptions {
+interface ModelReplayOptions extends RehydrateChatPanelOptions {
 	/** The render's owner (SPEC §1.1), with the reader facts continuity needs beside it. */
 	continuity?: ContinuityReplayContext;
 	/**

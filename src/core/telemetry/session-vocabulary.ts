@@ -49,7 +49,6 @@ export type MiddlewareHook = (typeof MIDDLEWARE_HOOKS)[number];
 
 /** The hooks an extension can register: the middleware hooks plus `prompt_submit`, before a prompt is accepted. */
 export const EXTENSION_HOOKS = [...MIDDLEWARE_HOOKS, "prompt_submit"] as const;
-export type ExtensionHook = (typeof EXTENSION_HOOKS)[number];
 
 /** Every effect a middleware firing can carry. `rewrite_tool_input` is the runtime's own: no rule can declare it. */
 export const MIDDLEWARE_EFFECT_KINDS = [

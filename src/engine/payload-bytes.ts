@@ -3,6 +3,7 @@
 import type { Api, AssistantMessage, AssistantMessageEventStream, Model, StreamOptions } from "@earendil-works/pi-ai";
 import { createAssistantMessageEventStream } from "@earendil-works/pi-ai";
 import { observeWireEffort, wireEffortOf } from "../core/telemetry/call-effort.js";
+import { zeroUsage } from "./types.js";
 
 /**
  * Under transport option B Pi serializes and sends the request, so the payload it hands its provider is the request
@@ -77,14 +78,7 @@ export function observePayloadBytes<T extends StreamOptions>(
 				api: model.api,
 				provider: model.provider,
 				model: model.id,
-				usage: {
-					input: 0,
-					output: 0,
-					cacheRead: 0,
-					cacheWrite: 0,
-					totalTokens: 0,
-					cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
-				},
+				usage: zeroUsage(),
 				stopReason: reason,
 				errorMessage: cause instanceof Error ? cause.message : String(cause),
 				timestamp: Date.now(),

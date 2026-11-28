@@ -25,7 +25,7 @@ export interface TuiRenderObserver {
 	endPhase(frame: unknown, phase: TuiRenderPhase, phaseToken: unknown): void;
 }
 
-export interface TuiRenderAdmission {
+interface TuiRenderAdmission {
 	readonly blocked: boolean;
 	onWritable(listener: () => void): () => void;
 }

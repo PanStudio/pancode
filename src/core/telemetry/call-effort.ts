@@ -10,7 +10,7 @@
 import { THINKING_LEVELS, type ThinkingLevel } from "../views/thinking-levels.js";
 
 /** The journaled effort when the request named none. */
-export const WIRE_EFFORT_OMITTED = "omitted";
+const WIRE_EFFORT_OMITTED = "omitted";
 /** An effort as a provider spells it: one short token, never content. */
 export const WIRE_EFFORT_PATTERN = "^[A-Za-z0-9_.-]{1,32}$";
 const WIRE_EFFORT = new RegExp(WIRE_EFFORT_PATTERN);

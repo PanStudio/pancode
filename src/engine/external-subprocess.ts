@@ -12,7 +12,7 @@ import {
 } from "../core/safe-exec.js";
 import { clampTimerDelayMs } from "../core/timers.js";
 
-export type BoundedLine = { kind: "line"; line: string } | { kind: "oversized" };
+type BoundedLine = { kind: "line"; line: string } | { kind: "oversized" };
 
 /**
  * Split a byte stream without ever retaining more than one bounded line.
@@ -85,12 +85,12 @@ export async function readStderr(child: { stderr: Readable }): Promise<string> {
 
 export const EXTERNAL_PROCESS_KILL_GRACE_MS = 1500;
 
-export interface ProcessTreeOutcome extends ProcessGroupCleanupStatus {
+interface ProcessTreeOutcome extends ProcessGroupCleanupStatus {
 	exitCode: number;
 	pipeDrainIncomplete: boolean;
 }
 
-export interface ProcessTreeTerminator {
+interface ProcessTreeTerminator {
 	readonly completed: Promise<ProcessTreeOutcome>;
 	terminate(): void;
 	cleanup(): void;

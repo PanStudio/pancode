@@ -5,9 +5,11 @@ import { spawn } from "node:child_process";
 import type { Readable, Writable } from "node:stream";
 import { boundedExternalDiagnostic } from "../../core/external-diagnostic.js";
 import { buildSafeToolEnv, resolveSafeCwd } from "../../core/safe-exec.js";
+import { asRecord } from "../../core/type-guards.js";
 import { codexSubprocessPermissionConfig } from "../../domains/providers/runtimes/external-cli-policy.js";
 import { assertToolProfileEnforceable } from "../../tools/profiles.js";
 import { bindExternalUsage } from "../external-call-telemetry.js";
+import { cliWorkOrderPrompt, finiteUsage } from "../external-cli/jsonl-runner.js";
 import {
 	createProcessTreeTerminator,
 	EXTERNAL_PROCESS_KILL_GRACE_MS,
@@ -18,31 +20,18 @@ import type { AgentEvent, AgentMessage, Usage } from "../types.js";
 import type { WorkerEventEmit, WorkerRunHandle, WorkerRunInput, WorkerRunResult } from "../worker-run-types.js";
 
 const CODEX_BINARY = "codex";
-export const CODEX_CLI_DEFAULT_MODEL = "codex-cli-default";
-export const CODEX_MAX_STREAM_LINE_BYTES = 1024 * 1024;
-export const CODEX_MAX_STREAM_BYTES = 8 * 1024 * 1024;
-export const CODEX_MAX_RESPONSE_BYTES = 4 * 1024 * 1024;
+const CODEX_CLI_DEFAULT_MODEL = "codex-cli-default";
+const CODEX_MAX_STREAM_LINE_BYTES = 1024 * 1024;
+const CODEX_MAX_STREAM_BYTES = 8 * 1024 * 1024;
+const CODEX_MAX_RESPONSE_BYTES = 4 * 1024 * 1024;
 
 type CodexChildProcess = ChildProcessByStdio<Writable, Readable, Readable>;
 
-export interface CodexRuntimeDependencies {
+interface CodexRuntimeDependencies {
 	binary?: string;
 	workspaceRoot?: string;
 	environment?: NodeJS.ProcessEnv;
 	killGraceMs?: number;
-}
-
-export type { CodexSubprocessPermissionConfig } from "../../domains/providers/runtimes/external-cli-policy.js";
-export { codexSubprocessPermissionConfig } from "../../domains/providers/runtimes/external-cli-policy.js";
-
-export function buildCodexExecPrompt(input: WorkerRunInput): string {
-	return [
-		input.systemPrompt.trim(),
-		...(input.dynamicPromptMessages ?? []).map((message) => message.body.trim()),
-		input.task.trim(),
-	]
-		.filter(Boolean)
-		.join("\n\n");
 }
 
 /** `codex exec -` reads the work order from stdin; prompt text never enters argv. */
@@ -60,24 +49,12 @@ export function buildCodexExecArgs(input: WorkerRunInput): string[] {
 	return args;
 }
 
-function record(value: unknown): Record<string, unknown> | null {
-	return typeof value === "object" && value !== null && !Array.isArray(value)
-		? (value as Record<string, unknown>)
-		: null;
-}
-
-function finite(value: unknown): number {
-	return typeof value === "number" && Number.isFinite(value) && value >= 0
-		? Math.min(value, Number.MAX_SAFE_INTEGER)
-		: 0;
-}
-
 function normalizeUsage(raw: unknown): Usage {
-	const usage = record(raw);
-	const totalInput = finite(usage?.input_tokens);
-	const cacheRead = Math.min(totalInput, finite(usage?.cached_input_tokens));
-	const cacheWrite = Math.min(totalInput - cacheRead, finite(usage?.cache_write_input_tokens));
-	const output = finite(usage?.output_tokens);
+	const usage = asRecord(raw);
+	const totalInput = finiteUsage(usage?.input_tokens);
+	const cacheRead = Math.min(totalInput, finiteUsage(usage?.cached_input_tokens));
+	const cacheWrite = Math.min(totalInput - cacheRead, finiteUsage(usage?.cache_write_input_tokens));
+	const output = finiteUsage(usage?.output_tokens);
 	const result: Usage & { reasoningTokens?: number } = {
 		input: totalInput - cacheRead - cacheWrite,
 		output,
@@ -86,7 +63,7 @@ function normalizeUsage(raw: unknown): Usage {
 		totalTokens: totalInput + output,
 		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
 	};
-	const reasoning = finite(usage?.reasoning_output_tokens);
+	const reasoning = finiteUsage(usage?.reasoning_output_tokens);
 	if (reasoning > 0) result.reasoningTokens = reasoning;
 	return result;
 }
@@ -131,7 +108,7 @@ async function readCodexEvents(child: CodexChildProcess, emit: WorkerEventEmit, 
 		} catch {
 			throw new Error("Codex returned an invalid JSONL event");
 		}
-		const event = record(parsed);
+		const event = asRecord(parsed);
 		if (!event || typeof event.type !== "string") throw new Error("Codex returned an invalid JSONL event");
 		if (state.terminal) throw new Error("Codex emitted an event after its terminal turn");
 		switch (event.type) {
@@ -148,7 +125,7 @@ async function readCodexEvents(child: CodexChildProcess, emit: WorkerEventEmit, 
 				break;
 			case "item.completed": {
 				if (!state.turnStarted) throw new Error("Codex returned an item before turn.start");
-				const item = record(event.item);
+				const item = asRecord(event.item);
 				if (item?.type === "agent_message" && typeof item.text === "string") {
 					appendText(emit, state, `${state.text ? "\n" : ""}${item.text}`);
 				}
@@ -161,7 +138,7 @@ async function readCodexEvents(child: CodexChildProcess, emit: WorkerEventEmit, 
 				state.usage = event.usage;
 				if (event.type === "turn.failed") {
 					state.error = boundedExternalDiagnostic(
-						String(record(event.error)?.message ?? event.message ?? "Codex turn failed"),
+						String(asRecord(event.error)?.message ?? event.message ?? "Codex turn failed"),
 					);
 				}
 				break;
@@ -180,7 +157,7 @@ function assistantMessage(
 ): AgentMessage & { role: "assistant" } {
 	const succeeded = !aborted && exitCode === 0 && state.terminal === "completed" && !diagnostic;
 	const usage = normalizeUsage(state.usage) as Usage & { pancodeExternal?: Record<string, unknown> };
-	const rawUsage = record(state.usage);
+	const rawUsage = asRecord(state.usage);
 	usage.pancodeExternal = {
 		tokenUsage: [rawUsage?.input_tokens, rawUsage?.output_tokens].some(
 			(value) => typeof value === "number" && Number.isFinite(value),
@@ -232,7 +209,7 @@ export function startCodexCliWorkerRun(
 	if (input.signal?.aborted === true) throw input.signal.reason;
 	const sourceEnv = dependencies.environment ?? process.env;
 	const args = buildCodexExecArgs(input);
-	const prompt = buildCodexExecPrompt(input);
+	const prompt = cliWorkOrderPrompt(input);
 	const cwd = resolveSafeCwd(input.cwd, dependencies.workspaceRoot ?? process.cwd());
 	const child: CodexChildProcess = spawn(dependencies.binary ?? CODEX_BINARY, args, {
 		cwd,

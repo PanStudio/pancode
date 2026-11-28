@@ -18,9 +18,8 @@ import {
 	listRunEvidence,
 	provenanceTranscriptLines,
 } from "../domains/evidence/index.js";
-import { formatColumns } from "./argv.js";
+import { formatColumns, printError } from "./argv.js";
 import { runEvidenceDetail } from "./evidence-detail.js";
-import { printError } from "./shared.js";
 import { truncate } from "./text-layout.js";
 
 const HELP = `pancode evidence inspect <runId> [--json] [--exit-code]

@@ -8,7 +8,7 @@
  * base: LiteLLM deployments may embed paths, query credentials, or user-info
  * in the configured URL, none of which belongs in a session or sealed receipt.
  */
-export interface LiteLLMGatewayRoutingObservation {
+interface LiteLLMGatewayRoutingObservation {
 	gateway: "litellm";
 	callId?: string;
 	modelGroup?: string;

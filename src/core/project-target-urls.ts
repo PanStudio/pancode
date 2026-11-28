@@ -22,7 +22,7 @@ const PROJECT_TARGET_ORIGIN = Symbol("pancode.projectTargetOrigin");
 const USER_TARGET = "user";
 
 /** The project settings file whose `targets` list supplied an entry, and what the user's own entry for that id named. */
-export interface ProjectTargetOrigin {
+interface ProjectTargetOrigin {
 	file: string;
 	/** "stored": the user's entry names `auth.apiKeyRef` or `auth.oauthProfile`; "key-variable": only `auth.apiKeyEnvVar`. */
 	userCredential?: "stored" | "key-variable";

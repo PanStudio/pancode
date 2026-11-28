@@ -10,7 +10,7 @@
 import path from "node:path";
 import { pancodeConfigDir } from "./xdg.js";
 
-export const USER_HANDBOOK_FILENAME = "PANCODE.md";
+const USER_HANDBOOK_FILENAME = "PANCODE.md";
 
 /** Larger is refused, not cut: the file rides in every session's prompt. */
 export const USER_HANDBOOK_MAX_BYTES = 32 * 1024;

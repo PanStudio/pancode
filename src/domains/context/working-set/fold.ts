@@ -11,9 +11,9 @@
  * of their shared prefix for the same reason compaction summaries do.
  */
 
-import type { SessionEntry } from "../../session/entries.js";
+import type { SessionEntry, WorkingSetRef } from "../../session/entries.js";
 import { activePath } from "../../session/tree/active-path.js";
-import type { EvictedState, WorkingSetRef, WorkingSetView } from "./contract.js";
+import type { EvictedState, WorkingSetView } from "./contract.js";
 import { recalledRef } from "./payload.js";
 
 /** Ref keys index `WorkingSetView.evicted`. Today a key is the entry turnId. */

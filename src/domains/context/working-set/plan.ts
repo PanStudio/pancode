@@ -15,13 +15,13 @@
  * broke either drops S0 and plans S1 alone, once.
  */
 
+import type { WorkingSetPolicyId } from "../../../core/defaults.js";
 import type {
 	EvictedState,
 	EvictionCandidate,
 	EvictionPlan,
 	PolicyInput,
 	WorkingSetPolicy,
-	WorkingSetPolicyId,
 	WorkingSetView,
 } from "./contract.js";
 import { planEviction } from "./engine.js";

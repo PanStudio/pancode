@@ -157,14 +157,14 @@ export interface TurnConstraints {
 	readonly runCaps?: RunCaps;
 }
 
-export interface RunCaps {
+interface RunCaps {
 	/** Provider requests the main agent loop sends, once per attempt. */
 	readonly maxRequests?: number;
 	/** Tool calls the main agent executes or has refused, each call of a batch separately. */
 	readonly maxToolCalls?: number;
 }
 
-export type RunCapCode = "max_requests" | "max_tool_calls";
+type RunCapCode = "max_requests" | "max_tool_calls";
 
 /** The cap a refusal reason names, or undefined for any other text. */
 export function runCapStopCode(reason: string): RunCapCode | undefined {
@@ -173,7 +173,7 @@ export function runCapStopCode(reason: string): RunCapCode | undefined {
 	return undefined;
 }
 
-export interface RunCapCounter {
+interface RunCapCounter {
 	/** Before a main-loop request is sent: a refusal once the request cap or a fired tool cap stops the run. */
 	admitRequest(caps: RunCaps | undefined): string | undefined;
 	/** Before a tool batch runs: every call counts, and a batch that would pass the cap is refused whole. */
@@ -241,7 +241,7 @@ function isRunCaps(value: unknown): boolean {
 }
 
 /** Template budget bounds; `template` names the prompt template that set them, for refusal text. */
-export interface TurnBudget {
+interface TurnBudget {
 	readonly toolCalls?: number;
 	readonly observationBytes?: number;
 	readonly template?: string;
@@ -252,7 +252,7 @@ export interface TurnBudget {
  * a second call to it is refused and the turn locks to a text-only summary, so
  * each turn runs one step and a continuation starts the next one.
  */
-export interface TurnStepPolicy {
+interface TurnStepPolicy {
 	readonly mode: "step";
 	readonly stepTool: string;
 	/** The routes the policy applies on; absent means every route. */
@@ -266,7 +266,7 @@ export type StepPolicyRoute = ModelTier | "uncached";
 export const STEP_POLICY_ROUTES: ReadonlyArray<StepPolicyRoute> = [...MODEL_TIERS, "uncached"];
 
 /** The session chat route a turn starts on, as its runtime resolution reports it (WTF-P 0.8.3 C1). */
-export interface StepPolicyRouteFacts {
+interface StepPolicyRouteFacts {
 	modelTier?: ModelTier;
 	promptCaching?: boolean;
 }

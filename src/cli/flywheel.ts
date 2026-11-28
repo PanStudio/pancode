@@ -16,7 +16,7 @@ import {
 	runReportCommand,
 	sweepIntakeStore,
 } from "../domains/report/index.js";
-import { printError } from "./shared.js";
+import { printError } from "./argv.js";
 
 export const FLYWHEEL_HELP = `pancode dev flywheel --sweep [--store <dir>]
 pancode dev flywheel --forget <reportId> [--store <dir>]

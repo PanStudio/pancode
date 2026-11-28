@@ -17,6 +17,7 @@ import { copilotAuthState, prepareCopilotSdk } from "../domains/providers/copilo
 import type { AuthStatus } from "../domains/providers/index.js";
 import { supportGroupLabel } from "../domains/providers/index.js";
 import { getRuntimeRegistry } from "../domains/providers/registry.js";
+import { formatColumns, printError, printOk } from "./argv.js";
 import { askYesNo } from "./ask.js";
 import { railPrefix } from "./configure-target.js";
 import { offerCopilotSignIn } from "./copilot-sign-in.js";
@@ -45,13 +46,7 @@ import {
 	withOwnLogin,
 } from "./provider-target.js";
 import { promptText } from "./select.js";
-import {
-	credentialWriteFailed,
-	formatColumns,
-	printError,
-	printOk,
-	printPlaintextCredentialWarning,
-} from "./shared.js";
+import { credentialWriteFailed, printPlaintextCredentialWarning } from "./shared.js";
 import { terminalColumns, wrapPlain } from "./text-layout.js";
 
 const USAGE = `usage: pancode auth list [--json]

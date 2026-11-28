@@ -50,11 +50,7 @@ import {
 	type WorkerProgressSnapshot,
 } from "../domains/telemetry/worker-progress.js";
 
-export {
-	boundSettledText,
-	WORKER_LIVE_TAIL_LINES,
-	WORKER_TOOL_NAME_LIMIT,
-} from "../domains/telemetry/worker-progress.js";
+export { boundSettledText } from "../domains/telemetry/worker-progress.js";
 export type { WorkerProgressSnapshot };
 
 export interface WorkerAttempt {
@@ -180,7 +176,7 @@ export type WorkerStreamChange =
 	| { kind: "created"; entry: WorkerEntryState }
 	| { kind: "updated"; entry: WorkerEntryState };
 
-export interface WorkerStreamOptions {
+interface WorkerStreamOptions {
 	/**
 	 * Sealed terminal facts for a finished run. The result is the terminal
 	 * truth; the bus payload is only the fallback for when it cannot be read.
