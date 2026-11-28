@@ -6,7 +6,7 @@
  */
 
 import { ceilChars } from "../../session/context-accounting.js";
-import type { MessageEntry, SessionEntry } from "../../session/entries.js";
+import type { MessageEntry, RecallTrigger, SessionEntry } from "../../session/entries.js";
 import { messageText } from "../../session/message-projection.js";
 import { filterEntriesToActivePath } from "../../session/tree/active-path.js";
 import {
@@ -14,7 +14,6 @@ import {
 	EMPTY_WORKING_SET_VIEW,
 	type RecallError,
 	type RecallResult,
-	type RecallTrigger,
 	type WorkingSetView,
 } from "./contract.js";
 import { parseRefKey, refKey } from "./fold.js";

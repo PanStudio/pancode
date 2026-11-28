@@ -5,8 +5,8 @@
  *
  * Pure ledger logic: which entries a replay works from, and the agent messages
  * they become. Nothing here renders, so the turn engine can import it without
- * reaching the terminal renderers; `chat-renderer.ts` re-exports the public
- * names and shares the entry-decoding helpers.
+ * reaching the terminal renderers; `chat-renderer.ts` shares the entry-decoding
+ * helpers.
  */
 
 import { createHostPolicyMessage } from "../core/host-policy-message.js";
