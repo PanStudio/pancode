@@ -350,7 +350,7 @@ export function createPromptsBundle(
 						: []),
 					...sources.pancodeRepoAwareness,
 					...selfDevelopmentSkillFragments(sources.pancodeRepoAwareness.length > 0, sessionInputs, safety),
-					...catalogFragments(sources.catalogs, sessionInputs),
+					...catalogFragments(sources.catalogs, sessionInputs, safety),
 					// bt-10: only unconditional rules, so the prefix is the same before and after a file is referenced.
 					...renderCustomizationFragments(sources.customization, cwd, []).fragments,
 				],
@@ -770,7 +770,25 @@ function catalogLines(entries: ReadonlyArray<CatalogEntry>, namesOnly: boolean):
  * lists only catalogs whose route this session's surface can reach, and it
  * grants nothing: loading, dispatching and MCP calls keep their own gates.
  */
-function catalogFragments(catalogs: CatalogSnapshot, inputs: SessionPromptInputs): RenderedPromptFragment[] {
+/**
+ * How this session can start a playbook. dispatch starts one behind the operator's plan card; a headless run below
+ * yolo can never approve that card, and a session without dispatch cannot start one at all, so neither is told to.
+ */
+function playbookCatalogHeader(dispatch: boolean, headless: boolean, yolo: boolean): string {
+	if (!dispatch) {
+		return "Playbooks (multi-step workflows the fleet runs; this session cannot start one, so the operator starts it with /fleet run <playbook> <task>):";
+	}
+	if (headless && !yolo) {
+		return 'Playbooks (multi-step workflows the fleet runs; a headless run cannot approve one, so name `pancode fleet run <playbook> "<task>"` for the operator rather than starting it):';
+	}
+	return 'Playbooks (multi-step workflows the fleet runs; start one with dispatch(playbook={name:"<playbook>", vars:{task:"<task>"}}), which shows the operator its plan card; playbook.preview:true validates one without running it; never dispatch its steps yourself):';
+}
+
+function catalogFragments(
+	catalogs: CatalogSnapshot,
+	inputs: SessionPromptInputs,
+	autonomy: string,
+): RenderedPromptFragment[] {
 	if (inputs.providerSupportsTools === false) return [];
 	const names = new Set(inputs.toolNames ?? []);
 	const namesOnly = isCompactPrompt(inputs);
@@ -789,9 +807,7 @@ function catalogFragments(catalogs: CatalogSnapshot, inputs: SessionPromptInputs
 	}
 	if (catalogs.playbooks.length > 0) {
 		sections.push(
-			inputs.headless === true
-				? "Playbooks (multi-step workflows the fleet runs; not startable from this run):"
-				: "Playbooks (multi-step workflows the fleet runs; the operator starts one with /fleet run <playbook>, so suggest it rather than dispatching its steps yourself):",
+			playbookCatalogHeader(names.has("dispatch"), inputs.headless === true, autonomy === "yolo"),
 			...catalogLines(catalogs.playbooks, namesOnly),
 		);
 	}
