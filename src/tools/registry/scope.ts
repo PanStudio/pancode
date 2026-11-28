@@ -23,6 +23,7 @@ import type { createRegistryDenials } from "./denials.js";
 import type { createFlowGates } from "./flow.js";
 import type { createRegistryHooks } from "./hooks.js";
 import type { createOperatorScopes } from "./operator-scope.js";
+import type { createRegistryPark } from "./park.js";
 import type { createSnapshotGate } from "./snapshot.js";
 
 export interface ParkedCall {
@@ -121,4 +122,16 @@ export interface RegistryScope {
 	readonly evaluateCallAdmission: ReturnType<typeof createRegistryAdmission>["evaluateCallAdmission"];
 	readonly admit: ReturnType<typeof createRegistryAdmission>["admit"];
 	readonly deniedVerdict: ReturnType<typeof createRegistryAdmission>["deniedVerdict"];
+	readonly approvalRailOf: ReturnType<typeof createRegistryPark>["approvalRailOf"];
+	readonly cleanupParkedEntry: ReturnType<typeof createRegistryPark>["cleanupParkedEntry"];
+	readonly resolveParkedAsBlocked: ReturnType<typeof createRegistryPark>["resolveParkedAsBlocked"];
+	readonly reparkEntry: ReturnType<typeof createRegistryPark>["reparkEntry"];
+	readonly notifyAdmissionReview: ReturnType<typeof createRegistryPark>["notifyAdmissionReview"];
+	readonly observeUnattendedRefusal: ReturnType<typeof createRegistryPark>["observeUnattendedRefusal"];
+	readonly nextApprovalRequestId: ReturnType<typeof createRegistryPark>["nextApprovalRequestId"];
+	readonly notifyPermissionRequired: ReturnType<typeof createRegistryPark>["notifyPermissionRequired"];
+	readonly cancelParkedCallById: ReturnType<typeof createRegistryPark>["cancelParkedCallById"];
+	readonly refreshHooksAfterGitControlWrite: ReturnType<typeof createRegistryPark>["refreshHooksAfterGitControlWrite"];
+	readonly judgeParkedCall: ReturnType<typeof createRegistryPark>["judgeParkedCall"];
+	readonly requestReadRootApproval: ReturnType<typeof createRegistryPark>["requestReadRootApproval"];
 }

@@ -1,30 +1,21 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
-import { randomBytes } from "node:crypto";
-import { resolve as resolvePath } from "node:path";
 import { recordUncontainedShell } from "../core/sandbox/launch-record.js";
 import { invalidateWorkspaceSecretScans } from "../core/sandbox/secret-files.js";
 import type { SandboxLaunchWhy } from "../core/sandbox/types.js";
 import type { ToolName } from "../core/tool-names.js";
-import { isMcpToolName, ToolNames } from "../core/tool-names.js";
+import { ToolNames } from "../core/tool-names.js";
 import { toolSpecPlacement } from "../core/tool-surface.js";
 import { SESSION_CODE_CONSENT_RULE_ID } from "../core/views/approval-words.js";
 import type { MiddlewareEffect, MiddlewareHookInput, ToolCallLanding } from "../domains/middleware/types.js";
 import type { ClassifierCall } from "../domains/safety/action-classifier.js";
 import { evaluateAdmission } from "../domains/safety/admission.js";
-import type { OpenDecisionKind } from "../domains/safety/autonomy-window.js";
 import { mainCallExposure } from "../domains/safety/call-consequence.js";
-import { GIT_CONTROL_FILE_RULE_ID, STARTUP_PATH_RULE_ID } from "../domains/safety/containment.js";
 import type { SafetyDecision } from "../domains/safety/contract.js";
 import { escapeScopeOptionConsequence, escapeScopeOptionLabel } from "../domains/safety/escape-scope.js";
 import type { FlowRestrictionSet } from "../domains/safety/information-flow.js";
 import { isFlowRestrictionSet, mergeFlowRestrictions } from "../domains/safety/information-flow.js";
-import {
-	OPERATOR_NAMED_RULE,
-	SAFETY_JUDGE_ALLOW_REASON_CODE,
-	type SafetyJudgeOutcome,
-} from "../domains/safety/safety-judge.js";
-import { asksToLeaveSandbox } from "../domains/safety/sandbox-escape.js";
+import { OPERATOR_NAMED_RULE, SAFETY_JUDGE_ALLOW_REASON_CODE } from "../domains/safety/safety-judge.js";
 import { DEFAULT_AUTONOMY_LEVEL } from "../lib/autonomy/autonomy.js";
 import { approvalGiver, withApprovalNote } from "./approval-note.js";
 import { settleObservationCharge } from "./observation.js";
@@ -44,13 +35,13 @@ import { createRegistryDenials } from "./registry/denials.js";
 import { createFlowGates } from "./registry/flow.js";
 import { createRegistryHooks } from "./registry/hooks.js";
 import { createOperatorScopes } from "./registry/operator-scope.js";
+import { createRegistryPark } from "./registry/park.js";
 import type { AdmitOutcome, ParkedCall, RegistryScope } from "./registry/scope.js";
 import { createSnapshotGate } from "./registry/snapshot.js";
 import {
 	approvalConsequencesOf,
 	disposeAdmissionArgs,
 	hookLanding,
-	outboundFilesOf,
 	prepareAdmissionCall,
 	prepareToolArgs,
 	resolveToolResultDisposition,
@@ -59,7 +50,6 @@ import type {
 	AdmissionReviewEvent,
 	ExecutionProvenance,
 	OneShotGrant,
-	ParkCancelOptions,
 	PermissionRequiredMeta,
 	RegistryDeps,
 	RegistryVerdict,
@@ -75,7 +65,7 @@ import {
 	recordedExecution,
 	withRegistryScope,
 } from "./registry-nested-calls.js";
-import { createShellEgress, enqueueOperatorAsk, type OperatorAskQueue } from "./registry-operator-asks.js";
+import { createShellEgress, type OperatorAskQueue } from "./registry-operator-asks.js";
 import {
 	blockDecision,
 	blockedVerdict,
@@ -95,7 +85,6 @@ import {
 	PARK_ABORT_REASON,
 	parkAnsweredBlockedVerdict,
 	SAFETY_JUDGE_REASON_PREFIX,
-	SAFETY_JUDGE_SKIP,
 	SNAPSHOT_REQUIRED_REASON_CODE,
 	safetyJudgeAllowedDecision,
 	withFlowRestrictions,
@@ -127,13 +116,6 @@ const WORKSPACE_WRITING_TOOLS: ReadonlySet<string> = new Set([
 	// A run script has Node; it may write files.
 	ToolNames.Browser,
 ]);
-
-/**
- * Approval rules after which a landed typed write refreshes the git hook drift baseline: git-control-file, which the
- * operator approves or the judge allows, and startup-path-confirm, which only the operator approves. A hooks
- * directory such as .husky is both, and the startup-path rule asks first.
- */
-const HOOK_REFRESH_RAILS: ReadonlySet<string> = new Set([GIT_CONTROL_FILE_RULE_ID, STARTUP_PATH_RULE_ID]);
 
 /**
  * A call reaching execution without the main-session sandbox. A job command admitted only contained is refused
@@ -208,8 +190,6 @@ export function createRegistry(deps: RegistryDeps): ToolRegistry {
 	const boundaryReminderListeners = new Set<
 		(reminders: ReadonlyArray<ToolBoundaryReminder>, input: MiddlewareHookInput) => void
 	>();
-	let approvalRequestCounter = 0;
-	const approvalRequestToken = randomBytes(4).toString("hex");
 	const reg: RegistryScope = {
 		deps,
 		tools,
@@ -324,6 +304,43 @@ export function createRegistry(deps: RegistryDeps): ToolRegistry {
 		get deniedVerdict() {
 			return deniedVerdict;
 		},
+
+		get approvalRailOf() {
+			return approvalRailOf;
+		},
+		get cleanupParkedEntry() {
+			return cleanupParkedEntry;
+		},
+		get resolveParkedAsBlocked() {
+			return resolveParkedAsBlocked;
+		},
+		get reparkEntry() {
+			return reparkEntry;
+		},
+		get notifyAdmissionReview() {
+			return notifyAdmissionReview;
+		},
+		get observeUnattendedRefusal() {
+			return observeUnattendedRefusal;
+		},
+		get nextApprovalRequestId() {
+			return nextApprovalRequestId;
+		},
+		get notifyPermissionRequired() {
+			return notifyPermissionRequired;
+		},
+		get cancelParkedCallById() {
+			return cancelParkedCallById;
+		},
+		get refreshHooksAfterGitControlWrite() {
+			return refreshHooksAfterGitControlWrite;
+		},
+		get judgeParkedCall() {
+			return judgeParkedCall;
+		},
+		get requestReadRootApproval() {
+			return requestReadRootApproval;
+		},
 	};
 	const {
 		operatorYoloScope,
@@ -336,11 +353,20 @@ export function createRegistry(deps: RegistryDeps): ToolRegistry {
 		trueYolo,
 	} = createOperatorScopes(reg);
 
-	/** The rail that named the parked call, when the decision carried one. */
-	const approvalRailOf = (decision: SafetyDecision): string | undefined => {
-		if (decision.kind === "allow") return decision.policy?.ruleId;
-		return decision.match?.ruleId ?? decision.policy?.ruleId;
-	};
+	const {
+		approvalRailOf,
+		cleanupParkedEntry,
+		resolveParkedAsBlocked,
+		reparkEntry,
+		notifyAdmissionReview,
+		observeUnattendedRefusal,
+		nextApprovalRequestId,
+		notifyPermissionRequired,
+		cancelParkedCallById,
+		refreshHooksAfterGitControlWrite,
+		judgeParkedCall,
+		requestReadRootApproval,
+	} = createRegistryPark(reg);
 
 	const { outboundFlowViolation, fileTargetFlowViolation, sourceAdmissionRefusal } = createFlowGates(reg);
 
@@ -657,42 +683,6 @@ export function createRegistry(deps: RegistryDeps): ToolRegistry {
 		guardBlocked,
 	} = createRegistryAttempts(reg);
 
-	const cleanupParkedEntry = (entry: ParkedCall): void => {
-		entry.abortCleanup?.();
-		delete entry.abortCleanup;
-	};
-
-	const resolveParkedAsBlocked = (entry: ParkedCall, reason: string, options?: ParkCancelOptions): void => {
-		withRegistryScope(entry.options, () => {
-			cleanupParkedEntry(entry);
-			disposeAdmissionArgs(tools.get(entry.call.tool as ToolName), entry.call.args ?? {});
-			// A denied/cancelled park is still a model attempt: observe it so
-			// identical retries trip the loop detector. When the detector fires, its
-			// reason replaces the generic denial so the model gets recovery guidance.
-			// A hook-raised park was observed by the hook stage that raised it.
-			const loopReason =
-				entry.settledHookEffects !== undefined ? null : observeRejectedAttempt(entry.call, entry.decision, entry.options);
-			entry.resolve(
-				guardOverrideForRejectedAttempt(entry.call, entry.decision, loopReason) ??
-					parkDenial(
-						parkAnsweredBlockedVerdict(entry.decision, entry.call.tool, loopReason ?? reason, entry.meta.gateReason),
-						reason,
-						options?.denied,
-						options?.unattended,
-					),
-			);
-		});
-	};
-
-	const reparkEntry = (entry: ParkedCall, index?: number): void => {
-		if (index === undefined || index < 0 || index >= parked.length) {
-			parked.push(entry);
-			return;
-		}
-		parked.splice(index, 0, entry);
-	};
-
-	/** The status surfaces read a started call as running; until the judge admits it, nothing is running (B01). */
 	/**
 	 * An ask_user call while contained yolo holds an escape scope on offer (M-7): the host-owned option the tool adds
 	 * to a question about running outside the sandbox, which grants the scope only when the operator picks it.
@@ -710,142 +700,6 @@ export function createRegistry(deps: RegistryDeps): ToolRegistry {
 				accept: () => ledger.grant(scope, "ask-user"),
 			},
 		};
-	};
-	const notifyAdmissionReview = (options: ToolInvokeOptions | undefined, state: AdmissionReviewEvent["state"]): void => {
-		const toolCallId = options?.toolCallId;
-		if (toolCallId === undefined || toolCallId.length === 0) return;
-		for (const listener of admissionReviewListeners) {
-			try {
-				listener({ toolCallId, state });
-			} catch {
-				// A status listener's failure never changes the verdict.
-			}
-		}
-	};
-
-	const observeUnattendedRefusal = (
-		call: ClassifierCall,
-		decision: SafetyDecision,
-		kind: OpenDecisionKind,
-		rule?: string,
-	): void => {
-		try {
-			deps.onUnattendedRefusal?.(call, decision, kind, rule);
-		} catch {
-			// An observer's failure never changes the denial or its bookkeeping.
-		}
-	};
-
-	const nextApprovalRequestId = (): string => `apr-${approvalRequestToken}-${++approvalRequestCounter}`;
-
-	const notifyPermissionRequired = (
-		call: ClassifierCall,
-		decision: SafetyDecision,
-		meta: PermissionRequiredMeta,
-	): void => {
-		for (const listener of permissionListeners) {
-			try {
-				listener(call, decision, meta);
-			} catch {
-				// Listener errors never abort admission; they are surfaced via
-				// whatever observability the caller wires up.
-			}
-		}
-	};
-
-	const cancelParkedCallById = (requestId: string, reason: string, options?: ParkCancelOptions): boolean => {
-		const index = parked.findIndex((entry) => entry.meta.requestId === requestId);
-		if (index === -1) return false;
-		const [entry] = parked.splice(index, 1);
-		if (!entry) return false;
-		resolveParkedAsBlocked(entry, reason, options);
-		const next = parked[0];
-		if (next) notifyPermissionRequired(next.call, next.decision, next.meta);
-		return true;
-	};
-
-	/**
-	 * A typed write approved under a HOOK_REFRESH_RAILS rule landed; the hook
-	 * files it wrote join the drift baseline, so the next git command does not
-	 * ask about the change just approved.
-	 */
-	const refreshHooksAfterGitControlWrite = (
-		call: ClassifierCall,
-		decision: SafetyDecision,
-		verdict: RegistryVerdict,
-	): void => {
-		if (deps.hookDrift === undefined || verdict.kind !== "ok" || verdict.result.kind === "error") return;
-		if (!HOOK_REFRESH_RAILS.has(approvalRailOf(decision) ?? "")) return;
-		const targets = [call.args?.path, call.args?.file_path]
-			.filter((target): target is string => typeof target === "string" && target.length > 0)
-			.map((target) => resolvePath(process.cwd(), target));
-		try {
-			deps.hookDrift.refresh(targets);
-		} catch {
-			// The baseline keeps its old entry, so the next git command asks: the safe direction.
-		}
-	};
-
-	/**
-	 * The safety judge's review of a main-session ask at autonomy default.
-	 * `skip` everywhere else: workers, yolo, a registry without a judge, and a
-	 * call already cancelled. The time spent judging is reported as park time,
-	 * so the tool's own duration stays a measurement of the tool.
-	 */
-	const judgeParkedCall = (
-		call: ClassifierCall,
-		outcome: Extract<AdmitOutcome, { kind: "park" }>,
-		options: ToolInvokeOptions | undefined,
-	): SafetyJudgeOutcome | Promise<SafetyJudgeOutcome> => {
-		const judge = deps.safetyJudge;
-		if (judge === undefined || (deps.principal ?? "main") !== "main") return SAFETY_JUDGE_SKIP;
-		// Leaving the sandbox is the operator's alone: no judge, whatever it would say, approves it (D9).
-		if (asksToLeaveSandbox(outcome.decision)) return SAFETY_JUDGE_SKIP;
-		if ((deps.autonomy?.() ?? DEFAULT_AUTONOMY_LEVEL) !== "default" || options?.signal?.aborted === true) {
-			return SAFETY_JUDGE_SKIP;
-		}
-		let pending: SafetyJudgeOutcome | Promise<SafetyJudgeOutcome>;
-		try {
-			const mcpSpec = isMcpToolName(call.tool) ? tools.get(call.tool as ToolName) : undefined;
-			const sends = outboundFilesOf(mcpSpec, call.args).map((file) => file.consequence);
-			pending = judge.review({
-				tool: call.tool,
-				args: call.args,
-				decision: outcome.decision,
-				...(mcpSpec !== undefined
-					? {
-							mcpTool: {
-								actionClass: mcpSpec.baseActionClass,
-								description: mcpSpec.description,
-								...(sends.length > 0 ? { sends } : {}),
-							},
-						}
-					: {}),
-				...(outcome.source !== undefined ? { source: outcome.source } : {}),
-				approvalAuthority: outcome.approvalAuthority,
-				...(outcome.planScale === true ? { dispatchPlan: true } : {}),
-				...(options?.origin === "harness" ? { harness: true } : {}),
-				...(deps.operatorAttends?.() === true && deps.unattendedAsks?.() !== true && permissionListeners.size > 0
-					? { operatorAttends: true }
-					: {}),
-				...(options?.sessionId !== undefined ? { sessionId: options.sessionId } : {}),
-				...(options?.turnId !== undefined ? { turnId: options.turnId } : {}),
-				...(options?.toolCallId !== undefined ? { toolCallId: options.toolCallId } : {}),
-				...(options?.signal !== undefined ? { signal: options.signal } : {}),
-			});
-		} catch {
-			// The judge's own failure is no verdict: the call takes today's path.
-			return SAFETY_JUDGE_SKIP;
-		}
-		const report = (judged: SafetyJudgeOutcome): SafetyJudgeOutcome => {
-			if (judged.kind !== "skip" && judged.latencyMs > 0) options?.onParked?.(judged.latencyMs);
-			return judged;
-		};
-		// Only a review that asks a model is awaited, so every other ask parks in
-		// the same tick it did before the judge existed.
-		if (!(pending instanceof Promise)) return report(pending);
-		notifyAdmissionReview(options, "judging");
-		return pending.then(report, () => SAFETY_JUDGE_SKIP);
 	};
 
 	/** Admit, park or run one call; `invoke` adds the main agent's denial memory around it. */
@@ -1120,81 +974,7 @@ export function createRegistry(deps: RegistryDeps): ToolRegistry {
 			}
 			return joinReadFanOut(reads, cap);
 		},
-		async requestReadRootApproval(root, options, task) {
-			return withRegistryScope(options, async () => {
-				// Contained yolo never waits for a person, so the Scout run reports the approval it needed instead.
-				if (
-					(deps.principal ?? "main") !== "main" ||
-					options?.signal?.aborted ||
-					permissionListeners.size === 0 ||
-					deps.unattendedAsks?.() === true
-				)
-					return null;
-				const call: ClassifierCall = Object.freeze({ tool: ToolNames.Read, args: Object.freeze({ path: root }) });
-				const admission = evaluateAdmission({
-					principal: "main",
-					effects: [call],
-					safety: deps.safety,
-					autonomy: "default",
-					confirmationRuleId: "dispatch-external-read",
-					confirmationText: {
-						detail: `Allow one read-only Scout run to inspect external root ${JSON.stringify(root)}? This grants no writes, commands, or access to other external roots.`,
-						hints: ["This approval expires with this Scout run."],
-					},
-				});
-				if (admission.kind !== "ask") {
-					if (admission.kind === "deny") recordRegistryDisposition(call, admission.decision, "blocked");
-					return null;
-				}
-				const decision: SafetyDecision = {
-					...admission.decision,
-					kind: "ask",
-					confirmationRuleId: "dispatch-external-read",
-					rejection: {
-						short: `Scout external read root needs approval: ${root}`,
-						detail: `Allow one read-only Scout run to inspect external root ${JSON.stringify(root)}? No writes or commands are granted.`,
-						hints: ["One approval covers only this run and root."],
-					},
-				};
-				const meta: PermissionRequiredMeta = {
-					requestId: nextApprovalRequestId(),
-					axis: "net:dispatch-external-read",
-					approvalAuthority: "operator",
-					...(options?.sessionId !== undefined ? { sessionId: options.sessionId } : {}),
-					...(options?.turnId !== undefined ? { turnId: options.turnId } : {}),
-					...(options?.toolCallId !== undefined ? { toolCallId: options.toolCallId } : {}),
-					...(task !== undefined ? { dispatchTask: { ...task } } : {}),
-				};
-				return await new Promise((resolve) => {
-					const started = performance.now();
-					let reported = false;
-					const closePark = () => {
-						if (!reported) {
-							reported = true;
-							options?.onParked?.(Math.round(performance.now() - started));
-						}
-					};
-					const entry: ParkedCall = {
-						call,
-						decision,
-						meta,
-						readRootApproval: true,
-						closePark,
-						...(options !== undefined ? { options } : {}),
-						resolve(verdict) {
-							closePark();
-							const details = verdict.kind === "ok" ? verdict.result.details : undefined;
-							resolve(
-								details && typeof details.requestId === "string" && typeof details.requestedBy === "string"
-									? { requestId: details.requestId, requestedBy: details.requestedBy }
-									: null,
-							);
-						},
-					};
-					enqueueOperatorAsk(askQueue, entry, "confirmation:dispatch-external-read");
-				});
-			});
-		},
+		requestReadRootApproval,
 		hasParkedCalls: () => parked.length > 0,
 		parkedCount: () => parked.length,
 		renotifyHead() {
