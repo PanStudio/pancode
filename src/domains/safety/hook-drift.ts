@@ -25,10 +25,11 @@ import type { ClassifierCall } from "./action-classifier.js";
  * git command runs outside the sandbox at autonomy default any file added or
  * changed since then makes the call an operator-only ask under
  * `git-hooks-changed`. The operator's allow accepts exactly the files the
- * card named; an approved or judge-allowed `git-control-file` write accepts
- * the file it wrote. An executable git config value (core.fsmonitor, a
- * filter driver, an `!` alias) counts as a hook: the fingerprint carries
- * each one by its config file and key.
+ * card named; an approved or judge-allowed `git-control-file` write, or an
+ * approved `startup-path-confirm` write, accepts the file it wrote. An
+ * executable git config value (core.fsmonitor, a filter driver, an `!`
+ * alias) counts as a hook: the fingerprint carries each one by its config
+ * file and key.
  */
 export const GIT_HOOKS_CHANGED_RULE_ID = "git-hooks-changed";
 
