@@ -1776,6 +1776,38 @@ describe("safety gate boundary", () => {
 		strictEqual(recognition("wc *"), "unrecognized", "a matched file name is judged as the option it becomes");
 	});
 
+	it("recognizes a for loop over a read-only find only when every value and body step only reads", () => {
+		writeInspectionFixture();
+		const policy = engine();
+		const recognition = (command: string) => policy.evaluate({ tool: ToolNames.Bash, args: { command } }).execRecognition;
+		// A fleet coder's exploration command parked behind an operator-only ask.
+		strictEqual(
+			recognition(
+				`cd ${scratch} || pwd; find . -path ./.git -prune -o -type f -print | head -100; echo; cat README.md; echo ----; for f in $(find src -name *.js); do echo == $f; cat $f; done`,
+			),
+			"recognized",
+		);
+		strictEqual(recognition('for f in $(find src)\ndo\n  wc -l "$f"\ndone'), "recognized");
+		for (const command of [
+			"for f in $(cat a.txt); do cat $f; done",
+			'for f in $(find src); do sed -n 1p "$f"; done',
+			"for f in $(find src); do pytest $f; done",
+			"for f in $(find src); do cat $f > a.txt; done",
+			"for f in $(find src -printf /etc/hostname); do cat $f; done",
+			"for PATH in $(find src); do cat $PATH; done",
+			"for f in $(find src); do cat $f $g; done",
+		])
+			strictEqual(recognition(command), "unrecognized", command);
+		writeFileSync(join(scratch, "src", "a b.js"), "x\n");
+		strictEqual(recognition("for f in $(find src); do cat $f; done"), "unrecognized", "a spaced name splits");
+		rmSync(join(scratch, "src", "a b.js"));
+		symlinkSync("/etc/hostname", join(scratch, "src", "host.js"));
+		strictEqual(recognition("for f in $(find src); do cat $f; done"), "unrecognized", "a value links out");
+		rmSync(join(scratch, "src", "host.js"));
+		writeFileSync(join(scratch, "src", ".env"), "SECRET=1\n");
+		strictEqual(recognition("for f in $(find src); do cat $f; done"), "unrecognized", "a value is zero-access");
+	});
+
 	it("asks for rg while the tool environment names a ripgrep config", () => {
 		// The config file can add --follow, --pre and -z, which the recognizer refuses on the command line.
 		writeInspectionFixture();
