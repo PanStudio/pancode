@@ -1079,7 +1079,8 @@ function readHubInventoryInPass(options: HubInventoryOptions): HubInventory {
 		if (wants("agent")) {
 			const agentDiagnostics: AgentRecipeDiagnostic[] = [];
 			try {
-				for (const recipe of discoverAgentRecipes(cwd, agentDiagnostics)) agentRows.push(fromAgent(recipe, index));
+				for (const recipe of discoverAgentRecipes(loadSkills, cwd, agentDiagnostics))
+					agentRows.push(fromAgent(recipe, index));
 			} catch (error) {
 				note(`agent: discovery failed: ${error instanceof Error ? error.message : String(error)}`);
 			}

@@ -282,7 +282,7 @@ it("binds the self-development skills to built-in edit recipes that require cont
 	t.after(() => env.restore());
 	const dir = path.join(import.meta.dirname, "../../src/domains/agents/builtins");
 	const bound = (cwd: string, id: string) =>
-		loadRecipesFromDir({ source: "builtin", dir, cwd }).find((recipe) => recipe.id === id)?.skills ?? [];
+		loadRecipesFromDir(loadSkills, { source: "builtin", dir, cwd }).find((recipe) => recipe.id === id)?.skills ?? [];
 	const repo = path.resolve(import.meta.dirname, "../..");
 	ok(bound(repo, "coder").includes("pancode-dev"));
 	ok(bound(repo, "coder").includes("pancode-test"));

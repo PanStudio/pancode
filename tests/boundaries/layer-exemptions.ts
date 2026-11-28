@@ -17,7 +17,6 @@ export const LAYER_EXEMPTIONS: {
 	barrel: new Map([
 		["src/domains/agents -> src/domains/config", 1],
 		["src/domains/agents -> src/domains/mcp", 2],
-		["src/domains/agents -> src/domains/resources", 6],
 		["src/domains/agents -> src/domains/safety", 4],
 		["src/domains/claims -> src/domains/telemetry", 1],
 		["src/domains/context -> src/domains/prompts", 4],
@@ -103,7 +102,6 @@ export const LAYER_EXEMPTIONS: {
 		["src/domains/workspace-snapshots -> src/domains/safety", 2],
 	]),
 	dependsOn: new Map([
-		["agents -> resources", 6],
 		["context -> prompts", 4],
 		["extensions -> dispatch", 1],
 		["extensions -> plugins", 1],

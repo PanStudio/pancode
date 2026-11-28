@@ -6,10 +6,18 @@ import { assertAgentIdNamespace } from "../config/agent-namespace.js";
 import { pluginSnapshotFor, withPluginDiscoveryPass } from "../plugins/index.js";
 import type { AgentsContract } from "./contract.js";
 import type { AgentRecipe } from "./recipe.js";
-import { discoverAgentRecipes } from "./registry.js";
+import { discoverAgentRecipes, type SkillCatalogLoader } from "./registry.js";
 import { type AgentSpec, normalizeAgentSpec } from "./spec.js";
 
-export function createAgentsBundle(_context: DomainContext): DomainBundle<AgentsContract> {
+export interface AgentsBundleOptions {
+	/** Skill catalog reader from the resources domain, which loads after agents. */
+	loadSkills: SkillCatalogLoader;
+}
+
+export function createAgentsBundle(
+	_context: DomainContext,
+	options: AgentsBundleOptions,
+): DomainBundle<AgentsContract> {
 	let recipes: ReadonlyArray<AgentRecipe> = [];
 	let specs: ReadonlyArray<AgentSpec> = [];
 	let revision = 0;
@@ -24,7 +32,7 @@ export function createAgentsBundle(_context: DomainContext): DomainBundle<Agents
 		// Read the digest in the discovery's own pass, so it names exactly the
 		// verified projection the recipes came from without a second walk.
 		const { merged, pluginDigest } = withPluginDiscoveryPass(() => ({
-			merged: discoverAgentRecipes(process.cwd()),
+			merged: discoverAgentRecipes(options.loadSkills, process.cwd()),
 			pluginDigest: pluginSnapshotFor(process.cwd()).digest,
 		}));
 		attemptedRecipes = merged;
