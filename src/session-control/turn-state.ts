@@ -719,6 +719,12 @@ export type ChatLoopCancelState = TurnStateView<
 	| "activeInterruptReason"
 >;
 
+/** chat-loop/route-move: reads the running request a route move would carry. */
+export type ChatLoopRouteMoveState = TurnStateView<
+	"routeMove" | "runtime" | "streamStallReason" | "streamStallStage",
+	"routeMove" | "streamStallReason" | "streamStallStage"
+>;
+
 /**
  * The thinking level argument is ignored: the agent state owns the level and
  * turn state keeps no copy. The parameter stays optional because existing test

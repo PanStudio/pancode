@@ -117,6 +117,8 @@ export interface ChatLoopScope {
 	readonly requestBudgetRoll: ChatLoopComposition["requestBudgetRoll"];
 	readonly turnRuntime: ChatLoopComposition["turnRuntime"];
 	readonly steerInterrupter: ChatLoopComposition["steerInterrupter"];
+	readonly routeMoveWait: ChatLoopComposition["routeMoveWait"];
+	readonly routeFit: ChatLoopComposition["routeFit"];
 	readonly continuity: ChatLoopComposition["continuity"];
 	readonly stepStarts: ChatLoopBus["stepStarts"];
 	readonly stepPipeline: ChatLoopBus["stepPipeline"];
