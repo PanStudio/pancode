@@ -23,6 +23,7 @@ import { createConfigurePancodeTool } from "./configure-pancode.js";
 import { assertRegisteredBuiltinTools, type CoreToolBootstrapDeps, registerCoreTools } from "./core-bootstrap.js";
 import { createDispatchTool } from "./dispatch.js";
 import type { DispatchBackgroundRegistry } from "./dispatch-background.js";
+import type { DispatchPlaybookPort } from "./dispatch-playbook.js";
 import { createDispatchRunEventRegistry } from "./dispatch-run-events.js";
 import type { DispatchSchemaComposition } from "./dispatch-schema.js";
 import { COORDINATOR_DISPATCH_ARGUMENTS, coordinatorDispatchParameters } from "./dispatch-schema.js";
@@ -78,6 +79,8 @@ export interface ToolBootstrapDeps extends Omit<CoreToolBootstrapDeps, "mcpCapab
 	dispatchBackground?: DispatchBackgroundRegistry;
 	/** The session's fleet launcher: the playbook runs dispatch starts, and the roots monitor collects. */
 	fleetRuns?: FleetRunLauncher;
+	/** How `dispatch(playbook=...)` compiles and starts a playbook on `fleetRuns`; absent refuses it with the CLI form. */
+	playbooks?: DispatchPlaybookPort;
 	/** Live decision board snapshot; dispatch seals its active refs onto every request. */
 	getDecisionBoard?: () => ReadonlyArray<DecisionLedgerEntry>;
 	/** Optional herdr worktree lifecycle for compete candidates. */
@@ -109,6 +112,8 @@ export interface ToolBootstrapHandle {
 	mcpCapabilities: McpCapabilitySource | null;
 	/** Close every launched MCP client. Idempotent; also bound to session end and shutdown on the bus. */
 	close(): Promise<void>;
+	/** The session's fleet launcher dispatch and monitor were given, which every surface shows and the turn collects. */
+	fleetRuns: FleetRunLauncher | null;
 }
 
 /**
@@ -239,6 +244,7 @@ export function registerAllTools(registry: ToolRegistry, deps: ToolBootstrapDeps
 			...(deps.dispatchBackground ? { background: deps.dispatchBackground } : {}),
 			...(deps.getDecisionBoard ? { getDecisionBoard: deps.getDecisionBoard } : {}),
 			...(deps.competeMuxWorktrees ? { competeWorktrees: { mux: deps.competeMuxWorktrees } } : {}),
+			...(deps.playbooks ? { playbooks: deps.playbooks } : {}),
 		};
 		registry.register({
 			...builtin(createDispatchTool(dispatchToolDeps), {
@@ -356,5 +362,5 @@ export function registerAllTools(registry: ToolRegistry, deps: ToolBootstrapDeps
 		disposeCloseListeners.push(deps.bus.subscribe("session.ended", close));
 		disposeCloseListeners.push(deps.bus.subscribe("shutdown.requested", close));
 	}
-	return { mcpCapabilities, close };
+	return { mcpCapabilities, close, fleetRuns: deps.fleetRuns ?? null };
 }

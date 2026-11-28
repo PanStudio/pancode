@@ -67,6 +67,7 @@ import type { ExtensionReloadCoordinator } from "../extension-reload.js";
 import { admitHandoffSeedFlow, type createFlowLedger } from "../flow-ledger.js";
 import { createJobHost } from "../job-host.js";
 import type { createSessionSettingsView } from "../session-settings-view.js";
+import { createSessionFleetRuns } from "./fleet-runs.js";
 
 type SessionSettingsView = ReturnType<typeof createSessionSettingsView>;
 
@@ -249,7 +250,19 @@ export function registerBootTools(input: BootToolsInput) {
 			(cells.deferredWatchdogNoticeSink ?? ((msg: string) => bootStderr(`${msg}\n`)))(text);
 		},
 	});
+	// One launcher for every fleet run the session starts: /fleet run on any surface and the main agent's playbooks.
+	const fleetRuns = createSessionFleetRuns({
+		agents,
+		decisionBoard,
+		dispatch,
+		getCurrentSettings,
+		result,
+		session,
+		toolLimits: () => cells.chat.toolLimits?.(),
+		detachable: options.headless === undefined,
+	});
 	const toolBootstrap = registerAllTools(toolRegistry, {
+		...(fleetRuns ? { fleetRuns: fleetRuns.launcher, playbooks: fleetRuns.playbooks } : {}),
 		jobTool: jobHost.tool,
 		jobs: jobHost.operations,
 		flow: flowPort,

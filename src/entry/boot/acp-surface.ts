@@ -9,7 +9,6 @@ import { mainShellContained } from "../../core/sandbox/main-session.js";
 import { routingChangeNotices } from "../../core/session-routing.js";
 import type { PluginsReloadedPayload } from "../../core/telemetry/live-events.js";
 import { pancodeDataDir, pancodeStateDir } from "../../core/xdg.js";
-import { createFleetRunLauncher } from "../../domains/dispatch/fleet-run-launcher.js";
 import { expandSubmitText } from "../../domains/resources/submit-expansion.js";
 import type { SessionEntry } from "../../domains/session/entries.js";
 import { resumedSessionRoute } from "../../domains/session/resumed-route.js";
@@ -158,18 +157,9 @@ export async function runAcpSurface(
 		});
 		return acpQuotaRead;
 	};
-	// The fleets this ACP agent starts. A second start is refused while one runs, as the terminal's /fleet run refuses
-	// it, since two fleets would race over one workspace.
-	const fleetRuns = agents
-		? createFleetRunLauncher({
-				dispatch,
-				agents: { getSpec: (agentId) => agents.getSpec(agentId) },
-				workspaceRoot: () => process.cwd(),
-				getSettings: getCurrentSettings,
-				getDecisionBoard: () => decisionBoard.snapshot(),
-				sessionId: () => session?.current()?.id ?? null,
-			})
-		: null;
+	// The session's fleets, the client's /fleet run and the main agent's playbooks alike. A second start is refused while
+	// one runs, as the terminal's /fleet run refuses it, since two fleets would race over one workspace.
+	const fleetRuns = toolBootstrap.fleetRuns;
 	const [{ acpCommandControl }, { servePancodeAcpAgent }] = await Promise.all([
 		seams.loadAcpCommands(),
 		seams.loadAcpServer(),
