@@ -8,7 +8,7 @@ import { setTimeout } from "node:timers/promises";
 import { Workspace } from "../contracts/sessions.js";
 import { ConfigGraph, SettingsReport } from "../contracts/settings.js";
 import { harness, json } from "./harness/app.js";
-import { seedSettings } from "./harness/settings-fixture.js";
+import { seedSettings } from "./harness/hub-fixture.js";
 
 test("settings: canonical layer origins, complete leaves, real credential store and environment redaction", async () => {
 	const h = await harness({}, { env: { OPENAI_API_KEY: "fixture-process-environment-e3d26" } });

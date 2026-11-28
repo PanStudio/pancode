@@ -57,9 +57,9 @@ import type { OverlayState } from "../../src/interactive/overlay-key-routing.js"
 import { createOverlayModelSelectors } from "../../src/interactive/overlay-model-selectors.js";
 import type { OpenModelScopeOverlayDeps } from "../../src/interactive/overlays/model-scope.js";
 import { ModelOverlayView } from "../../src/interactive/overlays/model-selector.js";
-import type { ModelRow } from "../../src/interactive/overlays/model-selector-model.js";
 import { presentProviderError } from "../../src/interactive/renderers/provider-error.js";
 import { resolveWorkerRuntime } from "../../src/worker/runtime-registry.js";
+import { selectableModelRow } from "../harness/packaged-model-catalog.js";
 import { isolatePancodeEnv } from "../harness/scratch-env.js";
 
 const temporaryDirectories: string[] = [];
@@ -93,45 +93,6 @@ function inertOverlayHandle(onHide?: () => void): OverlayHandle {
 		unfocus: () => undefined,
 		isFocused: () => true,
 		getBounds: () => undefined,
-	};
-}
-
-function selectableModelRow(): ModelRow {
-	const caps = { ...EMPTY_CAPABILITIES, chat: true, tools: true };
-	return {
-		value: "next-target/next-model",
-		target: "next-target",
-		model: "next-model",
-		runtimeName: "Contract runtime",
-		runtimeShortName: "Contract",
-		runtimeId: "contract-runtime",
-		apiFamily: "openai-completions",
-		bucket: "local",
-		source: "configured",
-		authText: "ready",
-		available: true,
-		reason: "",
-		healthToken: "success",
-		healthText: "healthy",
-		caps,
-		capabilityDecisions: {
-			chat: true,
-			tools: true,
-			reasoning: false,
-			vision: false,
-			streaming: true,
-			contextWindow: 32768,
-			maxTokens: 8192,
-		},
-		thinking: "off",
-		streaming: true,
-		badges: "T",
-		context: "32kctx",
-		maxTokens: "8k",
-		active: false,
-		scoped: false,
-		visibleByDefault: true,
-		selectable: true,
 	};
 }
 
