@@ -47,6 +47,7 @@ import { extensionContentDigestWithCapture } from "./integrity.js";
 import type { ResolvedPathGrant } from "./path-grants.js";
 import {
 	assertPlainProjectDir,
+	assertPlainWorktreeParent,
 	type ExtensionSandboxReport,
 	extensionProjectDir,
 	extensionWorktreeParent,
@@ -351,7 +352,12 @@ export class ExtensionRuntimeProcessV2 {
 				const parent = extensionWorktreeParent(options.snapshot.workspace, extension.id);
 				if (parent !== undefined) {
 					this.worktrees = parent.dir;
-					if (!options.readOnly) this.createdWorktrees = prepareWorktreeParent(parent);
+					if (!options.readOnly) {
+						this.createdWorktrees = prepareWorktreeParent(parent);
+						ensureProjectIgnore(parent.root);
+					} else {
+						assertPlainWorktreeParent(parent);
+					}
 				}
 			}
 			cpSync(extension.provenance.canonicalRoot, copy, { recursive: true, dereference: false, verbatimSymlinks: true });

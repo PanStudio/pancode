@@ -41,7 +41,9 @@ import {
 } from "../../src/domains/extensions/path-grants.js";
 import {
 	assertPlainProjectDir,
+	assertPlainWorktreeParent,
 	extensionProjectDir,
+	extensionWorktreeParent,
 	prepareProjectDir,
 } from "../../src/domains/extensions/runtime-sandbox.js";
 import {
@@ -1128,32 +1130,96 @@ describe("a runtime that declares worktrees", () => {
 		);
 		writeFileSync(
 			join(root, "extension.mjs"),
-			`import { readFileSync } from "node:fs";
+			`import { readFileSync, writeFileSync } from "node:fs";
 			import { join } from "node:path";
 			export default (api) => {
 				api.handle("read", async (_args, ctx) => {
-					const wt = await ctx.worktrees.create({ base: "HEAD" });
+					const wt = await ctx.worktrees.create({ base: "HEAD", keep: true });
 					const own = readFileSync(join(wt.path, "f.txt"), "utf8").trim();
 					let other = "read";
 					try { readFileSync(${JSON.stringify(join(other, "secret.txt"))}, "utf8"); } catch (error) { other = error.code; }
-					return { text: JSON.stringify({ own, other, version: ctx.snapshot.pancodeVersion }) };
+					let wrote = "wrote";
+					try { writeFileSync(join(wt.path, "nope.txt"), "x"); } catch (error) { wrote = error.code; }
+					return { text: JSON.stringify({ own, other, wrote, wtPath: wt.path, version: ctx.snapshot.pancodeVersion }) };
+				});
+			};`,
+		);
+		const noservice = join(env.dir, "pack-noservice");
+		mkdirSync(noservice);
+		writeFileSync(
+			join(noservice, "pancode-extension.json"),
+			JSON.stringify({
+				id: "wt-noservice",
+				version: "1.0.0",
+				description: "Workspace reader without services.worktrees",
+				runtime: {
+					api: 2,
+					entrypoint: "extension.mjs",
+					permissions: { fs: { read: ["workspace"] } },
+					commands: [{ name: "peek", description: "peek" }],
+				},
+			}),
+		);
+		writeFileSync(
+			join(noservice, "extension.mjs"),
+			`import { readFileSync } from "node:fs";
+			export default (api) => {
+				api.handle("peek", (args) => {
+					try { return { text: "leaked:" + readFileSync(args, "utf8").trim() }; }
+					catch (error) { return { text: "blocked:" + error.code }; }
 				});
 			};`,
 		);
 		assert.ok(installExtension(root, { cwd: repo, scope: "user" }).extension?.loadable);
+		assert.ok(installExtension(noservice, { cwd: repo, scope: "user" }).extension?.loadable);
 		process.chdir(repo);
 		const operator = new OperatorExtensions({
 			context: () => ({ workspace: repo, sessionId: "attended", mode: "interactive" }),
 			isIdle: () => true,
-			onlyId: "wt-read",
 		});
 		cleanup.push(() => operator.dispose());
 		assert.equal((await operator.reload("startup")).status, "committed");
 		const output = await operator.invoke(extensionInvocation("wt-read", "read"), "", [], new AbortController().signal);
-		const read = JSON.parse(output.text ?? "{}") as { own: string; other: string; version: string };
+		const read = JSON.parse(output.text ?? "{}") as {
+			own: string;
+			other: string;
+			wrote: string;
+			wtPath: string;
+			version: string;
+		};
 		assert.equal(read.own, "hello");
 		assert.equal(read.other, "ERR_ACCESS_DENIED");
+		assert.equal(read.wrote, "ERR_ACCESS_DENIED");
 		assert.match(read.version, /^\d+\.\d+\.\d+/u);
+
+		// A sibling extension with workspace read access but no services.worktrees cannot read ext-wt-read's worktree.
+		const peek = await operator.invoke(
+			extensionInvocation("wt-noservice", "peek"),
+			join(read.wtPath, "f.txt"),
+			[],
+			new AbortController().signal,
+		);
+		assert.match(peek.text, /^blocked:/u, `wt-noservice unexpectedly read wt-read's worktree: ${peek.text}`);
+
+		// A symlink planted along .pancode/worktrees/ext-wt-read is refused even in a read-only session.
+		await operator.dispose();
+		rmSync(join(repo, ".pancode", "worktrees", "ext-wt-read"), { recursive: true, force: true });
+		symlinkSync(tmpdir(), join(repo, ".pancode", "worktrees", "ext-wt-read"));
+		const parent = extensionWorktreeParent(repo, "wt-read");
+		assert.ok(parent !== undefined);
+		assert.throws(() => assertPlainWorktreeParent(parent), /not a plain directory/u);
+		const badReader = new OperatorExtensions({
+			context: () => ({ workspace: repo, sessionId: "ro", mode: "interactive" }),
+			isIdle: () => true,
+			onlyId: "wt-read",
+			readOnly: () => true,
+		});
+		cleanup.push(() => badReader.dispose());
+		await badReader.reload("startup");
+		await assert.rejects(
+			() => badReader.invoke(extensionInvocation("wt-read", "read"), "", [], new AbortController().signal),
+			/not a plain directory/u,
+		);
 	});
 });
 
