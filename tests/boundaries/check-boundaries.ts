@@ -245,7 +245,8 @@ const OWNER_CAPABILITIES: ReadonlyMap<string, string> = new Map([
  * that owns the domain keeps the capability and hands it to its collaborators.
  */
 const OWNER_CAPABILITY_HOLDERS: ReadonlyMap<string, string> = new Map([
-	["src/entry/orchestrator.ts#middleware", "the interactive composition root owns the middleware domain"],
+	["src/entry/boot/domains.ts#middleware", "creates the middleware domain the interactive composition root owns"],
+	["src/entry/boot/session-start.ts#middleware", "takes the composition root's registrar from its middleware domain"],
 	["src/entry/extension-reload.ts#middleware", "replaces registrations for the orchestrator on reload"],
 	["src/entry/worker-hook-host.ts#middleware", "registers extension hooks for the orchestrator's worker host"],
 	["src/entry/boot/turn-hooks.ts#middleware", "registers the turn hooks for the orchestrator that owns the domain"],
@@ -256,7 +257,8 @@ const OWNER_CAPABILITY_HOLDERS: ReadonlyMap<string, string> = new Map([
 	["src/cli/worker-extension-hooks.ts#middleware", "the headless and fleet composition owns its middleware domain"],
 	["src/engine/worker-tools.ts#middleware", "the worker builds its own host from the parent's snapshot"],
 	["src/session-control/chat-loop.ts#middleware", "receives registerHook from the orchestrator as a dependency"],
-	["src/entry/orchestrator.ts#telemetry", "the interactive composition root owns the telemetry domain"],
+	["src/entry/boot/domains.ts#telemetry", "creates the telemetry domain the interactive composition root owns"],
+	["src/entry/boot/session-start.ts#telemetry", "takes the composition root's run readers from its telemetry domain"],
 	["src/entry/boot/surface.ts#telemetry", "carries the orchestrator's binder to the interactive surface it starts"],
 	["src/interactive/interactive-deps.ts#telemetry", "carries the orchestrator's binder to the presentation"],
 	["src/interactive/interactive-presentation.ts#telemetry", "binds the terminal's live run readers for its lifetime"],
@@ -815,7 +817,7 @@ const FUNCTION_LINE_EXEMPTIONS: ReadonlyMap<string, number> = new Map([
 	["src/acp/server.ts#servePancodeAcpAgent", 3780],
 	["src/engine/loop-guard.ts#createLoopGuardRegistration", 1490],
 	["src/engine/worker-runtime.ts#startWorkerRun", 2346],
-	["src/entry/orchestrator.ts#bootOrchestrator", 1163],
+	["src/entry/orchestrator.ts#bootOrchestrator", 953],
 	["src/interactive/chat-panel.ts#createChatPanel", 2064],
 	["src/interactive/chat-panel.ts#createChatPanel.applyEvent", 534],
 	["src/interactive/editor-submit.ts#createEditorSubmitController", 668],

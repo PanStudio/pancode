@@ -16,42 +16,23 @@ import type { AcpHandoffControl } from "../acp/server-options.js";
 import { createStdioServerTransport } from "../acp/transport.js";
 import type { RunJsonMainSessionFrame } from "../cli/modes/run-json-schema.js";
 import { RUN_JSON_SCHEMA_VERSION } from "../cli/modes/run-json-schema.js";
-import { noteMainRunV2, writeRunDiagnostic } from "../cli/run-failure.js";
+import { writeRunDiagnostic } from "../cli/run-failure.js";
 import { startLoginEnvCapture } from "../core/bash-exec.js";
 import { formatBootTrace } from "../core/boot-trace.js";
 import { readPancodeVersionLabel } from "../core/build-info.js";
 import { type PancodeSettings, readSettings } from "../core/config.js";
-import type { OutputStyle } from "../core/defaults.js";
-import { type LoadResult, loadDomains } from "../core/domain-loader.js";
 import { setAutonomousCommitProcess } from "../core/git-commit-attribution.js";
-import { flushPackageActivities } from "../core/package-activity.js";
 import { ensureProjectIgnore } from "../core/project-root.js";
-import { consumeRestartIntent } from "../core/restart-intent.js";
 import { StartupTimer } from "../core/startup-timer.js";
-import { captureAdmits } from "../core/telemetry/capture.js";
 import { telemetryHub } from "../core/telemetry/hub.js";
-import { registerResearchTraceSink } from "../core/telemetry/research-trace.js";
-import { getTerminationCoordinator, resolveShutdownHookBudgetMs } from "../core/termination.js";
+import { getTerminationCoordinator } from "../core/termination.js";
 import { yieldToEventLoop } from "../core/timers.js";
 import { captureProjectSurface, projectSurfaceTrustNotice } from "../core/workspace-trust.js";
-import { pancodeStateDir } from "../core/xdg.js";
-import { AgentsDomainModule } from "../domains/agents/module.js";
-import { ConfigDomainModule, createConfigDomainModule } from "../domains/config/module.js";
-import { createContextDomainModule } from "../domains/context/module.js";
 import { createWorktreeBootRecovery } from "../domains/dispatch/index.js";
-import { createDispatchDomainModule } from "../domains/dispatch/module.js";
-import { ExtensionsDomainModule } from "../domains/extensions/module.js";
-import { describeUpgradeNotice, ensurePancodeState, takeUpgradeNotice } from "../domains/install/index.js";
-import { InteropDomainModule } from "../domains/interop/module.js";
+import { ensurePancodeState } from "../domains/install/index.js";
 import { prepareBackgroundMemoryModel } from "../domains/memory/background-route.js";
-import { withDispatchMemory } from "../domains/memory/dispatch-section.js";
-import { MemoryRuntime } from "../domains/memory/index.js";
 import { createCapabilityGate } from "../domains/middleware/capability-gate.js";
-import { createMiddlewareDomain } from "../domains/middleware/module.js";
-import { PluginsDomainModule } from "../domains/plugins/module.js";
-import { createPromptsDomainModule } from "../domains/prompts/module.js";
 import type { ProvidersContract } from "../domains/providers/index.js";
-import { createProvidersDomainModule } from "../domains/providers/module.js";
 import {
 	type LlmRequestAdmission,
 	type OneShotPort,
@@ -61,17 +42,11 @@ import {
 import { resolveModelReference } from "../domains/providers/resolver.js";
 import { LOCAL_API_KEY_FALLBACK, resolveSideCallAuth } from "../domains/providers/side-call-auth.js";
 import { resolveTarget } from "../domains/providers/unpriced-routes.js";
-import { createResourcesDomainModule } from "../domains/resources/module.js";
 import { DEFAULT_RECENT_ENTRY_LIMIT } from "../domains/safety/finish-entries.js";
 import type { GitHookDriftGuard } from "../domains/safety/hook-drift.js";
 import type { FlowRestrictionSet } from "../domains/safety/index.js";
-import { EMPTY_INFORMATION_FLOW_POLICY, resolveModelDestination } from "../domains/safety/index.js";
-import { workerFlowPolicyInput } from "../domains/safety/information-flow.js";
-import { SafetyDomainModule } from "../domains/safety/module.js";
 import type { ProtectedArtifactState } from "../domains/safety/protected-artifacts.js";
 import type { SafetyJudgeSeat } from "../domains/safety/safety-judge.js";
-import { unattendedWindowMs } from "../domains/safety/unattended.js";
-import { createSchedulingDomainModule } from "../domains/scheduling/module.js";
 import type { CompactInput, CompactResult } from "../domains/session/compaction/compact.js";
 import {
 	type CompactionFlowAdmission,
@@ -84,9 +59,6 @@ import { collectSessionEntries } from "../domains/session/compaction/session-ent
 import type { SessionContract, SessionMeta } from "../domains/session/contract.js";
 import type { CompactionTrigger, SessionEntry } from "../domains/session/entries.js";
 import { commitHandoff, type HandoffServiceDeps, prepareHandoff } from "../domains/session/handoff-service.js";
-import { SessionLiveError } from "../domains/session/index.js";
-import { SessionDomainModule } from "../domains/session/module.js";
-import { createTelemetryDomain } from "../domains/telemetry/module.js";
 import {
 	declareRuntimeNoticeProducer,
 	EXIT_RELEASE_MS,
@@ -116,9 +88,7 @@ import {
 } from "../session-control/model-session-replay.js";
 import { createTurnOutcomeCollector } from "../session-control/turn-outcome-collector.js";
 import type { BootOptions } from "./boot-options.js";
-import { createFlowLedger, FLOW_RESTRICTION_ENTRY_TYPE } from "./flow-ledger.js";
-import { bindSessionPackageActivity } from "./package-activity.js";
-import { resolvePanesEnablement } from "./panes-activation.js";
+import { FLOW_RESTRICTION_ENTRY_TYPE } from "./flow-ledger.js";
 import { applyRouteOverlay } from "./route-overlay.js";
 
 export type { BootOptions, HeadlessSamplingOverrides } from "./boot-options.js";
@@ -145,12 +115,15 @@ import { startToolOffloadSweep } from "../tools/result-shaping.js";
 import { runAcpSurface } from "./boot/acp-surface.js";
 import { buildBootAutonomy } from "./boot/autonomy.js";
 import { startBootChat } from "./boot/chat.js";
+import { loadBootDomains } from "./boot/domains.js";
 import { wireBootExtensions } from "./boot/extension-reload.js";
 import { buildBootGuards } from "./boot/guards.js";
 import { runHeadlessSurface } from "./boot/headless-surface.js";
 import { runInteractiveSurface } from "./boot/interactive-surface.js";
 import { wireBootMemory } from "./boot/memory.js";
 import { buildBootRegistry } from "./boot/registry.js";
+import { resolveBootResume } from "./boot/resume.js";
+import { startBootSession } from "./boot/session-start.js";
 import { buildBootSettings } from "./boot/settings.js";
 import type { BootSurfaceCells, BootSurfaceInput, BootSurfaceSeams } from "./boot/surface.js";
 import { buildBootSystemOne } from "./boot/system-one.js";
@@ -488,195 +461,61 @@ export async function bootOrchestrator(options: BootOptions = {}): Promise<BootR
 		operatorAutonomy: () => AutonomyLevel;
 		hookDrift: () => GitHookDriftGuard;
 	} | null = null;
-
-	// Panes are an interactive-surface projection. Headless, ACP, and worker boots
-	// gate detection off so they never resolve a socket path or open a descriptor.
-	// This mirrors the `interactive` predicate computed after the domains load.
-	const muxInteractive = !options.headless && options.acp === undefined && process.env.PANCODE_INTERACTIVE === "1";
-	// An ACP client counts as attended only when it advertised so at initialize.
-	// The deferred front answers initialize before this boot, so the handshake is
-	// already settled here; a plain client advertises nothing and keeps the
-	// unattended behavior (no ask_user, no merge card, worker asks denied at once).
-	const acpHandshake = options.acp?.handshake;
-	const acpInterviews = acpHandshake?.initialized === true && acpHandshake.interviewsEnabled;
-	const acpWorkerPermissions = acpHandshake?.initialized === true && acpHandshake.workerPermissionsEnabled;
-	const acpElicitationChannel =
-		acpHandshake?.initialized === true && acpHandshake.elicitationEnabled ? createAcpElicitationChannel() : undefined;
-	const acpInterviewChannel = acpInterviews
-		? createAcpInterviewChannel({
-				unattendedWindowMs: () => unattendedWindowMs(getCurrentSettings().safety.unattendedAfterSeconds),
-			})
-		: undefined;
-	// The rung is settled once, before the config contract loads, off the
-	// `--with-panes` flag and whether this process runs in a pane host. An
-	// inactive rung loads nothing: the whole extension, mux domain included,
-	// lives behind the dynamic import below.
-	const muxEnablement = resolvePanesEnablement(options.panes);
-	const withPanes = muxInteractive && muxEnablement !== "off" ? await import("./with-panes.js") : null;
-	// Session-only output style toggles, reported to PanCode's pane host so its chrome follows.
-	const outputStyleListeners = new Set<(style: OutputStyle) => void>();
-
-	// Assigned once the extension reload coordinator exists, after the domains
-	// load; a worker dispatched before that carries no extension hooks.
-	let workerHookSource: import("./extension-reload.js").ExtensionReloadCoordinator["workerHooks"] | null = null;
-	const memoryOwner = new MemoryRuntime();
-	// The loader publishes only the query contract; this root keeps the right to register hooks.
-	const middlewareDomain = createMiddlewareDomain();
-	const telemetryDomain = createTelemetryDomain();
-	// Annotated: the module options close over contracts read from this result.
-	const result: LoadResult = await loadDomains(
-		[
-			options.startupSettings
-				? createConfigDomainModule(options.startupSettings, { holdReloads: bootPhaseBoundary !== undefined })
-				: ConfigDomainModule,
-			ExtensionsDomainModule,
-			PluginsDomainModule,
-			InteropDomainModule,
-			createResourcesDomainModule({
-				reservedPromptNames: new Set(BUILTIN_SLASH_COMMANDS.map((entry) => entry.name)),
-				skills: () => ({
-					disableDiscovery: options.noSkills === true || options.headless?.noSkills === true,
-					...(options.skillPaths && options.skillPaths.length > 0
-						? { explicitSkillPaths: options.skillPaths }
-						: options.headless?.skillPaths && options.headless.skillPaths.length > 0
-							? { explicitSkillPaths: options.headless.skillPaths }
-							: {}),
-				}),
-			}),
-			createContextDomainModule({
-				noContextFiles: options.noContextFiles === true,
-				startupHintHost: {
-					// ACP advertises `context`, so clients can send the same slash form as the TUI.
-					initCommand: options.headless ? "pancode context init" : "/context init",
-					// Scripted runs keep suggestions off stderr; malformed-file warnings still flow.
-					suggest: options.headless === undefined || (options.headless.mode !== "json" && process.stderr.isTTY === true),
-					// TUI and ACP consume the stored hints on their own notice surfaces.
-					...(options.acp === undefined && !muxInteractive ? { sink: (hint) => bootStderr(`pancode: ${hint.text}\n`) } : {}),
-				},
-			}),
-			// Live probes exercise this session's chat model once the effective view
-			// exists (assigned below with dispatch's); until then, the shared snapshot.
-			createProvidersDomainModule({ getSettings: () => effectiveSettingsForDispatch?.() }),
-			SafetyDomainModule,
-			createPromptsDomainModule({
-				noContextFiles: options.noContextFiles === true,
-				noSkills: options.noSkills === true || options.headless?.noSkills === true,
-			}),
-			AgentsDomainModule,
-			middlewareDomain.module,
-			{
-				manifest: { name: "memory", dependsOn: [] },
-				createExtension: () => ({
-					contract: memoryOwner.contract,
-					extension: { start: () => {}, stop: () => memoryOwner.dispose() },
-				}),
+	const {
+		acpElicitationChannel,
+		acpInterviewChannel,
+		acpInterviews,
+		acpWorkerPermissions,
+		dispatch,
+		memoryOwner,
+		middlewareDomain,
+		outputStyleListeners,
+		result,
+		telemetryDomain,
+		withPanes,
+		domainsState,
+	} = await loadBootDomains({
+		bootPhaseBoundary,
+		bootStderr,
+		BUILTIN_SLASH_COMMANDS,
+		bus,
+		capabilityGate,
+		createAcpElicitationChannel,
+		createAcpInterviewChannel,
+		options,
+		termination,
+		timer,
+		worktreeRecovery,
+		cells: {
+			get askUserBridge() {
+				return askUserBridge;
 			},
-			SessionDomainModule,
-			telemetryDomain.module,
-			// Budget alerts and the plan baseline read the ceiling through the
-			// session's effective view, where `--max-cost-usd` sets it.
-			createSchedulingDomainModule({ getSettings: () => effectiveSettingsForDispatch?.() }),
-			...(withPanes
-				? [
-						withPanes.createMuxDomainModule({
-							enabled: muxEnablement,
-							log: (level, message) => {
-								if (level === "warning") bootStderr(`[mux] ${message}\n`);
-							},
-							onSessionOutputStyle: (listener) => outputStyleListeners.add(listener),
-						}),
-					]
-				: []),
-			// Dispatch resolves worker targets through the session's effective
-			// settings view once it exists (assigned below, after the config
-			// contract loads); until then it falls back to the shared snapshot.
-			createDispatchDomainModule({
-				getCapabilityGate: () => capabilityGate,
-				budgetWaitForRaise: !options.headless && !options.acp,
-				// Only an operator surface answers worker escalations (F9): the TUI
-				// overlay, or an ACP client that advertised it forwards them to a person.
-				workerPermissionResponder: !options.headless && (!options.acp || acpWorkerPermissions),
-				// A headless steer channel reaches the main session only.
-				workerSteering: !options.headless,
-				// Under fleet.permissions.mode=judge the main session's safety judge
-				// reviews native workers' ordinary asks in this process.
-				operatorAutonomy: () => workerAskJudgeForDispatch?.operatorAutonomy(),
-				workerAskJudge: {
-					seat: () => workerAskJudgeForDispatch?.seat(),
-					autonomy: () => workerAskJudgeForDispatch?.autonomy() ?? "default",
-					hookDrift: () => workerAskJudgeForDispatch?.hookDrift(),
-				},
-				// The merge card rides the same attended gate, and asks through
-				// whichever ask_user handler the TUI or the ACP client has by then.
-				...(!options.headless && (!options.acp || acpInterviews)
-					? { operatorAsk: { available: () => registryState.askUserHandler !== null, ask: (q, o) => askUserBridge(q, o) } }
-					: {}),
-				getSettings: () => effectiveSettingsForDispatch?.(),
-				// A native worker's tool calls reach this session's extension hooks.
-				workerHooks: {
-					declarations: () => workerHookSource?.declarations() ?? [],
-					dropped: () => workerHookSource?.dropped() ?? [],
-					evaluate: async (request, run) => (await workerHookSource?.evaluate(request, run)) ?? [],
-					notify: (message) => workerHookSource?.notify(message),
-				},
-				getProtectedArtifactState: () => protectedArtifactStateForDispatch?.() ?? { artifacts: [] },
-				getFlowRestrictions: () => flowRestrictionsForDispatch?.() ?? null,
-				getFlowPolicy: () => workerFlowPolicyInput(safety?.policy?.informationFlow?.() ?? EMPTY_INFORMATION_FLOW_POLICY),
-				// Stamps every run with the session that dispatched it, which is what
-				// keeps a sibling PanCode process's runs and batches out of this one.
-				getSessionId: () => sessionOriginForDispatch?.()?.id ?? null,
-				getSessionParentId: () => sessionOriginForDispatch?.()?.parentSessionId ?? null,
-				getSessionOrigin: () => sessionOriginForDispatch?.() ?? null,
-				// The domain owns the durable journal here, not the dispatch
-				// tool's event registry: `/run`, a watchdog run, and a model
-				// dispatch all have to leave the same transcript behind, and only
-				// the last of the three ever reaches that registry.
-				journalRunEvents: true,
-				bootRecovery: worktreeRecovery,
-			}),
-		],
-		{ diagnostic: bootStderr, ...(bootPhaseBoundary ? { beforeEach: bootPhaseBoundary } : {}) },
-	);
-	timer.mark(`domains loaded (${result.loaded.length})`);
-
-	const dispatch = withDispatchMemory(result.getContract("dispatch"), () => effectiveSettingsForDispatch?.());
-	let unsubscribeDispatchShutdown: (() => void) | undefined;
-	if (dispatch) {
-		let dispatchDrain: Promise<void> | undefined;
-		const beginDispatchDrain = (): Promise<void> => (dispatchDrain ??= dispatch.drain());
-		unsubscribeDispatchShutdown = bus.subscribe("shutdown.requested", () => {
-			// Admission closes before sequential drain hooks can wait on another resource.
-			void beginDispatchDrain().catch(() => {
-				// The awaited drain hook reports this same rejection.
-			});
-		});
-		termination.onDrain(
-			async () => {
-				unsubscribeDispatchShutdown?.();
-				await beginDispatchDrain();
+			get effectiveSettingsForDispatch() {
+				return effectiveSettingsForDispatch;
 			},
-			{
-				timeoutMs: Math.min(2 ** 31 - 1, (dispatch.drainAllowanceMs?.() ?? 0) + resolveShutdownHookBudgetMs()),
+			get flowRestrictionsForDispatch() {
+				return flowRestrictionsForDispatch;
 			},
-		);
-	}
-	// The loader caps each domain separately. The outer hook must allow the
-	// whole sequence to finish, including cleanup after a timed-out domain and
-	// the dispatch stop's own allowance for its async durable writes (#428).
-	termination.onPersist(
-		(signal) => {
-			// The coordinator's status is set before any hook runs (130 on SIGINT, 143 on SIGTERM); process.exited
-			// records it (#434).
-			result.getContract("telemetry")?.setExitStatus?.(termination.getExitCode());
-			return result.stop(signal);
+			get getCurrentSettings() {
+				return getCurrentSettings;
+			},
+			get protectedArtifactStateForDispatch() {
+				return protectedArtifactStateForDispatch;
+			},
+			get registryState() {
+				return registryState;
+			},
+			get safety() {
+				return safety;
+			},
+			get sessionOriginForDispatch() {
+				return sessionOriginForDispatch;
+			},
+			get workerAskJudgeForDispatch() {
+				return workerAskJudgeForDispatch;
+			},
 		},
-		{
-			timeoutMs: Math.min(
-				2 ** 31 - 1,
-				(result.loaded.length + 1) * resolveShutdownHookBudgetMs() + (dispatch?.drainAllowanceMs?.() ?? 0),
-			),
-		},
-	);
+	});
 
 	bus.emit("session.started", { at: Date.now() });
 	timer.mark("session_start fired");
@@ -700,78 +539,47 @@ export async function bootOrchestrator(options: BootOptions = {}): Promise<BootR
 		await termination.shutdown(0);
 		return { exitCode: 0, bootTimeMs: timer.snapshot().totalMs };
 	}
-
-	const middleware = result.getContract("middleware");
-	const middlewareRegistrar = middlewareDomain.registrar();
-	const telemetry = result.getContract("telemetry");
-	const telemetryRunReaders = telemetryDomain.runReaders();
-	const safety = result.getContract("safety");
-	const session = result.getContract("session");
-	telemetry?.resetSession(session?.current()?.id ?? null);
-	// Memory and compaction traces run outside any call; they journal into the session current when they fire,
-	// the same session background memory calls are journaled under (#434).
-	registerResearchTraceSink({
-		admits(kind) {
-			const origin = session?.current();
-			const capture = origin ? telemetry?.telemetryCapture?.(origin) : undefined;
-			return capture !== undefined && captureAdmits(capture, kind);
-		},
-		record(kind, data, preimage) {
-			const origin = session?.current();
-			if (origin) telemetry?.recordResearchTrace?.(origin, { role: "memory", id: origin.id }, kind, data, preimage);
+	const {
+		admitModelFlow,
+		agents,
+		contextDomain,
+		extensions,
+		flowLedger,
+		flowPort,
+		initialNotices,
+		interop,
+		middleware,
+		middlewareRegistrar,
+		mux,
+		prompts,
+		resources,
+		safety,
+		session,
+		telemetry,
+		telemetryRunReaders,
+	} = await startBootSession({
+		heldTrustNotices,
+		interactive,
+		middlewareDomain,
+		providers,
+		readFlowSessionEntries,
+		result,
+		telemetryDomain,
+		cells: {
+			get flowRestrictionsForDispatch() {
+				return flowRestrictionsForDispatch;
+			},
+			set flowRestrictionsForDispatch(value) {
+				flowRestrictionsForDispatch = value;
+			},
+			get sessionOriginForDispatch() {
+				return sessionOriginForDispatch;
+			},
+			set sessionOriginForDispatch(value) {
+				sessionOriginForDispatch = value;
+			},
 		},
 	});
-	// One durable union of restricted sources per session. Every model send,
-	// mediated outbound call and System One request is judged against it.
-	const flowLedger = createFlowLedger({
-		session: session ?? null,
-		readEntries: readFlowSessionEntries,
-		policy: safety?.policy,
-	});
-	// The registry and tool `flow` port, shared so both read the one ledger.
-	const flowPort = { carried: flowLedger.current, refusal: flowLedger.refusal, absorb: flowLedger.absorb };
-	flowRestrictionsForDispatch = () => {
-		// A worker launched while the ledger cannot vouch would carry unlabeled
-		// context; the refusal surfaces at its first model request instead.
-		const refusal = flowLedger.refusal();
-		if (refusal !== null) throw new Error(refusal);
-		return flowLedger.current();
-	};
-	/**
-	 * Block reason when the session's restricted context may not reach a
-	 * configured target as it is configured now, or null. The live target
-	 * descriptor is read at every request, so a URL changed behind the id is
-	 * judged on what it is now.
-	 */
-	const admitModelFlow = (destination: { targetId: string; runtimeId: string; wireModelId: string }): string | null =>
-		flowLedger.admitDestination(
-			resolveModelDestination({
-				targetId: destination.targetId,
-				runtimeId: destination.runtimeId,
-				url: providers?.getTarget(destination.targetId)?.url ?? null,
-				model: destination.wireModelId,
-			}),
-		);
-	sessionOriginForDispatch = () => session?.current() ?? null;
-	const prompts = result.getContract("prompts");
-	const agents = result.getContract("agents");
-	const resources = result.getContract("resources");
-	const extensions = result.getContract("extensions");
-	const mux = result.getContract("mux");
-	const contextDomain = result.getContract("context");
-	const interop = result.getContract("interop");
-	const initialNotices = interactive
-		? [...heldTrustNotices, ...(contextDomain?.startupHints() ?? []).map((hint) => hint.text)]
-		: [];
-	// Once per version, interactive only: headless and ACP have no operator at
-	// the keyboard to tell, and the record is left unclaimed for the boot that does.
-	const upgrade = interactive ? takeUpgradeNotice() : null;
-	if (upgrade !== null) {
-		initialNotices.push(describeUpgradeNotice(upgrade));
-		// No network: the packaged changelog says whether this upgrade fixes something the operator reported (R-14).
-		const { takeFixedReportNotices } = await import("../domains/report/index.js");
-		initialNotices.push(...takeFixedReportNotices(pancodeStateDir(), upgrade));
-	}
 	if (!providers || !dispatch || !telemetry || !safety || !middleware || !middlewareRegistrar) {
 		bootStderr(
 			"PanCode: chat mode requires safety + middleware + providers + dispatch + telemetry contracts; aborting.\n",
@@ -779,56 +587,11 @@ export async function bootOrchestrator(options: BootOptions = {}): Promise<BootR
 		await termination.shutdown(1);
 		return { exitCode: 1, bootTimeMs: timer.snapshot().totalMs };
 	}
-
-	if (session) {
-		const unbindActivity = bindSessionPackageActivity(session);
-		termination.onDrain(unbindActivity);
-		termination.onDrain(bus.subscribe("session.reattached", () => flushPackageActivities()));
-	}
-	// A headless `--resume`/`--continue`, or the interactive `--resume <id>`/`--continue`, resolves here, where the
-	// session domain exists. Headless it is a hard requirement: a caller that asked to continue a conversation must not
-	// receive an answer written without that conversation's history. Interactive, a miss opens a fresh session.
-	const requestedResume = options.headless ? options.headless.resumeSession : options.resume;
-	let headlessResumeFailure: string | null = null;
-	let headlessResumeSlug: SessionLiveError["slug"] | undefined;
-	let resolvedResumeId: string | undefined;
-	if (requestedResume !== undefined && requestedResume.kind !== "picker") {
-		if (!session) {
-			headlessResumeFailure = "session continuation requires the session domain, which is not loaded";
-		} else if (requestedResume.kind === "id") {
-			const resolved = session.resolveId(requestedResume.id);
-			if (typeof resolved === "string") resolvedResumeId = resolved;
-			else
-				headlessResumeFailure = `session prefix ${requestedResume.id} is ambiguous; matches: ${resolved.ambiguous.join(", ")}`;
-		} else {
-			const latest = session.history().find((meta) => meta.hasModelTurn !== false);
-			if (latest === undefined)
-				headlessResumeFailure = `no previous session with a model turn recorded for ${process.cwd()}`;
-			else resolvedResumeId = latest.id;
-		}
-	}
-	const resumeId =
-		resolvedResumeId ?? (interactive ? consumeRestartIntent(pancodeStateDir(), process.cwd()) : undefined);
-	if (options.headless?.sessionName !== undefined) session?.nameSession(options.headless.sessionName);
-	let resumedSessionAtBoot = false;
-	if (resumeId && session && headlessResumeFailure === null) {
-		try {
-			// A v2 envelope names the session a fork branched from; a no-op unless --output-format json|stream-json.
-			if (requestedResume?.kind !== "picker" && requestedResume?.fork === true)
-				noteMainRunV2({ parentSessionId: session.forkFrom(resumeId).parentSessionId ?? resumeId });
-			else session.resume(resumeId);
-			resumedSessionAtBoot = true;
-		} catch (err) {
-			const detail = err instanceof Error ? err.message : String(err);
-			if (err instanceof SessionLiveError) headlessResumeSlug = err.slug;
-			if (requestedResume !== undefined) headlessResumeFailure = `failed to resume session ${resumeId}: ${detail}`;
-			else bootStderr(`PanCode: failed to resume session ${resumeId}: ${detail}\n`);
-		}
-	}
-	if (headlessResumeFailure !== null && !options.headless)
-		initialNotices.push(`Nothing resumed: ${headlessResumeFailure}. This is a fresh session.`);
-	else if (headlessResumeFailure !== null) {
-		writeRunDiagnostic(`pancode run: ${headlessResumeFailure}\n`, headlessResumeSlug);
+	const { resumeState } = resolveBootResume({ bootStderr, bus, interactive, options, session, termination });
+	if (resumeState.headlessResumeFailure !== null && !options.headless)
+		initialNotices.push(`Nothing resumed: ${resumeState.headlessResumeFailure}. This is a fresh session.`);
+	else if (resumeState.headlessResumeFailure !== null) {
+		writeRunDiagnostic(`pancode run: ${resumeState.headlessResumeFailure}\n`, resumeState.headlessResumeSlug);
 		await termination.shutdown(2);
 		return { exitCode: 2, bootTimeMs: timer.snapshot().totalMs };
 	}
@@ -922,10 +685,10 @@ export async function bootOrchestrator(options: BootOptions = {}): Promise<BootR
 				return toolBootstrap;
 			},
 			get workerHookSource() {
-				return workerHookSource;
+				return domainsState.workerHookSource;
 			},
 			set workerHookSource(value) {
-				workerHookSource = value;
+				domainsState.workerHookSource = value;
 			},
 		},
 	});
@@ -1179,7 +942,7 @@ export async function bootOrchestrator(options: BootOptions = {}): Promise<BootR
 		resolveEffectiveAutonomy,
 		restoreResumedRoute,
 		result,
-		resumedSessionAtBoot,
+		resumedSessionAtBoot: resumeState.resumedSessionAtBoot,
 		routeProvenance,
 		safety,
 		session,
@@ -1320,7 +1083,7 @@ export async function bootOrchestrator(options: BootOptions = {}): Promise<BootR
 		releasePancodeLoadedModelsOnExit,
 		replayCurrentSession,
 		resolveEffectiveAutonomy,
-		resumedSessionAtBoot,
+		resumedSessionAtBoot: resumeState.resumedSessionAtBoot,
 		routeProvenance,
 		runtimeHooks,
 		safety,
@@ -1405,10 +1168,10 @@ export async function bootOrchestrator(options: BootOptions = {}): Promise<BootR
 			registryState.reportReviewOpener = value;
 		},
 		get resumedSessionAtBoot() {
-			return resumedSessionAtBoot;
+			return resumeState.resumedSessionAtBoot;
 		},
 		get unsubscribeDispatchShutdown() {
-			return unsubscribeDispatchShutdown;
+			return domainsState.unsubscribeDispatchShutdown;
 		},
 		get yoloHeldAtBoot() {
 			return settingsState.yoloHeldAtBoot;
