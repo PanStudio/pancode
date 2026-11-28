@@ -352,7 +352,7 @@ export async function ensureLlamaCppResidency(input: LlamaCppResidencyInput): Pr
 		assertLoadable: async () => {
 			if (snapshot.some((entry) => entry.id === input.keepModelId)) return;
 			throw new ResidencyPreconditionError(
-				`llama.cpp router on '${input.targetId}' does not serve '${input.keepModelId}'; it lists ${snapshot.length} model(s). Residency left the target untouched. Fix the wire model id in settings, or add the preset to the server.`,
+				`llama.cpp router on '${input.targetId}' does not serve '${input.keepModelId}'; it lists ${snapshot.length} model(s). Residency left the connection untouched. Fix the wire model id in settings, or add the preset to the server.`,
 			);
 		},
 		capacity: async () => (await fetchRouterProps(input, fetchImpl)).maxInstances,

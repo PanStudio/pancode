@@ -105,7 +105,7 @@ function windowFrame(status: AutonomyStatus): AutonomyWindowFrame | null {
 		tone: readout.tone,
 		halted: readout.halted,
 		...(status.halted
-			? { haltDetail: cut(`yolo paused: ${detail}. A new message continues with a fresh window.`, 512) }
+			? { haltDetail: cut(`YOLO paused: ${detail}. A new message continues with a fresh window.`, 512) }
 			: {}),
 	};
 }

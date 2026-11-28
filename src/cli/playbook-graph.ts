@@ -7,7 +7,7 @@ import {
 	executionPlanStepScope,
 } from "../domains/dispatch/execution-plan.js";
 import type { FleetRunPreviewInput, FleetRunPreviewRoute } from "../domains/dispatch/fleet-run-preview.js";
-import { writeCliFailure } from "./kit/json-out.js";
+import { writeCliFailure } from "./lib/json-out.js";
 import { inspectPlaybook } from "./playbook-preflight.js";
 import { parsePlaybookVars, playbookVarsOrUndefined } from "./playbook-vars.js";
 
@@ -225,7 +225,7 @@ export function runPlaybookGraph(args: ReadonlyArray<string>, resolveRoute?: Pla
 							: "";
 				const route =
 					step.target !== undefined
-						? ` target=${step.target}`
+						? ` connection=${step.target}`
 						: step.profile !== undefined
 							? ` profile=${step.profile}`
 							: "";

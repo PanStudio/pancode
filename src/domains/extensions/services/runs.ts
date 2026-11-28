@@ -380,7 +380,7 @@ export function createExtensionRunService(deps: ExtensionRunServiceDeps): Extens
 				"--cwd",
 				place.cwd,
 				...(run.delegate ? [] : ["--no-delegate"]),
-				...(run.target !== null && run.model !== null ? ["--target", run.target, "--model", run.model] : []),
+				...(run.target !== null && run.model !== null ? ["--connection", run.target, "--model", run.model] : []),
 				...(run.thinking !== null ? ["--thinking", run.thinking] : []),
 				...(answersPath !== null ? ["--answers", answersPath] : []),
 				"--timeout",

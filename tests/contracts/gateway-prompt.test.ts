@@ -140,7 +140,8 @@ describe("gateway in the session prompt", () => {
 			// 13,628: finish states when it applies first (a text-only reply never calls it), 751 -> 938 bytes (15:27Z ruling).
 			// 13,646: the product name PanCode is three bytes longer than the old name in six tool descriptions.
 			// 13,962: bash and verify declare unsandboxed_reason, the operator-shown reason an escape now requires (sandbox D9).
-			ok(total <= 13_962, `ten attached tools must stay within 13,962 bytes, down from ${ATTACHED_BUDGET_BYTES}`);
+			// 13,966: dispatch names its route field connection, four bytes longer than target.
+			ok(total <= 13_966, `ten attached tools must stay within 13,966 bytes, down from ${ATTACHED_BUDGET_BYTES}`);
 			const gateway = sizes.find((entry) => entry.name === ToolNames.Gateway);
 			ok(gateway !== undefined && gateway.bytes < 2_048, `the gateway schema stays small: ${gateway?.bytes}`);
 			doesNotMatch(

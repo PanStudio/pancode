@@ -20,11 +20,11 @@ import type { HubImportPlan } from "../../domains/interop/index.js";
 import { applyHubImport, planHubImport, releaseHubImport } from "../../domains/interop/index.js";
 import type { PluginScope } from "../../domains/plugins/types.js";
 import type {
+	HubActionPlan,
 	HubCategory,
 	HubCopyInspection,
 	HubInventory,
 	HubInventoryOptions,
-	HubLifecyclePlan,
 	HubOperation,
 } from "../../domains/resources/index.js";
 import {
@@ -38,7 +38,7 @@ import {
 import { type OverlayHandle, stripTerminalSequences, type TUI } from "../../engine/tui.js";
 import type { NoticeLevel } from "../command-output.js";
 import { fitUnits, GLYPH, keyCap, pancodeTheme } from "../theme/index.js";
-import type { HubLifecyclePort } from "./hub-lifecycle.js";
+import type { HubActionPort } from "./hub-actions.js";
 import {
 	buildHubRows,
 	type HubMode,
@@ -70,7 +70,7 @@ const HUB_READ_FAILED_REMEDY = "R reads the hub again; n opens the notices.";
 
 export interface HubOverlayDeps {
 	/** The package lifecycle. Plans are reviewed before anything is written. */
-	lifecycle: HubLifecyclePort;
+	lifecycle: HubActionPort;
 	setEditorText: (text: string) => void;
 	notice: (level: NoticeLevel, text: string) => void;
 	onClose: () => void;
@@ -337,7 +337,7 @@ export function openHubOverlay(tui: TUI, deps: HubOverlayDeps): OverlayHandle {
 			return;
 		}
 		const withRequirements = operation === "install" && pendingWithRequirements === ref;
-		let plan: HubLifecyclePlan;
+		let plan: HubActionPlan;
 		try {
 			plan = deps.lifecycle.plan({
 				operation,
@@ -380,7 +380,7 @@ export function openHubOverlay(tui: TUI, deps: HubOverlayDeps): OverlayHandle {
 				child = null;
 				deps.lifecycle.release(plan);
 				restore();
-				deps.notice("info", `${refWords(ref)}: cancelled; nothing was written.`);
+				deps.notice("info", `${refWords(ref)}: canceled; nothing was written.`);
 				review.hide();
 			},
 			onDone: (result) => {
@@ -448,7 +448,7 @@ export function openHubOverlay(tui: TUI, deps: HubOverlayDeps): OverlayHandle {
 				// reviewed bytes leave no trace, not merely that nothing was installed.
 				releaseHubImport(plan);
 				restore();
-				deps.notice("info", `Import of ${plan.id ?? source} cancelled; nothing was written.`);
+				deps.notice("info", `Import of ${plan.id ?? source} canceled; nothing was written.`);
 				review.hide();
 			},
 			onDone: (result) => {

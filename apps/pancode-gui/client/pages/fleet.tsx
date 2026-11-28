@@ -455,7 +455,7 @@ export function FleetDetail({ client, dispatch = false }: { client: Client; disp
 						<summary>Run identity, timing & runtime</summary>
 						<p className="inspection-id">{id}</p>
 						<dl className="trace-facts">
-							<dt>Workspace</dt>
+							<dt>Project</dt>
 							<dd>{run.data.cwd}</dd>
 							<dt>Runtime</dt>
 							<dd>{run.data.runtimeId}</dd>

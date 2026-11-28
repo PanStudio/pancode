@@ -130,7 +130,7 @@ export async function sessionActionSteps(run: SmokeRun) {
 		await board.getByText(/^Proposed memory-k1-global\. Review it/).waitFor();
 		await check("session-board-writes");
 		if (width === 1600 || width === 390) {
-			await board.locator("h3", { hasText: "What PanCode learned this session" }).scrollIntoViewIfNeeded();
+			await board.locator("h3", { hasText: "Memory from this session" }).scrollIntoViewIfNeeded();
 			await page.screenshot({ path: join(output, `session-board-writes-${width}.png`) });
 		}
 		await check("session-board-hand");
@@ -197,7 +197,7 @@ export async function sessionActionSteps(run: SmokeRun) {
 		// say who turned it down, which a bare status cannot.
 		await page.getByLabel("Message PanCode", { exact: true }).fill("[approval] Write it again.");
 		await page.getByRole("button", { name: "Send", exact: true }).click();
-		await page.getByRole("button", { name: "Reject", exact: true }).first().click();
+		await page.getByRole("button", { name: "Deny", exact: true }).first().click();
 		await page.getByText("Permission rejected.", { exact: true }).waitFor();
 		const refused = page.locator(".diff.is-rejected").last();
 		await refused.waitFor();
@@ -298,8 +298,8 @@ export async function sessionActionSteps(run: SmokeRun) {
 		await page.getByRole("button", { name: "Interrupt", exact: true }).click();
 		await page.keyboard.press("Escape");
 		await page.getByText("A dispatched worker is attached; stop the turn instead.").waitFor();
-		// Stop takes two presses, and the question puts focus on the answer that keeps the work.
-		await workers.getByRole("button", { name: "Stop scout", exact: true }).click();
+		// Cancel takes two presses, and the question puts focus on the answer that keeps the work.
+		await workers.getByRole("button", { name: "Cancel scout", exact: true }).click();
 		assert.equal(
 			await page
 				.getByRole("button", { name: "Keep running", exact: true })
@@ -307,7 +307,7 @@ export async function sessionActionSteps(run: SmokeRun) {
 			true,
 		);
 		await check("fleet-stop");
-		await page.getByRole("button", { name: "Stop run", exact: true }).click();
+		await page.getByRole("button", { name: "Cancel worker", exact: true }).click();
 		await page.getByText("The worker was stopped.", { exact: true }).waitFor();
 		assert.equal(await page.getByRole("button", { name: "Guide scout", exact: true }).count(), 0);
 		assert.equal(await page.locator(".live-workers").count(), 0, "a settled run leaves the live strip");
@@ -389,13 +389,13 @@ export async function sessionActionSteps(run: SmokeRun) {
 		);
 		await page.locator(".jump-to-latest").click();
 		await page.locator(".jump-to-latest").waitFor({ state: "detached" });
-		await page.getByRole("button", { name: "Stop turn", exact: true }).click();
+		await page.getByRole("button", { name: "Cancel turn", exact: true }).click();
 		await settled();
 		await check("cancelled");
 	});
 	await step("playbook run", async () => {
 		// A playbook: preview compiles and starts nothing; the run starts the plan shown.
-		const fleetDialog = await slashAction("fleet run", "Run a playbook", "Run a workflow");
+		const fleetDialog = await slashAction("fleet run", "Run a playbook", "Run a playbook");
 		const fleetPanel = fleetDialog;
 		await fleetPanel.getByLabel("Playbook name", { exact: true }).fill("survey");
 		await fleetPanel.getByLabel("Variables, one name=value per line", { exact: true }).fill("site=plot-7");
@@ -414,7 +414,7 @@ export async function sessionActionSteps(run: SmokeRun) {
 	});
 	await step("extensions", async () => {
 		// Extensions: what this conversation loaded, and a reload that says which generation is live.
-		const extensionsDialog = await slashAction("extensions", "Extensions", "Tools and add-ons");
+		const extensionsDialog = await slashAction("extensions", "Extensions", "Extensions");
 		const extensionsPanel = extensionsDialog.locator(".extensions-panel");
 		await extensionsPanel.getByText("survey-tools 1.2.0 · project scope", { exact: true }).waitFor();
 		// Reload sits under the panel's Apply installed changes disclosure.
@@ -533,7 +533,7 @@ export async function sessionActionSteps(run: SmokeRun) {
 	await step("branches", async () => {
 		// Branches: continuing from an earlier reply replays only that branch; forking moves the
 		// conversation to a new session and says the project's files were left alone.
-		const branchesDialog = await slashAction("tree", "Branches", "Conversation history");
+		const branchesDialog = await slashAction("tree", "Session tree", "Session tree");
 		const branches = branchesDialog.locator(".branch-panel");
 		await branches.getByText("The next request continues here", { exact: false }).waitFor();
 		await check("branches");
@@ -580,7 +580,7 @@ export async function sessionActionSteps(run: SmokeRun) {
 	await step("handoff", async () => {
 		// Handoff: a draft is reviewed and edited before anything is written; starting the new
 		// conversation moves there.
-		const handoffDialog = await slashAction("handoff", "Hand off to a new conversation", "Continue in a new task");
+		const handoffDialog = await slashAction("handoff", "Hand off to a new conversation", "Continue in a new session");
 		const handoff = handoffDialog.locator(".handoff-panel");
 		await handoff
 			.getByLabel("What should the next conversation accomplish?", { exact: true })
@@ -614,7 +614,10 @@ export async function sessionActionSteps(run: SmokeRun) {
 		const viewerNote = viewer.locator(".composer__delivery-note");
 		const viewing = (note: typeof viewerNote) => note.locator("strong", { hasText: /^Viewing$/ });
 		await viewing(viewerNote).waitFor();
-		assert.match(await viewerNote.innerText(), /^Viewing\s+Browser window( \d+)? controls this task\.\s+Take control$/);
+		assert.match(
+			await viewerNote.innerText(),
+			/^Viewing\s+Browser window( \d+)? controls this session\.\s+Take control$/,
+		);
 		const viewerField = viewer.getByLabel("Message PanCode", { exact: true });
 		assert.ok(await viewerField.isDisabled(), "a viewing window's message box takes input the server refuses");
 		assert.ok(await viewer.locator(".composer__submit").isDisabled(), "a viewing window offers Send");
@@ -642,14 +645,14 @@ export async function sessionActionSteps(run: SmokeRun) {
 		// Close lives in the top bar's Task actions menu, away from the composer's Stop.
 		await settled();
 		await taskMenu.locator("summary").click();
-		await taskMenu.getByRole("menuitem", { name: "Close task", exact: true }).click();
+		await taskMenu.getByRole("menuitem", { name: "Close session", exact: true }).click();
 		// Closing is a session control request; it is confirmed before it is sent.
 		await page
 			.getByRole("dialog", { name: "Close this session?", exact: true })
 			.getByRole("button", { name: "Close session", exact: true })
 			.click();
 		await page.locator('.wb-chip--status[data-tone="quiet"]', { hasText: "Closed" }).waitFor();
-		await page.getByText("This task is closed.", { exact: true }).waitFor();
+		await page.getByText("This session is closed.", { exact: true }).waitFor();
 		await check("closed");
 	});
 }

@@ -177,7 +177,7 @@ export function SessionControlNotice({ connected }: { connected: boolean }) {
 								className="session-control-result"
 								data-state={record.stage}
 								data-control-key={record.key}
-								aria-label={`${record.action === "stop" ? "Stop turn" : "Close session"} · ${record.title}`}
+								aria-label={`${record.action === "stop" ? "Cancel turn" : "Close session"} · ${record.title}`}
 							>
 								<header>
 									<StatusMark
@@ -190,7 +190,7 @@ export function SessionControlNotice({ connected }: { connected: boolean }) {
 														? "neutral"
 														: "success"
 										}
-										label={record.action === "stop" ? "Stop turn" : "Close session"}
+										label={record.action === "stop" ? "Cancel turn" : "Close session"}
 									/>
 									<h3>{record.title}</h3>
 								</header>
@@ -224,7 +224,7 @@ export function SessionControlNotice({ connected }: { connected: boolean }) {
 												controls.retry(record.key);
 											}}
 										>
-											Retry original {record.action}
+											Retry original {record.action === "stop" ? "cancel" : "close"}
 										</button>
 									) : null}
 									{record.stage === "complete" ? (

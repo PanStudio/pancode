@@ -5,16 +5,16 @@ import type { Problem } from "../../contracts/common.js";
 import type { EvidenceRequest } from "../../contracts/evidence.js";
 import type { FleetRequest } from "../../contracts/fleet.js";
 import type { HubPlanRequest } from "../../contracts/hub.js";
-import type { Machine, MachineMutation } from "../../contracts/machines.js";
+import type { Node, NodeMutation } from "../../contracts/nodes.js";
 import type {
 	ProblemReportBundleRequest,
 	ProblemReportChoices,
 	ProblemReportEdits,
 	ProblemReportPlanRequest,
 } from "../../contracts/problem-reports.js";
+import type { Program } from "../../contracts/programs.js";
 import type { SettingWrite } from "../../contracts/settings-controls.js";
 import type { TelemetryRequest } from "../../contracts/telemetry.js";
-import type { Tool } from "../../contracts/toolchain.js";
 import type { TraceRequest } from "../../contracts/traces.js";
 
 export type WorkerKind = "reads" | "ops";
@@ -28,9 +28,9 @@ export type WorkerSettings = {
 	failInstall?: boolean;
 	crashRead?: boolean;
 };
-export type RawTool = Tool;
+export type RawProgram = Program;
 /** A registered node's SSH destination, as the attach supervisor needs it; unset fields are null. */
-export type MachineEndpoint = {
+export type NodeEndpoint = {
 	id: string;
 	host: string;
 	user: string | null;
@@ -41,9 +41,9 @@ export type MachineEndpoint = {
 };
 export type RuntimeInfo = { entry: string; packageRoot: string; execArgv: string[]; threadId: number };
 export interface Methods {
-	"machines.list": { params: { cwd: string }; result: Machine[] };
-	"machines.endpoints": { params: { cwd: string }; result: MachineEndpoint[] };
-	"machines.mutate": { params: { cwd: string; mutation: MachineMutation }; result: { id: string; message: string } };
+	"nodes.list": { params: { cwd: string }; result: Node[] };
+	"nodes.endpoints": { params: { cwd: string }; result: NodeEndpoint[] };
+	"nodes.mutate": { params: { cwd: string; mutation: NodeMutation }; result: { id: string; message: string } };
 	"setup.status": { params: { cwd?: string }; result: unknown };
 	"runtime.info": { params: Record<string, never>; result: RuntimeInfo };
 	"system.read": { params: Record<string, never>; result: unknown };
@@ -66,12 +66,12 @@ export interface Methods {
 	};
 	"traces.read": { params: TraceRequest; result: unknown };
 	"telemetry.read": { params: TelemetryRequest; result: unknown };
-	"tools.list": { params: Record<string, never>; result: { rows: RawTool[]; threadId: number } };
-	"tools.install": { params: { id: string; force: boolean }; result: { id: string; message: string } };
+	"programs.list": { params: Record<string, never>; result: { rows: RawProgram[]; threadId: number } };
+	"programs.install": { params: { id: string; force: boolean }; result: { id: string; message: string } };
 	"hub.plan": { params: { cwd: string; request: Static<typeof HubPlanRequest> }; result: unknown };
 	"hub.apply": { params: { cwd: string; planId: string }; result: unknown };
 	"hub.release": { params: { cwd: string; planId: string }; result: unknown };
-	"tools.remove": { params: { id: string }; result: { id: string; message: string } };
+	"programs.remove": { params: { id: string }; result: { id: string; message: string } };
 	"reports.plan": { params: { cwd: string; input: ProblemReportPlanRequest }; result: unknown };
 	"reports.update": { params: { cwd: string; draftId: string; edits: ProblemReportEdits }; result: unknown };
 	"reports.send": { params: { cwd: string; draftId: string; choices: ProblemReportChoices }; result: unknown };

@@ -748,7 +748,7 @@ test("a live operator rejection or judge refusal is a refusal, not a failure ech
 	const rejected = presentTool(account("The operator denied this tool call", "operator approval (sandbox-escape)"), {
 		decision: "rejected",
 	});
-	assert.deepEqual([rejected.statusLabel, rejected.digest, rejected.ended], ["Rejected", null, true]);
+	assert.deepEqual([rejected.statusLabel, rejected.digest, rejected.ended], ["Denied", null, true]);
 	const judged = presentTool(account("The judge did not find this action authorized.", "PanCode policy (safety-judge)"));
 	assert.deepEqual([judged.statusLabel, judged.digest, judged.ended], ["Refused", null, true]);
 	const broke = presentTool(account("Refused by nobody: EACCES", "a typo"));
@@ -896,13 +896,13 @@ test("a call refused at its gate reads Rejected only when the operator rejected 
 		rawOutput: { result: { kind: "error", message: "write blocked: write was not approved" }, isError: true },
 	});
 	const rejected = presentTool(settled, { decision: "rejected" });
-	assert.equal(rejected.statusLabel, "Rejected");
-	assert.equal(rejected.diff?.label, "Not applied · rejected");
+	assert.equal(rejected.statusLabel, "Denied");
+	assert.equal(rejected.diff?.label, "Not applied · denied");
 	const refused = presentTool(settled, { decision: "cancelled" });
 	assert.equal(refused.statusLabel, "Refused");
 	assert.equal(refused.diff?.label, "Not applied · refused");
 	for (const card of [rejected, refused])
-		assert.doesNotMatch(`${card.statusLabel} ${card.diff?.label}`, /not approved|denied/i);
+		assert.doesNotMatch(`${card.statusLabel} ${card.diff?.label}`, /not approved|rejected/i);
 });
 
 test("a call held for the operator's answer reads Waiting for approval, never Queued", () => {
@@ -1030,9 +1030,9 @@ test("a pending call waits on its approval or is queued, and is never counted as
 		rawInput: { path: "/repo/a.py" },
 		rawOutput: refusal,
 	});
-	assert.equal(activityDigest([change], new Map([["w", "rejected"]])), "1 change rejected");
+	assert.equal(activityDigest([change], new Map([["w", "rejected"]])), "1 change denied");
 	assert.equal(activityDigest([change]), "1 change refused");
-	assert.equal(summarizeActivity([change], new Map([["w", "rejected"]])).label, "1 tool rejected");
+	assert.equal(summarizeActivity([change], new Map([["w", "rejected"]])).label, "1 tool denied");
 });
 
 test("a settled dispatch names the runs it started, in any of the runner's result shapes", () => {

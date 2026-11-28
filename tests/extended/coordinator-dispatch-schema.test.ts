@@ -155,8 +155,8 @@ describe("compact coordinator dispatch contract", () => {
 		}
 		// Every advanced field is off the attached schema too, in the call and in a batch task.
 		const members = [
-			{ label: "a", target: "t1" },
-			{ label: "b", target: "t2" },
+			{ label: "a", connection: "t1" },
+			{ label: "b", connection: "t2" },
 		];
 		const advanced = {
 			mode: "council",
@@ -177,8 +177,8 @@ describe("compact coordinator dispatch contract", () => {
 		});
 		ok(Value.Check(canonical, decoded));
 		deepStrictEqual(restore({ task: "x", review: "true" }).review, true);
-		const refused = restore({ task: "x", members: '[{"label":"a","target":"t"}]', candidates: "many" });
-		strictEqual(refused.members, '[{"label":"a","target":"t"}]', "one member stays for canonical refusal");
+		const refused = restore({ task: "x", members: '[{"label":"a","connection":"t"}]', candidates: "many" });
+		strictEqual(refused.members, '[{"label":"a","connection":"t"}]', "one member stays for canonical refusal");
 		strictEqual(refused.candidates, "many");
 	});
 

@@ -12,9 +12,9 @@ import { useDetailsDismiss } from "../interaction/use-details-dismiss.js";
 import { HomeAside } from "../shell/HomeAside.js";
 import { PancodePulse, PULSE_SIZE } from "../shell/PancodeMark.js";
 import { PancodeStage } from "../shell/PancodeStage.js";
+import { rememberWorkspace } from "../shell/sessions.js";
 import { useShell } from "../shell/shell-context.js";
 import { TopBar } from "../shell/TopBar.js";
-import { rememberWorkspace } from "../shell/tasks.js";
 import { firstRequestBusy, homeDraft, subscribeHomeDraft, updateHomeDraft } from "./home-draft.js";
 import {
 	canStartFirstTask,
@@ -26,7 +26,7 @@ import {
 	workspaceNotice,
 } from "./home-draft-model.js";
 import { settleStarted } from "./started-request.js";
-import { reconcileFirstTask, useFirstTask } from "./use-first-task.js";
+import { reconcileFirstSession, useFirstSession } from "./use-first-session.js";
 import "../chat/composer-box.css";
 import "./home.css";
 import { metaQuery, workspacesQuery } from "../api/queries.js";
@@ -72,10 +72,10 @@ function WorkspaceMenu({
 		<details className="ws-menu" ref={menu}>
 			<summary className="wb-chip" title={current?.path}>
 				<Icon name="folder" />
-				<span>{current?.name ?? "Choose a workspace"}</span>
+				<span>{current?.name ?? "Choose a project"}</span>
 				<Icon name="chevronDown" />
 			</summary>
-			<fieldset className="ws-menu__panel" aria-label="Workspaces">
+			<fieldset className="ws-menu__panel" aria-label="Projects">
 				{workspaces.map((workspace) => (
 					<button
 						key={workspace.id}
@@ -106,7 +106,7 @@ function WorkspaceMenu({
 				>
 					<Icon name="folderOpen" />
 					<span>
-						<strong>Open workspace…</strong>
+						<strong>Open project…</strong>
 					</span>
 				</button>
 			</fieldset>
@@ -163,7 +163,7 @@ function Onboarding({
 					{hasWorkspace ? null : (
 						<button type="button" className="primary" onClick={onOpenWorkspace}>
 							<Icon name="folderOpen" />
-							Open workspace
+							Open project
 						</button>
 					)}
 				</div>
@@ -202,11 +202,11 @@ export function Home({ client }: { client: Client }) {
 	const setup = useSetupStatus(client, true, setupWorkspaceId(workspaceId, list));
 	const ready = setup.data?.state === "ready";
 	const meta = useQuery(metaQuery(client));
-	const send = useFirstTask(client);
+	const send = useFirstSession(client);
 	const reconcile = useMutation({
 		mutationFn: async () => {
 			await meta.refetch({ throwOnError: true });
-			return reconcileFirstTask(client);
+			return reconcileFirstSession(client);
 		},
 	});
 	const epochChanged = !!pending && !!meta.data && pending.epoch !== meta.data.epoch;
@@ -271,7 +271,7 @@ export function Home({ client }: { client: Client }) {
 			<div className="newtask">
 				<div className="newtask__inner">
 					<PancodeStage total={2} done={stageDone} />
-					<h1 className="newtask__title">{onboarding ? "Set up your workspace" : "Start a task"}</h1>
+					<h1 className="newtask__title">{onboarding ? "Set up your workspace" : "Start a session"}</h1>
 					{!onboarding ? <p className="newtask__intro">Describe a change to make or a question about your code.</p> : null}
 					{onboarding ? (
 						<Onboarding
@@ -290,7 +290,7 @@ export function Home({ client }: { client: Client }) {
 									{workspaces.isFetching ? "Checking…" : "Retry"}
 								</button>
 								<button type="button" onClick={() => shell?.openWorkspace()}>
-									Open workspace…
+									Open project…
 								</button>
 							</div>
 						</div>
@@ -370,10 +370,10 @@ export function Home({ client }: { client: Client }) {
 									className="composer__submit primary"
 									type="submit"
 									disabled={!canSend}
-									aria-label={busy ? "Starting task…" : "Start task"}
+									aria-label={busy ? "Starting session…" : "Start session"}
 								>
 									{busy ? <PancodePulse size={PULSE_SIZE.row} /> : <Icon name="arrowUp" />}
-									<span>{busy ? "Starting…" : "Start task"}</span>
+									<span>{busy ? "Starting…" : "Start session"}</span>
 								</button>
 							</div>
 						</div>
@@ -400,7 +400,7 @@ export function Home({ client }: { client: Client }) {
 								)}
 							</span>
 							<span className="newtask__context-label">
-								Task settings <Icon name="chevronDown" />
+								Session settings <Icon name="chevronDown" />
 							</span>
 						</summary>
 						<dl>
@@ -432,15 +432,15 @@ export function Home({ client }: { client: Client }) {
 						<div className="newtask__notice newtask__recovery" role="status">
 							<p>
 								{busy
-									? "Starting your task. Your request is kept until PanCode confirms it."
+									? "Starting your session. Your request is kept until PanCode confirms it."
 									: epochChanged
-										? "PanCode restarted. The earlier request may have been accepted. Review the task before making a new request."
+										? "PanCode restarted. The earlier request may have been accepted. Review the session before making a new request."
 										: "The earlier request has no confirmed outcome. Retry sends that original request; edits above stay separate."}
 							</p>
 							<details>
 								<summary>Earlier request</summary>
 								<p className="newtask__request">{pending.exactTurnBody.text}</p>
-								<p>Workspace: {list.find((item) => item.id === pending.workspaceId)?.name ?? pending.workspaceId}</p>
+								<p>Project: {list.find((item) => item.id === pending.workspaceId)?.name ?? pending.workspaceId}</p>
 							</details>
 							<div className="newtask__recovery-actions">
 								{!epochChanged ? (
@@ -452,25 +452,25 @@ export function Home({ client }: { client: Client }) {
 									{reconcile.isPending ? "Checking…" : "Check status"}
 								</button>
 								{pending.sessionId ? (
-									<Link to={`/sessions/${pending.sessionId}`}>Review task</Link>
+									<Link to={`/sessions/${pending.sessionId}`}>Review session</Link>
 								) : (
-									<Link to="/sessions">Review tasks</Link>
+									<Link to="/sessions">Review sessions</Link>
 								)}
 							</div>
 							{reconcile.isSuccess ? (
 								<p>
 									{reconcile.data
-										? `The task is ${reconcile.data.state}, with ${reconcile.data.turns.length} reported ${reconcile.data.turns.length === 1 ? "turn" : "turns"}. Review it to check the earlier request.`
-										: "No session was confirmed in this tab. Review the workspace’s tasks; the earlier creation may have succeeded."}{" "}
+										? `The session is ${reconcile.data.state}, with ${reconcile.data.turns.length} reported ${reconcile.data.turns.length === 1 ? "turn" : "turns"}. Review it to check the earlier request.`
+										: "No session was confirmed in this tab. Review the workspace’s sessions; the earlier creation may have succeeded."}{" "}
 									Matching text does not confirm this request’s outcome.
 								</p>
 							) : null}
 							{reconcile.error ? (
-								<p>The earlier task could not be checked. Review saved tasks before starting again.</p>
+								<p>The earlier session could not be checked. Review saved sessions before starting again.</p>
 							) : null}
 							{!busy && !reconcile.isPending ? (
 								<>
-									<p>Discarding this record does not stop a task already accepted.</p>
+									<p>Discarding this record does not stop a session already accepted.</p>
 									<button
 										type="button"
 										onClick={() => {

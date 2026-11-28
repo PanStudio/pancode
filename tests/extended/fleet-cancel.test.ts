@@ -4,7 +4,7 @@ import { deepStrictEqual, strictEqual } from "node:assert/strict";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
-import { runFleetCancel } from "../../src/cli/fleet-cancel.js";
+import { runFleetCancel, runFleetStop } from "../../src/cli/fleet-cancel.js";
 import { runFleetWait } from "../../src/cli/fleet-wait.js";
 import { telemetryContext } from "../../src/core/telemetry/context.js";
 import { sumPricing } from "../../src/core/telemetry/pricing.js";
@@ -42,7 +42,7 @@ describe("fleet cancel requests", () => {
 	afterEach(() => scratch.restore());
 
 	/** Run the command with stdout captured and stderr silenced. */
-	const cancel = async (args: string[], options: { settleWaitMs?: number } = {}) => {
+	const invoke = async (fn: typeof runFleetCancel, args: string[], options: { settleWaitMs?: number } = {}) => {
 		const written: string[] = [];
 		const write = process.stdout.write;
 		const writeErr = process.stderr.write;
@@ -53,13 +53,15 @@ describe("fleet cancel requests", () => {
 		process.stderr.write = (() => true) as typeof process.stderr.write;
 		let code: number;
 		try {
-			code = await runFleetCancel(args, options);
+			code = await fn(args, options);
 		} finally {
 			process.stdout.write = write;
 			process.stderr.write = writeErr;
 		}
 		return { code, out: written.join("") };
 	};
+	const cancel = (args: string[], options: { settleWaitMs?: number } = {}) => invoke(runFleetCancel, args, options);
+	const stop = (args: string[], options: { settleWaitMs?: number } = {}) => invoke(runFleetStop, args, options);
 
 	it("hands the owner a request for its run exactly once and removes the file", () => {
 		const path = join(pancodeStateDir(), "cancel-requests", "run-active.json");
@@ -83,7 +85,7 @@ describe("fleet cancel requests", () => {
 		strictEqual(readRootCancelRequest("fleet-abc123"), null);
 	});
 
-	it("cancels a sealed fleet root idempotently and refuses an unknown or ambiguous one", async () => {
+	it("stops a sealed fleet root idempotently, refuses unknown/ambiguous roots, and enforces stop vs cancel split", async () => {
 		ensurePancodeState();
 		const record = writeFleetRootRecord({ rootId: "fleet-aa0001", playbook: "demo", cwd: scratch.dir });
 		writeFleetRootRecord({ rootId: "fleet-aa0002", playbook: "demo", cwd: scratch.dir });
@@ -97,7 +99,7 @@ describe("fleet cancel requests", () => {
 		strictEqual(matchFleetRootIds("fleet-aa").length, 2);
 		strictEqual(matchFleetRootIds("fleet-aa0001").join(), "fleet-aa0001");
 		for (let i = 0; i < 2; i++) {
-			const { code, out } = await cancel(["fleet-aa0001", "--json"]);
+			const { code, out } = await stop(["fleet-aa0001", "--json"]);
 			strictEqual(code, 0);
 			// C6: one compact object with version 1.
 			strictEqual(out.trimEnd().includes("\n"), false);
@@ -110,13 +112,27 @@ describe("fleet cancel requests", () => {
 		for (const [token, slug] of [
 			["fleet-zz9999", "not_found"],
 			["fleet-aa", "ambiguous"],
-			["run-unknown", "not_found"],
 		] as const) {
-			const { code, out } = await cancel([token, "--json"]);
+			const { code, out } = await stop([token, "--json"]);
 			strictEqual(code, 1);
 			const failure = JSON.parse(out);
 			deepStrictEqual([failure.version, failure.ok, failure.error.code], [1, false, slug]);
 		}
+		const unknownRun = await cancel(["run-unknown", "--json"]);
+		strictEqual(unknownRun.code, 1);
+		const unknownFailure = JSON.parse(unknownRun.out);
+		deepStrictEqual([unknownFailure.version, unknownFailure.ok, unknownFailure.error.code], [1, false, "not_found"]);
+
+		// No alias: fleet cancel refuses fleet roots and fleet stop refuses worker runs with exit 2 (usage).
+		const wrongCancel = await cancel(["fleet-aa0001", "--json"]);
+		const wrongCancelFailure = JSON.parse(wrongCancel.out);
+		deepStrictEqual([wrongCancel.code, wrongCancelFailure.ok, wrongCancelFailure.error.code], [2, false, "usage"]);
+		strictEqual(String(wrongCancelFailure.error.message).includes("fleet stop"), true);
+
+		const wrongStop = await stop(["run-unknown", "--json"]);
+		const wrongStopFailure = JSON.parse(wrongStop.out);
+		deepStrictEqual([wrongStop.code, wrongStopFailure.ok, wrongStopFailure.error.code], [2, false, "usage"]);
+		strictEqual(String(wrongStopFailure.error.message).includes("fleet cancel"), true);
 	});
 
 	// C19: the exit agrees with the report's state. Sealed (now or before) exits 0, accepted but settling exits 75,
@@ -168,9 +184,12 @@ describe("fleet cancel requests", () => {
 		strictEqual(takeRunCancelRequest(live.id)?.runId, live.id);
 
 		writeFleetRootRecord({ rootId: "fleet-bb0001", playbook: "demo", cwd: scratch.dir });
-		const root = await cancel(["fleet-bb0001", "--json"], { settleWaitMs: 0 });
+		const root = await stop(["fleet-bb0001", "--json"], { settleWaitMs: 0 });
 		const rootReport = JSON.parse(root.out);
 		deepStrictEqual([root.code, rootReport.action, rootReport.state], [75, "requested", "pending"]);
+		const rootText = await stop(["fleet-bb0001"], { settleWaitMs: 0 });
+		strictEqual(rootText.code, 75);
+		strictEqual(rootText.out.startsWith("stop requested for fleet root fleet-bb0001;"), true);
 		strictEqual(readRootCancelRequest("fleet-bb0001")?.rootId, "fleet-bb0001");
 
 		const malformed = await cancel(["bad id!", "--json"]);

@@ -15,17 +15,17 @@ import path from "node:path";
 import { safeResourceWrite } from "../../core/safe-resource-write.js";
 import { pancodeConfigDir, pancodeConfigPath } from "../../core/xdg.js";
 import { ENVELOPE_SEAT_BELT, envelopeLines } from "../extensions/index.js";
-import type { HubPackageEntry } from "../plugins/hub-types.js";
+import type { HubPackEntry } from "../plugins/hub-types.js";
 import { bundledPluginCatalog } from "../plugins/index.js";
 import { hubEntryRef } from "./hub.js";
 import {
-	applyHubLifecycle,
-	type HubLifecyclePlan,
-	planHubLifecycle,
-	releaseHubLifecycle,
+	applyHubAction,
+	type HubActionPlan,
+	planHubAction,
+	releaseHubAction,
 	syncHubPackBinaries,
 } from "./hub-actions.js";
-import { listInstalledHubPackages, readHubInstallRecord } from "./hub-packages.js";
+import { listInstalledHubPacks, readHubInstallRecord } from "./hub-packs.js";
 
 /** Where post-install reports. The upgrade presenter satisfies it. */
 export interface DefaultPackOutput {
@@ -66,7 +66,7 @@ function writeGiven(file: string, given: ReadonlySet<string>): void {
 }
 
 /** Why the staged tree is not the one the release reviewed, or null when it is. */
-function unreviewed(plan: HubLifecyclePlan, row: HubPackageEntry): string | null {
+function unreviewed(plan: HubActionPlan, row: HubPackEntry): string | null {
 	const step = plan.steps[0];
 	if (plan.steps.length !== 1 || !step) return "it needs other packs installed first";
 	if (step.refusal) return step.refusal;
@@ -78,7 +78,7 @@ function unreviewed(plan: HubLifecyclePlan, row: HubPackageEntry): string | null
 	return null;
 }
 
-function printEnvelope(out: DefaultPackOutput, plan: HubLifecyclePlan, row: HubPackageEntry): void {
+function printEnvelope(out: DefaultPackOutput, plan: HubActionPlan, row: HubPackEntry): void {
 	const review = plan.reviews?.find((item) => item.ref === hubEntryRef(row));
 	if (!review?.envelope) return;
 	out.note(`${hubEntryRef(row)} is allowed to:`);
@@ -94,7 +94,7 @@ function printEnvelope(out: DefaultPackOutput, plan: HubLifecyclePlan, row: HubP
 async function syncPrograms(
 	out: DefaultPackOutput,
 	ref: string,
-	apply: ReturnType<typeof applyHubLifecycle>,
+	apply: ReturnType<typeof applyHubAction>,
 	cwd: string,
 ) {
 	const failures = await syncHubPackBinaries(apply, cwd, (message) => out.note(message));
@@ -103,18 +103,18 @@ async function syncPrograms(
 	out.commandAdvice("Fetch it again with:", `pancode hub update ${ref}`);
 }
 
-async function giveDefault(out: DefaultPackOutput, row: HubPackageEntry, cwd: string): Promise<boolean> {
+async function giveDefault(out: DefaultPackOutput, row: HubPackEntry, cwd: string): Promise<boolean> {
 	const ref = hubEntryRef(row);
-	const plan = planHubLifecycle({ operation: "install", ref, scope: "user", catalogOnly: true, cwd });
+	const plan = planHubAction({ operation: "install", ref, scope: "user", catalogOnly: true, cwd });
 	const problem = unreviewed(plan, row);
 	if (problem !== null) {
-		releaseHubLifecycle(plan);
+		releaseHubAction(plan);
 		out.warn(`Did not install the default pack ${ref}: ${problem}`);
 		out.commandAdvice("Install it yourself after a look with:", `pancode hub install ${ref}`);
 		return false;
 	}
 	printEnvelope(out, plan, row);
-	const apply = applyHubLifecycle(plan);
+	const apply = applyHubAction(plan);
 	const outcome = apply.outcomes[0];
 	if (outcome?.status !== "committed") {
 		out.warn(`Did not install the default pack ${ref}: ${outcome?.error?.message ?? "nothing was committed"}`);
@@ -126,19 +126,19 @@ async function giveDefault(out: DefaultPackOutput, row: HubPackageEntry, cwd: st
 	return true;
 }
 
-async function refreshDefault(out: DefaultPackOutput, row: HubPackageEntry, cwd: string): Promise<void> {
+async function refreshDefault(out: DefaultPackOutput, row: HubPackEntry, cwd: string): Promise<void> {
 	const ref = hubEntryRef(row);
 	const installed = readHubInstallRecord(row.name, { cwd, scope: "user" }, row.kind);
 	if (!installed || installed.contentDigest === row.sha256) return;
 	// A pack the operator turned off is left untouched.
-	const copy = listInstalledHubPackages(cwd, { scope: "user", all: true }).find(
+	const copy = listInstalledHubPacks(cwd, { scope: "user", all: true }).find(
 		(item) => item.id === row.name && (item.kind ?? "plugin") === row.kind,
 	);
 	if (copy && !copy.enabled) return;
 	const update = `pancode hub update ${ref}`;
-	let plan: HubLifecyclePlan;
+	let plan: HubActionPlan;
 	try {
-		plan = planHubLifecycle({ operation: "update", ref, scope: "user", cwd });
+		plan = planHubAction({ operation: "update", ref, scope: "user", cwd });
 	} catch (error) {
 		out.note(`Left ${ref} as installed: ${error instanceof Error ? error.message : String(error)}`);
 		return;
@@ -146,7 +146,7 @@ async function refreshDefault(out: DefaultPackOutput, row: HubPackageEntry, cwd:
 	const problem = unreviewed(plan, row);
 	const growth = plan.reviews?.find((item) => item.ref === ref)?.growth;
 	if (problem !== null || (row.kind === "extension" && (growth === undefined || growth.length > 0))) {
-		releaseHubLifecycle(plan);
+		releaseHubAction(plan);
 		out.note(
 			problem !== null
 				? `Left ${ref} as installed: ${problem}`
@@ -155,7 +155,7 @@ async function refreshDefault(out: DefaultPackOutput, row: HubPackageEntry, cwd:
 		out.commandAdvice("Review and update it with:", update);
 		return;
 	}
-	const apply = applyHubLifecycle(plan);
+	const apply = applyHubAction(plan);
 	const outcome = apply.outcomes[0];
 	if (outcome?.status !== "committed") {
 		out.warn(`Did not update ${ref}: ${outcome?.error?.message ?? "nothing was committed"}`);
@@ -174,7 +174,7 @@ export function pendingDefaultPacks(cwd: string = homedir()): string[] {
 	} catch {
 		return [];
 	}
-	const copies = listInstalledHubPackages(cwd, { scope: "user", all: true });
+	const copies = listInstalledHubPacks(cwd, { scope: "user", all: true });
 	return bundledPluginCatalog([])
 		.filter(
 			(row) =>
@@ -210,7 +210,7 @@ export async function applyDefaultPacks(out: DefaultPackOutput, cwd: string = ho
 				await refreshDefault(out, row, cwd);
 				continue;
 			}
-			const present = listInstalledHubPackages(cwd, { scope: "user", all: true }).some(
+			const present = listInstalledHubPacks(cwd, { scope: "user", all: true }).some(
 				(copy) => copy.id === row.name && (copy.kind ?? "plugin") === row.kind,
 			);
 			if (present || (await giveDefault(out, row, cwd))) {

@@ -11,7 +11,7 @@ pancode systemone off [--scope user|project]
 pancode systemone check <engine> --live
 
 System One is experimental and off until you name a route or an ordered list of
-them: jev, memory, main, a declared engine or a target. From the next start a named
+them: jev, memory, main, a declared engine or a connection. From the next start a named
 route answers the consult tool. A route that declares real probabilities also reads
 web and MCP results when the safety judge reviews a call, and a route answers steering
 triage when chat.steering.triage is on. On a hosted route, what these send leaves the
@@ -114,7 +114,7 @@ async function offlineSystemOneDeps(live: Readonly<PancodeSettings>) {
 	const { oneShotTokens } = await import("../domains/providers/one-shot.js");
 	const { runOutOfTurnRound } = await import("../session-control/side-question.js");
 	const auth = openAuthStorage();
-	const getTarget = (id: string) => live.targets.find((entry) => entry.id === id) ?? null;
+	const getTarget = (id: string) => live.connections.find((entry) => entry.id === id) ?? null;
 	const getRuntime = (id: string) => BUILTIN_RUNTIMES.find((runtime) => runtime.id === id) ?? null;
 	const authPort = {
 		resolveForTarget: (
@@ -129,7 +129,7 @@ async function offlineSystemOneDeps(live: Readonly<PancodeSettings>) {
 		const runtime = target === null ? null : getRuntime(target.runtime);
 		const wireModelId = request.model ?? target?.defaultModel ?? null;
 		if (target === null || runtime === null || wireModelId === null) {
-			throw new Error(`target '${request.targetId}' names no model to ask`);
+			throw new Error(`connection '${request.targetId}' names no model to ask`);
 		}
 		const result = await runOutOfTurnRound({
 			model: runtime.synthesizeModel(target, wireModelId, null),
@@ -185,7 +185,7 @@ async function runCheck(name: string): Promise<number> {
 		{ state: { left: 2, right: 1 }, files: {} },
 		{ onFailure: (reason) => (failure = reason) },
 	);
-	const requested = resolved.engine.model ?? "target default";
+	const requested = resolved.engine.model ?? "connection default";
 	if (verdict === null) {
 		printError(`${name} (${requested}): ${failure}; nothing is verified`);
 		return 1;

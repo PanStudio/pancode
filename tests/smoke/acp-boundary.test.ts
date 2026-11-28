@@ -61,7 +61,7 @@ async function initialize(target: Home): Promise<void> {
 }
 function seedTarget(target: Home, endpoint: string): void {
 	editSettingsFile(join(target.root, "config", "settings.yaml"), (settings) => {
-		settings.targets = [
+		settings.connections = [
 			{
 				id: "acp-local",
 				runtime: "openai-compat",
@@ -72,7 +72,7 @@ function seedTarget(target: Home, endpoint: string): void {
 				capabilities: { chat: true, tools: true, toolCallFormat: "openai", contextWindow: 32768, maxTokens: 4096 },
 			},
 		];
-		Object.assign(section(settings, "chat"), { target: "acp-local", model: "mock-model" });
+		Object.assign(section(settings, "chat"), { connection: "acp-local", model: "mock-model" });
 	});
 }
 function assistantText(updates: ReadonlyArray<Record<string, unknown>>): string {

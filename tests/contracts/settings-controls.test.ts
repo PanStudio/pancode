@@ -20,11 +20,11 @@ import { isolatePancodeEnv } from "../harness/scratch-env.js";
 
 function fixture() {
 	const settings = structuredClone(DEFAULT_SETTINGS);
-	settings.targets = [
+	settings.connections = [
 		{ id: "first", runtime: "openai-compat", defaultModel: "first-model" },
 		{ id: "second", runtime: "openai-compat", defaultModel: "second-model" },
 	];
-	settings.chat.target = "first";
+	settings.chat.connection = "first";
 	settings.chat.model = "custom-model";
 	return settings;
 }
@@ -63,10 +63,10 @@ test("invalid typed values, references, and cross-field edits leave the original
 		["context.workingSet.target", "1"],
 		["fleet.nodes", "{}"],
 		["interface.keybindings", "{"],
-		["chat.target", "typo"],
+		["chat.connection", "typo"],
 		["fleet.default.node", "typo"],
 		["chat.modelPicker.favorites", "typo/model"],
-		["fleet.profiles", '{"reviewer":{"target":"typo"}}'],
+		["fleet.profiles", '{"reviewer":{"connection":"typo"}}'],
 		["fleet.agentProfiles", '{"scout":"typo"}'],
 		["integrations.hub.confirmedRemote", "https://example.com"],
 	] as const) {
@@ -80,18 +80,18 @@ test("invalid typed values, references, and cross-field edits leave the original
 test("changing a role connection clears only that role's previous model override", () => {
 	const settings = fixture();
 	const before = structuredClone(settings);
-	applyControlValue(settings, "chat.target", "second", settingsRuntimeFacts());
-	assert.equal(settings.chat.target, "second");
+	applyControlValue(settings, "chat.connection", "second", settingsRuntimeFacts());
+	assert.equal(settings.chat.connection, "second");
 	assert.equal(settings.chat.model, null);
 	assert.deepEqual(settings.fleet, before.fleet);
-	assert.deepEqual(settings.targets, before.targets);
+	assert.deepEqual(settings.connections, before.connections);
 });
 
 test("saved edits preserve unrelated fields, explicit inheritance, and survive a fresh read", async (t) => {
 	const env = await isolatePancodeEnv("pancode-settings-controls-");
 	t.after(() => env.restore());
 	updateSettings(() => fixture());
-	saveControl("chat.target", "second");
+	saveControl("chat.connection", "second");
 	saveControl("safety.limits.sessionCostUsd", "7");
 	saveControl("chat.modelPicker.favorites", "second/second-model");
 	saveControl("context.compaction.model", "summary-model");
@@ -103,9 +103,9 @@ test("saved edits preserve unrelated fields, explicit inheritance, and survive a
 	assert.equal(effective.chat.model, "second-model");
 	assert.equal(effective.safety.limits.sessionCostUsd, 7);
 	assert.deepEqual(effective.chat.modelPicker.favorites, ["second/second-model"]);
-	assert.equal(effective.targets.length, 2);
+	assert.equal(effective.connections.length, 2);
 	const content = readFileSync(join(env.dir, "config", "settings.yaml"), "utf8");
-	assert.throws(() => saveControl("chat.target", "missing"));
+	assert.throws(() => saveControl("chat.connection", "missing"));
 	assert.equal(readFileSync(join(env.dir, "config", "settings.yaml"), "utf8"), content);
 });
 
@@ -146,12 +146,12 @@ test("saved edits keep the operator's comments, quoting and untouched lines", as
 	t.after(() => env.restore());
 	updateSettings(() => fixture());
 	const file = join(env.dir, "config", "settings.yaml");
-	const original = `# operator comment\n${readFileSync(file, "utf8").replace("target: first", "target: 'first'")}`;
+	const original = `# operator comment\n${readFileSync(file, "utf8").replace("connection: first", "connection: 'first'")}`;
 	writeFileSync(file, original);
 	saveControl("safety.limits.sessionCostUsd", "7");
 	const next = readFileSync(file, "utf8");
 	assert.ok(next.startsWith("# operator comment\n"));
-	assert.ok(next.includes("target: 'first'"));
+	assert.ok(next.includes("connection: 'first'"));
 	assert.ok(/sessionCostUsd: 7\b/u.test(next));
 	const before = new Set(original.split("\n"));
 	const changed = next.split("\n").filter((line) => !before.has(line));
@@ -175,19 +175,19 @@ test("layout-preserving YAML edits round-trip tagged values and structural chang
 	}
 });
 
-for (const [seconds, shown] of [
-	[600, "10 min"],
-	[61, "61 sec"],
+for (const [ms, shown] of [
+	[600_000, "10 min"],
+	[61_000, "61 sec"],
 ] as const) {
-	test(`worker response time renders ${seconds} seconds with a duration unit`, () => {
+	test(`worker response time renders ${ms} ms with a duration unit`, () => {
 		const settings = fixture();
-		settings.safety.limits.workerResponseSeconds = seconds;
+		settings.safety.limits.workerResponseTimeoutMs = ms;
 		const items = buildSettingItems(settings);
 		const section = buildSettingsSections(items).find((section) =>
-			section.items.some((row) => row.configPath === "safety.limits.workerResponseSeconds"),
+			section.items.some((row) => row.configPath === "safety.limits.workerResponseTimeoutMs"),
 		);
 		assert.ok(section);
-		const index = section.items.findIndex((row) => row.configPath === "safety.limits.workerResponseSeconds");
+		const index = section.items.findIndex((row) => row.configPath === "safety.limits.workerResponseTimeoutMs");
 		const center = new SettingsCenter(items, {
 			getBodyHeight: () => 30,
 			prepareChange: () => null,

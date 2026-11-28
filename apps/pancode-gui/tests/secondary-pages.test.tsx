@@ -27,8 +27,8 @@ const { isSettingsPath, showsSettingsRail } = await import("../client/shell/shel
 const { ShellContext } = await import("../client/shell/shell-context.js");
 const { SettingsPage } = await import("../client/pages/settings.js");
 const { SystemPage } = await import("../client/pages/system.js");
-const { Toolchain } = await import("../client/pages/toolchain.js");
-const { Sessions, TaskHistoryActions } = await import("../client/pages/tasks.js");
+const { ProgramsPage } = await import("../client/pages/programs.js");
+const { Sessions, SessionHistoryActions } = await import("../client/pages/project-sessions.js");
 const { MissionControl } = await import("../client/pages/mission-control.js");
 const { SessionControlsProvider } = await import("../client/shell/SessionControls.js");
 const { useWorkspaceSelection, WorkspacePicker } = await import("../client/pages/workspace-selection.js");
@@ -88,7 +88,7 @@ test("operator tables expose recorded model, target, latency, tool and compactio
 	const html = render(queries(), "/metrics", <OperatorMetrics client={client} {...metrics} />);
 	for (const label of [
 		"Per model",
-		"Per target",
+		"Per connection",
 		"Cache read",
 		"Cache / prompt",
 		"Main TTFT p50 / p95",
@@ -208,7 +208,7 @@ test("project and session toolbar controls retain names when their visible text 
 			<MissionControl client={client} />
 		</SessionControlsProvider>,
 	);
-	for (const label of ["Trace replay", "Evidence", "Machines"]) assert.ok(sessions.includes(`aria-label="${label}"`));
+	for (const label of ["Trace replay", "Evidence", "Nodes"]) assert.ok(sessions.includes(`aria-label="${label}"`));
 	assert.match(sessions, /aria-label="(?:Updating|Refresh) sessions"/);
 });
 
@@ -220,7 +220,7 @@ test("read-only project inspection never describes a save and an empty project l
 	assert.doesNotMatch(html, /saves go|user settings/);
 	cache.setQueryData(["workspaces"], []);
 	const empty = render(cache, "/usage", <ProjectPicker />);
-	assert.match(empty, /href="\/"[^>]*>Open a workspace/);
+	assert.match(empty, /href="\/"[^>]*>Open a project/);
 	assert.doesNotMatch(empty, /href="\/sessions"/);
 });
 
@@ -245,7 +245,7 @@ test("saved project tasks can be renamed without resuming and only closed, unhel
 	const html = render(
 		queries(),
 		"/workspaces/workspace-1/sessions",
-		<TaskHistoryActions client={client} row={row} summary={summary} />,
+		<SessionHistoryActions client={client} row={row} summary={summary} />,
 	);
 	assert.match(html, /aria-label="Rename Sensor notes"/);
 	assert.match(html, /aria-label="Delete Sensor notes"/);
@@ -256,7 +256,7 @@ test("saved project tasks can be renamed without resuming and only closed, unhel
 		const protectedHtml = render(
 			queries(),
 			"/workspaces/workspace-1/sessions",
-			<TaskHistoryActions client={client} row={{ ...row, open: held }} summary={{ ...summary, endedAt }} />,
+			<SessionHistoryActions client={client} row={{ ...row, open: held }} summary={{ ...summary, endedAt }} />,
 		);
 		assert.match(protectedHtml, /aria-label="Rename Sensor notes"/);
 		assert.doesNotMatch(protectedHtml, /aria-label="Delete Sensor notes"/);
@@ -336,7 +336,7 @@ test("System prioritizes warnings even when doctor marked the observed condition
 	assert.doesNotMatch(html, />Repair<\/button>/);
 });
 
-test("Toolchain distinguishes a PATH executable from an installed vendored copy", () => {
+test("ProgramsPage distinguishes a PATH executable from an installed vendored copy", () => {
 	const cache = queries();
 	cache.setQueryData(
 		["tools"],
@@ -361,7 +361,7 @@ test("Toolchain distinguishes a PATH executable from an installed vendored copy"
 			},
 		],
 	);
-	const html = render(cache, "/toolchain", <Toolchain client={client} />);
+	const html = render(cache, "/programs", <ProgramsPage client={client} />);
 	assert.match(html, /Using PATH/);
 	assert.match(html, /Resolved version/);
 	assert.match(html, /2.0.0/);
@@ -408,7 +408,7 @@ for (const [path, expected] of [
 		);
 		assert.match(html, new RegExp(`<option value="${expected}" selected=""`));
 		assert.match(html, new RegExp(`<output>${expected}-value</output>`));
-		assert.match(html, new RegExp(`href="/settings/targets\\?workspace=${expected}"`));
+		assert.match(html, new RegExp(`href="/settings/connections\\?workspace=${expected}"`));
 		assert.match(html, new RegExp(`href="/settings/routing\\?workspace=${expected}"`));
 	});
 }
@@ -451,13 +451,13 @@ test("Skills opens with the settings rail, as the hub beside it does", () => {
 });
 
 test("a direct load of the hub or System opens the settings rail; reached from the work rail they keep it (gui-verify 3)", () => {
-	for (const path of ["/hub", "/system", "/system/interop", "/toolchain", "/settings/safety"]) {
+	for (const path of ["/hub", "/system", "/system/interop", "/programs", "/settings/safety"]) {
 		assert.ok(showsSettingsRail(path, undefined), `${path} loads on the settings rail`);
 		assert.ok(showsSettingsRail(path, true), `${path} keeps the settings rail`);
 	}
 	assert.ok(!showsSettingsRail("/hub", false));
 	assert.ok(!showsSettingsRail("/system/interop", false));
-	assert.ok(showsSettingsRail("/toolchain", false), "only the hub and System are linked from the work rail");
+	assert.ok(showsSettingsRail("/programs", false), "only the hub and System are linked from the work rail");
 	assert.ok(!showsSettingsRail("/sessions/s1", undefined));
 	assert.ok(!showsSettingsRail("/", true));
 });

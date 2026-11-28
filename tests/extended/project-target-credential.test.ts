@@ -40,7 +40,7 @@ test("a trusted project's loopback target keeps the operator's key unless its ru
 	writeFileSync(
 		join(workspace, ".pancode", "settings.yaml"),
 		[
-			"targets:",
+			"connections:",
 			"  - id: openai",
 			"    runtime: openai",
 			"    url: http://127.0.0.1:31337/v1",
@@ -53,7 +53,7 @@ test("a trusted project's loopback target keeps the operator's key unless its ru
 	const snapshot = captureProjectSurface(workspace, "settings");
 	ok(snapshot.contentHash);
 	recordProjectSurfaceTrust(workspace, "settings", snapshot.contentHash);
-	const targets = readLayeredSettings(workspace).settings.targets;
+	const targets = readLayeredSettings(workspace).settings.connections;
 	const openaiTarget = targets.find((target) => target.id === "openai");
 	const ollamaTarget = targets.find((target) => target.id === "homeollama");
 	ok(openaiTarget && ollamaTarget);
@@ -77,7 +77,7 @@ test("a project targets list that drops a user-only target warns against the pro
 	ok(configDir);
 	mkdirSync(configDir, { recursive: true });
 	const userTargets = [
-		"targets:",
+		"connections:",
 		"  - id: copilot",
 		"    runtime: github-copilot",
 		"  - id: litellm",
@@ -85,17 +85,17 @@ test("a project targets list that drops a user-only target warns against the pro
 		"    url: http://127.0.0.1:9/v1",
 	];
 	const rosters = ["fleet:", "  rosters:", "    senior:", "      members:"];
-	for (const label of ["one", "two"]) rosters.push(`        - label: ${label}`, "          target: litellm");
+	for (const label of ["one", "two"]) rosters.push(`        - label: ${label}`, "          connection: litellm");
 	writeFileSync(
 		join(configDir, "settings.yaml"),
-		[...userTargets, ...rosters, "safety:", "  judge:", "    target: litellm", "    model: dummy", ""].join("\n"),
+		[...userTargets, ...rosters, "safety:", "  judge:", "    connection: litellm", "    model: dummy", ""].join("\n"),
 	);
 	const workspace = join(home.dir, "workspace");
 	mkdirSync(join(workspace, ".pancode"), { recursive: true });
 	const localFile = join(workspace, ".pancode", "settings.local.yaml");
 	writeFileSync(
 		localFile,
-		"targets:\n  - id: copilot\n    runtime: github-copilot\n  - id: copilot-long\n    runtime: github-copilot\n",
+		"connections:\n  - id: copilot\n    runtime: github-copilot\n  - id: copilot-long\n    runtime: github-copilot\n",
 	);
 	const snapshot = captureProjectSurface(workspace, "settings");
 	ok(snapshot.contentHash);
@@ -103,11 +103,11 @@ test("a project targets list that drops a user-only target warns against the pro
 
 	const layered = readStrictLayeredSettings(workspace);
 	strictEqual(
-		layered.settings.targets.some((target) => target.id === "litellm"),
+		layered.settings.connections.some((target) => target.id === "litellm"),
 		false,
 		"no user route merged in",
 	);
-	strictEqual(layered.settings.safety.judge.target, null);
+	strictEqual(layered.settings.safety.judge.connection, null);
 	strictEqual(layered.settings.safety.judge.model, null);
 	strictEqual(layered.settings.fleet.rosters.senior, undefined);
 	const dropped = layered.issues.filter((issue) => issue.message.includes("'litellm'"));
@@ -118,9 +118,9 @@ test("a project targets list that drops a user-only target warns against the pro
 	// A route naming a target no layer declares is still the user file's error.
 	writeFileSync(
 		join(configDir, "settings.yaml"),
-		[...userTargets, "safety:", "  review:", "    target: ghost", ""].join("\n"),
+		[...userTargets, "safety:", "  review:", "    connection: ghost", ""].join("\n"),
 	);
-	throws(() => readStrictLayeredSettings(workspace), /safety\.review\.target: unknown target 'ghost'/);
+	throws(() => readStrictLayeredSettings(workspace), /safety\.review\.connection: unknown connection 'ghost'/);
 });
 
 test("a project redeclaring a credentialed user target is refused naming its file, never sent the placeholder", async (t) => {
@@ -133,7 +133,7 @@ test("a project redeclaring a credentialed user target is refused naming its fil
 	writeFileSync(
 		join(configDir, "settings.yaml"),
 		[
-			"targets:",
+			"connections:",
 			"  - id: litellm",
 			"    runtime: litellm",
 			`    url: ${url}`,
@@ -151,7 +151,7 @@ test("a project redeclaring a credentialed user target is refused naming its fil
 	const localFile = join(workspace, ".pancode", "settings.local.yaml");
 	writeFileSync(
 		localFile,
-		`targets:\n  - id: litellm\n    runtime: litellm\n    url: ${url}\n  - id: work\n    runtime: github-copilot\n    auth:\n      apiKeyEnvVar: WORK_KEY\n`,
+		`connections:\n  - id: litellm\n    runtime: litellm\n    url: ${url}\n  - id: work\n    runtime: github-copilot\n    auth:\n      apiKeyEnvVar: WORK_KEY\n`,
 	);
 	const snapshot = captureProjectSurface(workspace, "settings");
 	ok(snapshot.contentHash);
@@ -161,7 +161,7 @@ test("a project redeclaring a credentialed user target is refused naming its fil
 	const replaced = layered.issues.filter((issue) => issue.message === PROJECT_TARGETS_REPLACE_USER_TARGETS);
 	strictEqual(replaced.length, 1);
 	strictEqual(replaced[0]?.origin, "project.local");
-	const target = layered.settings.targets.find((entry) => entry.id === "litellm");
+	const target = layered.settings.connections.find((entry) => entry.id === "litellm");
 	ok(target);
 	strictEqual(target.auth?.apiKeyRef, undefined, "the project layer kept no stored-credential reference");
 	// The protocol tier needs no credential by default; without the refusal this target got the local placeholder key.
@@ -174,7 +174,7 @@ test("a project redeclaring a credentialed user target is refused naming its fil
 	strictEqual(status.redeclared, refusal);
 	// The session's routed view is a clone; the file still comes from this snapshot.
 	const view = applySessionRouting(layered.settings, seedSessionRouting(layered.settings));
-	const routed = view.targets.find((entry) => entry.id === "litellm");
+	const routed = view.connections.find((entry) => entry.id === "litellm");
 	ok(routed);
 	strictEqual(resolveAuthTarget(routed, litellm).credentialRefusal, refusal);
 	// A copy that lost its origin is still refused, never sent the placeholder.
@@ -183,7 +183,7 @@ test("a project redeclaring a credentialed user target is refused naming its fil
 		/redeclared in a project settings file/,
 	);
 	// A sign-in runtime ignores the project's key variable, and its fix names no key variable; the user id was trimmed.
-	const work = layered.settings.targets.find((entry) => entry.id === "work");
+	const work = layered.settings.connections.find((entry) => entry.id === "work");
 	ok(work);
 	const copilot: RuntimeAuthMetadata = { id: "github-copilot", tier: "cloud", auth: "oauth" };
 	const signIn = resolveAuthTarget(work, copilot).credentialRefusal ?? "";
@@ -191,8 +191,11 @@ test("a project redeclaring a credentialed user target is refused naming its fil
 	strictEqual(signIn.includes("apiKeyEnvVar"), false);
 	strictEqual(bootAuthStatus(work, copilot).available, false);
 	// Back on the user's own list, now keyless on purpose: the recorded redeclaration does not reach it.
-	writeFileSync(join(configDir, "settings.yaml"), `targets:\n  - id: litellm\n    runtime: litellm\n    url: ${url}\n`);
-	const own = readLayeredSettings(home.dir).settings.targets.find((entry) => entry.id === "litellm");
+	writeFileSync(
+		join(configDir, "settings.yaml"),
+		`connections:\n  - id: litellm\n    runtime: litellm\n    url: ${url}\n`,
+	);
+	const own = readLayeredSettings(home.dir).settings.connections.find((entry) => entry.id === "litellm");
 	ok(own);
 	strictEqual(targetRequiresAuth(own, litellm), false);
 	strictEqual(targetRequiresAuth(structuredClone(own), litellm), true, "a copy with no origin stays refused");
@@ -200,7 +203,7 @@ test("a project redeclaring a credentialed user target is refused naming its fil
 		readLayeredSettings(home.dir).settings,
 		seedSessionRouting(readLayeredSettings(home.dir).settings),
 	);
-	const ownRouted = ownView.targets.find((entry) => entry.id === "litellm");
+	const ownRouted = ownView.connections.find((entry) => entry.id === "litellm");
 	ok(ownRouted);
 	strictEqual(targetRequiresAuth(ownRouted, litellm), false);
 	const auth = openAuthStorage();
@@ -231,7 +234,7 @@ test("a refused credential and a placeholder-key 401 each name their real cause,
 		noCredential: true,
 	});
 	ok(placeholder);
-	strictEqual(providerFailureHeadline(placeholder), "The endpoint asks for a credential; this target sends none.");
+	strictEqual(providerFailureHeadline(placeholder), "The endpoint asks for a credential; this connection sends none.");
 	match(providerFailureAdvice(placeholder), /^pancode configure --id bare adds one /);
 	// A project's list replaces the user's, so its own target's fix is that file, not configure.
 	const projectOnly = readProviderFailureRoute({ ...placeholder, projectFile: "/w/.pancode/settings.yaml" });
@@ -268,12 +271,12 @@ test("a trusted project target that names its key variable is sent that variable
 	mkdirSync(join(workspace, ".pancode"), { recursive: true });
 	writeFileSync(
 		join(workspace, ".pancode", "settings.yaml"),
-		"targets:\n  - id: team\n    runtime: openai\n    url: https://llm.team.example.org/v1\n    auth: { apiKeyEnvVar: TEAM_KEY }\n",
+		"connections:\n  - id: team\n    runtime: openai\n    url: https://llm.team.example.org/v1\n    auth: { apiKeyEnvVar: TEAM_KEY }\n",
 	);
 	const snapshot = captureProjectSurface(workspace, "settings");
 	ok(snapshot.contentHash);
 	recordProjectSurfaceTrust(workspace, "settings", snapshot.contentHash);
-	const target = readLayeredSettings(workspace).settings.targets.find((entry) => entry.id === "team");
+	const target = readLayeredSettings(workspace).settings.connections.find((entry) => entry.id === "team");
 	ok(target);
 	const openai: RuntimeAuthMetadata = {
 		id: "openai",
@@ -330,7 +333,7 @@ test("a trusted project's chat target URL never receives the environment API key
 	mkdirSync(join(workspace, ".pancode"), { recursive: true });
 	writeFileSync(
 		join(workspace, ".pancode", "settings.yaml"),
-		`targets:\n  - id: projremote\n    runtime: openai\n    url: ${url}\n    defaultModel: gpt-stub\nchat:\n  target: projremote\n  model: gpt-stub\n`,
+		`connections:\n  - id: projremote\n    runtime: openai\n    url: ${url}\n    defaultModel: gpt-stub\nchat:\n  connection: projremote\n  model: gpt-stub\n`,
 	);
 	const snapshot = captureProjectSurface(workspace, "settings");
 	ok(snapshot.contentHash);
@@ -366,14 +369,14 @@ test("a trusted project target whose named key is unset is refused before any re
 	mkdirSync(join(workspace, ".pancode"), { recursive: true });
 	writeFileSync(
 		join(workspace, ".pancode", "settings.yaml"),
-		`targets:\n  - id: team\n    runtime: openai-compat\n    url: ${url}\n    defaultModel: mock-model\n    auth: { apiKeyEnvVar: TEAM_KEY }\nchat:\n  target: team\n  model: mock-model\n`,
+		`connections:\n  - id: team\n    runtime: openai-compat\n    url: ${url}\n    defaultModel: mock-model\n    auth: { apiKeyEnvVar: TEAM_KEY }\nchat:\n  connection: team\n  model: mock-model\n`,
 	);
 	const snapshot = captureProjectSurface(workspace, "settings");
 	ok(snapshot.contentHash);
 	recordProjectSurfaceTrust(workspace, "settings", snapshot.contentHash);
 	const env: NodeJS.ProcessEnv = { ...process.env, NODE_ENV: "test", NO_COLOR: "1" };
 	delete env.TEAM_KEY;
-	const named = /target team reads its key from \$TEAM_KEY, which is not set/;
+	const named = /connection team reads its key from \$TEAM_KEY, which is not set/;
 
 	const run = await runCli(["--no-context-files", "--no-skills", "run", "--no-delegate", "say hi"], {
 		env,
@@ -394,6 +397,6 @@ test("a trusted project target whose named key is unset is refused before any re
 	const chat = (doctor.stdout + doctor.stderr).split("\n").find((line) => /^\S+\s+chat\s/.test(line));
 	strictEqual(
 		chat,
-		`!!   chat                   target 'team', model 'mock-model'; target team reads its key from $TEAM_KEY, which is not set in this shell; set it with \`export TEAM_KEY=<key>\`, or fix auth.apiKeyEnvVar on target team in ${join(workspace, ".pancode", "settings.yaml")}.`,
+		`!!   chat                   connection 'team', model 'mock-model'; connection team reads its key from $TEAM_KEY, which is not set in this shell; set it with \`export TEAM_KEY=<key>\`, or fix auth.apiKeyEnvVar on connection team in ${join(workspace, ".pancode", "settings.yaml")}.`,
 	);
 });

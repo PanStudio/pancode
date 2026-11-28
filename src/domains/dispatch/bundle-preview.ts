@@ -180,7 +180,7 @@ export function createRoutePreview(rt: DispatchRuntime) {
 		assertAcpDelegationUnhooked(agentId);
 		if (req.responseSchema !== undefined) {
 			throw new UnsupportedResponseSchemaError(
-				"dispatch: responseSchema requires the native llamacpp runtime and cannot be enforced by an ACP delegation target",
+				"dispatch: responseSchema requires the native llamacpp runtime and cannot be enforced by an ACP delegation connection",
 			);
 		}
 		// An external ACP agent runs its own tool loop, so PanCode cannot mediate
@@ -188,7 +188,7 @@ export function createRoutePreview(rt: DispatchRuntime) {
 		// rather than accept a guarantee we cannot keep.
 		if (req.writeRoots !== undefined && req.writeRoots.length > 0) {
 			throw new Error(
-				"dispatch: writeRoots cannot be enforced on an ACP delegation target; the external agent runs its own tool surface. Dispatch to a native or claude-sdk worker.",
+				"dispatch: writeRoots cannot be enforced on an ACP delegation connection; the external agent runs its own tool surface. Dispatch to a native or claude-sdk worker.",
 			);
 		}
 	}
@@ -199,7 +199,7 @@ export function createRoutePreview(rt: DispatchRuntime) {
 		);
 		if (gates.length > 0)
 			throw new Error(
-				`dispatch: the ACP agent ${agentId} runs its own tools where no extension tool hook reaches, and the blocking hooks of ${hookExtensionIds(gates)} apply to every worker; dispatch to an http target`,
+				`dispatch: the ACP agent ${agentId} runs its own tools where no extension tool hook reaches, and the blocking hooks of ${hookExtensionIds(gates)} apply to every worker; dispatch to an http connection`,
 			);
 	}
 
@@ -229,8 +229,8 @@ export function createRoutePreview(rt: DispatchRuntime) {
 		if (gates.length > 0)
 			throw new Error(
 				runtime.kind === "subprocess"
-					? `dispatch: the ${runtime.id} runtime runs its own tools where no extension tool hook reaches, and the blocking hooks of ${hookExtensionIds(gates)} apply to every worker; route it to an http target`
-					: `dispatch: the ${runtime.id} runtime cannot carry extension tool hooks, and the blocking hooks of ${hookExtensionIds(gates)} match this worker's tools; route it to an http target`,
+					? `dispatch: the ${runtime.id} runtime runs its own tools where no extension tool hook reaches, and the blocking hooks of ${hookExtensionIds(gates)} apply to every worker; route it to an http connection`
+					: `dispatch: the ${runtime.id} runtime cannot carry extension tool hooks, and the blocking hooks of ${hookExtensionIds(gates)} match this worker's tools; route it to an http connection`,
 			);
 		return unhooked;
 	}
@@ -382,7 +382,7 @@ export function createRoutePreview(rt: DispatchRuntime) {
 				outputBoundTokens,
 				budget,
 				nativeWorker: target.runtime.kind === "http",
-				responseSeconds: (settings ?? DEFAULT_SETTINGS).safety.limits.workerResponseSeconds,
+				responseSeconds: (settings ?? DEFAULT_SETTINGS).safety.limits.workerResponseTimeoutMs / 1000,
 				wallMs: resolveRunWall({
 					capMs: runWallCapMs((settings ?? DEFAULT_SETTINGS).fleet.limits, req.requestOrigin),
 					...(agentSpec.budget?.timeoutMs !== undefined ? { recipeMs: agentSpec.budget.timeoutMs } : {}),

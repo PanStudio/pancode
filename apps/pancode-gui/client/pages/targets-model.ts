@@ -19,7 +19,7 @@ const STATUS_WORD: Readonly<Record<Operation["status"], string>> = {
 	running: "running",
 	succeeded: "done",
 	failed: "failed",
-	cancelled: "cancelled",
+	cancelled: "canceled",
 };
 
 /**

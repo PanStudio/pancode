@@ -58,8 +58,8 @@ export const PANELS = {
 			"The trace database stays on this machine and this page only reads it. Event payloads and process command lines are shown from that local database; what the histograms cross with is how many of each kind there were.",
 	},
 	toolchain: {
-		eyebrow: eyebrow("Pinned tools", "this installation", "install and remove"),
-		title: "Toolchain",
+		eyebrow: eyebrow("Pinned programs", "this installation", "install and remove"),
+		title: "Programs",
 		boundary:
 			"Resolution is read from this machine: a compatible copy on PATH first, then the pinned copy PanCode vendored. Removing a vendored copy leaves your PATH installation in place.",
 	},
@@ -82,7 +82,7 @@ export const PANELS = {
 			"Values are read from the configuration layers on this machine. Credentials, executable arguments and structured collections stay in those files; what crosses is that they are configured.",
 	},
 	configMap: {
-		eyebrow: eyebrow("Effective PanCode", "one workspace", READ_ONLY),
+		eyebrow: eyebrow("Effective PanCode", "one project", READ_ONLY),
 		title: "Why PanCode behaves this way",
 		boundary:
 			"Source contents, hook arguments and environment maps stay in their files on this machine. What crosses is each surface's scope, precedence, trust, apply timing and its numeric facts.",
@@ -97,7 +97,7 @@ export const PANELS = {
 		eyebrow: eyebrow("Model endpoints", "your user settings", "add, probe and remove"),
 		title: "Connections",
 		boundary:
-			"Targets are written to your user settings on this machine, and credentials are never entered or shown here. A probe contacts the endpoints you configured and no other host.",
+			"Connections are written to your user settings on this machine, and credentials are never entered or shown here. A probe contacts the endpoints you configured and no other host.",
 	},
 	hub: {
 		eyebrow: eyebrow("Capabilities", "you and this project", "plan, then apply"),
@@ -130,10 +130,10 @@ export const PANELS = {
 			"The record is reproduced from the ledger on this machine as it was sealed. Reading it re-runs nothing, and a valid integrity mark authenticates the record rather than the work it describes.",
 	},
 	sessions: {
-		eyebrow: eyebrow("Your work", "workspaces on this machine", "open, resume and delete"),
+		eyebrow: eyebrow("Your work", "projects on this machine", "open, resume and delete"),
 		title: "Sessions",
 		boundary:
-			"Session history is read from the session store on this machine, and deleting a closed session removes it from that store for good. Opening a workspace records its path in PanCode's own state and changes nothing inside the folder.",
+			"Session history is read from the session store on this machine, and deleting a closed session removes it from that store for good. Opening a project records its path in PanCode's own state and changes nothing inside the folder.",
 	},
 } as const satisfies Record<string, PanelCopy>;
 

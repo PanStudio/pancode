@@ -100,12 +100,12 @@ async function request(
 test("validated target retention reaches old and explicit-mode OpenAI serializers", async () => {
 	const valid = validateSettings({
 		version: 2,
-		targets: [{ id: "openai", runtime: "openai", cache: { retention: "long" } }],
+		connections: [{ id: "openai", runtime: "openai", cache: { retention: "long" } }],
 	});
 	deepStrictEqual(valid.issues, []);
-	strictEqual(valid.settings.targets[0]?.cache?.retention, "long");
+	strictEqual(valid.settings.connections[0]?.cache?.retention, "long");
 	for (const cache of [{ retention: "24h" }, { retention: true }, { warmEverything: true }]) {
-		ok(validateSettings({ version: 2, targets: [{ id: "openai", runtime: "openai", cache }] }).issues.length > 0);
+		ok(validateSettings({ version: 2, connections: [{ id: "openai", runtime: "openai", cache }] }).issues.length > 0);
 	}
 	const old = await request(openai, "gpt-5.4", "long");
 	strictEqual(old.prompt_cache_retention, "24h");
@@ -784,12 +784,12 @@ test("deployment bindings and warm bounds are strict settings with no implicit a
 		warm: { startup: true, maxInputTokens: 4096, maxDurationMs: 10000, cooldownMs: 60000 },
 	};
 	const parse = (value: unknown) =>
-		validateSettings({ version: 2, targets: [{ id: "local", runtime: "llamacpp", cache: value }] });
+		validateSettings({ version: 2, connections: [{ id: "local", runtime: "llamacpp", cache: value }] });
 	ok(parse({ ...cache, warm: { startup: "yes" } }).issues.length > 0);
 	const valid = parse(cache);
 	deepStrictEqual(valid.issues, []);
-	deepStrictEqual(valid.settings.targets[0]?.cache, cache);
-	strictEqual(valid.settings.targets[0]?.lifecycle, undefined);
+	deepStrictEqual(valid.settings.connections[0]?.cache, cache);
+	strictEqual(valid.settings.connections[0]?.lifecycle, undefined);
 	for (const controlUrl of ["file:///tmp/socket", "http://user:password@localhost", "http://localhost?token=secret"])
 		ok(parse({ ...cache, deployment: { ...cache.deployment, controlUrl } }).issues.length > 0);
 	for (const maxDurationMs of [0, -1, 1.5, Number.MAX_SAFE_INTEGER + 1])

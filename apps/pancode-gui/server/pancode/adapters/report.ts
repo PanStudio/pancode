@@ -43,7 +43,7 @@ import { AppProblem } from "../../services/problem.js";
 const hosts = new Map<string, ReportDialogHost>();
 function identitySettings(cwd: string) {
 	try {
-		return { targets: readLayeredSettings(cwd).settings.targets };
+		return { connections: readLayeredSettings(cwd).settings.connections };
 	} catch {
 		// Unreadable settings mask no target names; every other identity value still applies.
 		return {};

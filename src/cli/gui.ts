@@ -18,7 +18,7 @@ const HELP = `PanCode graphical application
 
 Usage:
   pancode gui [--path </app/path>] [--open | --no-open] [--foreground | --reuse-background]
-              [--port <0-65535>] [--idle-exit <milliseconds>] [--log-file <file>] [--token-stdin]
+              [--port <0-65535>] [--idle-exit <duration>] [--log-file <file>] [--token-stdin]
   pancode gui background install [--handover] [--open] [--port <1-65535>]
   pancode gui background status|start|open|restart [--if-idle]|stop|uninstall
   pancode gui launcher install|status|uninstall
@@ -30,7 +30,7 @@ prints its launch link and opens it; press Ctrl+C to stop it.
 
 A browser opens by itself only from an interactive terminal on a desktop.
 --open always opens one, --no-open never does. --foreground always starts a
-private server, and so does any of --port, --idle-exit <milliseconds>
+private server, and so does any of --port, --idle-exit <duration>
 or --log-file. --path opens a particular page. --reuse-background fails instead
 of starting a private server when the background app cannot be used.
 --token-stdin takes the launch token from the first line of stdin; the app on

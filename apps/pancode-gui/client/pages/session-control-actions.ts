@@ -66,7 +66,7 @@ export function useSessionControls(client: Client) {
 				);
 				store.patch(original.key, {
 					stage: "complete",
-					message: "PanCode confirmed the stop. The turn shows as stopped once its last update arrives.",
+					message: "PanCode confirmed the cancellation. The turn shows as canceled once its last update arrives.",
 				});
 			}
 			refreshLists();

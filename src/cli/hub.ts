@@ -33,19 +33,19 @@ import {
 	hubWorkspace,
 	pinHubEntry,
 	planHubInstall,
-	registerHubPackage,
+	registerHubPack,
 	releaseHubPlan,
-	resolveHubPackage,
+	resolveHubPack,
 	resolveInstalledHubEntry,
 	syncHub,
 } from "../domains/resources/hub.js";
 import {
-	applyHubLifecycle,
+	applyHubAction,
 	HUB_OPERATIONS,
+	type HubActionPlan,
 	type HubApplyResult,
-	type HubLifecyclePlan,
 	type HubOperation,
-	planHubLifecycle,
+	planHubAction,
 	syncHubPackBinaries,
 } from "../domains/resources/hub-actions.js";
 import {
@@ -62,9 +62,9 @@ import {
 import { HUB_ROOT_PUBLIC_KEYS } from "../domains/resources/hub-keys.js";
 import {
 	installedCopiesNamed,
-	listInstalledHubPackages as listInstalledPlugins,
+	listInstalledHubPacks as listInstalledPlugins,
 	readHubManifest as readPluginManifest,
-} from "../domains/resources/hub-packages.js";
+} from "../domains/resources/hub-packs.js";
 import { describeHubPair } from "../domains/resources/hub-pairing.js";
 import {
 	autoRefreshRemoteIndex,
@@ -74,14 +74,14 @@ import {
 	readHubTrustState,
 	refreshRemoteIndex,
 } from "../domains/resources/hub-trust.js";
-import { validateHubPackage } from "../domains/resources/hub-validation.js";
+import { validateHubPack } from "../domains/resources/hub-validation.js";
 import { bareSkillRemedy, isBareSkillDirectory, packageBareSkill } from "../domains/resources/skills/bare-skill.js";
 import { knownSkillNames } from "../domains/resources/skills/marketplace.js";
 import { createProcessJournal } from "../domains/telemetry/process-journal.js";
 import { formatColumns, printError, printOk } from "./argv.js";
-import { didYouMean } from "./kit/did-you-mean.js";
-import { helpRequested } from "./kit/help.js";
-import { jsonDocument, writeCliFailure } from "./kit/json-out.js";
+import { didYouMean } from "./lib/did-you-mean.js";
+import { helpRequested } from "./lib/help.js";
+import { jsonDocument, writeCliFailure } from "./lib/json-out.js";
 import { leaves as hubLeaves } from "./specs/hub.js";
 import { terminalColumns, truncate, wrapPlain } from "./text-layout.js";
 
@@ -245,7 +245,7 @@ function updateLabel(update: HubCopyUpdate): string {
 }
 
 /** Existing JSON fields stay where old callers expect them; plan and apply are additive. */
-function lifecycleJson(operation: HubOperation, plan: HubLifecyclePlan, apply: HubApplyResult, ok: boolean) {
+function lifecycleJson(operation: HubOperation, plan: HubActionPlan, apply: HubApplyResult, ok: boolean) {
 	const target = plan.steps.at(-1);
 	const last = apply.outcomes.at(-1);
 	const failure = apply.outcomes.find((item) => item.status === "failed" && item.error);
@@ -286,7 +286,7 @@ function lifecycleJson(operation: HubOperation, plan: HubLifecyclePlan, apply: H
  * What each reviewed step would be allowed to do and how it pairs, printed
  * before anything is committed so a plain run and a dry run show the same plan.
  */
-function printStepReviews(plan: HubLifecyclePlan): void {
+function printStepReviews(plan: HubActionPlan): void {
 	for (const step of plan.steps)
 		if (step.source?.publisher)
 			process.stdout.write(
@@ -481,8 +481,8 @@ function runLifecycleStep(
 	scope: PluginScope | undefined,
 	parsed: Parsed,
 	options: HubCommandOptions,
-): { plan: HubLifecyclePlan; apply: HubApplyResult; ok: boolean } {
-	const plan = planHubLifecycle({
+): { plan: HubActionPlan; apply: HubApplyResult; ok: boolean } {
+	const plan = planHubAction({
 		operation,
 		ref,
 		cwd: options.cwd,
@@ -492,7 +492,7 @@ function runLifecycleStep(
 		withRequirements: parsed.withRequirements,
 	});
 	if (!parsed.json) printStepReviews(plan);
-	const apply = applyHubLifecycle(plan, { dryRun: parsed.dryRun });
+	const apply = applyHubAction(plan, { dryRun: parsed.dryRun });
 	const ok = apply.failed === 0 && (apply.dryRun || plan.applicable);
 	if (!parsed.json) {
 		for (const outcome of apply.outcomes) {
@@ -528,7 +528,7 @@ function cliRefusal(
 	message: string,
 	operation: HubOperation,
 	parsed: Parsed,
-	step: HubLifecyclePlan["steps"][number] | undefined,
+	step: HubActionPlan["steps"][number] | undefined,
 ): string {
 	const missing = operation === "install" && !parsed.withRequirements ? (step?.dependencies.missing ?? []) : [];
 	return message.replace(
@@ -916,7 +916,7 @@ async function executeHubCommand(
 		if (!ref || parsed.positional.length !== 1)
 			throw new Error(`hub ${parsed.command} requires one path or pack reference`);
 		if (parsed.command === "register") {
-			const entry = registerHubPackage(ref, { ...options, force: parsed.force });
+			const entry = registerHubPack(ref, { ...options, force: parsed.force });
 			if (parsed.json) emit({ ok: true, entry });
 			else
 				printOk(
@@ -952,7 +952,7 @@ async function executeHubCommand(
 				return code;
 			}
 			const packageRoot = existsSync(local) && statSync(local).isFile() ? path.dirname(local) : local;
-			const result = validateHubPackage(packageRoot, {
+			const result = validateHubPack(packageRoot, {
 				cwd: options.cwd,
 				authoring: { knownSkills: knownSkillNames(options.cwd) },
 			});
@@ -1004,7 +1004,7 @@ async function executeHubCommand(
 				else printInspection(installedInspectView(installed, inspection));
 				return installed.valid ? 0 : 1;
 			}
-			const entry = resolveHubPackage(ref, options);
+			const entry = resolveHubPack(ref, options);
 			const record = readHubInventory({
 				cwd: options.cwd,
 				...(options.catalog ? { catalog: options.catalog } : {}),

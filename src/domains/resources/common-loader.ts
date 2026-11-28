@@ -9,7 +9,7 @@ import { committedPluginResourceRoots, enabledPluginResourceRoots, type PluginRe
 import type { ResourceDiagnostic, ResourceScope, ResourceSourceInfo } from "./collision.js";
 
 export interface ResourceRoot {
-	owner?: import("../../core/package-identity.js").PackageIdentity;
+	owner?: import("../../core/pack-identity.js").PackIdentity;
 	path: string;
 	/** Package root for safely resolving package-relative prompt references. */
 	rootPath?: string;

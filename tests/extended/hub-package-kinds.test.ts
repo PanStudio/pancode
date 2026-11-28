@@ -5,11 +5,11 @@ import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node
 import { dirname, join } from "node:path";
 import { test } from "node:test";
 import { readSettings, updateSettings } from "../../src/core/config.js";
-import { HUB_KINDS, type HubEntryKind } from "../../src/domains/plugins/hub-types.js";
+import { HUB_PLUGIN_BACKED_KINDS, type HubEntryKind } from "../../src/domains/plugins/hub-types.js";
 import {
 	disablePlugin,
 	enablePlugin,
-	installHubPackage,
+	installHubPack,
 	installPlugin,
 	listInstalledPlugins,
 	pluginContentDigest,
@@ -53,7 +53,7 @@ function fixture(root: string, kind: HubEntryKind, version = "1.0.0", carries?: 
 	);
 }
 
-for (const kind of HUB_KINDS)
+for (const kind of HUB_PLUGIN_BACKED_KINDS)
 	test(`${kind} uses the same scoped manifest, pin, provenance and lifecycle`, async () => {
 		const env = await isolatePancodeEnv(`hub-${kind}-`);
 		try {
@@ -63,7 +63,7 @@ for (const kind of HUB_KINDS)
 			fixture(source, kind);
 			const digest = pluginContentDigest(source);
 			for (const scope of ["user", "project"] as const) {
-				const result = installHubPackage({
+				const result = installHubPack({
 					kind,
 					sourcePath: source,
 					scope,
@@ -116,7 +116,7 @@ for (const kind of ["skill", "prompt"] as const)
 			const packKind = kind === "skill" ? "skill" : "plugin";
 			fixture(source, packKind, "1.0.0", kind);
 			const origin = { kind: "interop" as const, host: "claude-code", source };
-			const installed = installHubPackage({
+			const installed = installHubPack({
 				kind: packKind,
 				sourcePath: source,
 				scope: "user",
@@ -134,11 +134,11 @@ for (const kind of ["skill", "prompt"] as const)
 					? loadSkills({
 							cwd,
 							home: env.dir,
-							trustProjectCompatRoots: readSettings().integrations.projectResources.trustProjectImports,
+							trustProjectCompatRoots: readSettings().integrations.hub.trustProjectImports,
 						}).items.find((e) => e.name === "example")?.trusted
 					: loadPromptTemplates({
 							cwd,
-							trustProjectCompatRoots: readSettings().integrations.projectResources.trustProjectImports,
+							trustProjectCompatRoots: readSettings().integrations.hub.trustProjectImports,
 						}).items.find((e) => e.name === "example")?.trusted;
 			equal(loaded(), false);
 			if (kind === "skill") {
@@ -152,11 +152,11 @@ for (const kind of ["skill", "prompt"] as const)
 			}
 
 			updateSettings((settings) => {
-				settings.integrations.projectResources.trustProjectImports = true;
+				settings.integrations.hub.trustProjectImports = true;
 			});
 			equal(loaded(), true);
 			updateSettings((settings) => {
-				settings.integrations.projectResources.trustProjectImports = false;
+				settings.integrations.hub.trustProjectImports = false;
 			});
 			equal(loaded(), false);
 			write(source, "host-executable.sh", "dangerous host hook\n");
@@ -186,7 +186,7 @@ test("manifest kind and explicit version cannot be substituted or changed with f
 		const source = join(env.dir, "source");
 		fixture(source, "skill");
 		ok(
-			installHubPackage({
+			installHubPack({
 				kind: "plugin",
 				sourcePath: source,
 				scope: "user",

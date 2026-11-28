@@ -775,10 +775,10 @@ test("why-stopped names a yolo halt still standing and the open decisions it lef
 		],
 	});
 	deepStrictEqual(
-		why.findings.filter((line) => line.startsWith("Yolo")),
+		why.findings.filter((line) => line.startsWith("YOLO")),
 		[
-			"Yolo ended the run at 2026-10-30T00:00:06.000Z: the safety judge blocked too many calls (judge-streak).",
-			"Yolo left 3 open decisions for the operator: 1 operator-only, 2 judge-block.",
+			"YOLO ended the run at 2026-10-30T00:00:06.000Z: the safety judge blocked too many calls (judge-streak).",
+			"YOLO left 3 open decisions for the operator: 1 operator-only, 2 judge-block.",
 		],
 	);
 	strictEqual(whyStopped(source, now).autonomy, undefined);

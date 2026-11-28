@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import { delimiter, join } from "node:path";
-import { statOrNull, toolVersionDir, vendoredBinaryCandidates } from "./paths.js";
-import { currentToolPlatform, findPinnedTool, findPinnedToolByBinary, PINNED_TOOLS } from "./registry.js";
-import { installedToolVersions } from "./remove.js";
-import type { PinnedTool, ToolPathCandidate, ToolResolution, ToolStatus } from "./types.js";
+import { programVersionDir, statOrNull, vendoredBinaryCandidates } from "./paths.js";
+import { currentProgramPlatform, findPinnedProgram, findPinnedProgramByBinary, PINNED_PROGRAMS } from "./registry.js";
+import { installedProgramVersions } from "./remove.js";
+import type { PinnedProgram, ProgramPathCandidate, ProgramResolution, ProgramStatus } from "./types.js";
 import { probeBinaryVersion, satisfiesMinimum } from "./version.js";
 
 /**
@@ -44,8 +44,8 @@ export function findExecutableOnPath(name: string): string | null {
  * to compare against and nothing vendored to fall back to, so the answer is
  * whatever PATH says.
  */
-export function resolveToolBinary(name: string): ToolResolution {
-	const entry = findPinnedToolByBinary(name) ?? findPinnedTool(name);
+export function resolveProgramBinary(name: string): ProgramResolution {
+	const entry = findPinnedProgramByBinary(name) ?? findPinnedProgram(name);
 	if (entry === null) {
 		const found = findExecutableOnPath(name);
 		return {
@@ -69,7 +69,7 @@ function findVendoredBinary(id: string, version: string, binary: string): string
 }
 
 /** The ladder for a known registry row and one of its binaries. */
-function resolveEntryBinary(entry: PinnedTool, binary: string): ToolResolution {
+function resolveEntryBinary(entry: PinnedProgram, binary: string): ProgramResolution {
 	const pathCandidate = probePathCandidate(entry, binary);
 	const vendoredPath = findVendoredBinary(entry.id, entry.version, binary);
 
@@ -105,7 +105,7 @@ function resolveEntryBinary(entry: PinnedTool, binary: string): ToolResolution {
  * the isolation the private host exists for. Null when the pin is not installed.
  */
 export function resolveVendoredBinary(id: string): { binaryPath: string; version: string } | null {
-	const entry = findPinnedTool(id);
+	const entry = findPinnedProgram(id);
 	if (entry === null) return null;
 	const path = findVendoredBinary(entry.id, entry.version, entry.primaryBinary);
 	return path !== null ? { binaryPath: path, version: entry.version } : null;
@@ -115,7 +115,7 @@ export function resolveVendoredBinary(id: string): { binaryPath: string; version
  * One binary of a row at its pin and nothing else: no PATH lookup, no version probe. A program an extension
  * declares resolves only here, so a same-named program on PATH never runs in place of the bytes the operator approved.
  */
-export function resolvePinnedEntryBinary(entry: PinnedTool, binary: string): ToolResolution {
+export function resolvePinnedEntryBinary(entry: PinnedProgram, binary: string): ProgramResolution {
 	const vendoredPath = findVendoredBinary(entry.id, entry.version, binary);
 	return {
 		source: vendoredPath === null ? "none" : "vendored",
@@ -128,16 +128,16 @@ export function resolvePinnedEntryBinary(entry: PinnedTool, binary: string): Too
 }
 
 /** Whether this platform has a pinned build of `id` that this home has not installed, the gap its install command closes. */
-export function pinnedToolMissing(id: string): boolean {
-	const entry = findPinnedTool(id);
-	const platform = currentToolPlatform();
+export function pinnedProgramMissing(id: string): boolean {
+	const entry = findPinnedProgram(id);
+	const platform = currentProgramPlatform();
 	if (entry === null || platform === null || entry.downloads[platform] === undefined) return false;
 	return resolveVendoredBinary(id) === null;
 }
 
 /** Per-entry state for the CLI and doctor. */
-export function toolStatus(entry: PinnedTool): ToolStatus {
-	const platform = currentToolPlatform();
+export function programStatus(entry: PinnedProgram): ProgramStatus {
+	const platform = currentProgramPlatform();
 	const supported = platform !== null && entry.downloads[platform] !== undefined;
 	const resolution = resolveEntryBinary(entry, entry.primaryBinary);
 	return {
@@ -147,14 +147,14 @@ export function toolStatus(entry: PinnedTool): ToolStatus {
 		platform,
 		supported,
 		installed: resolution.vendoredPath !== null,
-		installDir: toolVersionDir(entry.id, entry.version),
+		installDir: programVersionDir(entry.id, entry.version),
 		resolution,
 	};
 }
 
 /** Per-entry state for every row, in registry order. */
-export function toolStatuses(): ToolStatus[] {
-	return PINNED_TOOLS.map((entry) => toolStatus(entry));
+export function programStatuses(): ProgramStatus[] {
+	return PINNED_PROGRAMS.map((entry) => programStatus(entry));
 }
 
 /** The one command that fixes a tool PanCode cannot resolve. */
@@ -174,7 +174,7 @@ export function installRemedy(id: string): string {
  * names the path, the version found, and the floor it missed, and never reports
  * a rejected copy as an absent one.
  */
-export function describeFloorRejection(status: ToolStatus): string | null {
+export function describeFloorRejection(status: ProgramStatus): string | null {
 	const candidate = status.resolution.pathCandidate;
 	if (candidate === null || candidate.satisfiesMinimum) return null;
 	const floor = status.resolution.entry?.minimumVersion ?? status.version;
@@ -187,7 +187,7 @@ export function describeFloorRejection(status: ToolStatus): string | null {
  * the pin. Shared by `pancode programs status` and the doctor rows so the two
  * cannot drift into describing the same machine differently.
  */
-export function describeResolution(status: ToolStatus): string {
+export function describeResolution(status: ProgramStatus): string {
 	const { resolution } = status;
 	const rejection = describeFloorRejection(status);
 	if (resolution.source === "path") {
@@ -210,7 +210,7 @@ export function describeResolution(status: ToolStatus): string {
 	}
 	// A PanCode upgrade that moves a pin leaves the old vendored copy behind. That is
 	// an update to run, not a tool that was never installed.
-	const superseded = installedToolVersions(status.id).filter((version) => version !== status.version);
+	const superseded = installedProgramVersions(status.id).filter((version) => version !== status.version);
 	if (superseded.length > 0) {
 		const rejected = rejection === null ? "" : `; ${rejection}`;
 		return `vendored ${superseded.join(", ")} is superseded by the ${status.version} pin${rejected} (update with \`${installRemedy(status.id)}\`)`;
@@ -221,7 +221,7 @@ export function describeResolution(status: ToolStatus): string {
 	return `not found (install with \`${installRemedy(status.id)}\`)`;
 }
 
-function probePathCandidate(entry: PinnedTool, binary: string): ToolPathCandidate | null {
+function probePathCandidate(entry: PinnedProgram, binary: string): ProgramPathCandidate | null {
 	const found = findExecutableOnPath(binary);
 	if (found === null) return null;
 	// The floor is a property of the tool, and only the primary binary is asked

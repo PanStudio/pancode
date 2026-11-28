@@ -157,7 +157,7 @@ function livePhase(row: DispatchBoardRow, room = 48): string {
 			: "waiting for slot";
 	}
 	if (row.status === "retrying") return row.retry ? `retrying ${GLYPH.sep} attempt ${row.retry.attempt}` : "retrying";
-	if (row.status === "cancelling") return "stopping";
+	if (row.status === "cancelling") return "canceling";
 	if (row.progress === undefined) return "starting";
 	return workerActivityWords(row.progress, { room, history: row.routeFirstOutput ?? null });
 }
@@ -178,7 +178,7 @@ function runFactsOf(row: DispatchBoardRow, now: number): RunFacts {
 		case "enqueued":
 			return { ...base, outcome: "queued", phase: livePhase(row) };
 		case "cancelling":
-			return { ...base, outcome: "running", phase: "stopping" };
+			return { ...base, outcome: "running", phase: "canceling" };
 		case "aborted":
 			return { ...base, outcome: "cancelled", ...(reason === undefined ? {} : { reason }) };
 		case "failed":

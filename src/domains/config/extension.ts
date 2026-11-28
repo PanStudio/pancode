@@ -45,10 +45,10 @@ export function createConfigBundle(
 	let projectWarning: string | null = null;
 	let reloadsHeld = options.holdReloads === true;
 	let reloadPending = false;
-	const sessionTargets = new Map<string, PancodeSettings["targets"][number]>();
+	const sessionTargets = new Map<string, PancodeSettings["connections"][number]>();
 	function retainSessionTargets(settings: PancodeSettings): PancodeSettings {
 		for (const target of sessionTargets.values()) {
-			if (!settings.targets.some((saved) => saved.id === target.id)) settings.targets.push(target);
+			if (!settings.connections.some((saved) => saved.id === target.id)) settings.connections.push(target);
 		}
 		// `run --sandbox required` holds for the run's snapshot across reloads and saves.
 		return pinRunSettings(settings);
@@ -152,7 +152,7 @@ export function createConfigBundle(
 		async start() {
 			if (initialSettings) {
 				const owned = structuredClone(initialSettings) as PancodeSettings;
-				keepTargetOrigins(initialSettings.targets, owned.targets);
+				keepTargetOrigins(initialSettings.connections, owned.connections);
 				snapshot = pinRunSettings(owned);
 				projectWarning = formatSettingsLayerWarning(readLayeredSettings(process.cwd()));
 			} else {

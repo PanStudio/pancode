@@ -43,8 +43,8 @@ import {
 	targetUrlProblem,
 } from "./configure-target.js";
 import { offerCopilotSignIn } from "./copilot-sign-in.js";
+import { shortenPath } from "./install-presenter.js";
 import { inferKeyProvider } from "./key-prefix.js";
-import { shortenPath } from "./lifecycle-presenter.js";
 import { credentialFileProtection } from "./shared.js";
 
 /** Screen 1 when PanCode found something: each route it found, best first, and a way out to the rest. */
@@ -153,7 +153,7 @@ export const HAVE_STEP: Step = {
 			const runtime = registry.get("openai-compat") ?? undefined;
 			if (runtime && answers.runtime === undefined) {
 				answers.runtime = runtime;
-				answers.targetId = deriveTargetId(runtime.id, readSettings().targets);
+				answers.targetId = deriveTargetId(runtime.id, readSettings().connections);
 			}
 		}
 		wizard.answer("You have", choices.find((choice) => choice.value === result.value)?.label ?? result.value);
@@ -222,7 +222,7 @@ export const KEY_STEP: Step = {
 		}
 		answers.runtime = runtime;
 		answers.keyProvider = runtime?.id;
-		answers.targetId = runtime ? deriveTargetId(runtime.id, readSettings().targets) : undefined;
+		answers.targetId = runtime ? deriveTargetId(runtime.id, readSettings().connections) : undefined;
 		if (runtime) wizard.answer("Provider", `${runtime.displayName}  ${chalk.dim("(from the key)")}`);
 		return "next";
 	},
@@ -267,7 +267,7 @@ export const FILE_STEP: Step = {
 			const confirm = await wizard.select<"apply" | "back">({
 				heading: ["", chalk.bold("This setup file will:"), ...describeImport(prepared)],
 				choices: [
-					{ value: "apply", label: "Apply", hint: "save these targets to your PanCode settings" },
+					{ value: "apply", label: "Apply", hint: "save these connections to your PanCode settings" },
 					{ value: "back", label: "Back", hint: "choose another file" },
 				],
 				railPrefix: wizard.rail,
@@ -378,7 +378,7 @@ export const RUNTIME_STEP: Step = {
 		if (!runtime) return "back";
 		if (answers.runtime?.id !== runtime.id) {
 			answers.targetId =
-				answers.mode === "edit" ? answers.existing?.id : deriveTargetId(runtime.id, readSettings().targets);
+				answers.mode === "edit" ? answers.existing?.id : deriveTargetId(runtime.id, readSettings().connections);
 			answers.url = undefined;
 			answers.detected = undefined;
 			// A key pasted on the first-run key screen belongs to whichever provider is picked for it.
@@ -396,7 +396,7 @@ export const RUNTIME_STEP: Step = {
 			answers.inventoryKey = undefined;
 		}
 		answers.runtime = runtime;
-		answers.targetId ??= deriveTargetId(runtime.id, readSettings().targets);
+		answers.targetId ??= deriveTargetId(runtime.id, readSettings().connections);
 		wizard.answer("Provider", `${runtime.displayName}  ${chalk.dim(`(${runtime.id})`)}`);
 		return "next";
 	},

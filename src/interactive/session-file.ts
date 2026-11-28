@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
-import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { readBuildProvenance, runningBuildId } from "../core/build-info.js";
+import { makeDirectorySync } from "../core/make-directory.js";
 import { safeResourceWrite } from "../core/safe-resource-write.js";
 import type { Quantity } from "../core/telemetry/dto.js";
 import type { PermissionRequestedPayload } from "../core/telemetry/live-events.js";
@@ -116,7 +116,7 @@ function sessionFileRecord(input: {
  * The path is the caller's; only its missing parent directories are created.
  */
 function writeSessionFile(path: string, record: SessionFileRecord | SessionFileLiveRecord): void {
-	mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
+	makeDirectorySync(dirname(path), 0o700);
 	safeResourceWrite(path, `${JSON.stringify(record, null, 2)}\n`, { mode: 0o600 });
 }
 

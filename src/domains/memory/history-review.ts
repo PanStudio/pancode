@@ -197,7 +197,7 @@ const TASK_MAX_CHARS = 300;
 const DIAGNOSTIC_MAX_CHARS = 160;
 const READ_EXCERPT_MAX_CHARS = 240;
 /** Persisted flow labels; the same custom entry type `src/entry/flow-ledger.ts` writes. */
-const FLOW_RESTRICTION_ENTRY_TYPE = "pancode_flow_restriction";
+const FLOW_RESTRICTION_ENTRY_TYPE = "pancode_flow_restrictions";
 
 /**
  * Shell inspection that teaches nothing about how this repository works on its

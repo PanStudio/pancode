@@ -240,7 +240,7 @@ function totalLine(ledger: ContextLedger, width: number, count: CountFormat): st
 				...(provenance ? { shorter: [{ text: `${provenance} window`, rank: 0 }] } : {}),
 			});
 		}
-		const provider = ledger.provider ?? "no target";
+		const provider = ledger.provider ?? "no connection";
 		const model = ledger.model ? abbreviateModelId(ledger.model) : "no model";
 		units.push({
 			text: `${provider} ${GLYPH.sep} ${model}`,

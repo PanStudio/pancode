@@ -59,7 +59,7 @@
 		"dist/sdk/tool.js",
 		"dist/sdk/mcp-server.d.ts",
 		"dist/sdk/mcp-server.js",
-		"dist/extensions/test-kit.js",
+		"dist/extensions/test-harness.js",
 		"examples/extensions/lab-status/pancode-extension.json",
 		"examples/extensions/measurements/pancode-extension.json",
 		"examples/extensions/README.md",

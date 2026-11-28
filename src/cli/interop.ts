@@ -16,8 +16,8 @@ import {
 	renderInteropAdoptionPlan,
 } from "../domains/interop/index.js";
 import { runInteropInspect } from "./interop-inspect.js";
-import { writeCliFailure } from "./kit/json-out.js";
-import type { ErrorSlug } from "./kit/slugs.js";
+import { writeCliFailure } from "./lib/json-out.js";
+import type { ErrorSlug } from "./lib/slugs.js";
 
 const ADOPT_PATH = ["interop", "adopt"] as const;
 

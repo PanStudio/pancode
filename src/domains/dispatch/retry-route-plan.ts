@@ -161,7 +161,7 @@ export function eligibleAlternateRoute(
 		runtimeId: run.runtimeId,
 		endpointIdentityHash: "",
 	};
-	const routes = configuredJointTargets(settings?.targets ?? [], failed, endpointIdentityHash).filter((route) =>
+	const routes = configuredJointTargets(settings?.connections ?? [], failed, endpointIdentityHash).filter((route) =>
 		otherModel
 			? route.modelId !== run.wireModelId
 			: minContextWindow === undefined
@@ -181,7 +181,7 @@ export function eligibleAlternateRoute(
 				settings,
 			);
 			if (identity.targetId !== route.targetId) {
-				return { candidate, unavailable: `route resolved to target '${identity.targetId}'` };
+				return { candidate, unavailable: `route resolved to connection '${identity.targetId}'` };
 			}
 			if (identity.targetId === run.targetId && identity.wireModelId === run.wireModelId) {
 				return { candidate, unavailable: "route resolved to the failed route" };

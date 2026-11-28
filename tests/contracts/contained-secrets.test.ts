@@ -493,9 +493,9 @@ test("a live-check target's login file reads through the main sandbox, and nothi
 		{ id: "seat", runtime: "copilot-sdk", auth: {} },
 		{ id: "local", runtime: "openai-compat", auth: {} },
 	];
-	const validated = validateSettings({ targets: [], safety: { liveCheckTargets: ["seat"] } });
+	const validated = validateSettings({ targets: [], safety: { liveCheckConnections: ["seat"] } });
 	ok(
-		validated.issues.some((issue) => issue.path === "safety.liveCheckTargets"),
+		validated.issues.some((issue) => issue.path === "safety.liveCheckConnections"),
 		JSON.stringify(validated.issues),
 	);
 	const availability = sandboxAvailability();
@@ -512,7 +512,7 @@ test("a live-check target's login file reads through the main sandbox, and nothi
 	writeFileSync(join(isolated.dir, ".copilot", "config.json"), '{"fake":"seat-login-value"}\n');
 	writeFileSync(join(isolated.dir, ".codex", "auth.json"), '{"fake":"codex-login-value"}\n');
 	const cwd = realpathSync(mkdtempSync(join(tmpdir(), "pancode-live-check-ws-")));
-	const settings = { safety: { sandboxPassEnv: [], liveCheckTargets: ["seat", "local"] }, targets };
+	const settings = { safety: { sandboxPassEnv: [], liveCheckConnections: ["seat", "local"] }, connections: targets };
 	const read = (env: ReturnType<typeof sandboxEnvPolicy>): string => {
 		const plan = planMainSandboxSpawn(
 			mainSandboxPolicy({ workspace: cwd, scratchRoots: [], env }),
@@ -538,7 +538,7 @@ test("typed read and grep refuse PanCode's settings and MCP files while they hol
 	const settings = join(config, "settings.yaml");
 	const backup = join(config, "settings.yaml.bak");
 	const mcp = join(config, "mcp.yaml");
-	const secretSettings = "targets:\n  - id: lab\n    auth:\n      headers:\n        X-Api-Key: HEADER_MARKER\n";
+	const secretSettings = "connections:\n  - id: lab\n    auth:\n      headers:\n        X-Api-Key: HEADER_MARKER\n";
 	writeFileSync(settings, secretSettings);
 	writeFileSync(backup, secretSettings);
 	writeFileSync(
@@ -556,7 +556,7 @@ test("typed read and grep refuse PanCode's settings and MCP files while they hol
 	deepStrictEqual(verdicts(), ["block", "block", "block", "block", "block", "block"]);
 	strictEqual(engine.readablePath(settings), false, "a listing withholds settings.yaml");
 	// Without a header target or a server token the same engine reads both again, so an agent can help with them.
-	writeFileSync(settings, "targets:\n  - id: lab\n    auth:\n      apiKeyEnvVar: LAB_KEY\n");
+	writeFileSync(settings, "connections:\n  - id: lab\n    auth:\n      apiKeyEnvVar: LAB_KEY\n");
 	writeFileSync(backup, "targets: []\n");
 	writeFileSync(mcp, "version: 1\nservers:\n  - id: gh\n    command: gh-mcp\n");
 	deepStrictEqual(verdicts(), ["allow", "allow", "allow", "allow", "allow", "allow"]);

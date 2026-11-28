@@ -20,8 +20,8 @@ import { readPancodeVersion, resolvePackageRoot } from "../../../core/package-ro
 import { safeResourceWrite } from "../../../core/safe-resource-write.js";
 import { parseTomlDocument } from "../../../core/toml.js";
 import { pancodeCacheDir, resolvePancodeDirs } from "../../../core/xdg.js";
-import { findPinnedTool } from "../../../lib/programs/registry.js";
-import { resolveToolBinary } from "../../../lib/programs/resolve.js";
+import { findPinnedProgram } from "../../../lib/programs/registry.js";
+import { resolveProgramBinary } from "../../../lib/programs/resolve.js";
 import { renderYaziTheme } from "./theme.js";
 
 const PROFILE_FILES = ["yazi.toml", "keymap.toml", "theme.toml", "init.lua"] as const;
@@ -88,7 +88,7 @@ function defaultAssetDir(): string {
 }
 
 function yaziPin(): string {
-	return findPinnedTool("yazi")?.version ?? "unknown";
+	return findPinnedProgram("yazi")?.version ?? "unknown";
 }
 
 function filesBelow(root: string, current: string = root): string[] {
@@ -267,7 +267,7 @@ export function inspectYaziProfile(options: YaziProfileOptions): YaziProfileInsp
 
 /** Inspect the profile against the `ya` path the shared resolution ladder currently chooses. */
 export function inspectCurrentYaziProfile(): YaziProfileInspection {
-	return inspectYaziProfile({ yaPath: resolveToolBinary("ya").binaryPath ?? "(unresolved)" });
+	return inspectYaziProfile({ yaPath: resolveProgramBinary("ya").binaryPath ?? "(unresolved)" });
 }
 
 /** One shared sentence for `programs status yazi` and the doctor profile row. */

@@ -96,7 +96,7 @@ export function liveStatus(
 ): LiveStatus {
 	if (row !== undefined && row.status !== "running") {
 		if (row.status === "failed") return { state: "failed", label: "Failed", detail: row.problem?.detail ?? null };
-		if (row.status === "cancelled") return { state: "stopped", label: "Stopped", detail: null };
+		if (row.status === "cancelled") return { state: "stopped", label: "Canceled", detail: null };
 		const ending = turnEnding(row);
 		if (ending !== null && isStoppedEarly(ending))
 			return { state: "stopped", label: "Stopped early", detail: endingSentence(ending, row.stopReason) };

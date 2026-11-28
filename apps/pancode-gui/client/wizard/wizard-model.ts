@@ -24,7 +24,7 @@ export const STAGE_LABELS: Readonly<Record<StageId, string>> = {
 	connect: "Connect",
 	model: "Model",
 	test: "Test",
-	workspace: "Workspace",
+	workspace: "Project",
 };
 
 export type WizardMode = "first" | "add" | "repair";
@@ -479,7 +479,7 @@ export function stepFor(prompt: Prompt): StepView {
 
 // The CLI wraps its introduction at 80 columns, so the tails of two sentences arrive as lines of their own.
 const INTRO =
-	/^(Welcome to PanCode|Add a target|Edit target:|Choose what you already use|Back returns|Escape goes back|Saved result:|provider allows it\.|you complete\.)/u;
+	/^(Welcome to PanCode|Add a connection|Edit connection:|Choose what you already use|Back returns|Escape goes back|Saved result:|provider allows it\.|you complete\.)/u;
 
 interface ProbeReading {
 	readonly state: "reachable" | "unreachable" | "auth-failed" | "warning";
@@ -714,7 +714,7 @@ export function viewTitle(view: WizardView): string {
 	if (view.kind === "working") return view.label;
 	if (view.kind === "saved") return "Connection saved";
 	if (view.kind === "failed") return "Setup stopped";
-	if (view.kind === "cancelled") return "Setup cancelled";
+	if (view.kind === "cancelled") return "Setup canceled";
 	return view.prompt.heading[0] || "Continue setup";
 }
 

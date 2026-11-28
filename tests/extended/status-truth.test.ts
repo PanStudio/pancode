@@ -302,7 +302,7 @@ test("Esc during a first-token wait puts the receipt under the cancelled prompt 
 	const output = screen(panel);
 	const firstReceipt = output.indexOf("✓ Done · 3.0s");
 	const prompt = output.indexOf("second prompt");
-	const cancelled = output.indexOf("⊘ Stopped · 15s");
+	const cancelled = output.indexOf("⊘ Canceled · 15s");
 	ok(firstReceipt >= 0, output);
 	ok(prompt > firstReceipt, output);
 	ok(cancelled > prompt, output);
@@ -538,7 +538,7 @@ test("a 40x15 card shows the effect and every choice without scrolling, and leav
 	match(card, /effect\s+Publishes to origin/u);
 	match(card, /\[Enter\] allow/u);
 	match(card, /\[Esc\] deny/u);
-	match(card, /\[Alt\+X\] stop/u);
+	match(card, /\[Alt\+X\] deny and stop/u);
 	match(card, /4:58 denies/u, "the timer stays on screen beside the position");
 	for (const row of rows) doesNotMatch(row, /^(?:rule|effect|advisory)$/u);
 });
@@ -833,7 +833,7 @@ test("each provider failure names its own way out", () => {
 	match(cut, /The model will not see the partial reply\./u);
 	doesNotMatch(cut, /configure/u);
 	doesNotMatch(providerFailureAdvice({ ...route, stage: "provider", errorClass: "http_503" }), /configure/u);
-	match(providerFailureAdvice(route), /pancode configure --id gw edits this target/u);
+	match(providerFailureAdvice(route), /pancode configure --id gw edits this connection/u);
 });
 
 test("a provider failure leads with a plain sentence and the rail gives the block's way out", () => {
@@ -1979,7 +1979,7 @@ test("a silent worker says whether its wait is usual for the route only from two
 	const late = { ...waiting, evidenceAtMs: now - 95_000 };
 	strictEqual(
 		workerSilenceWords(late, { now, history: null, room: 60 }),
-		"no output for 1m35s · x in /fleet stops it · usual unknown",
+		"no output for 1m35s · x in /fleet cancels it · usual unknown",
 	);
 	strictEqual(
 		workerSilenceWords(late, { now, history: { calls: 4, slowestMs: 400 }, room: 40 }),
@@ -2572,7 +2572,7 @@ test("Connect asks for a replacement key when the target refused the stored one,
 				damageReason: () => null,
 			},
 		} as never,
-		getSettings: () => ({ targets: [target] }) as never,
+		getSettings: () => ({ connections: [target] }) as never,
 		notify: (_level, text) => notices.push(text),
 		refreshFooter() {},
 		renderContextIsland() {},

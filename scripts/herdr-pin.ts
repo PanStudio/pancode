@@ -23,7 +23,7 @@ import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { currentToolPlatform, findPinnedTool } from "../src/lib/programs/registry.js";
+import { currentProgramPlatform, findPinnedProgram } from "../src/lib/programs/registry.js";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const RELEASES = "https://api.github.com/repos/herdrdev/herdr/releases/latest";
@@ -55,7 +55,7 @@ async function fetchBytes(url: string): Promise<Buffer> {
 }
 
 async function main(): Promise<number> {
-	const entry = findPinnedTool("herdr");
+	const entry = findPinnedProgram("herdr");
 	if (entry === null) throw new Error("the registry has no herdr entry");
 	const release = JSON.parse((await fetchBytes(RELEASES)).toString("utf8")) as { tag_name: string };
 	const latest = release.tag_name.replace(/^v/u, "");
@@ -68,7 +68,7 @@ async function main(): Promise<number> {
 	const work = mkdtempSync(join(tmpdir(), "herdr-pin-"));
 	try {
 		const base = `https://github.com/herdrdev/herdr/releases/download/v${latest}`;
-		const platform = currentToolPlatform();
+		const platform = currentProgramPlatform();
 		let localBinary: string | null = null;
 		process.stdout.write(`\nsha256 for ${latest}:\n`);
 		for (const [key, asset] of Object.entries(ASSETS)) {

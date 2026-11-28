@@ -32,7 +32,7 @@ test("a project that defines targets borrows no route it did not choose", async 
 	mkdirSync(join(repo, ".pancode"), { recursive: true });
 	writeFileSync(
 		join(repo, ".pancode", "settings.local.yaml"),
-		"version: 2\ntargets:\n  - id: project-route\n    runtime: openai-compat\n    url: http://127.0.0.1:1/v1\n    defaultModel: fixture\n",
+		"version: 2\nconnections:\n  - id: project-route\n    runtime: openai-compat\n    url: http://127.0.0.1:1/v1\n    defaultModel: fixture\n",
 	);
 	recordProjectSurfaceTrust(repo, "settings", captureProjectSurface(repo, "settings").contentHash as string);
 	process.chdir(repo);
@@ -48,19 +48,19 @@ test("headless run plans and preflights a trusted project's chat route, not the 
 	});
 	initializePancodeHome();
 	const targets = [
-		"targets:",
+		"connections:",
 		"  - { id: user-route, runtime: openai-compat, url: 'http://127.0.0.1:1/v1', defaultModel: user-model }",
 		`  - { id: project-route, runtime: openai-compat, url: '${fixture.url}', defaultModel: mock-model, auth: { apiKeyEnvVar: PANCODE_TEST_OPENAI_KEY } }`,
 	].join("\n");
 	writeFileSync(
 		settingsPath(),
-		`version: 2\n${targets}\nchat: { target: user-route, model: user-model, thinkingLevel: low }\n`,
+		`version: 2\n${targets}\nchat: { connection: user-route, model: user-model, thinkingLevel: low }\n`,
 	);
 	const repo = join(home.dir, "repo");
 	mkdirSync(join(repo, ".pancode"), { recursive: true });
 	writeFileSync(
 		join(repo, ".pancode", "settings.local.yaml"),
-		"chat: { target: project-route, model: mock-model, thinkingLevel: high }\n",
+		"chat: { connection: project-route, model: mock-model, thinkingLevel: high }\n",
 	);
 	recordProjectSurfaceTrust(repo, "settings", captureProjectSurface(repo, "settings").contentHash as string);
 	const env = { ...process.env, NODE_ENV: "test", NO_COLOR: "1", PANCODE_TEST_OPENAI_KEY: "fixture-key" };

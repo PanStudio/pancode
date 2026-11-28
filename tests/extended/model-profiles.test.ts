@@ -49,7 +49,7 @@ it("the packaged profiles and their substring fallback tier agree on upstream lo
 			}
 		}
 		const allCurated = structuredClone(DEFAULT_SETTINGS);
-		allCurated.targets = profiles.entries().map((entry, index) => ({
+		allCurated.connections = profiles.entries().map((entry, index) => ({
 			id: `curated-${index}`,
 			runtime: "llamacpp",
 			defaultModel: patterns(entry)[0] ?? entry.id,
@@ -59,16 +59,16 @@ it("the packaged profiles and their substring fallback tier agree on upstream lo
 			deepStrictEqual(row.differentFields, [], row.modelId ?? "(unset)");
 		}
 		const settings = structuredClone(DEFAULT_SETTINGS);
-		settings.targets = [
+		settings.connections = [
 			{ id: "blade", runtime: "litellm", defaultModel: "local/qwen3.8-27b-q6_k" },
 			{ id: "cloud", runtime: "openai-codex", defaultModel: "gpt-6-sol" },
 			{ id: "unset", runtime: "llamacpp" },
 		];
-		settings.chat.target = "blade";
+		settings.chat.connection = "blade";
 		settings.chat.model = "dynamo/nvidia-nemotron-3.5-lightning-30b-a3b";
-		settings.fleet.default.target = "blade";
+		settings.fleet.default.connection = "blade";
 		settings.fleet.default.model = "local/gemma-4-26b-a4b-it-q4_k_m";
-		settings.fleet.profiles.worker = { target: "cloud", model: "gpt-6-luna", thinkingLevel: "low" };
+		settings.fleet.profiles.worker = { connection: "cloud", model: "gpt-6-luna", thinkingLevel: "low" };
 		const comparison = compareConfiguredModelProfiles(settings, profiles, legacy);
 		deepStrictEqual(
 			comparison.map((row) => [row.targetId, row.profileId, row.differentFields]),

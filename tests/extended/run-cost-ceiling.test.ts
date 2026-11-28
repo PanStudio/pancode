@@ -244,7 +244,7 @@ test("--require-priced: parsed into limits, carried to admission, and refuses on
 	const required = { [RUN_OVERRIDES_ENV]: JSON.stringify({ requirePriced: true }) };
 	match(
 		requirePricedRefusal("none", "proxy/gpt-x", required) ?? "",
-		/^--require-priced: proxy\/gpt-x has no known pricing; declare targets\[\]\.pricing/,
+		/^--require-priced: proxy\/gpt-x has no known pricing; declare connections\[\]\.pricing/,
 	);
 	for (const pricedBy of ["catalog", "target-rates", "free"])
 		strictEqual(requirePricedRefusal(pricedBy, "t/m", required), undefined);
@@ -259,7 +259,7 @@ test("--dry-run --require-priced refuses an unpriced route exactly as the run wo
 	mkdirSync(cwd);
 	writeFileSync(
 		path.join(home.dir, "config", "settings.yaml"),
-		"version: 2\ntargets:\n  - { id: proxy, runtime: litellm, url: 'http://127.0.0.1:9', defaultModel: gpt-x }\nchat:\n  target: proxy\n  model: gpt-x\n",
+		"version: 2\nconnections:\n  - { id: proxy, runtime: litellm, url: 'http://127.0.0.1:9', defaultModel: gpt-x }\nchat:\n  connection: proxy\n  model: gpt-x\n",
 	);
 	let stderr = "";
 	t.mock.method(process.stderr, "write", (chunk: string | Uint8Array) => {
@@ -270,7 +270,10 @@ test("--dry-run --require-priced refuses an unpriced route exactly as the run wo
 	try {
 		const code = await runPancodeRun(["--dry-run", "--require-priced", "--no-delegate", "x"], { noContextFiles: true });
 		strictEqual(code, 2, stderr);
-		match(stderr, /--require-priced: routes this run can reach have no known pricing: proxy\/gpt-x; declare targets/u);
+		match(
+			stderr,
+			/--require-priced: routes this run can reach have no known pricing: proxy\/gpt-x; declare connections/u,
+		);
 		// SPEC 6.9: declaring the pricing is the fix, so the preflight's refusal is not_configured at its source.
 		const args = parseRunCliArgs(["--dry-run", "--require-priced", "--no-delegate", "x"]);
 		const refusal = await dryRunPricingRefusal(args, readSettings());
@@ -286,8 +289,8 @@ test("--require-priced admits a mercury-3 run and --max-cost-usd bounds it at In
 	const home = await isolatePancodeEnv("pancode-mercury-priced-");
 	const raw = {
 		version: 2,
-		targets: [{ id: "inception", runtime: "inception", defaultModel: "mercury-3" }],
-		chat: { target: "inception", model: "mercury-3" },
+		connections: [{ id: "inception", runtime: "inception", defaultModel: "mercury-3" }],
+		chat: { connection: "inception", model: "mercury-3" },
 	};
 	mkdirSync(path.join(home.dir, "config"), { recursive: true });
 	writeFileSync(path.join(home.dir, "config", "settings.yaml"), JSON.stringify(raw));
@@ -296,7 +299,7 @@ test("--require-priced admits a mercury-3 run and --max-cost-usd bounds it at In
 		const { settings, issues } = validateSettings(raw);
 		deepStrictEqual(issues, []);
 		strictEqual(await dryRunPricingRefusal(parsed, settings), undefined);
-		const target = settings.targets[0];
+		const target = settings.connections[0];
 		ok(target);
 		const { rates, pricedBy } = resolveEffectivePricing(target, inception, "mercury-3");
 		strictEqual(pricedBy, "catalog");

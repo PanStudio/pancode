@@ -156,16 +156,16 @@ export function knownSecretValues(env: NodeJS.ProcessEnv, secretNames: Iterable<
 	return [...values];
 }
 
-/** The scrub's inputs from settings: the operator's pass list and the variables PanCode's targets read keys from. */
+/** The scrub's inputs from settings: the operator's pass list and the variables PanCode's connections read keys from. */
 export function sandboxEnvPolicy(settings: {
 	safety: { sandboxPassEnv: ReadonlyArray<string> };
-	targets: ReadonlyArray<{ auth?: { apiKeyEnvVar?: string; headers?: Readonly<Record<string, string>> } }>;
+	connections: ReadonlyArray<{ auth?: { apiKeyEnvVar?: string; headers?: Readonly<Record<string, string>> } }>;
 }): SandboxEnvPolicy {
-	const secretNames = settings.targets.flatMap((target) => {
+	const secretNames = settings.connections.flatMap((target) => {
 		const name = target.auth?.apiKeyEnvVar?.trim();
 		return name === undefined || name.length === 0 ? [] : [name];
 	});
-	const maskSettings = settings.targets.some((target) => Object.keys(target.auth?.headers ?? {}).length > 0);
+	const maskSettings = settings.connections.some((target) => Object.keys(target.auth?.headers ?? {}).length > 0);
 	return {
 		passEnv: [...settings.safety.sandboxPassEnv],
 		secretNames: [...new Set(secretNames)],
@@ -174,24 +174,24 @@ export function sandboxEnvPolicy(settings: {
 }
 
 /**
- * Runtimes whose official login lives in one file PanCode knows, so `safety.liveCheckTargets` can name a target on
+ * Runtimes whose official login lives in one file PanCode knows, so `safety.liveCheckConnections` can name a connection on
  * one: copilot-sdk reads the official `copilot login` from `$COPILOT_HOME/config.json` (default `~/.copilot`).
  * gh's token, the system keychain and PanCode's own credentials.yaml are never on the list.
  */
 export const LIVE_CHECK_LOGIN_RUNTIMES: ReadonlySet<string> = new Set(["copilot-sdk"]);
 
-/** The login files the targets `safety.liveCheckTargets` names read, absolute, at most one per runtime. */
+/** The login files the connections `safety.liveCheckConnections` names read, absolute, at most one per runtime. */
 function liveCheckLoginFiles(
 	settings: {
-		safety: { liveCheckTargets: ReadonlyArray<string> };
-		targets: ReadonlyArray<{ id: string; runtime: string }>;
+		safety: { liveCheckConnections: ReadonlyArray<string> };
+		connections: ReadonlyArray<{ id: string; runtime: string }>;
 	},
 	env: NodeJS.ProcessEnv,
 	home: string,
 ): string[] {
 	const runtimes = new Set(
-		settings.safety.liveCheckTargets.flatMap((id) => {
-			const runtime = settings.targets.find((target) => target.id === id)?.runtime;
+		settings.safety.liveCheckConnections.flatMap((id) => {
+			const runtime = settings.connections.find((target) => target.id === id)?.runtime;
 			return runtime !== undefined && LIVE_CHECK_LOGIN_RUNTIMES.has(runtime) ? [runtime] : [];
 		}),
 	);

@@ -53,7 +53,7 @@ export interface RunAbortedStatusEvent {
 	reason?: string;
 }
 
-export interface ForceCancelledStatusEvent {
+export interface ForceCanceledStatusEvent {
 	type: "force_cancelled";
 	reason: string;
 }
@@ -103,7 +103,7 @@ export type StatusInputEvent =
 	| OverlayPushEvent
 	| OverlayPopEvent
 	| RunAbortedStatusEvent
-	| ForceCancelledStatusEvent
+	| ForceCanceledStatusEvent
 	| DispatchProgressStatusEvent
 	| SubmitAcceptedStatusEvent
 	| SubmitSettledStatusEvent

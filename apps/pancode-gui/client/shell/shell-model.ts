@@ -49,7 +49,7 @@ export interface TaskRow {
 	readonly liveElsewhere?: LiveElsewhere;
 }
 
-const NEW_TASK_TITLE = "New task";
+const NEW_TASK_TITLE = "New session";
 
 /** What the sidebar and the top bar call a task: its reported label, else the first request. */
 export function taskTitle(
@@ -217,7 +217,7 @@ export function taskRows(
 				(row): TaskRow => ({
 					id: row.id,
 					workspaceId,
-					title: row.name?.trim() || row.firstMessagePreview?.replace(/\s+/g, " ").trim() || "Saved task",
+					title: row.name?.trim() || row.firstMessagePreview?.replace(/\s+/g, " ").trim() || "Saved session",
 					open: false,
 					state: "idle",
 					at: row.lastActivityAt ?? row.createdAt,
@@ -287,7 +287,7 @@ export const READY_LABEL = "Ready";
 const SETTINGS_SEGMENTS = new Set([
 	"settings",
 	"hub",
-	"toolchain",
+	"programs",
 	"usage",
 	"metrics",
 	"system",
@@ -297,7 +297,7 @@ const SETTINGS_SEGMENTS = new Set([
 	"research",
 	"arena",
 	"docs",
-	"machines",
+	"nodes",
 	"skills",
 ]);
 
@@ -373,7 +373,7 @@ export const SETTINGS_SECTIONS: readonly SettingsSection[] = [
 		path: "/settings/models",
 		icon: "models",
 		group: "settings",
-		owns: ["/settings/models", "/settings/targets", "/settings/routing"],
+		owns: ["/settings/models", "/settings/connections", "/settings/routing"],
 	},
 	{
 		id: "safety",
@@ -401,12 +401,12 @@ export const SETTINGS_SECTIONS: readonly SettingsSection[] = [
 	},
 	{ id: "hub", label: "Hub", path: "/hub", icon: "skills", group: "capabilities", owns: ["/hub"] },
 	{
-		id: "toolchain",
-		label: "Toolchain",
-		path: "/toolchain",
+		id: "programs",
+		label: "Programs",
+		path: "/programs",
 		icon: "toolchain",
 		group: "capabilities",
-		owns: ["/toolchain"],
+		owns: ["/programs"],
 	},
 	{ id: "usage", label: "Usage", path: "/usage", icon: "usage", group: "activity", owns: ["/usage"] },
 	{
@@ -424,14 +424,14 @@ export const SETTINGS_SECTIONS: readonly SettingsSection[] = [
 	{ id: "arena", label: "Arena", path: "/arena", icon: "arena", group: "activity", owns: ["/arena"] },
 	{ id: "system", label: "System", path: "/system", icon: "system", group: "capabilities", owns: ["/system"] },
 	{ id: "sessions", label: "Sessions", path: "/sessions", icon: "sessions", group: "activity", owns: ["/sessions"] },
-	{ id: "machines", label: "Machines", path: "/machines", icon: "system", group: "capabilities", owns: ["/machines"] },
+	{ id: "nodes", label: "Nodes", path: "/nodes", icon: "system", group: "capabilities", owns: ["/nodes"] },
 ];
 
 export function settingsDestination(path: string, workspaceId: string | null | undefined): string {
 	return workspaceId ? `${path}?${new URLSearchParams({ workspace: workspaceId })}` : path;
 }
 
-/** The section a pathname belongs to. The longest matching prefix wins so `/settings/targets` is Models, not Harness. */
+/** The section a pathname belongs to. The longest matching prefix wins so `/settings/connections` is Models, not Harness. */
 export function settingsSectionFor(pathname: string): SettingsSection | undefined {
 	let best: { section: SettingsSection; length: number } | undefined;
 	for (const section of SETTINGS_SECTIONS)

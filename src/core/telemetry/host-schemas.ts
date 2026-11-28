@@ -121,7 +121,7 @@ export const ExtensionBinaryRanSchema = Type.Object(
 	closed,
 );
 /** One hub lifecycle operation on a pack: what changed, at which digests, and who confirmed it (#434). */
-export const HubLifecycleSchema = Type.Object(
+export const HubActionSchema = Type.Object(
 	{
 		operationId: ExistingId,
 		kind: ExistingId,

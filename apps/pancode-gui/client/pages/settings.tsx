@@ -390,7 +390,7 @@ export function ConfigurationTabs({
 		<nav ref={bar} className="settings-tabs" aria-label="Configuration views">
 			{[
 				{ key: "settings", label: "Model settings", path: "/settings/models" },
-				{ key: "targets", label: "Connections", path: "/settings/targets" },
+				{ key: "targets", label: "Connections", path: "/settings/connections" },
 				{ key: "routing", label: "Fleet routes", path: "/settings/routing" },
 				{ key: "effective", label: "Effective values", path: "/settings/effective" },
 				{ key: "why", label: "Sources & timing", path: "/settings/why" },

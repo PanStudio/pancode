@@ -66,7 +66,7 @@ export function ContextControls({
 				</p>
 			) : null}
 			{!catalog.isPending && !catalog.error && actions.length === 0 ? (
-				<p className="drill__note">This task has no context actions available.</p>
+				<p className="drill__note">This session has no context actions available.</p>
 			) : null}
 			{command && args ? (
 				<form

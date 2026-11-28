@@ -33,7 +33,7 @@ test("/config opens Settings on Connections while /settings retains its areas", 
 
 test("Add target is an actionable in-TUI wizard (#385)", () => {
 	const items = buildSettingItems(structuredClone(DEFAULT_SETTINGS));
-	const add = items.find((item) => item.id === "targets.add-cta");
+	const add = items.find((item) => item.id === "connections.add-cta");
 	ok(add);
 	strictEqual(add.readOnly, false);
 	ok(!add.currentValue.includes("pancode"));
@@ -42,11 +42,11 @@ test("Add target is an actionable in-TUI wizard (#385)", () => {
 test("Connect by URL sits beside Add a target as an actionable row", () => {
 	const items = buildSettingItems(structuredClone(DEFAULT_SETTINGS));
 	const ids = items.map((item) => item.id);
-	const url = items.find((item) => item.id === "targets.url-cta");
+	const url = items.find((item) => item.id === "connections.url-cta");
 	ok(url);
 	strictEqual(url.label, "Connect by URL");
 	strictEqual(url.readOnly, false);
-	strictEqual(ids.indexOf("targets.url-cta"), ids.indexOf("targets.add-cta") + 1);
+	strictEqual(ids.indexOf("connections.url-cta"), ids.indexOf("connections.add-cta") + 1);
 });
 
 function fixtures(): void {
@@ -108,13 +108,13 @@ class ScriptedWizard extends TargetWizardSurface {
 		else if (heading.includes("Review what PanCode could verify")) {
 			for (const width of [40, 60, 80]) {
 				const screen = this.render(width).map(stripTerminalSequences).join("\n");
-				for (const control of ["Save target", "Back", "Cancel setup", "No generation", "GPU/VRAM"])
+				for (const control of ["Save connection", "Back", "Cancel setup", "No generation", "GPU/VRAM"])
 					ok(screen.includes(control), `${control} missing from ${width}-column review: ${screen}`);
 			}
 			value = this.inspect && !this.inspected ? "details" : this.save ? "save" : "cancel";
 			this.inspected = true;
 			ok(
-				!readSettings().targets.some((target) => target.id === "wizard-one") || this.runtime === "wizard-two",
+				!readSettings().connections.some((target) => target.id === "wizard-one") || this.runtime === "wizard-two",
 				"Add remains a draft until Save",
 			);
 		} else value = options.choices[0]?.value;
@@ -156,11 +156,11 @@ test("the dock hosts shared target add and URL/runtime/model editing through Sav
 			0,
 			add.render(200).map(stripTerminalSequences).join("\n"),
 		);
-		const target = readSettings().targets.find((entry) => entry.id === "wizard-one");
+		const target = readSettings().connections.find((entry) => entry.id === "wizard-one");
 		ok(
 			target,
 			JSON.stringify({
-				targets: readSettings().targets,
+				targets: readSettings().connections,
 				seen: add.seen,
 				rows: add.render(200).map(stripTerminalSequences),
 			}),
@@ -174,18 +174,18 @@ test("the dock hosts shared target add and URL/runtime/model editing through Sav
 		match(add.seen.join("\n"), /Machine observations.*usable CPUs.*available memory.*automatic local workers/u);
 		match(add.seen.join("\n"), /Connection address.*No generation request was sent/u);
 		updateSettings((settings) => {
-			settings.chat.target = target.id;
+			settings.chat.connection = target.id;
 			settings.chat.model = "model-a";
 		});
 		const edit = new ScriptedWizard("wizard-two", "localhost:9922", "model-b");
 		strictEqual(await edit.start({ mode: "edit", target }), 0, edit.render(200).map(stripTerminalSequences).join("\n"));
 		const settings = readSettings();
-		const updated = settings.targets.find((entry) => entry.id === target.id);
+		const updated = settings.connections.find((entry) => entry.id === target.id);
 		ok(updated);
 		strictEqual(updated.runtime, "wizard-two");
 		strictEqual(updated.url, "http://localhost:9922");
 		strictEqual(updated.defaultModel, "model-b");
-		strictEqual(settings.chat.target, target.id);
+		strictEqual(settings.chat.connection, target.id);
 		strictEqual(settings.chat.model, "model-a", "editing the target does not rewrite chat's explicit model");
 		match(edit.seen.join("\n"), /Which provider/);
 	} finally {
@@ -261,7 +261,7 @@ test("a sign-in link stays whole under the masked paste-code prompt, older notes
 
 test("Settings mounts Add and Edit as docked prompts and tears them down with its parent (#385)", async () => {
 	const settings = structuredClone(DEFAULT_SETTINGS);
-	settings.targets = [{ id: "local", runtime: "wizard-one", url: "http://localhost:9911", defaultModel: "model-a" }];
+	settings.connections = [{ id: "local", runtime: "wizard-one", url: "http://localhost:9911", defaultModel: "model-a" }];
 	const proxies: Component[] = [];
 	const tui = {
 		terminal: { rows: 24 },
@@ -271,7 +271,7 @@ test("Settings mounts Add and Edit as docked prompts and tears them down with it
 			return { hide() {} };
 		},
 	} as unknown as TUI;
-	for (const rowId of ["targets.add-cta", "targets.local"] as const) {
+	for (const rowId of ["connections.add-cta", "connections.local"] as const) {
 		const parent = openSettingsOverlay(tui, {
 			getSettings: () => settings,
 			writeSettings() {
@@ -283,13 +283,13 @@ test("Settings mounts Add and Edit as docked prompts and tears them down with it
 		});
 		const frame = dockTop(tui)?.frame as unknown as Component;
 		frame.handleInput?.("\r");
-		if (rowId === "targets.local") {
+		if (rowId === "connections.local") {
 			frame.handleInput?.("\x1b[B");
 			frame.handleInput?.("\r");
 		}
 		const wizard = dockTop(tui)?.frame;
 		ok(wizard);
-		match(wizard.dockTitle(), rowId === "targets.local" ? /Edit target: local/ : /Add target/);
+		match(wizard.dockTitle(), rowId === "connections.local" ? /Edit connection: local/ : /Add connection/);
 		for (const width of [40, 60, 80, 120, 200]) {
 			for (const proxy of proxies) deepStrictEqual(proxy.render(width), []);
 			for (const line of wizard.renderDockBody(width - 4, 16)) ok(visibleWidth(line) <= width - 4);
@@ -311,7 +311,7 @@ test("Add in the dock sends one test request and saves on its answer, without th
 		strictEqual(server.requests.length, 1, add.reports.join("\n"));
 		match(add.reports.join("\n"), /Testing wizard-one \/ model-a \.\.\. answered in/u);
 		ok(!add.seen.some((heading) => heading.includes("Review what PanCode could verify")));
-		ok(readSettings().targets.some((target) => target.id === "wizard-one"));
+		ok(readSettings().connections.some((target) => target.id === "wizard-one"));
 	} finally {
 		await closeServer(server.server);
 		env.restore();
@@ -346,7 +346,7 @@ test("closing setup during a probe cannot save a late target (#385)", async () =
 			wizard.cancel();
 			release();
 			strictEqual(await pending, 130);
-			ok(!readSettings().targets.some((target) => target.id === "wizard-one"));
+			ok(!readSettings().connections.some((target) => target.id === "wizard-one"));
 		} finally {
 			if (original) runtime.probe = original;
 			else delete runtime.probe;
@@ -375,9 +375,9 @@ test("Connect by URL saves a connection from a URL and a model inside the hosted
 		const wizard = new ScriptedWizard("", url, "model-b");
 		strictEqual(await wizard.start({ mode: "url" }), 0, wizard.render(200).map(stripTerminalSequences).join("\n"));
 		const settings = readSettings();
-		const target = settings.targets.find((entry) => entry.url === url);
-		ok(target, JSON.stringify({ targets: settings.targets, seen: wizard.seen }));
-		strictEqual(settings.chat.target, target.id);
+		const target = settings.connections.find((entry) => entry.url === url);
+		ok(target, JSON.stringify({ targets: settings.connections, seen: wizard.seen }));
+		strictEqual(settings.chat.connection, target.id);
 		strictEqual(settings.chat.model, "model-b");
 		const screen = wizard.render(200).map(stripTerminalSequences).join("\n");
 		match(screen, new RegExp(`Connected: ${target.id} / model-b`));
@@ -391,7 +391,7 @@ test("Connect by URL saves a connection from a URL and a model inside the hosted
 test("Remove target saved globally drops the key the target owned and keeps the runtime's key", () => {
 	if (getRuntimeRegistry().list().length === 0) registerBuiltinRuntimes(getRuntimeRegistry());
 	let settings = structuredClone(DEFAULT_SETTINGS);
-	settings.targets = [
+	settings.connections = [
 		{ id: "work", runtime: "openai", defaultModel: "gpt-5", auth: { apiKeyRef: "target:work" } },
 		{ id: "team", runtime: "openai", defaultModel: "gpt-5" },
 	];
@@ -425,7 +425,7 @@ test("Remove target saved globally drops the key the target owned and keeps the 
 			notice: (_level, text) => void notices.push(text),
 			onClose() {},
 			section: "models",
-			rowId: `targets.${targetId}`,
+			rowId: `connections.${targetId}`,
 		});
 		const frame = dockTop(tui)?.frame as unknown as Component;
 		frame.handleInput?.("\r");
@@ -436,7 +436,7 @@ test("Remove target saved globally drops the key the target owned and keeps the 
 		parent.hide();
 	}
 	deepStrictEqual(
-		settings.targets.map((target) => target.id),
+		settings.connections.map((target) => target.id),
 		[],
 	);
 	deepStrictEqual([...stored], ["openai"]);

@@ -9,7 +9,7 @@ import { ensurePancodeState } from "../domains/install/index.js";
 import { PluginsDomainModule } from "../domains/plugins/module.js";
 import { loadSkills } from "../domains/resources/skills/loader.js";
 import { SafetyDomainModule } from "../domains/safety/module.js";
-import { writeCliFailure } from "./kit/json-out.js";
+import { writeCliFailure } from "./lib/json-out.js";
 
 const HELP = `pancode agents [list] [--json] [--all]
 pancode agents validate [--json]

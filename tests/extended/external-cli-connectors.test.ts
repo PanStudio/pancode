@@ -125,10 +125,10 @@ describe("PanCode external CLI connectors", { skip: process.platform === "win32"
 			},
 		);
 		equal(unverified.find((mode) => mode.mode === "acp")?.status, "experimental");
-		equal(modes.find((mode) => mode.mode === "headless")?.command, "/run --target codex-peer <agent> <task>");
+		equal(modes.find((mode) => mode.mode === "headless")?.command, "/run --connection codex-peer <agent> <task>");
 		equal(modes.find((mode) => mode.mode === "pane")?.status, "unavailable");
 		equal(modes.find((mode) => mode.mode === "pane")?.command, "/panes peer codex <brief>");
-		const parsed = parseSlashCommand("/run --target codex-peer --worktree coder Fix parser");
+		const parsed = parseSlashCommand("/run --connection codex-peer --worktree coder Fix parser");
 		equal(parsed.kind, "run");
 		if (parsed.kind === "run") {
 			equal(parsed.options.target, "codex-peer");

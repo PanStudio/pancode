@@ -14,9 +14,9 @@
 export const UNATTENDED_DECIDED_BY = "unattended";
 
 /** The countdown window in milliseconds; 0 means wait for the operator forever. */
-export function unattendedWindowMs(seconds: number | undefined): number {
-	if (seconds === undefined || !Number.isFinite(seconds) || seconds <= 0) return 0;
-	return Math.floor(seconds) * 1000;
+export function unattendedWindowMs(ms: number | undefined): number {
+	if (ms === undefined || !Number.isFinite(ms) || ms <= 0) return 0;
+	return Math.floor(ms);
 }
 
 /** At yolo a question never waits forever: a 0 window reads as this, the shipped default (#421). */
@@ -32,7 +32,7 @@ export const AWAY_ASK_WINDOW_MS = 30_000;
  * round has no window at any autonomy level.
  */
 export function askUserWindowMs(
-	seconds: number | undefined,
+	timeoutMs: number | undefined,
 	context: { yolo: boolean; away: boolean; operatorOnly?: boolean },
 ): number {
 	// PanCode can never answer an operator_only question, so a lapsed window only
@@ -40,7 +40,7 @@ export function askUserWindowMs(
 	// yolo too. It waits for the operator however long they are gone, as an
 	// extension interview does (F-C1).
 	if (context.operatorOnly === true) return 0;
-	let ms = unattendedWindowMs(seconds);
+	let ms = unattendedWindowMs(timeoutMs);
 	if (ms === 0 && context.yolo) ms = YOLO_ASK_WINDOW_FLOOR_SECONDS * 1000;
 	return ms > 0 && context.away ? Math.min(ms, AWAY_ASK_WINDOW_MS) : ms;
 }

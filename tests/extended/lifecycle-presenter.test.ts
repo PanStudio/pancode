@@ -7,7 +7,7 @@ import { join } from "node:path";
 import { PassThrough } from "node:stream";
 import { describe, it } from "node:test";
 
-import { createLifecyclePresenter, formatBytes, measurePath, shortenPath } from "../../src/cli/lifecycle-presenter.js";
+import { createInstallPresenter, formatBytes, measurePath, shortenPath } from "../../src/cli/install-presenter.js";
 
 /**
  * Drop SGR escapes so a rail assertion compares glyphs, not colors. A fresh
@@ -99,7 +99,7 @@ describe("contracts/lifecycle-presenter", () => {
 
 	it("renders plain text with no rail, no ANSI, and the same facts as the rail", () => {
 		const { stream, text } = capture();
-		const presenter = createLifecyclePresenter({ plain: true, stream, columns: 100 });
+		const presenter = createInstallPresenter({ plain: true, stream, columns: 100 });
 
 		presenter.header("Uninstall PanCode", "uninstall");
 		presenter.step("Installation method: npm global");
@@ -134,7 +134,7 @@ describe("contracts/lifecycle-presenter", () => {
 
 	it("separates unlike blocks with exactly one rail line and keeps like blocks together", () => {
 		const { stream, text } = capture();
-		const presenter = createLifecyclePresenter({ plain: false, stream, columns: 100 });
+		const presenter = createInstallPresenter({ plain: false, stream, columns: 100 });
 
 		presenter.header("Upgrade", "upgrade");
 		presenter.step("Installation method: source checkout");
@@ -160,7 +160,7 @@ describe("contracts/lifecycle-presenter", () => {
 
 	it("wraps rail prose so a narrow terminal keeps its rail", () => {
 		const { stream, text } = capture();
-		const presenter = createLifecyclePresenter({ plain: false, stream, columns: 40 });
+		const presenter = createInstallPresenter({ plain: false, stream, columns: 40 });
 		presenter.header("Reset PanCode", "reset");
 		presenter.note("State holds every session transcript and the audit trail beside it.");
 
@@ -174,7 +174,7 @@ describe("contracts/lifecycle-presenter", () => {
 
 	it("emits one JSON document that includes advice recorded after a failure", () => {
 		const { stream, text } = capture();
-		const presenter = createLifecyclePresenter({ json: true, stream });
+		const presenter = createInstallPresenter({ json: true, stream });
 
 		presenter.header("Reset PanCode", "reset");
 		presenter.step("Inspecting roots");
@@ -196,7 +196,7 @@ describe("contracts/lifecycle-presenter", () => {
 
 	it("writes no rail to stdout in json mode", () => {
 		const { stream, text } = capture();
-		const presenter = createLifecyclePresenter({ json: true, stream });
+		const presenter = createInstallPresenter({ json: true, stream });
 		presenter.header("Upgrade", "upgrade");
 		presenter.step("Current version: 0.4.2");
 		presenter.warn("Dry run: no changes made");
@@ -209,7 +209,7 @@ describe("contracts/lifecycle-presenter", () => {
 	it("reads a confirmation from the input stream", async () => {
 		const inStream = new PassThrough();
 		const outStream = new PassThrough();
-		const presenter = createLifecyclePresenter({ plain: true, inputStream: inStream, stream: outStream });
+		const presenter = createInstallPresenter({ plain: true, inputStream: inStream, stream: outStream });
 
 		const promise = presenter.confirm("Proceed with uninstall?", false);
 		inStream.write("y\n");
@@ -219,7 +219,7 @@ describe("contracts/lifecycle-presenter", () => {
 	it("treats a closed stdin as a refusal rather than a confirmation", async () => {
 		const inStream = new PassThrough();
 		const outStream = new PassThrough();
-		const presenter = createLifecyclePresenter({ plain: true, inputStream: inStream, stream: outStream });
+		const presenter = createInstallPresenter({ plain: true, inputStream: inStream, stream: outStream });
 
 		const promise = presenter.confirm("Proceed with uninstall?", false);
 		inStream.end();

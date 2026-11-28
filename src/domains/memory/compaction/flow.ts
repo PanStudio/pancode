@@ -131,18 +131,18 @@ async function resolveCompactionModel(
 	signal?: AbortSignal,
 ): Promise<CompactionResolution | null> {
 	const override = settings.context.compaction.model;
-	let targetId = settings.chat.target;
+	let targetId = settings.chat.connection;
 	let wireModelId = settings.chat.model;
 	if (override !== undefined && override !== null) {
 		let selected: ReturnType<typeof resolveModelReference>;
 		try {
 			selected = resolveModelReference(override, providers, { use: "chat" });
 		} catch {
-			throw new Error("context.compaction.model is an invalid pattern; set a unique target/model reference");
+			throw new Error("context.compaction.model is an invalid pattern; set a unique connection/model reference");
 		}
 		if (!selected.ref || selected.warning) {
 			throw new Error(
-				"context.compaction.model must match exactly one chat-eligible configured model; set a unique target/model reference on a loaded HTTP target with chat enabled",
+				"context.compaction.model must match exactly one chat-eligible configured model; set a unique connection/model reference on a loaded HTTP connection with chat enabled",
 			);
 		}
 		targetId = selected.ref.target;
@@ -152,7 +152,9 @@ async function resolveCompactionModel(
 	await prepareBackgroundModelMetadata(providers, targetId, signal);
 	const status = providers.list().find((entry) => entry.target.id === targetId);
 	if (!status?.available) {
-		throw new Error("context.compaction.model target is unavailable; check the selected target with pancode targets");
+		throw new Error(
+			"context.compaction.model connection is unavailable; check the selected connection with pancode connections",
+		);
 	}
 	const resolved = resolveRuntimeTarget(providers, {
 		targetId,
@@ -176,7 +178,7 @@ async function resolveCompactionModel(
 			providers.knowledgeBase?.lookup(route.wireModelId, route.runtime.id) ?? null,
 		);
 	} catch {
-		throw new Error("context.compaction.model could not be prepared; check the selected target/model configuration");
+		throw new Error("context.compaction.model could not be prepared; check the selected connection/model configuration");
 	}
 	const refined = refineRuntimeTargetWithModelHints(route, model, providers.knowledgeBase);
 	applyModelCapabilityPatch(model, refined.capabilities);
@@ -189,7 +191,7 @@ async function resolveCompactionModel(
 	);
 	if (targetRequiresAuth(route.target, route.runtime) && !sideAuth.apiKey) {
 		throw new Error(
-			"context.compaction.model authentication is unavailable; authenticate the selected target with pancode auth",
+			"context.compaction.model authentication is unavailable; authenticate the selected connection with pancode auth",
 		);
 	}
 	const endpointKey = modelEndpointKey(route.target, route.wireModelId);
@@ -298,7 +300,7 @@ export async function runCompactionFlow(
 		const resolved = await resolveCompactionModel(settings, providers, budget?.signal);
 		budget?.signal?.throwIfAborted();
 		if (!resolved) {
-			throw new Error("no model configured; set chat.target + chat.model");
+			throw new Error("no model configured; set chat.connection + chat.model");
 		}
 		// Summarize only the active branch: after a /tree switch the raw file
 		// still holds abandoned sibling turns, and a summary that folds them in

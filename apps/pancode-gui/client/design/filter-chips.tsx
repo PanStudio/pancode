@@ -71,7 +71,7 @@ export function InventoryEmpty({
 				</button>
 			) : (
 				<button type="button" className="primary" disabled={startDisabled} onClick={onStart}>
-					Start a task
+					Start a session
 					<Icon name="plus" />
 				</button>
 			)}

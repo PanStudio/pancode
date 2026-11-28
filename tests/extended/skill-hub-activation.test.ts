@@ -8,7 +8,7 @@ import { parse as parseYaml } from "yaml";
 import { skillActivationFromToolDetails, withModelSkillActivation } from "../../src/core/skill-activation.js";
 import { clearPluginSnapshots, pluginSnapshotFor, reloadPluginResources } from "../../src/domains/plugins/index.js";
 import { discoverHub } from "../../src/domains/resources/hub.js";
-import { applyHubLifecycle, type HubRefreshHost, planHubLifecycle } from "../../src/domains/resources/hub-actions.js";
+import { applyHubAction, type HubRefreshHost, planHubAction } from "../../src/domains/resources/hub-actions.js";
 import { readHubInventory } from "../../src/domains/resources/hub-inventory.js";
 import { loadSkills, parsePendingSkillRequests } from "../../src/domains/resources/skills/loader.js";
 import { reloadPluginResourcesAndNotify } from "../../src/entry/plugin-reload.js";
@@ -56,8 +56,8 @@ it("activates every bundled skill from its native package in a workspace with pe
 			(left, right) => Number(left.kind !== "skill") - Number(right.kind !== "skill"),
 		);
 		for (const entry of skillsFirst) {
-			const result = applyHubLifecycle(
-				planHubLifecycle({ operation: "install", ref: `${entry.kind}:${entry.name}`, scope: "user", cwd }),
+			const result = applyHubAction(
+				planHubAction({ operation: "install", ref: `${entry.kind}:${entry.name}`, scope: "user", cwd }),
 			);
 			strictEqual(result.committed, 1, `${entry.name}: ${JSON.stringify(result)}`);
 		}
@@ -114,8 +114,8 @@ for (const scope of ["user", "project"] as const) {
 			};
 			refresh(cwd); // The already-running session initially has no native installation.
 			const context = createContextTool({ getCwd: () => cwd });
-			const plan = planHubLifecycle({ operation: "install", ref: "skill:find-skills", scope, cwd });
-			const applied = applyHubLifecycle(plan, { refresh });
+			const plan = planHubAction({ operation: "install", ref: "skill:find-skills", scope, cwd });
+			const applied = applyHubAction(plan, { refresh });
 			strictEqual(applied.committed, 1, JSON.stringify(applied));
 			strictEqual(applied.refresh.status, "refreshed");
 			strictEqual(generations.length, 2);
@@ -188,8 +188,8 @@ it("says an undeclared member of an unapproved project plugin needs trust, not t
 			path.join(source, "skills/member-folder/SKILL.md"),
 			"---\nname: member-one\ndescription: A member skill\n---\nPRIVATE MEMBER BODY\n",
 		);
-		const applied = applyHubLifecycle(
-			planHubLifecycle({ operation: "install", ref: source, scope: "project", cwd: installedAt }),
+		const applied = applyHubAction(
+			planHubAction({ operation: "install", ref: source, scope: "project", cwd: installedAt }),
 		);
 		strictEqual(applied.committed, 1, JSON.stringify(applied));
 		// Installing approves the copy where it ran. The same state arriving with a clone is not approved.

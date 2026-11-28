@@ -429,13 +429,13 @@ export async function runAcpSurface(
 			routing: () => {
 				const settings = getCurrentSettings();
 				return {
-					target: settings.chat.target,
+					target: settings.chat.connection,
 					model: settings.chat.model,
 				};
 			},
 			setSessionRouting: (patch, source) => {
 				const current = getCurrentSettings();
-				const target = patch.target ?? current.chat.target;
+				const target = patch.target ?? current.chat.connection;
 				const model = patch.model ?? current.chat.model;
 				if (target && model && (patch.target !== undefined || patch.model !== undefined)) {
 					selectAtScope({ target, model, thinkingLevel: patch.thinkingLevel }, "session", source);

@@ -111,20 +111,19 @@ function hadPaneHost(versionDir: string): boolean {
  * The installers, `panes install` and doctor always try.
  */
 async function vendoredHerdr(): Promise<{ binaryPath: string; version: string } | null> {
-	const { currentToolPlatform, findPinnedTool, installTool, resolveVendoredBinary, toolVersionDir } = await import(
-		"../lib/programs/index.js"
-	);
+	const { currentProgramPlatform, findPinnedProgram, installProgram, resolveVendoredBinary, programVersionDir } =
+		await import("../lib/programs/index.js");
 	const present = resolveVendoredBinary("herdr");
 	if (present !== null) return present;
-	const entry = findPinnedTool("herdr");
-	const platform = currentToolPlatform();
+	const entry = findPinnedProgram("herdr");
+	const platform = currentProgramPlatform();
 	if (entry === null || platform === null || entry.downloads[platform] === undefined) return null;
-	if (!hadPaneHost(toolVersionDir(entry.id, entry.version))) return null;
+	if (!hadPaneHost(programVersionDir(entry.id, entry.version))) return null;
 	const { pancodeStateDir } = await import("../core/xdg.js");
 	const stamp = installFailureStamp(pancodeStateDir());
 	if (recentInstallFailure(stamp, entry.version, Date.now())) return null;
 	process.stderr.write("PanCode: setting up terminal panes (one time)...\n");
-	const installed = await installTool("herdr", { timeoutMs: LAUNCH_INSTALL_TIMEOUT_MS });
+	const installed = await installProgram("herdr", { timeoutMs: LAUNCH_INSTALL_TIMEOUT_MS });
 	const resolved = installed.ok ? resolveVendoredBinary("herdr") : null;
 	if (resolved === null) {
 		const why = installed.ok ? "the installed binary was not found" : installed.message.split("\n")[0];
@@ -186,7 +185,7 @@ export async function maybeLaunchWorkspace(
 		outputStyle: settings.interface.outputDetail,
 		cwd: process.cwd(),
 		pancodeArgv: pancodeArgv(),
-		pancodeEnv: { ...pancodePaneEnv(process.env, settings.targets), ...terminalHandover() },
+		pancodeEnv: { ...pancodePaneEnv(process.env, settings.connections), ...terminalHandover() },
 		notice: (line) => process.stderr.write(`PanCode: ${line}.\n`),
 	});
 	if (result.status === "fallback") {

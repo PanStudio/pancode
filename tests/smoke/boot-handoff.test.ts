@@ -11,7 +11,7 @@ import { after, afterEach, before, describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
 import { stripVTControlCharacters } from "node:util";
 import { spawn } from "node-pty";
-import { findPinnedTool } from "../../src/lib/programs/index.js";
+import { findPinnedProgram } from "../../src/lib/programs/index.js";
 import { makeScratchHome } from "../harness/scratch-env.js";
 import { type StrayProcess, stopProcessesCarrying } from "../harness/stray-processes.js";
 
@@ -86,14 +86,14 @@ function fixture(extra: NodeJS.ProcessEnv = {}): Fixture {
 	writeFileSync(
 		join(home.dir, "config", "settings.yaml"),
 		`version: 2
-targets:
+connections:
   - id: handoff-local
     runtime: lmstudio
     url: ${endpoint}
     defaultModel: handoff-model
     lifecycle: user-managed
 chat:
-  target: handoff-local
+  connection: handoff-local
   model: handoff-model
 `,
 	);
@@ -103,7 +103,7 @@ chat:
 	mkdirSync(join(home.dir, "state", "mux"), { recursive: true });
 	writeFileSync(
 		join(home.dir, "state", "mux", "herdr-install-failed.json"),
-		JSON.stringify({ version: findPinnedTool("herdr")?.version, at: Date.now() }),
+		JSON.stringify({ version: findPinnedProgram("herdr")?.version, at: Date.now() }),
 	);
 	const renderTrace = join(home.dir, "render.jsonl");
 	return {

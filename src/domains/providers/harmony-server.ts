@@ -3,7 +3,7 @@
 /**
  * What a server does with gpt-oss Harmony frames, and the vLLM flags that make
  * it do all of it (#435). A leaf shared by the engine's recovery layer, the
- * vLLM runtime probe and the `targets` report, so the flag text exists once.
+ * vLLM runtime probe and the `connections` report, so the flag text exists once.
  */
 
 export const VLLM_GPT_OSS_SERVE_FLAGS =

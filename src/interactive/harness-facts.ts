@@ -573,7 +573,7 @@ export function createHarnessFactsSource(producers: HarnessFactsProducers): Harn
 	} | null = null;
 
 	const currentTargetStatus = (settings: Readonly<PancodeSettings> | undefined): TargetStatus | null => {
-		const targetId = settings?.chat?.target;
+		const targetId = settings?.chat?.connection;
 		if (!targetId) return null;
 		return producers.providers.list().find((candidate) => candidate.target.id === targetId) ?? null;
 	};
@@ -582,7 +582,7 @@ export function createHarnessFactsSource(producers: HarnessFactsProducers): Harn
 		settings: Readonly<PancodeSettings> | undefined,
 		targetStatus: TargetStatus | null,
 	): HarnessThinkingFacts => {
-		const targetId = settings?.chat?.target ?? undefined;
+		const targetId = settings?.chat?.connection ?? undefined;
 		const modelId = settings?.chat?.model ?? undefined;
 		const asked = settings?.chat?.thinkingLevel ?? "off";
 		const hasReasoning = producers.hasReasoningRoute?.(targetId, modelId) === true;
@@ -634,7 +634,7 @@ export function createHarnessFactsSource(producers: HarnessFactsProducers): Harn
 	const modelIdentity = (): { readonly targetId: string | undefined; readonly modelId: string | undefined } => {
 		const chat = producers.getSettings?.().chat;
 		const modelId = chat?.model ?? currentTargetStatus(producers.getSettings?.())?.target.defaultModel ?? undefined;
-		return { targetId: chat?.target ?? undefined, modelId };
+		return { targetId: chat?.connection ?? undefined, modelId };
 	};
 
 	const autonomyMode = (): string => producers.getSettings?.().safety.autonomy ?? "default";
@@ -686,7 +686,7 @@ export function createHarnessFactsSource(producers: HarnessFactsProducers): Harn
 	const route = (): HarnessRouteFacts => {
 		const settings = producers.getSettings?.();
 		const targetStatus = currentTargetStatus(settings);
-		const targetId = settings?.chat?.target ?? null;
+		const targetId = settings?.chat?.connection ?? null;
 		const modelId = settings?.chat?.model ?? null;
 		const effectiveModelId = modelId ?? targetStatus?.target.defaultModel ?? null;
 		return {
@@ -779,14 +779,14 @@ export function createHarnessFactsSource(producers: HarnessFactsProducers): Harn
 	const routeReadiness = (): HarnessRouteReadinessData | null => {
 		const settings = producers.getSettings?.();
 		const chat = settings?.chat;
-		if (!chat?.target) return null;
+		if (!chat?.connection) return null;
 		const target = currentTargetStatus(settings);
 		if (!target || target.health === undefined || typeof target.reason !== "string") return null;
 		const last = producers.getLastTurnSummary?.() ?? null;
-		const onRoute = last !== null && last.targetId === chat.target && last.modelId === chat.model;
+		const onRoute = last !== null && last.targetId === chat.connection && last.modelId === chat.model;
 		const missing = missingFromTargetStatus(target);
 		return {
-			targetId: chat.target,
+			targetId: chat.connection,
 			available: target.available,
 			reason: target.reason,
 			health: target.health.status,

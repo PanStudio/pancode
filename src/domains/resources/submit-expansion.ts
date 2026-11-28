@@ -12,7 +12,7 @@
 import { randomUUID } from "node:crypto";
 import { homedir } from "node:os";
 import path from "node:path";
-import { PLUGIN_RESOURCE_USE, recordPackageActivity } from "../../core/package-activity.js";
+import { PLUGIN_RESOURCE_USE, recordPackActivity } from "../../core/pack-activity.js";
 import { relativePathEscapes } from "../../core/path-containment.js";
 import type { PendingSkillRequest } from "../../core/skill-activation.js";
 import type { TurnConstraints } from "../../core/turn-constraints.js";
@@ -423,7 +423,7 @@ export async function expandSubmitText(
 	}
 	const promptOwner = promptExpansion?.expanded ? promptExpansion.template.sourceInfo?.owner : undefined;
 	if (promptExpansion?.expanded && promptOwner)
-		recordPackageActivity({
+		recordPackActivity({
 			type: PLUGIN_RESOURCE_USE,
 			kind: "prompt",
 			owner: promptOwner,

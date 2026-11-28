@@ -79,7 +79,7 @@ export function createSessionTranscript(deps: SessionTranscriptDeps): SessionTra
 		const input: { cwd: string; target?: string; model?: string } = {
 			cwd: deps.getCwd?.() ?? process.cwd(),
 		};
-		if (settings?.chat.target) input.target = settings.chat.target;
+		if (settings?.chat.connection) input.target = settings.chat.connection;
 		if (settings?.chat.model) input.model = settings.chat.model;
 		deps.session.create(input);
 	};

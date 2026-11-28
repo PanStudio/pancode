@@ -64,7 +64,7 @@ test("dynamic slash slots read current source values and replace the argument", 
 	});
 	for (const [line, expected] of [
 		["/run re", "researcher"],
-		["/run researcher --target lo", "local"],
+		["/run researcher --connection lo", "local"],
 		["/skill re", "review"],
 	] as const) {
 		const suggestions = await provider.getSuggestions([line], 0, line.length, {
@@ -154,7 +154,7 @@ function presentationProvider(userTasks?: UserTasksStore) {
 	return provider;
 }
 
-for (const action of ["hand", "done", "drop"] as const) {
+for (const action of ["hand", "done", "remove"] as const) {
 	test(`presentation /tasks ${action} completions select the loaded operator inbox task`, async () => {
 		let body: string | undefined;
 		const userTasks = createUserTasksStore({

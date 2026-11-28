@@ -1,0 +1,99 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { useRef, useState } from "react";
+import type { Client } from "../api/client.js";
+import { Icon } from "../design/icons.js";
+import { TONE_GLYPHS } from "../design/status.js";
+import { useDetailsDismiss } from "../interaction/use-details-dismiss.js";
+import { attachmentStatus, nodeChoices, nodeDestination, switcherLabel } from "./node-switcher-model.js";
+import { useNodeAttach } from "./use-node-attach.js";
+
+/**
+ * Which machine's app this window shows. The list always comes from the app on this machine, so it
+ * is the same whichever node the window is looking at; choosing a node starts its own GUI over SSH
+ * when needed and then leaves for it.
+ */
+export function NodeSwitcher({
+	local,
+	current,
+	remoteHost,
+}: {
+	local: Client;
+	/** The registered node this window shows, or null for this machine. */
+	current: string | null;
+	remoteHost: string | undefined;
+}) {
+	// The list costs a registry read on the server, and only the open menu shows it: read it when the menu first
+	// opens, not on every page load.
+	const [wanted, setWanted] = useState(false);
+	const { attachments, error, loading, pending, open } = useNodeAttach(local, wanted);
+	const ref = useRef<HTMLDetailsElement>(null);
+	useDetailsDismiss(ref);
+	const choices = nodeChoices(attachments, current);
+	const label = switcherLabel(current, remoteHost);
+	return (
+		<details
+			className="wb-menu wb-machine"
+			ref={ref}
+			onToggle={(event) => {
+				if (event.currentTarget.open) setWanted(true);
+			}}
+		>
+			<summary className="wb-action" aria-label={`Node: ${label}. Switch node`} title="Switch node">
+				<Icon name="system" />
+				<span className="wb-machine__label">{label}</span>
+				<Icon name="chevronDown" />
+			</summary>
+			{/* biome-ignore lint/a11y/useKeyWithClickEvents: the click only closes the menu after an item, whose own button handles the keyboard. */}
+			<div
+				className="wb-menu__panel wb-machine__panel"
+				role="menu"
+				aria-label="Nodes"
+				onClick={(event) => {
+					if (event.target instanceof Element && event.target.closest('[role="menuitem"]') && ref.current)
+						ref.current.open = false;
+				}}
+			>
+				{choices.map((choice) => {
+					const status = attachmentStatus(pending === choice.id ? "connecting" : choice.state);
+					return (
+						<button
+							type="button"
+							role="menuitem"
+							className="wb-menu__item wb-machine__item"
+							key={choice.id}
+							aria-current={choice.current ? "true" : undefined}
+							disabled={choice.current || pending !== null}
+							title={choice.detail ?? undefined}
+							onClick={() => {
+								if (choice.state === "local" || choice.state === "ready")
+									window.location.assign(nodeDestination(choice.state === "local" ? null : choice.id));
+								else open(choice.id);
+							}}
+						>
+							<Icon name={choice.current ? "check" : "system"} />
+							<span className="wb-machine__choice">
+								<strong>{choice.label}</strong>
+								<small>
+									{choice.host ? `${choice.host} · ` : ""}
+									<span data-tone={status.tone}>
+										<span aria-hidden="true">{TONE_GLYPHS[status.tone]}</span> {status.label}
+									</span>
+								</small>
+							</span>
+						</button>
+					);
+				})}
+				{loading ? <p className="wb-note">Reading nodes…</p> : null}
+				{error ? (
+					<p className="wb-note" role="alert">
+						Nodes unavailable.
+					</p>
+				) : null}
+				{!loading && !error && attachments.length === 0 ? (
+					<p className="wb-note">No registered nodes yet. Add one under Nodes.</p>
+				) : null}
+			</div>
+		</details>
+	);
+}

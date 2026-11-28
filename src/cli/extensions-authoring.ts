@@ -7,7 +7,7 @@ import { testExtensionPackage } from "../domains/extensions/authoring/test-runne
 import { validateExtensionPackage } from "../domains/extensions/authoring/validate.js";
 import { printError } from "./argv.js";
 
-const HELP = `pancode extensions init <id> [--template status|hook|panel|tool|workspace] [--dir <path>]
+const HELP = `pancode extensions init <id> [--template status|hook|panel|tool|workspace] [--out <path>]
 pancode extensions validate <path> [--json]
 pancode extensions test <path>
 `;
@@ -16,7 +16,7 @@ export async function runExtensionsAuthoring(argv: ReadonlyArray<string>): Promi
 	const [command, ...args] = argv;
 	let positional: string | undefined;
 	let template: string | undefined;
-	let dir: string | undefined;
+	let out: string | undefined;
 	let json = false;
 	try {
 		for (let index = 0; index < args.length; index++) {
@@ -29,12 +29,12 @@ export async function runExtensionsAuthoring(argv: ReadonlyArray<string>): Promi
 				json = true;
 				continue;
 			}
-			if (command === "init" && (arg === "--template" || arg === "--dir")) {
+			if (command === "init" && (arg === "--template" || arg === "--out")) {
 				const value = args[++index];
-				if (!value || value.startsWith("-") || (arg === "--template" ? template !== undefined : dir !== undefined))
+				if (!value || value.startsWith("-") || (arg === "--template" ? template !== undefined : out !== undefined))
 					throw new Error(`invalid ${arg}`);
 				if (arg === "--template") template = value;
-				else dir = value;
+				else out = value;
 				continue;
 			}
 			if (!arg || arg.startsWith("-") || positional) throw new Error(`unexpected argument: ${arg}`);
@@ -51,7 +51,7 @@ export async function runExtensionsAuthoring(argv: ReadonlyArray<string>): Promi
 		if (command === "init") {
 			const path = scaffoldExtension(positional, {
 				...(template === undefined ? {} : { template }),
-				...(dir === undefined ? {} : { dir }),
+				...(out === undefined ? {} : { dir: out }),
 			});
 			process.stdout.write(
 				`Created ${positional} (${template ?? "status"}) at ${path}\nNext: pancode extensions validate ${path}\nThen: pancode extensions test ${path}\n`,

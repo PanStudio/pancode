@@ -31,7 +31,7 @@ export async function conversationSteps(run: SmokeRun) {
 		// The project page's New task returns to the home composer for that project; the first message
 		// starts the task and opens its conversation.
 		await page.goto(run.workspaceUrl);
-		await page.locator("main button.primary", { hasText: "New task" }).click();
+		await page.locator("main button.primary", { hasText: "New session" }).click();
 		await page.waitForURL(`${origin}/`);
 		const firstField = page.getByLabel("Message PanCode", { exact: true });
 		await firstField.fill("Show the fixture findings with code and a diagram.");
@@ -369,7 +369,7 @@ export async function conversationSteps(run: SmokeRun) {
 		await originalField.dispose();
 	});
 	await step("route picker", async () => {
-		// Conversation controls use ACP config options, and saved scope alone can switch targets.
+		// Conversation controls use ACP config options, and saved scope alone can switch connections.
 		const route = page.locator(".route-picker");
 		// The model name, not only the thinking level, shows that it opens a choice.
 		assert.equal(await route.locator("summary .route-chip__text + .route-chip__caret").isVisible(), true);
@@ -383,7 +383,7 @@ export async function conversationSteps(run: SmokeRun) {
 		await route.locator("summary .route-chip__text").getByText("fixture-small", { exact: true }).waitFor();
 		assert.match(
 			(await route.locator("summary").getAttribute("title")) ?? "",
-			/Target: fixture\. Model: fixture-small\./,
+			/Connection: fixture\. Model: fixture-small\./,
 		);
 		await page.waitForFunction(() => !(document.querySelector(".route-picker") as HTMLDetailsElement).open);
 		assert.match((await route.locator("summary").getAttribute("title")) ?? "", /Thinking: high/);
@@ -408,11 +408,11 @@ export async function conversationSteps(run: SmokeRun) {
 		// The task's own actions sit in one Task actions menu in the top bar; working freedom is the
 		// composer's pill. The menu closes on Escape and hands focus back to its button.
 		await taskMenu.locator("summary").click();
-		await taskMenu.getByRole("menuitem", { name: "Rename task", exact: true }).waitFor();
-		await taskMenu.getByRole("menuitem", { name: "Close task", exact: true }).waitFor();
+		await taskMenu.getByRole("menuitem", { name: "Rename session", exact: true }).waitFor();
+		await taskMenu.getByRole("menuitem", { name: "Close session", exact: true }).waitFor();
 		await page
 			.locator(".composer")
-			.getByText("Working freedom for this task", { exact: true })
+			.getByText("Autonomy for this session", { exact: true })
 			.waitFor({ state: "attached" });
 		await check("session-controls");
 		const menuBounds = await taskMenu.locator(".wb-menu__panel").boundingBox();

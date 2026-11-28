@@ -67,7 +67,7 @@ function undeclaredMembers(rootPath: string, skills: string | undefined): string
 }
 
 /** Disk installation state, separate from the running session's resource snapshot. */
-export function installedSkillPackages(skills: ReadonlyArray<Skill>, cwd: string, trustImports = false) {
+export function installedSkillPacks(skills: ReadonlyArray<Skill>, cwd: string, trustImports = false) {
 	const snapshot = pluginSnapshotFor(cwd);
 	return listInstalledPlugins(cwd, { all: true })
 		.filter((pkg) => pkg.kind === "skill" || pkg.resources.skills)
@@ -126,6 +126,6 @@ export function installedSkillPackages(skills: ReadonlyArray<Skill>, cwd: string
 export function installedSkillNames(skills: ReadonlyArray<Skill>, cwd: string): Set<string> {
 	return new Set([
 		...skills.filter((skill) => skill.source === "pancode" || skill.source === "plugin").map((skill) => skill.name),
-		...installedSkillPackages(skills, cwd).flatMap((pkg) => pkg.names),
+		...installedSkillPacks(skills, cwd).flatMap((pkg) => pkg.names),
 	]);
 }

@@ -42,11 +42,11 @@ for (const role of ["chat", "fleet", "memory"] as const) {
 			file,
 			stringify({
 				version: 2,
-				targets: [
+				connections: [
 					{ id: "previous", runtime: "openai-compat", url: `${url}/previous`, defaultModel: "previous-model" },
 					{ id: "chosen", runtime: "openai-compat", url: `${url}/chosen`, defaultModel: "chosen-default" },
 				],
-				chat: { target: "previous", model: "previous-model" },
+				chat: { connection: "previous", model: "previous-model" },
 			}),
 		);
 		let inherit = false;
@@ -76,13 +76,13 @@ for (const role of ["chat", "fleet", "memory"] as const) {
 			return role === "chat" ? saved.chat : role === "fleet" ? saved.fleet.default : saved.context.memory;
 		};
 		await assignTarget(io, role);
-		assert.equal(route().target, "chosen");
+		assert.equal(route().connection, "chosen");
 		assert.equal(route().model, "chosen-other");
 		inherit = true;
 		await assignTarget(io, role);
 		assert.equal(route().model, null, "inheritance must remain null in the saved document");
 		updateSettings((settings) => {
-			const target = settings.targets.find((target) => target.id === "chosen");
+			const target = settings.connections.find((target) => target.id === "chosen");
 			assert.ok(target);
 			target.defaultModel = "chosen-other";
 		});
@@ -122,7 +122,7 @@ test("memory offers the chat route even when no eligible connections exist", asy
 		},
 		"memory",
 	);
-	assert.equal(readSettings().context.memory.target, null);
+	assert.equal(readSettings().context.memory.connection, null);
 	assert.equal(readSettings().context.memory.model, null);
 });
 
@@ -134,7 +134,7 @@ test("an unavailable inventory without a configured default cannot invent a rout
 	mkdirSync(join(home.dir, "config"), { recursive: true });
 	writeFileSync(
 		file,
-		stringify({ version: 2, targets: [{ id: "empty", runtime: "openai-compat", url: "http://127.0.0.1:1" }] }),
+		stringify({ version: 2, connections: [{ id: "empty", runtime: "openai-compat", url: "http://127.0.0.1:1" }] }),
 	);
 	const before = readFileSync(file, "utf8");
 	let prompts = 0;
@@ -173,7 +173,7 @@ test("fleet routing to a connection on an unregistered runtime warns and saves n
 	mkdirSync(join(home.dir, "config"), { recursive: true });
 	writeFileSync(
 		file,
-		stringify({ version: 2, targets: [{ id: "box", runtime: "no-such-runtime", url: "http://127.0.0.1:1" }] }),
+		stringify({ version: 2, connections: [{ id: "box", runtime: "no-such-runtime", url: "http://127.0.0.1:1" }] }),
 	);
 	const before = readFileSync(file, "utf8");
 	let warning = "";

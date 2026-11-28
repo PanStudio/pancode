@@ -18,24 +18,24 @@ import { isPluginId } from "../../core/plugin-id.js";
 import { isRecord } from "../../core/type-guards.js";
 import { isSemanticVersion } from "../extensions/compatibility.js";
 import { PLUGIN_EXTENSION_KEY, PLUGIN_SCHEMA } from "../plugins/index.js";
-import type { ForeignPackageFormat, PluginComponent } from "../plugins/types.js";
+import type { ForeignPackFormat, PluginComponent } from "../plugins/types.js";
 import { nestedSkillDirectories } from "../resources/skills/bare-skill.js";
 import { inventoryText } from "./inventory.js";
 import { type ProjectedResource, projectAgent, projectPrompt, projectSkill, safeName, tree } from "./projection.js";
 
 /** A manifest-bearing vendor plugin. A bare skill has no manifest to normalize and takes its own route. */
-export type ForeignPluginFormat = Exclude<ForeignPackageFormat, "portable" | "agent-skill">;
+export type ForeignPluginFormat = Exclude<ForeignPackFormat, "portable" | "agent-skill">;
 
-const FOREIGN_MANIFESTS: ReadonlyArray<{ format: ForeignPackageFormat; path: string }> = [
+const FOREIGN_MANIFESTS: ReadonlyArray<{ format: ForeignPackFormat; path: string }> = [
 	{ format: "portable", path: "plugin.json" },
 	{ format: "claude-code", path: ".claude-plugin/plugin.json" },
 	{ format: "codex", path: ".codex-plugin/plugin.json" },
 ];
 
 export interface ForeignPluginDetection {
-	format: ForeignPackageFormat | "none";
+	format: ForeignPackFormat | "none";
 	manifestPath?: string;
-	candidates: Array<{ format: ForeignPackageFormat; path: string }>;
+	candidates: Array<{ format: ForeignPackFormat; path: string }>;
 	ambiguous: boolean;
 	diagnostics: string[];
 }

@@ -1,0 +1,607 @@
+// SPDX-License-Identifier: LicenseRef-PanCode-1.0
+// SPDX-FileCopyrightText: 2026 Anthony Kougkas
+import { useQuery } from "@tanstack/react-query";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
+import { Link, NavLink, useLocation } from "react-router";
+import type { SessionOverviewItem } from "../../contracts/session-overview.js";
+import type { Workspace } from "../../contracts/sessions.js";
+import { type Client, problemCode } from "../api/client.js";
+import { formatTime } from "../api/clock.js";
+import type { ConnectionState } from "../api/events.js";
+import { sessionHistoryQuery, systemQuery, workspacesQuery } from "../api/queries.js";
+import { liveElsewhereLabel } from "../chat/live-elsewhere-model.js";
+import { Icon } from "../design/icons.js";
+import { TONE_GLYPHS } from "../design/status.js";
+import { focusComposerSoon } from "../interaction/focus-return.js";
+import { moveRowFocus } from "../interaction/row-keys.js";
+import { platformLabel, recalledSystem, rememberedSystem, systemStatus } from "../pages/system-model.js";
+import { countRender } from "../render/render-probe.js";
+import { chordHint } from "./chords.js";
+import { ExploreDrawer } from "./ExploreDrawer.js";
+import { InlineRename } from "./InlineRename.js";
+import { Menu, MenuItem } from "./Menu.js";
+import { NodeSwitcher } from "./NodeSwitcher.js";
+import { PancodeEmptyMark, PancodeLogo, PancodePulse, PancodeWordmark, PULSE_SIZE } from "./PancodeMark.js";
+import { SettingsSidebar } from "./SettingsSidebar.js";
+import {
+	type SessionActions,
+	useDeleteSession,
+	useMinuteClock,
+	useRenameSession,
+	useSessionOverview,
+} from "./sessions.js";
+import {
+	isSettingsPath,
+	STATE_LABELS,
+	sessionIdFromPath,
+	shortAge,
+	showsSettingsRail,
+	systemDetail,
+	type TaskRow,
+	taskRows,
+	taskRowTitle,
+	visibleTaskCount,
+	workspacesByRecency,
+} from "./shell-model.js";
+import { setThemeChoice, themeSwitchLabel, useTheme } from "./theme.js";
+import { useSessionIntent } from "./use-session-intent.js";
+import "./session-sidebar-actions.css";
+
+const TASKS_PER_PROJECT = 6;
+const PROJECTS_SHOWN = 10;
+const moveTaskFocus = moveRowFocus(".wb-task__main");
+export function SessionSidebar({
+	client,
+	local,
+	remoteHost,
+	version,
+	platform,
+	actions,
+	connection,
+	activeWorkspaceId,
+	onOpenWorkspace,
+	onSearch,
+	onToggle,
+	onHelp,
+	onNavigate,
+}: {
+	client: Client;
+	/** The app on this machine, which lists the machines whichever node this window shows. */
+	local: Client;
+	remoteHost: string | undefined;
+	version: string | undefined;
+	platform: string | undefined;
+	actions: SessionActions;
+	connection: ConnectionState;
+	activeWorkspaceId: string | null;
+	onOpenWorkspace: () => void;
+	/** Opens the palette; the Search button is its opener, so Esc returns there even when a click did not focus it. */
+	onSearch: (opener: HTMLElement) => void;
+	onToggle: () => void;
+	onHelp: () => void;
+	/** Called after navigation to finish any open navigation interaction. */
+	onNavigate: () => void;
+}) {
+	const theme = useTheme();
+	countRender("task-sidebar");
+	const location = useLocation();
+	const [exploring, setExploring] = useState(false);
+	// The settings rail lists the hub, Fleet and the other inspection pages, so it stays up on them.
+	const inSettings = useRef<boolean | undefined>(undefined);
+	const settings = showsSettingsRail(location.pathname, inSettings.current);
+	inSettings.current = settings;
+	const backTo = useRef("/");
+	useEffect(() => {
+		if (!isSettingsPath(location.pathname)) backTo.current = `${location.pathname}${location.search}`;
+	}, [location.pathname, location.search]);
+	const now = useMinuteClock();
+	const [shown, setShown] = useState(PROJECTS_SHOWN);
+	const workspaces = useQuery(workspacesQuery(client));
+	const overview = useSessionOverview(client);
+	// The installation check runs once the app is connected and idle, so the footer states a result, not "Not checked".
+	const [checkSystem, setCheckSystem] = useState(false);
+	const connected = connection === "Connected";
+	useEffect(() => {
+		if (!connected || checkSystem) return;
+		return afterBootIdle(() => setCheckSystem(true));
+	}, [connected, checkSystem]);
+	const system = useQuery({
+		...systemQuery(client),
+		enabled: checkSystem,
+		staleTime: 60_000,
+		refetchOnWindowFocus: false,
+		retry: false,
+		meta: { errorSurface: "inline" },
+	});
+	// A reload in this tab states its last result while the idle recheck runs, so it never flashes Connecting or Checking.
+	const [recalled] = useState(() => {
+		try {
+			return recalledSystem(sessionStorage.getItem(SYSTEM_STATUS_KEY));
+		} catch {
+			return undefined;
+		}
+	});
+	useEffect(() => {
+		if (!system.data) return;
+		try {
+			sessionStorage.setItem(SYSTEM_STATUS_KEY, rememberedSystem(system.data, platform));
+		} catch {
+			// Storage may be full or disabled; the next load checks again.
+		}
+	}, [system.data, platform]);
+	const status = systemStatus(connection, system.data?.findings ?? recalled?.findings, system.isError, true);
+	// Until the runtime reports its platform, the recalled one stands in, so a reload never reads "System Local" first.
+	const shownPlatform = platform ?? recalled?.platform;
+	const platformName = platformLabel(shownPlatform);
+	const checkedAt = system.data?.checkedAt ?? recalled?.checkedAt;
+	const runtimeDetail = systemDetail(shownPlatform, status.detail, checkedAt ? formatTime(checkedAt) : null);
+	const activeTask = sessionIdFromPath(location.pathname);
+	const ordered = useMemo(
+		() => workspacesByRecency(workspaces.data ?? [], activeWorkspaceId),
+		[workspaces.data, activeWorkspaceId],
+	);
+	return (
+		<div className="wb-side">
+			<div className="wb-side__top">
+				<Link
+					className="wb-brand"
+					to="/"
+					onClick={onNavigate}
+					aria-label={version ? `PanCode ${version} home` : "PanCode home"}
+				>
+					<PancodeLogo size={20} />
+					<span className="wb-brand__identity">
+						<PancodeWordmark />
+						{version ? (
+							<span className="wb-brand__version" title={`Running PanCode ${version}`}>
+								v{version}
+							</span>
+						) : null}
+					</span>
+				</Link>
+				<button
+					type="button"
+					className="wb-icon"
+					onClick={onToggle}
+					aria-label="Collapse sidebar"
+					title={`Collapse sidebar (${chordHint("sidebar")})`}
+				>
+					<Icon name="sidebar" />
+				</button>
+			</div>
+
+			<NodeSwitcher local={local} current={client.machine} remoteHost={remoteHost} />
+
+			<nav className="wb-side__discover" aria-label="Find and explore">
+				<button
+					type="button"
+					className="wb-action"
+					onClick={(event) => onSearch(event.currentTarget)}
+					title="Search sessions and commands"
+				>
+					<Icon name="search" />
+					<span>Search</span>
+				</button>
+				<button
+					type="button"
+					className="wb-action"
+					aria-haspopup="dialog"
+					aria-expanded={exploring}
+					onClick={() => setExploring(true)}
+				>
+					<Icon name="overview" />
+					<span>Explore</span>
+				</button>
+			</nav>
+			{exploring ? (
+				<ExploreDrawer
+					activeWorkspaceId={activeWorkspaceId}
+					onClose={() => setExploring(false)}
+					onNavigate={() => {
+						setExploring(false);
+						onNavigate();
+					}}
+				/>
+			) : null}
+
+			{settings ? (
+				<div className="wb-side__panel">
+					<Link className="wb-back" to={backTo.current} onClick={onNavigate}>
+						<Icon name="arrowLeft" /> Back to work
+					</Link>
+					<SettingsSidebar activeWorkspaceId={activeWorkspaceId} onNavigate={onNavigate} onHelp={onHelp} />
+				</div>
+			) : (
+				<div className="wb-side__panel">
+					<nav className="wb-side__actions" aria-label="Start">
+						<button
+							type="button"
+							className="wb-action wb-action--primary"
+							disabled={actions.launch.busy}
+							onClick={() => {
+								actions.newTask(activeWorkspaceId ?? undefined);
+								focusComposerSoon();
+							}}
+							title="Open your session composer"
+						>
+							{actions.launch.busy ? <PancodePulse size={PULSE_SIZE.row} /> : <Icon name="compose" />}
+							<span>{actions.launch.busy ? "Starting…" : "New session"}</span>
+						</button>
+						<NavLink to="/sessions" end className="wb-action" onClick={onNavigate}>
+							<Icon name="sessions" />
+							<span>Sessions</span>
+						</NavLink>
+						<button type="button" className="wb-action" onClick={onOpenWorkspace}>
+							<Icon name="folderOpen" />
+							<span>Open project</span>
+						</button>
+					</nav>
+
+					{/* Up and Down (j and k) move between task rows, as Help says. */}
+					{/* biome-ignore lint/a11y/noNoninteractiveTabindex: keyboard users scroll the task list independently. */}
+					<section className="wb-side__tasks" tabIndex={0} aria-label="Sessions by project" onKeyDown={moveTaskFocus}>
+						<div className="wb-side__heading">
+							<h2>Projects</h2>
+						</div>
+
+						{workspaces.isPending ? <p className="wb-note">Loading projects…</p> : null}
+						{workspaces.error ? (
+							<p className="wb-note" role="alert">
+								Projects unavailable.{" "}
+								<button type="button" className="wb-link" onClick={() => void workspaces.refetch()}>
+									Retry
+								</button>
+							</p>
+						) : null}
+						{!workspaces.isPending && !workspaces.error && ordered.length === 0 ? (
+							<div className="wb-side__empty">
+								<PancodeEmptyMark />
+								<p className="wb-note">Open a project to start your first session.</p>
+							</div>
+						) : null}
+						{ordered.slice(0, shown).map((workspace) => (
+							<ProjectGroup
+								key={workspace.id}
+								client={client}
+								workspace={workspace}
+								sessions={overview.data?.sessions ?? []}
+								current={workspace.id === activeWorkspaceId}
+								activeTask={activeTask}
+								actions={actions}
+								now={now}
+								onNavigate={onNavigate}
+							/>
+						))}
+						{ordered.length > shown ? (
+							<button type="button" className="wb-more" onClick={() => setShown((count) => count + PROJECTS_SHOWN)}>
+								Show {ordered.length - shown} more {ordered.length - shown === 1 ? "workspace" : "workspaces"}
+							</button>
+						) : null}
+					</section>
+				</div>
+			)}
+			<div className="wb-side__foot">
+				<Link
+					className="wb-runtime"
+					to="/system"
+					onClick={onNavigate}
+					aria-label={`System health: ${status.label}. Open system details`}
+					title={runtimeDetail}
+				>
+					<Icon name="system" />
+					<span className="wb-runtime__identity">
+						<strong>
+							System <span className="wb-runtime__platform">{platformName}</span>
+						</strong>
+						<span className="wb-status" role="status" data-tone={status.tone}>
+							<span className="wb-status__glyph" aria-hidden="true">
+								{TONE_GLYPHS[status.tone]}
+							</span>
+							<span className="wb-status__label">{status.label}</span>
+						</span>
+					</span>
+				</Link>
+				<button type="button" className="wb-icon" aria-label="Open help" title="Help and shortcuts" onClick={onHelp}>
+					<Icon name="docs" />
+				</button>
+				<button
+					type="button"
+					className="wb-icon"
+					aria-label={themeSwitchLabel(theme.resolved)}
+					title={themeSwitchLabel(theme.resolved)}
+					onClick={() => setThemeChoice(theme.resolved === "dark" ? "light" : "dark")}
+				>
+					<Icon name={theme.resolved === "dark" ? "sun" : "moon"} />
+				</button>
+				<NavLink to="/settings/general" className="wb-icon" aria-label="Settings" title="Settings" onClick={onNavigate}>
+					<Icon name="gear" />
+				</NavLink>
+			</div>
+		</div>
+	);
+}
+
+function ProjectGroup({
+	client,
+	workspace,
+	sessions,
+	current,
+	activeTask,
+	actions,
+	now,
+	onNavigate,
+}: {
+	client: Client;
+	workspace: Workspace;
+	sessions: readonly SessionOverviewItem[];
+	current: boolean;
+	activeTask: string | null;
+	actions: SessionActions;
+	now: number;
+	onNavigate: () => void;
+}) {
+	const listId = useId();
+	const [open, setOpen] = useState<boolean | null>(null);
+	const [limit, setLimit] = useState(TASKS_PER_PROJECT);
+	const expanded = open ?? current;
+	// A project the operator never opened still lists its saved tasks once it is expanded or searched.
+	const history = useQuery({
+		...sessionHistoryQuery(client, workspace.id),
+		enabled: expanded,
+	});
+	const rows = useMemo(
+		() => taskRows(workspace.id, sessions, history.data ?? []),
+		[workspace.id, sessions, history.data],
+	);
+	// Keep the selected task visible even when it is older than the page of rows shown.
+	const visible = visibleTaskCount(limit, rows, activeTask);
+	useEffect(() => {
+		if (current) setOpen((value) => value ?? true);
+	}, [current]);
+	const showing = expanded;
+	return (
+		<section className="wb-project" data-current={current}>
+			<div className="wb-project__head">
+				<button
+					type="button"
+					className="wb-project__toggle"
+					aria-expanded={showing}
+					aria-controls={listId}
+					onClick={() => setOpen(!showing)}
+					title={workspace.path}
+				>
+					<Icon name={showing ? "folderOpen" : "folder"} />
+					<span>{workspace.name}</span>
+				</button>
+				<button
+					type="button"
+					className="wb-icon wb-icon--small wb-project__new"
+					aria-label={`New session in ${workspace.name}`}
+					title={`New session in ${workspace.name}`}
+					disabled={actions.launch.busy}
+					onClick={() => {
+						actions.newTask(workspace.id);
+						focusComposerSoon();
+					}}
+				>
+					<Icon name="plus" />
+				</button>
+			</div>
+			{showing ? (
+				<ul className="wb-tasks" id={listId}>
+					{rows.slice(0, visible).map((row) => (
+						<li key={row.id}>
+							<TaskItem
+								client={client}
+								row={row}
+								selected={row.id === activeTask}
+								actions={actions}
+								now={now}
+								onNavigate={onNavigate}
+							/>
+						</li>
+					))}
+					{history.isPending && history.fetchStatus !== "idle" && rows.length === 0 ? (
+						<li className="wb-note">Loading…</li>
+					) : null}
+					{history.isError ? (
+						<li className="wb-note">
+							{/* A list item may not carry the status role; the note inside it can. */}
+							<span role="status">
+								{problemCode(history.error) === "unsupported" ? (
+									"Saved sessions aren't available with this connection."
+								) : (
+									<>
+										Saved sessions could not be refreshed.{" "}
+										<button
+											type="button"
+											className="wb-link"
+											disabled={history.isFetching}
+											onClick={() => void history.refetch()}
+										>
+											{history.isFetching ? "Checking…" : "Try again"}
+										</button>
+									</>
+								)}
+							</span>
+						</li>
+					) : null}
+					<li>
+						<Link to={`/workspaces/${workspace.id}/sessions`} className="wb-more wb-project__history" onClick={onNavigate}>
+							View project work
+							<Icon name="chevronRight" />
+						</Link>
+					</li>
+					{!history.isPending && !history.isError && rows.length === 0 ? (
+						<li className="wb-note">No sessions yet.</li>
+					) : null}
+					{rows.length > visible ? (
+						<li>
+							<button type="button" className="wb-more" onClick={() => setLimit(visible + TASKS_PER_PROJECT)}>
+								Show {rows.length - visible} more
+							</button>
+						</li>
+					) : null}
+				</ul>
+			) : null}
+		</section>
+	);
+}
+
+function TaskItem({
+	client,
+	row,
+	selected,
+	actions,
+	now,
+	onNavigate,
+}: {
+	client: Client;
+	row: TaskRow;
+	selected: boolean;
+	actions: SessionActions;
+	now: number;
+	onNavigate: () => void;
+}) {
+	const rename = useRenameSession(client);
+	const remove = useDeleteSession(client);
+	const intent = useSessionIntent(client, row.id, row.open && !selected);
+	const [editing, setEditing] = useState(false);
+	const [confirming, setConfirming] = useState(false);
+	const age = shortAge(row.at, now);
+	const label = STATE_LABELS[row.state];
+	const busy = actions.resuming === row.id || actions.controlling(row.id);
+	const glyph =
+		row.state === "working" || row.state === "starting" || actions.resuming === row.id ? (
+			<PancodePulse size={PULSE_SIZE.row} />
+		) : row.state === "approval" || row.state === "question" || row.state === "unknown" ? (
+			<span className="wb-dot wb-dot--approval" aria-hidden="true" />
+		) : row.state === "failed" ? (
+			<span className="wb-dot wb-dot--failed" aria-hidden="true" />
+		) : null;
+	const body = (
+		<>
+			<span className="wb-task__glyph">{glyph}</span>
+			<span className="wb-task__title">{actions.resuming === row.id ? "Opening…" : row.title}</span>
+			{/* A queued turn says so in place of the age: nothing else on the row would show it is not running. */}
+			{row.liveElsewhere ? (
+				<span className="wb-task__age">Live</span>
+			) : row.state === "waiting" || row.state === "paused" ? (
+				<span className="wb-task__age">{label}</span>
+			) : (
+				<>
+					{label ? <span className="sr-only">{label}</span> : null}
+					{age ? <span className="wb-task__age">{age}</span> : null}
+				</>
+			)}
+		</>
+	);
+	const elsewhere = row.liveElsewhere
+		? liveElsewhereLabel(row.liveElsewhere, formatTime(row.liveElsewhere.since))
+		: null;
+	const title = taskRowTitle(row.title, elsewhere, label);
+	const working = row.state === "working" || row.state === "starting";
+	if (confirming)
+		return (
+			<div className="wb-task" data-selected={selected} data-state={row.state}>
+				<fieldset className="wb-task__confirm">
+					<legend className="sr-only">Delete {row.title}</legend>
+					<span>Delete for good?</span>
+					<button
+						type="button"
+						className="wb-task__delete"
+						disabled={remove.isPending}
+						onClick={() =>
+							remove.mutate({ sessionId: row.id, workspaceId: row.workspaceId }, { onSettled: () => setConfirming(false) })
+						}
+					>
+						{remove.isPending ? "Deleting…" : "Delete"}
+					</button>
+					<button
+						type="button"
+						onClick={() => setConfirming(false)}
+						// biome-ignore lint/a11y/noAutofocus: the operator just asked to delete; the safe answer takes focus.
+						autoFocus
+					>
+						Keep
+					</button>
+				</fieldset>
+			</div>
+		);
+	return (
+		<div className="wb-task" data-selected={selected} data-state={row.state} data-editing={editing}>
+			{editing ? (
+				<div className="wb-task__main">
+					<span className="wb-task__glyph">{glyph}</span>
+					<InlineRename
+						value={row.title}
+						label={`Rename ${row.title}`}
+						onCancel={() => setEditing(false)}
+						onCommit={(next) => {
+							setEditing(false);
+							rename.mutate({ sessionId: row.id, workspaceId: row.workspaceId, label: next });
+						}}
+					/>
+				</div>
+			) : row.open || row.liveElsewhere ? (
+				<NavLink to={`/sessions/${row.id}`} className="wb-task__main" title={title} onClick={onNavigate} {...intent}>
+					{body}
+				</NavLink>
+			) : (
+				<button
+					type="button"
+					className="wb-task__main"
+					title={`${title} · Load this saved session`}
+					disabled={busy || actions.launch.busy}
+					onClick={() => actions.resume(row.id, row.workspaceId)}
+				>
+					{body}
+				</button>
+			)}
+			{editing ? null : (
+				<div className="wb-task__menu">
+					<Menu label={`Actions for ${row.title}`} float>
+						<MenuItem icon="pencil" disabled={busy} onClick={() => setEditing(true)}>
+							Rename
+						</MenuItem>
+						<MenuItem icon="external" disabled={busy} onClick={() => actions.openWindow(row.id, row.workspaceId, row.open)}>
+							Open in new window
+						</MenuItem>
+						{row.open ? (
+							<MenuItem
+								icon="close"
+								disabled={busy || working}
+								onClick={() =>
+									actions.close({ id: row.id, workspaceId: row.workspaceId, title: row.title, currentTurnId: null })
+								}
+							>
+								Close session
+							</MenuItem>
+						) : (
+							<MenuItem icon="trash" tone="danger" disabled={busy} onClick={() => setConfirming(true)}>
+								Delete…
+							</MenuItem>
+						)}
+					</Menu>
+				</div>
+			)}
+		</div>
+	);
+}
+
+const SYSTEM_STATUS_KEY = "pancode-system-status";
+// The check answers in tens of milliseconds; the wait only keeps it behind the first page's own reads.
+const SYSTEM_CHECK_DELAY_MS = 1_000;
+
+/** Runs `run` a few seconds after boot, when the browser is idle; returns the cancel. */
+function afterBootIdle(run: () => void): () => void {
+	let idle: number | null = null;
+	const timer = setTimeout(() => {
+		if (typeof requestIdleCallback === "function") idle = requestIdleCallback(run, { timeout: 5_000 });
+		else run();
+	}, SYSTEM_CHECK_DELAY_MS);
+	return () => {
+		clearTimeout(timer);
+		if (idle !== null) cancelIdleCallback(idle);
+	};
+}

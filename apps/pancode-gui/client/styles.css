@@ -510,7 +510,7 @@ nav a:hover {
 	overflow-wrap: anywhere;
 }
 
-/* Toolchain inventory */
+/* Programs inventory */
 .section-rule {
 	display: grid;
 	grid-template-columns: 1fr 1fr;

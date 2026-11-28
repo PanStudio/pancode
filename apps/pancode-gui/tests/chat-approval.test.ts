@@ -296,8 +296,8 @@ test("a shell-egress ask describes a session network grant rather than a one-tim
 	assert.deepEqual(
 		actions.map((action) => [action.decision, action.label]),
 		[
-			["reject", "Reject"],
-			["reject-and-stop", "Reject and stop the turn"],
+			["reject", "Deny"],
+			["reject-and-stop", "Deny and stop"],
 			["allow-once", "Allow for this session"],
 		],
 	);
@@ -459,7 +459,7 @@ test("progress is a working run, not a phase of its own, and a failure carries i
 	assert.equal(fleetSummaryLabel(runs), "Fleet · 2 running of 3");
 });
 
-test("a stopped worker reads as stopped, never as a failure (inspection F10)", () => {
+test("a canceled worker reads as canceled, never as a failure (inspection F10)", () => {
 	const runs = foldFleetRuns([
 		fact("fleet.started", { runId: "r1", agentId: "builder" }),
 		fact("fleet.failed", {
@@ -472,17 +472,17 @@ test("a stopped worker reads as stopped, never as a failure (inspection F10)", (
 		}),
 		fact("fleet.failed", { runId: "r2", agentId: "judge", outcome: "failed", reason: "failed", durationMs: 12 }),
 	]);
-	const [stopped, failed] = runs;
-	assert.ok(stopped && failed);
-	assert.equal(stopped.state, "stopped");
-	assert.ok(!isLiveRun(stopped));
-	assert.equal(fleetRunDetail(stopped), "Stopped · operator abort · 2.5s");
+	const [canceled, failed] = runs;
+	assert.ok(canceled && failed);
+	assert.equal(canceled.state, "canceled");
+	assert.ok(!isLiveRun(canceled));
+	assert.equal(fleetRunDetail(canceled), "Canceled · operator abort · 2.5s");
 	assert.equal(failed.state, "failed");
 	const presented = presentFleetFact({
 		type: "fleet.failed",
 		payload: { outcome: "cancelled", reason: "operator_cancel" },
 	});
-	assert.deepEqual([presented.label, presented.tone], ["Run stopped", "neutral"]);
+	assert.deepEqual([presented.label, presented.tone], ["Run canceled", "neutral"]);
 	assert.equal(presentFleetFact({ type: "fleet.failed", payload: { outcome: "failed" } }).label, "Run failed");
 });
 
@@ -632,14 +632,14 @@ test("a failed run's reason names its code once when the detail already says it 
 
 // `accepted` means the engine queued the request on the worker's stdin. Neither sentence may
 // claim the worker read it or that the run has already stopped.
-test("an accepted steer says queued or requested, never delivered or stopped", () => {
+test("an accepted steer says queued or requested, never delivered or canceled", () => {
 	const guide = steerOutcome("guide", { accepted: true });
 	assert.equal(guide.tone, "success");
 	assert.match(guide.message, /queued/i);
 	assert.doesNotMatch(guide.message, /delivered|received/i);
 	const cancel = steerOutcome("cancel", { accepted: true });
 	assert.match(cancel.message, /requested/i);
-	assert.doesNotMatch(cancel.message, /\bstopped\b/i);
+	assert.doesNotMatch(cancel.message, /\b(stopped|canceled)\b/i);
 });
 
 // The reason vocabulary is the engine's (`dispatchSteerReason` in src/acp/server-session-input.ts).
@@ -927,7 +927,7 @@ test("a sandbox escape's session option is drawn with its scope and answers with
 	const scope = "script /repo/check.sh (sha256:0123456789ab) · cwd /repo · no env assignments";
 	const options = [
 		...CHOICES,
-		{ optionId: "allow-session-scope", kind: "allow_always", name: `Approve for this session: ${scope}` },
+		{ optionId: "allow-session-scope", kind: "allow_always", name: `Allow for this session: ${scope}` },
 	];
 	const response = permissions.request("s-1", "turn-1", { sessionId: "s-1", toolCall: {}, options }, ROW);
 	const card = published[0]?.[1];

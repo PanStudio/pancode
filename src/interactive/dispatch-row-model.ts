@@ -348,8 +348,8 @@ export function dispatchStatusPresentation(
 				token: "dispatchAction",
 			};
 		case "cancelling":
-			// The card and the strip say stopping while the process exits, so the board's status cell does too.
-			return { glyph: GLYPH.cancelled, label: "stopping", token: "warning" };
+			// The card and the strip say canceling while the process exits, so the board's status cell does too.
+			return { glyph: GLYPH.cancelled, label: "canceling", token: "warning" };
 		case "retrying":
 			return { glyph: GLYPH.phaseRetry, label: "retrying", token: "warning" };
 		case "completed":
@@ -360,7 +360,7 @@ export function dispatchStatusPresentation(
 			// The watchdog stopped a worker whose heartbeat went silent: the inline card's words, not the ledger's.
 			return { glyph: GLYPH.error, label: "stopped responding", token: "error" };
 		case "aborted":
-			return { glyph: GLYPH.cancelled, label: "cancelled", token: "annotation" };
+			return { glyph: GLYPH.cancelled, label: "canceled", token: "annotation" };
 		case "stale":
 			return { glyph: GLYPH.warnInline, label: "not responding", token: "warning" };
 		case "enqueued":

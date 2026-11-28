@@ -76,7 +76,7 @@ export const SHIPPED_RESILIENCE_COOLDOWN_MS = DEFAULT_SETTINGS.fleet.retry.route
 type SettingScope = "live" | "restart";
 const RESTART_REQUIRED_IDS = new Set<string>([
 	"fleet.concurrency",
-	"integrations.runtimePlugins",
+	"integrations.providerPackages",
 	"interface.mode",
 	"interface.fullscreenScrollbar",
 	// The consult tool is registered once, at startup, with the engine chosen then.
@@ -96,12 +96,12 @@ export type EntrySettingId =
 	| `fleet.profiles.${string}`
 	| `fleet.agentProfiles.${string}`
 	| "systemOne.use"
-	| `targets.${string}`
+	| `connections.${string}`
 	| `fleet.nodes.${string}`
 	| `fleet.endpoints.${string}`;
 export type EditableSettingId = keyof typeof SETTINGS_LABELS_BY_ID | EntrySettingId;
 export type GroupHeaderId = `settings.group.${string}`;
-type TargetsCtaId = "targets.add-cta" | "targets.url-cta";
+type TargetsCtaId = "connections.add-cta" | "connections.url-cta";
 export type SettingsCenterRowId =
 	| EditableSettingId
 	| GroupHeaderId

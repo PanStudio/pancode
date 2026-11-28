@@ -77,7 +77,7 @@ export function createTurnContextBudget(shared: TurnContextScope) {
 			const snapshot = shared.currentContextSnapshot;
 			return sha256Json([
 				"historical/1",
-				settings.chat?.target ?? null,
+				settings.chat?.connection ?? null,
 				settings.chat?.model ?? null,
 				snapshot?.snapshotId ?? null,
 				snapshot ? snapshotInputTokens(snapshot) : null,
@@ -154,7 +154,7 @@ export function createTurnContextBudget(shared: TurnContextScope) {
 	): LiveBudgetAccounting => {
 		// Inspection uses already-loaded capture facts, never a diagnostic-ledger scan.
 		const sameRoute =
-			!snapshot || (snapshot.providerId === settings.chat?.target && snapshot.modelId === settings.chat?.model);
+			!snapshot || (snapshot.providerId === settings.chat?.connection && snapshot.modelId === settings.chat?.model);
 		// A saved request from model A cannot acquire model B's window while
 		// retaining A's identity and input measurement. Keep that capture coherent.
 		const window =
@@ -166,7 +166,7 @@ export function createTurnContextBudget(shared: TurnContextScope) {
 				: shared.windowWithoutRuntime();
 		const pendingTokens = shared.pendingUserInputTokens();
 		return {
-			targetId: snapshot?.providerId ?? settings.chat?.target ?? null,
+			targetId: snapshot?.providerId ?? settings.chat?.connection ?? null,
 			runtimeId: snapshot?.runtimeId ?? null,
 			modelId: snapshot?.modelId ?? settings.chat?.model ?? null,
 			modelApi: null,
@@ -233,7 +233,7 @@ export function createTurnContextBudget(shared: TurnContextScope) {
 			settings.context.compaction.maxTokens,
 			agentRuntime?.agent.state.model ??
 				getCatalogModelForRuntime(
-					accounting.runtimeId ?? settings.targets.find((target) => target.id === accounting.targetId)?.runtime ?? "",
+					accounting.runtimeId ?? settings.connections.find((target) => target.id === accounting.targetId)?.runtime ?? "",
 					accounting.modelId ?? "",
 				),
 		);

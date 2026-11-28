@@ -240,7 +240,7 @@ describe("job continuation at yolo (#445)", () => {
 		const host = make(hanging(BUDGET, counts));
 		const job = await host.create(finalMainJob, owner);
 		await advance(host);
-		await host.control(job.id, "cancel", owner);
+		await host.control(job.id, "cancel", owner, { now: true });
 		await advance(host);
 		deepStrictEqual(resumed, []);
 		strictEqual(counts.runs, 1);
@@ -600,7 +600,7 @@ describe("job continuation at yolo (#445)", () => {
 		for (let i = 0; i < 6; i++) await advance(host, 1000);
 		strictEqual(wakes, 1);
 		const atCancel = pollCount;
-		await host.control(job.id, "cancel", owner);
+		await host.control(job.id, "cancel", owner, { now: true });
 		for (let i = 0; i < 5; i++) await advance(host, 1000);
 		strictEqual(pollCount, atCancel);
 		strictEqual(wakes, 1);
@@ -622,7 +622,7 @@ describe("job continuation at yolo (#445)", () => {
 		strictEqual(requests.length, 1);
 		match(requests[0]?.text ?? "", /failed 5 polls in a row and is still polling/u);
 		match(requests[0]?.text ?? "", /KeyError: FAKE_CI_ARM/u);
-		match(requests[0]?.text ?? "", /action stop/u);
+		match(requests[0]?.text ?? "", /action cancel \(without now: true\)/u);
 		match(requests[0]?.notice ?? "", /Waking the main turn because autonomy is yolo/u);
 	});
 

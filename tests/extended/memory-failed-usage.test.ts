@@ -143,8 +143,8 @@ for (const ending of ["error", "aborted", "stop", "no-usage"] as const) {
 				},
 			});
 			const settings = structuredClone(DEFAULT_SETTINGS);
-			settings.targets = [{ id: "origin-target", runtime: "openai-compat", defaultModel: model.id }];
-			settings.context.memory.target = "origin-target";
+			settings.connections = [{ id: "origin-target", runtime: "openai-compat", defaultModel: model.id }];
+			settings.context.memory.connection = "origin-target";
 			settings.context.memory.model = model.id;
 			const providers = dispatchStubContext({
 				settings,
@@ -281,13 +281,13 @@ for (const unavailable of ["available", "down", "missing-model", "missing-creden
 		const env = await isolatePancodeEnv("pancode-memory-route-");
 		t.after(() => env.restore());
 		const settings = structuredClone(DEFAULT_SETTINGS);
-		settings.targets = [
+		settings.connections = [
 			{ id: "memory", runtime: "openai-compat", url: "http://gateway.invalid:4000", defaultModel: "memory-model" },
 			{ id: "chat", runtime: "openai-compat", url: "http://gateway.invalid:4000", defaultModel: "chat-model" },
 		];
-		settings.context.memory.target = "memory";
+		settings.context.memory.connection = "memory";
 		settings.context.memory.model = "memory-model";
-		settings.chat.target = "chat";
+		settings.chat.connection = "chat";
 		settings.chat.model = "chat-model";
 		const faux = createEngineFauxCore({ models: [{ id: "memory-model" }, { id: "chat-model", reasoning: true }] });
 		const providers = dispatchStubContext({
@@ -326,13 +326,13 @@ for (const unavailable of ["available", "down", "missing-model", "missing-creden
 			assert.match(route.fallbackReason ?? "", /No API key for provider: litellm/);
 		if (unavailable === "down") assert.match(route.fallbackReason ?? "", /endpoint unreachable/);
 		if (unavailable === "missing-model") assert.match(route.fallbackReason ?? "", /unknown model: memory-model/);
-		settings.context.memory.target = "chat";
+		settings.context.memory.connection = "chat";
 		settings.context.memory.model = "chat-model";
 		assert.ok(
 			createBackgroundMemoryModelClient(providers, settings, 1000, null),
 			"shared reasoning chat model can serve memory with capacity",
 		);
-		settings.context.memory.target = null;
+		settings.context.memory.connection = null;
 		settings.context.memory.model = null;
 		const chatRoute = createBackgroundMemoryModelClient(providers, settings, 1000, null);
 		assert.ok(chatRoute, "unset memory route uses the chat route");
@@ -343,13 +343,13 @@ for (const unavailable of ["available", "down", "missing-model", "missing-creden
 
 function routingFixture() {
 	const settings = structuredClone(DEFAULT_SETTINGS);
-	settings.targets = [
+	settings.connections = [
 		{ id: "memory", runtime: "litellm", url: "http://gateway.invalid:4000", defaultModel: "memory-model" },
 		{ id: "chat", runtime: "litellm", url: "http://gateway.invalid:4000", defaultModel: "chat-model" },
 	];
-	settings.chat.target = "chat";
+	settings.chat.connection = "chat";
 	settings.chat.model = "chat-model";
-	settings.context.memory.target = "memory";
+	settings.context.memory.connection = "memory";
 	settings.context.memory.model = "memory-model";
 	const faux = createEngineFauxCore({
 		api: "memory-fallback-fixture",
@@ -381,7 +381,7 @@ test("production callbacks use gateway capacity evidence and count foreground, l
 	t.after(() => env.restore());
 	const { settings, providers } = routingFixture();
 	const callbacks = createBackgroundMemoryRouting(providers, () => settings, null);
-	const target = settings.targets[0];
+	const target = settings.connections[0];
 	const status = providers.list()[0];
 	assert.ok(target);
 	assert.ok(status);

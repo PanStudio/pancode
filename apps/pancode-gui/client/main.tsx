@@ -75,7 +75,7 @@ function RouteError() {
 					<PancodeWordmark />
 				</p>
 				<h1>PanCode has no page at this address.</h1>
-				<p>The link may be old or mistyped. Your tasks and projects are where you left them.</p>
+				<p>The link may be old or mistyped. Your sessions and projects are where you left them.</p>
 				<a className="primary" href={`${prefix}/`}>
 					Go to Home
 				</a>
@@ -185,7 +185,7 @@ const router = createBrowserRouter([
 				},
 			},
 			{
-				path: "/settings/targets",
+				path: "/settings/connections",
 				lazy: async () => {
 					const { TargetsPage } = await import("./pages/targets.js");
 					return { element: <TargetsPage client={client} view="targets" /> };
@@ -283,16 +283,16 @@ const router = createBrowserRouter([
 				},
 			},
 			{
-				path: "/machines",
+				path: "/nodes",
 				lazy: async () => {
-					const { MachinesPage } = await import("./pages/machines.js");
-					return { element: <MachinesPage client={client} local={local} /> };
+					const { NodesPage } = await import("./pages/nodes.js");
+					return { element: <NodesPage client={client} local={local} /> };
 				},
 			},
 			{
 				path: "/workspaces/:workspaceId/sessions",
 				lazy: async () => {
-					const { Sessions } = await import("./pages/tasks.js");
+					const { Sessions } = await import("./pages/project-sessions.js");
 					return { element: <Sessions client={client} /> };
 				},
 			},
@@ -319,10 +319,10 @@ const router = createBrowserRouter([
 				},
 			},
 			{
-				path: "/toolchain",
+				path: "/programs",
 				lazy: async () => {
-					const { Toolchain } = await import("./pages/toolchain.js");
-					return { element: <Toolchain client={client} /> };
+					const { ProgramsPage } = await import("./pages/programs.js");
+					return { element: <ProgramsPage client={client} /> };
 				},
 			},
 		],

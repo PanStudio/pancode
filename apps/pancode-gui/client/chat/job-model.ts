@@ -9,6 +9,7 @@ import type { AcpJob } from "../../contracts/wire.js";
 import type { StatusTone } from "../design/status.js";
 
 export type { JobControlAction };
+export type JobStripAction = JobControlAction | "cancel-now";
 
 export interface JobRowView {
 	readonly jobId: string;
@@ -20,7 +21,7 @@ export interface JobRowView {
 	readonly facts: readonly string[];
 	/** One sentence the operator needs when something is held, failing or unresolved. */
 	readonly note: string | null;
-	readonly actions: readonly JobControlAction[];
+	readonly actions: readonly JobStripAction[];
 }
 
 /** Finished jobs kept in the strip after the live ones; the rest are history the session already counted. */
@@ -59,7 +60,6 @@ const OUTCOME_WORDS = {
 const ENDED: Record<NonNullable<AcpJob["reason"]>, { state: string; tone: StatusTone }> = {
 	count: { state: "Finished", tone: "success" },
 	condition: { state: "Condition met", tone: "success" },
-	stopped: { state: "Stopped", tone: "neutral" },
 	canceled: { state: "Canceled", tone: "warn" },
 	deadline: { state: "Deadline reached", tone: "warn" },
 	failure: { state: "Failed", tone: "fail" },
@@ -101,9 +101,9 @@ function stateOf(job: AcpJob): { state: string; tone: StatusTone; working: boole
 		: { state: "Waiting", tone: "warn", working };
 }
 
-function actionsOf(job: AcpJob): readonly JobControlAction[] {
-	if (job.state === "terminal") return job.complete ? [] : ["cancel"];
-	return job.state === "paused" ? ["resume", "stop", "cancel"] : ["pause", "stop", "cancel"];
+function actionsOf(job: AcpJob): readonly JobStripAction[] {
+	if (job.state === "terminal") return job.complete ? [] : ["cancel-now"];
+	return job.state === "paused" ? ["resume", "cancel", "cancel-now"] : ["pause", "cancel", "cancel-now"];
 }
 
 function noteOf(job: AcpJob): string | null {
@@ -159,20 +159,20 @@ export function jobRowView(job: AcpJob, now: number): JobRowView {
 }
 
 export const JOB_CONFIRMATIONS: Readonly<
-	Record<"stop" | "cancel", { readonly ask: string; readonly confirm: string }>
+	Record<"cancel" | "cancel-now", { readonly ask: string; readonly confirm: string }>
 > = {
-	stop: { ask: "Stop this loop? It starts no new runs and lets the current run finish.", confirm: "Stop loop" },
-	cancel: {
-		ask: "Cancel this loop? The current run is aborted and pending work is dropped.",
-		confirm: "Cancel loop",
+	cancel: { ask: "Cancel this loop? It starts no new runs and lets the current run finish.", confirm: "Cancel loop" },
+	"cancel-now": {
+		ask: "Cancel this loop now? The current run is aborted and pending work is dropped.",
+		confirm: "Cancel now",
 	},
 };
 
-export const JOB_ACTION_LABELS: Readonly<Record<JobControlAction, string>> = {
+export const JOB_ACTION_LABELS: Readonly<Record<JobStripAction, string>> = {
 	pause: "Pause",
 	resume: "Resume",
-	stop: "Stop",
 	cancel: "Cancel",
+	"cancel-now": "Cancel now",
 };
 
 export const liveJobsLabel = (count: number): string => (count === 1 ? "1 loop" : `${count} loops`);

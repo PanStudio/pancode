@@ -41,15 +41,15 @@ export function invokesPancodeSkillMutation(command: string, excludeHub = false)
 			args = args.slice(flag === "--skill" || flag === "--api-key" ? 2 : 1);
 		}
 		if (rootHelp) continue;
-		// `pancode dev share` dispatches to `pancode share`.
-		if (args[0] === "dev" && args[1] === "share") args = args.slice(1);
+		// `pancode dev archive` dispatches to `pancode archive`.
+		if (args[0] === "dev" && args[1] === "archive") args = args.slice(1);
 		if (
 			args[0] !== "skills" &&
 			args[0] !== "hub" &&
 			args[0] !== "plugins" &&
 			args[0] !== "extensions" &&
 			args[0] !== "interop" &&
-			args[0] !== "share"
+			args[0] !== "archive"
 		)
 			continue;
 		if (excludeHub && args[0] === "hub") continue;
@@ -59,7 +59,7 @@ export function invokesPancodeSkillMutation(command: string, excludeHub = false)
 }
 
 function resourceCliMutatesSkills(
-	resource: "skills" | "hub" | "plugins" | "extensions" | "interop" | "share",
+	resource: "skills" | "hub" | "plugins" | "extensions" | "interop" | "archive",
 	args: ReadonlyArray<string>,
 	confirmable: boolean,
 ): boolean {
@@ -68,7 +68,7 @@ function resourceCliMutatesSkills(
 	const valueOptions =
 		resource === "skills"
 			? ["--name", "--category", "--scenario", "--target", "--workspace", "--timeout"]
-			: resource === "share"
+			: resource === "archive"
 				? ["--out"]
 				: ["--kind", "--from"];
 	let verb: string | undefined;
@@ -87,9 +87,9 @@ function resourceCliMutatesSkills(
 		if (!arg.startsWith("-")) verb ??= arg;
 	}
 	if (resource === "skills") return verb === "install" || verb === "update" || verb === "sync";
-	// A share import installs packages and writes resources from an archive the
+	// An archive import installs packages and writes resources from an archive the
 	// model may have authored; its dry run only plans.
-	if (resource === "share") return confirmable && verb === "import" && !dryRun;
+	if (resource === "archive") return confirmable && verb === "import" && !dryRun;
 	if (resource === "plugins" || resource === "extensions") {
 		if (["install", "update", "remove", "enable", "disable", "pin"].includes(verb ?? "")) return true;
 		// Both authoring verbs run package code (startup registration, `*.test.ts`),

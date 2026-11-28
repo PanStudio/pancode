@@ -16,9 +16,9 @@ export const TRUST_LOADING = "Reading the project files…";
 export const TRUST_WAIT_FOR_TURN = "Wait for the current turn to finish.";
 export const TRUST_NOTHING_READABLE = "There is no readable file to trust.";
 export const TRUST_CHANGED = "The files changed after you opened this review. Review them again.";
-export const TRUST_RESTARTING = "Trusted. Restarting this task's engine to apply it…";
-export const TRUST_APPLY_LATER = "Trusted. Start a new task or resume this one to apply it.";
-const TRUST_DONE = "Trusted. Tasks you start or resume in this project apply it.";
+export const TRUST_RESTARTING = "Trusted. Restarting this session's engine to apply it…";
+export const TRUST_APPLY_LATER = "Trusted. Start a new session or resume this one to apply it.";
+const TRUST_DONE = "Trusted. Sessions you start or resume in this project apply it.";
 
 const VERDICT_WORDS: Readonly<Record<TrustPreview["verdict"], string>> = {
 	untrusted: "Not trusted yet",

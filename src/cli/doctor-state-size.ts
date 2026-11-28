@@ -14,7 +14,7 @@ import {
 import { resolvePancodeDirs } from "../core/xdg.js";
 import type { DoctorFinding } from "../domains/install/doctor.js";
 import { inactiveInstallerRecord, inspectInstallation } from "../domains/install/install-method.js";
-import { formatBytes } from "./lifecycle-presenter.js";
+import { formatBytes } from "./install-presenter.js";
 
 interface MeasuredEntry {
 	bytes: number;

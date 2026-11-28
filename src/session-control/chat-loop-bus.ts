@@ -23,7 +23,7 @@ export function createChatLoopBus(loop: ChatLoopScope, state: ChatLoopBusState) 
 		deps.bus?.subscribe("config.next_turn_scheduled", (payload) => {
 			if (
 				!payload.diff.nextTurn.some(
-					(path) => path === "chat" || path.startsWith("chat.") || path === "targets" || path.startsWith("targets."),
+					(path) => path === "chat" || path.startsWith("chat.") || path === "connections" || path.startsWith("connections."),
 				)
 			)
 				return;

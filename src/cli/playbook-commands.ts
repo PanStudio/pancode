@@ -3,7 +3,7 @@
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { pancodeProjectRoot } from "../core/project-root.js";
-import { jsonDocument, writeCliFailure } from "./kit/json-out.js";
+import { jsonDocument, writeCliFailure } from "./lib/json-out.js";
 import { discoverDeclaredProjectCommands } from "./verifier-authoring.js";
 
 function quoted(value: string): string {

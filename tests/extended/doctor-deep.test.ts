@@ -134,7 +134,7 @@ async function runDoctor(target: Record<string, unknown>, args: string[], cwd: s
 		PANCODE_REQUIRE_HOME_PREFIX: "1",
 	};
 	mkdirSync(join(root, "config"), { recursive: true });
-	writeFileSync(join(root, "config", "settings.yaml"), JSON.stringify({ targets: [target] }));
+	writeFileSync(join(root, "config", "settings.yaml"), JSON.stringify({ connections: [target] }));
 	// Doctor exits 1 on this minimal home (it was never initialized with
 	// --fix); the report on stdout is what these tests read.
 	const result = await execFileAsync(process.execPath, [CLI, "doctor", ...args], { cwd, env }).catch(

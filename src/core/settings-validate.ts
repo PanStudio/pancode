@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 /**
  * There is exactly one schema: the file on disk and the in-memory shape use
- * the same version-2 key names (`targets`, `chat.target`, ...). Validation is
+ * the same version-2 key names (`connections`, `chat.connection`, ...). Validation is
  * strict: unknown keys and type violations are errors carrying the exact key
  * path. Missing keys take DEFAULT_SETTINGS values.
  */
@@ -10,7 +10,7 @@
 import { isAbsolute } from "node:path";
 import { AUTONOMY_LEVELS, YOLO_CONFINEMENTS } from "../lib/autonomy/autonomy.js";
 import { scratchRootProblem } from "../lib/scratch-roots/scratch-roots.js";
-import { TURN_CONTROL_WORKFLOWS } from "../lib/turn-control/settings.js";
+import { TURN_CONTROL_HOOKS } from "../lib/turn-control/settings.js";
 import { validationWrapperProblem } from "../lib/validation-wrappers/validation-wrappers.js";
 import type { PancodeSettings } from "./config.js";
 import {
@@ -77,7 +77,7 @@ import { RUN_ROLES } from "./views/run-roles.js";
 const TOP_LEVEL_KEYS = [
 	"version",
 	"turnControl",
-	"targets",
+	"connections",
 	"funding",
 	"chat",
 	"fleet",
@@ -160,16 +160,16 @@ function validateSafetyReview(issues: Issues, review: unknown, settings: Pancode
 		issues.add("safety.review", `expected a map, got ${describe(review)}`);
 		return;
 	}
-	issues.unknownKeys("safety.review", review, ["enabled", "target", "cadenceToolCalls"]);
+	issues.unknownKeys("safety.review", review, ["enabled", "connection", "cadenceToolCalls"]);
 	if ("enabled" in review) {
 		const parsed = expectBoolean(issues, "safety.review.enabled", review.enabled);
 		if (parsed !== undefined) settings.safety.review.enabled = parsed;
 	}
-	if ("target" in review && review.target !== null) {
-		const parsed = expectString(issues, "safety.review.target", review.target);
-		if (parsed !== undefined && settings.targets.some((target) => target.id === parsed))
-			settings.safety.review.target = parsed;
-		else if (parsed !== undefined) issues.add("safety.review.target", `unknown target '${parsed}'`);
+	if ("connection" in review && review.connection !== null) {
+		const parsed = expectString(issues, "safety.review.connection", review.connection);
+		if (parsed !== undefined && settings.connections.some((target) => target.id === parsed))
+			settings.safety.review.connection = parsed;
+		else if (parsed !== undefined) issues.add("safety.review.connection", `unknown connection '${parsed}'`);
 	}
 	if ("cadenceToolCalls" in review && review.cadenceToolCalls !== null) {
 		const parsed = expectInteger(issues, "safety.review.cadenceToolCalls", review.cadenceToolCalls, { min: 1 });
@@ -209,17 +209,17 @@ export function validateSettings(raw: unknown): SettingsValidationResult {
 		if (!isRecord(raw.turnControl)) issues.add("turnControl", `expected a map, got ${describe(raw.turnControl)}`);
 		else {
 			const control = raw.turnControl;
-			issues.unknownKeys("turnControl", control, ["workflows"]);
-			if ("workflows" in control) {
-				if (!Array.isArray(control.workflows))
-					issues.add("turnControl.workflows", `expected a list, got ${describe(control.workflows)}`);
+			issues.unknownKeys("turnControl", control, ["hooks"]);
+			if ("hooks" in control) {
+				if (!Array.isArray(control.hooks))
+					issues.add("turnControl.hooks", `expected a list, got ${describe(control.hooks)}`);
 				else {
-					const workflows: PancodeSettings["turnControl"]["workflows"] = [];
-					for (const [index, value] of control.workflows.entries()) {
-						const parsed = expectEnum(issues, `turnControl.workflows[${index}]`, value, TURN_CONTROL_WORKFLOWS);
-						if (parsed !== undefined) workflows.push(parsed);
+					const hooks: PancodeSettings["turnControl"]["hooks"] = [];
+					for (const [index, value] of control.hooks.entries()) {
+						const parsed = expectEnum(issues, `turnControl.hooks[${index}]`, value, TURN_CONTROL_HOOKS);
+						if (parsed !== undefined) hooks.push(parsed);
 					}
-					settings.turnControl.workflows = workflows;
+					settings.turnControl.hooks = hooks;
 				}
 			}
 		}
@@ -242,22 +242,22 @@ export function validateSettings(raw: unknown): SettingsValidationResult {
 			}
 		}
 	}
-	if ("targets" in raw) {
-		if (!Array.isArray(raw.targets)) issues.add("targets", `expected a list, got ${describe(raw.targets)}`);
+	if ("connections" in raw) {
+		if (!Array.isArray(raw.connections)) issues.add("connections", `expected a list, got ${describe(raw.connections)}`);
 		else {
 			const seen = new Set<string>();
-			const targets: PancodeSettings["targets"] = [];
-			for (let index = 0; index < raw.targets.length; index += 1) {
-				const target = validateTarget(issues, `targets[${index}]`, raw.targets[index], settings.funding);
+			const targets: PancodeSettings["connections"] = [];
+			for (let index = 0; index < raw.connections.length; index += 1) {
+				const target = validateTarget(issues, `connections[${index}]`, raw.connections[index], settings.funding);
 				if (!target) continue;
 				if (seen.has(target.id)) {
-					issues.add(`targets[${index}].id`, `duplicate target id '${target.id}'`);
+					issues.add(`connections[${index}].id`, `duplicate connection id '${target.id}'`);
 					continue;
 				}
 				seen.add(target.id);
 				targets.push(target);
 			}
-			settings.targets = targets;
+			settings.connections = targets;
 		}
 	}
 
@@ -283,7 +283,7 @@ function validateChat(issues: Issues, value: unknown, settings: PancodeSettings)
 	else {
 		const chat = value;
 		issues.unknownKeys("chat", chat, [
-			"target",
+			"connection",
 			"model",
 			"thinkingLevel",
 			"modelPicker",
@@ -295,17 +295,17 @@ function validateChat(issues: Issues, value: unknown, settings: PancodeSettings)
 			"steering",
 		]);
 		const routeInput: Record<string, unknown> = {};
-		for (const key of ["target", "model", "thinkingLevel"] as const) {
+		for (const key of ["connection", "model", "thinkingLevel"] as const) {
 			if (key in chat) routeInput[key] = chat[key];
 		}
 		const route = validateRoute(
 			issues,
 			"chat",
 			routeInput,
-			{ target: settings.chat.target, model: settings.chat.model, thinkingLevel: settings.chat.thinkingLevel },
-			settings.targets,
+			{ connection: settings.chat.connection, model: settings.chat.model, thinkingLevel: settings.chat.thinkingLevel },
+			settings.connections,
 		);
-		settings.chat.target = route.target;
+		settings.chat.connection = route.connection;
 		settings.chat.model = route.model;
 		settings.chat.thinkingLevel = route.thinkingLevel;
 		if ("modelPicker" in chat) {
@@ -318,7 +318,7 @@ function validateChat(issues: Issues, value: unknown, settings: PancodeSettings)
 				}
 				if ("favorites" in chat.modelPicker) {
 					const parsed = expectStringArray(issues, "chat.modelPicker.favorites", chat.modelPicker.favorites);
-					if (parsed !== undefined) settings.chat.modelPicker.favorites = normalizeModelRefs(parsed, settings.targets);
+					if (parsed !== undefined) settings.chat.modelPicker.favorites = normalizeModelRefs(parsed, settings.connections);
 				}
 				if ("recentLimit" in chat.modelPicker) {
 					const parsed = expectInteger(issues, "chat.modelPicker.recentLimit", chat.modelPicker.recentLimit, { min: 1 });
@@ -376,7 +376,7 @@ function validateChat(issues: Issues, value: unknown, settings: PancodeSettings)
 						const target = settings.chat.steering.triage;
 						issues.unknownKeys(path, triage, [
 							"enabled",
-							"target",
+							"connection",
 							"model",
 							"thinkingLevel",
 							"minQueued",
@@ -388,12 +388,12 @@ function validateChat(issues: Issues, value: unknown, settings: PancodeSettings)
 							const parsed = expectBoolean(issues, `${path}.${key}`, triage[key]);
 							if (parsed !== undefined) target[key] = parsed;
 						}
-						if ("target" in triage) {
-							if (triage.target === null) target.target = null;
+						if ("connection" in triage) {
+							if (triage.connection === null) target.connection = null;
 							else {
-								const parsed = expectString(issues, `${path}.target`, triage.target);
+								const parsed = expectString(issues, `${path}.connection`, triage.connection);
 								if (parsed !== undefined)
-									target.target = settings.targets.some((candidate) => candidate.id === parsed) ? parsed : null;
+									target.connection = settings.connections.some((candidate) => candidate.id === parsed) ? parsed : null;
 							}
 						}
 						if ("model" in triage) {
@@ -405,7 +405,7 @@ function validateChat(issues: Issues, value: unknown, settings: PancodeSettings)
 						}
 						// A model without a target is the session target's own model choice, which the
 						// active runtime already made; it is dropped the way the memory block drops it.
-						if (!target.target) target.model = null;
+						if (!target.connection) target.model = null;
 						if ("thinkingLevel" in triage) {
 							const parsed = expectEnum(issues, `${path}.thinkingLevel`, triage.thinkingLevel, THINKING_LEVELS);
 							if (parsed !== undefined) target.thinkingLevel = parsed;
@@ -472,7 +472,7 @@ function validateFleet(issues: Issues, value: unknown, settings: PancodeSettings
 				"fleet.default",
 				rawFleet.default,
 				settings.fleet.default,
-				settings.targets,
+				settings.connections,
 				{
 					nodeIds: fleetNodeIds,
 				},
@@ -493,12 +493,12 @@ function validateFleet(issues: Issues, value: unknown, settings: PancodeSettings
 						`fleet.profiles.${name}`,
 						rawProfile,
 						DEFAULT_SETTINGS.fleet.default,
-						settings.targets,
+						settings.connections,
 						{
 							nodeIds: fleetNodeIds,
 						},
 					);
-					if (profile.target) profiles[name] = profile;
+					if (profile.connection) profiles[name] = profile;
 				}
 				settings.fleet.profiles = profiles;
 			}
@@ -533,15 +533,15 @@ function validateFleet(issues: Issues, value: unknown, settings: PancodeSettings
 							issues.add(memberPath, `expected a map, got ${describe(rawMember)}`);
 							continue;
 						}
-						issues.unknownKeys(memberPath, rawMember, ["label", "target", "model", "thinkingLevel", "color", "agent"]);
+						issues.unknownKeys(memberPath, rawMember, ["label", "connection", "model", "thinkingLevel", "color", "agent"]);
 						const label = expectString(issues, `${memberPath}.label`, rawMember.label);
-						const target = expectString(issues, `${memberPath}.target`, rawMember.target);
+						const target = expectString(issues, `${memberPath}.connection`, rawMember.connection);
 						if (label !== undefined && !COUNCIL_MEMBER_LABEL_PATTERN.test(label))
 							issues.add(`${memberPath}.label`, "expected [a-z][a-z0-9_-]{0,31}");
 						if (label !== undefined && labels.has(label)) issues.add(`${memberPath}.label`, "duplicate label");
 						if (label !== undefined) labels.add(label);
-						if (target !== undefined && !settings.targets.some((entry) => entry.id === target))
-							issues.add(`${memberPath}.target`, `unknown target '${target}'`);
+						if (target !== undefined && !settings.connections.some((entry) => entry.id === target))
+							issues.add(`${memberPath}.connection`, `unknown connection '${target}'`);
 						const model =
 							rawMember.model === undefined ? undefined : expectString(issues, `${memberPath}.model`, rawMember.model);
 						const thinkingLevel =
@@ -559,7 +559,7 @@ function validateFleet(issues: Issues, value: unknown, settings: PancodeSettings
 						if (label === undefined || target === undefined) continue;
 						members.push({
 							label,
-							target,
+							connection: target,
 							...(model ? { model } : {}),
 							...(thinkingLevel ? { thinkingLevel } : {}),
 							...(color ? { color } : {}),
@@ -861,7 +861,7 @@ function validateContext(issues: Issues, value: unknown, settings: PancodeSettin
 					"enabled",
 					"sideShare",
 					"surfaces",
-					"target",
+					"connection",
 					"model",
 					"thinkingLevel",
 					"cadenceToolCalls",
@@ -931,12 +931,12 @@ function validateContext(issues: Issues, value: unknown, settings: PancodeSettin
 						}
 					}
 				}
-				if ("target" in memory) {
-					if (memory.target === null) settings.context.memory.target = null;
+				if ("connection" in memory) {
+					if (memory.connection === null) settings.context.memory.connection = null;
 					else {
-						const parsed = expectString(issues, "context.memory.target", memory.target);
+						const parsed = expectString(issues, "context.memory.connection", memory.connection);
 						if (parsed !== undefined)
-							settings.context.memory.target = settings.targets.some((target) => target.id === parsed) ? parsed : null;
+							settings.context.memory.connection = settings.connections.some((target) => target.id === parsed) ? parsed : null;
 					}
 				}
 				if ("model" in memory) {
@@ -946,10 +946,10 @@ function validateContext(issues: Issues, value: unknown, settings: PancodeSettin
 						if (parsed !== undefined) settings.context.memory.model = parsed;
 					}
 				}
-				if (!settings.context.memory.target) settings.context.memory.model = null;
+				if (!settings.context.memory.connection) settings.context.memory.model = null;
 				else if (settings.context.memory.model === null)
 					settings.context.memory.model =
-						settings.targets.find((target) => target.id === settings.context.memory.target)?.defaultModel ?? null;
+						settings.connections.find((target) => target.id === settings.context.memory.connection)?.defaultModel ?? null;
 				if ("thinkingLevel" in memory) {
 					const parsed = expectEnum(issues, "context.memory.thinkingLevel", memory.thinkingLevel, THINKING_LEVELS);
 					if (parsed !== undefined) settings.context.memory.thinkingLevel = parsed;
@@ -972,7 +972,7 @@ function validateContext(issues: Issues, value: unknown, settings: PancodeSettin
 				const semantic = context.semantic;
 				issues.unknownKeys("context.semantic", semantic, [
 					"enabled",
-					"target",
+					"connection",
 					"model",
 					"assetIdentity",
 					"projectorIdentity",
@@ -986,7 +986,7 @@ function validateContext(issues: Issues, value: unknown, settings: PancodeSettin
 					const parsed = expectBoolean(issues, `context.semantic.${key}`, semantic[key]);
 					if (parsed !== undefined) settings.context.semantic[key] = parsed;
 				}
-				for (const key of ["target", "model", "assetIdentity", "projectorIdentity", "canaryFingerprint"] as const) {
+				for (const key of ["connection", "model", "assetIdentity", "projectorIdentity", "canaryFingerprint"] as const) {
 					if (!(key in semantic)) continue;
 					if (semantic[key] === null) settings.context.semantic[key] = null;
 					else {
@@ -1060,7 +1060,7 @@ function validateSafety(issues: Issues, value: unknown, settings: PancodeSetting
 			"egress",
 			"scratchRoots",
 			"sandboxPassEnv",
-			"liveCheckTargets",
+			"liveCheckConnections",
 			"sandboxUnixSockets",
 			"sandboxUnconfinedLocalWorkers",
 			"workerIsolation",
@@ -1069,7 +1069,7 @@ function validateSafety(issues: Issues, value: unknown, settings: PancodeSetting
 			"homeReads",
 			"snapshots",
 			"validationWrappers",
-			"unattendedAfterSeconds",
+			"unattendedAfterMs",
 			"yoloAccepted",
 			"yoloConfinement",
 			"yoloUnconfinedAccepted",
@@ -1094,20 +1094,20 @@ function validateSafety(issues: Issues, value: unknown, settings: PancodeSetting
 				});
 			}
 		}
-		if ("liveCheckTargets" in safety) {
-			const parsed = expectStringArray(issues, "safety.liveCheckTargets", safety.liveCheckTargets);
+		if ("liveCheckConnections" in safety) {
+			const parsed = expectStringArray(issues, "safety.liveCheckConnections", safety.liveCheckConnections);
 			if (parsed !== undefined) {
-				settings.safety.liveCheckTargets = [
+				settings.safety.liveCheckConnections = [
 					...new Set(
 						parsed.filter((id) => {
-							const target = settings.targets.find((candidate) => candidate.id === id);
+							const target = settings.connections.find((candidate) => candidate.id === id);
 							const problem =
 								target === undefined
-									? "no target with this id"
+									? "no connection with this id"
 									: LIVE_CHECK_LOGIN_RUNTIMES.has(target.runtime)
 										? null
 										: `runtime ${target.runtime} has no login file PanCode can reveal (only ${[...LIVE_CHECK_LOGIN_RUNTIMES].join(", ")})`;
-							if (problem !== null) issues.add("safety.liveCheckTargets", `${id}: ${problem}`);
+							if (problem !== null) issues.add("safety.liveCheckConnections", `${id}: ${problem}`);
 							return problem === null;
 						}),
 					),
@@ -1150,24 +1150,24 @@ function validateSafety(issues: Issues, value: unknown, settings: PancodeSetting
 			const parsed = expectBoolean(issues, "safety.yoloUnconfinedAccepted", safety.yoloUnconfinedAccepted);
 			if (parsed !== undefined) settings.safety.yoloUnconfinedAccepted = parsed;
 		}
-		if ("unattendedAfterSeconds" in safety) {
-			const parsed = expectInteger(issues, "safety.unattendedAfterSeconds", safety.unattendedAfterSeconds, { min: 0 });
-			if (parsed !== undefined) settings.safety.unattendedAfterSeconds = parsed;
+		if ("unattendedAfterMs" in safety) {
+			const parsed = expectInteger(issues, "safety.unattendedAfterMs", safety.unattendedAfterMs, { min: 0 });
+			if (parsed !== undefined) settings.safety.unattendedAfterMs = parsed;
 		}
 		if ("judge" in safety) {
 			if (!isRecord(safety.judge)) issues.add("safety.judge", `expected a map, got ${describe(safety.judge)}`);
 			else {
 				const judge = safety.judge;
-				issues.unknownKeys("safety.judge", judge, ["enabled", "target", "model", "environment", "allow", "deny"]);
+				issues.unknownKeys("safety.judge", judge, ["enabled", "connection", "model", "environment", "allow", "deny"]);
 				if ("enabled" in judge) {
 					const parsed = expectBoolean(issues, "safety.judge.enabled", judge.enabled);
 					if (parsed !== undefined) settings.safety.judge.enabled = parsed;
 				}
-				if ("target" in judge && judge.target !== null) {
-					const parsed = expectString(issues, "safety.judge.target", judge.target);
-					if (parsed !== undefined && settings.targets.some((target) => target.id === parsed))
-						settings.safety.judge.target = parsed;
-					else if (parsed !== undefined) issues.add("safety.judge.target", `unknown target '${parsed}'`);
+				if ("connection" in judge && judge.connection !== null) {
+					const parsed = expectString(issues, "safety.judge.connection", judge.connection);
+					if (parsed !== undefined && settings.connections.some((target) => target.id === parsed))
+						settings.safety.judge.connection = parsed;
+					else if (parsed !== undefined) issues.add("safety.judge.connection", `unknown connection '${parsed}'`);
 				}
 				if ("model" in judge && judge.model !== null) {
 					const parsed = expectString(issues, "safety.judge.model", judge.model);
@@ -1191,11 +1191,11 @@ function validateSafety(issues: Issues, value: unknown, settings: PancodeSetting
 					"observationBytesPerTurn",
 					"templateToolCallsPerTurnMax",
 					"templateObservationBytesPerTurnMax",
-					"workerResponseSeconds",
+					"workerResponseTimeoutMs",
 					"autonomousToolCalls",
 					"autonomousMinutes",
 					"autonomousTokens",
-					"bashIdleSeconds",
+					"bashIdleTimeoutMs",
 				]);
 				if ("sessionCostUsd" in limits) {
 					const parsed = expectNumber(issues, "safety.limits.sessionCostUsd", limits.sessionCostUsd, { min: 0 });
@@ -1205,13 +1205,13 @@ function validateSafety(issues: Issues, value: unknown, settings: PancodeSetting
 					"chatToolCallsPerTurn",
 					"readBytesPerCall",
 					"observationBytesPerTurn",
-					"workerResponseSeconds",
+					"workerResponseTimeoutMs",
 				] as const) {
 					if (!(key in limits)) continue;
 					const parsed = expectInteger(issues, `safety.limits.${key}`, limits[key], { min: 1 });
 					if (parsed !== undefined) settings.safety.limits[key] = parsed;
 				}
-				for (const key of ["autonomousToolCalls", "autonomousMinutes", "autonomousTokens", "bashIdleSeconds"] as const) {
+				for (const key of ["autonomousToolCalls", "autonomousMinutes", "autonomousTokens", "bashIdleTimeoutMs"] as const) {
 					if (!(key in limits)) continue;
 					const parsed = expectInteger(issues, `safety.limits.${key}`, limits[key], { min: 0 });
 					if (parsed !== undefined) settings.safety.limits[key] = parsed;
@@ -1347,37 +1347,23 @@ function validateIntegrations(issues: Issues, value: unknown, settings: PancodeS
 	if (!isRecord(value)) issues.add("integrations", `expected a map, got ${describe(value)}`);
 	else {
 		const integrations = value;
-		issues.unknownKeys("integrations", integrations, [
-			"projectResources",
-			"externalAgents",
-			"runtimePlugins",
-			"hub",
-			"git",
-		]);
-		if ("projectResources" in integrations) {
-			if (!isRecord(integrations.projectResources))
-				issues.add("integrations.projectResources", `expected a map, got ${describe(integrations.projectResources)}`);
-			else {
-				issues.unknownKeys("integrations.projectResources", integrations.projectResources, ["trustProjectImports"]);
-				if ("trustProjectImports" in integrations.projectResources) {
-					const parsed = expectBoolean(
-						issues,
-						"integrations.projectResources.trustProjectImports",
-						integrations.projectResources.trustProjectImports,
-					);
-					if (parsed !== undefined) settings.integrations.projectResources.trustProjectImports = parsed;
-				}
-			}
-		}
-		if ("runtimePlugins" in integrations) {
-			const parsed = expectStringArray(issues, "integrations.runtimePlugins", integrations.runtimePlugins);
-			if (parsed !== undefined) settings.integrations.runtimePlugins = parsed;
+		issues.unknownKeys("integrations", integrations, ["externalAgents", "providerPackages", "hub", "git"]);
+		if ("providerPackages" in integrations) {
+			const parsed = expectStringArray(issues, "integrations.providerPackages", integrations.providerPackages);
+			if (parsed !== undefined) settings.integrations.providerPackages = parsed;
 		}
 		if ("hub" in integrations) {
 			if (!isRecord(integrations.hub)) issues.add("integrations.hub", `expected a map, got ${describe(integrations.hub)}`);
 			else {
 				const hub = integrations.hub;
-				issues.unknownKeys("integrations.hub", hub, ["catalog", "remote", "confirmedRemote", "sync", "index"]);
+				issues.unknownKeys("integrations.hub", hub, [
+					"catalog",
+					"remote",
+					"confirmedRemote",
+					"sync",
+					"index",
+					"trustProjectImports",
+				]);
 				for (const key of ["catalog", "remote", "confirmedRemote"] as const) {
 					if (!(key in hub)) continue;
 					const value = hub[key];
@@ -1393,6 +1379,10 @@ function validateIntegrations(issues: Issues, value: unknown, settings: PancodeS
 					if (typeof hub.index !== "string")
 						issues.add("integrations.hub.index", `expected a string, got ${describe(hub.index)}`);
 					else settings.integrations.hub.index = hub.index.trim();
+				}
+				if ("trustProjectImports" in hub) {
+					const parsed = expectBoolean(issues, "integrations.hub.trustProjectImports", hub.trustProjectImports);
+					if (parsed !== undefined) settings.integrations.hub.trustProjectImports = parsed;
 				}
 			}
 		}

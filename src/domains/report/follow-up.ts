@@ -4,7 +4,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { resolvePackageRoot } from "../../core/package-root.js";
 import { safeResourceWrite } from "../../core/safe-resource-write.js";
-import { resolveToolBinary } from "../../lib/programs/index.js";
+import { resolveProgramBinary } from "../../lib/programs/index.js";
 import { type ReportCommandRunner, runReportCommand } from "./command.js";
 import { type OutboxEntry, readOutbox, updateOutbox } from "./outbox.js";
 import { reportsDirectory } from "./store.js";
@@ -91,7 +91,7 @@ async function readIssueStatus(
 
 function findGhFor(deps: FollowUpDeps): string | null {
 	try {
-		return (deps.findGh ?? (() => resolveToolBinary("gh").binaryPath))();
+		return (deps.findGh ?? (() => resolveProgramBinary("gh").binaryPath))();
 	} catch {
 		// No resolvable gh is the same as none.
 		return null;

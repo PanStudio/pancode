@@ -12,10 +12,10 @@
  */
 
 /** Platforms the registry can describe a download for. */
-export type ToolPlatform = "linux-x64" | "linux-arm64" | "darwin-x64" | "darwin-arm64" | "win32-x64";
+export type ProgramPlatform = "linux-x64" | "linux-arm64" | "darwin-x64" | "darwin-arm64" | "win32-x64";
 
 /** How a downloaded asset is packed. `raw` is a bare executable. */
-export type ToolArchiveKind = "raw" | "zip" | "tar.gz";
+export type ProgramArchiveKind = "raw" | "zip" | "tar.gz";
 
 /**
  * One platform's asset for one pinned tool.
@@ -24,10 +24,10 @@ export type ToolArchiveKind = "raw" | "zip" | "tar.gz";
  * unpacking, so the verification happens on the bytes that crossed the network
  * rather than on whatever an extractor produced from them.
  */
-export interface PinnedToolDownload {
+export interface PinnedProgramDownload {
 	url: string;
 	sha256: string;
-	archive: ToolArchiveKind;
+	archive: ProgramArchiveKind;
 	/**
 	 * Binary name to its path inside the archive. A `raw` download has exactly
 	 * one entry whose value is the empty string: the asset is the binary.
@@ -52,14 +52,14 @@ export interface PinnedToolDownload {
  * A document fetched separately from the asset, for tools whose release asset
  * is a bare binary carrying no license text. Pinned by checksum like the asset.
  */
-export interface PinnedToolDocument {
+export interface PinnedProgramDocument {
 	name: string;
 	url: string;
 	sha256: string;
 }
 
 /** One row of the pinned table. */
-export interface PinnedTool {
+export interface PinnedProgram {
 	/** Distribution/source notice written beside a separately installed program. */
 	notice?: string;
 	id: string;
@@ -80,45 +80,45 @@ export interface PinnedTool {
 	minimumVersion: string;
 	/** Arguments that make the primary binary print its version. */
 	versionArgs: ReadonlyArray<string>;
-	downloads: Readonly<Partial<Record<ToolPlatform, PinnedToolDownload>>>;
+	downloads: Readonly<Partial<Record<ProgramPlatform, PinnedProgramDownload>>>;
 	/** Documents fetched alongside the asset. Usually empty. */
-	documents: ReadonlyArray<PinnedToolDocument>;
+	documents: ReadonlyArray<PinnedProgramDocument>;
 }
 
 /** Where a resolved binary came from. */
-export type ToolSource = "path" | "vendored" | "none";
+export type ProgramSource = "path" | "vendored" | "none";
 
 /** What a PATH candidate looked like, kept even when it was rejected. */
-export interface ToolPathCandidate {
+export interface ProgramPathCandidate {
 	path: string;
 	version: string | null;
 	satisfiesMinimum: boolean;
 }
 
 /** The answer of one trip down the resolution ladder. */
-export interface ToolResolution {
-	source: ToolSource;
+export interface ProgramResolution {
+	source: ProgramSource;
 	/** Absolute path of the binary PanCode would run, or null when unresolved. */
 	binaryPath: string | null;
 	/** Version of the resolved binary when it could be read. */
 	version: string | null;
 	/** The registry row this resolution used, when the name is a pinned tool. */
-	entry: PinnedTool | null;
+	entry: PinnedProgram | null;
 	/** A PATH copy that was found, whether or not it was accepted. */
-	pathCandidate: ToolPathCandidate | null;
+	pathCandidate: ProgramPathCandidate | null;
 	/** The vendored copy's path when the pinned version is installed. */
 	vendoredPath: string | null;
 }
 
 /** Per-entry state, the shape the CLI and doctor both render. */
-export interface ToolStatus {
+export interface ProgramStatus {
 	id: string;
 	version: string;
 	license: string;
-	platform: ToolPlatform | null;
+	platform: ProgramPlatform | null;
 	/** False when the registry has no asset for the running platform. */
 	supported: boolean;
 	installed: boolean;
 	installDir: string;
-	resolution: ToolResolution;
+	resolution: ProgramResolution;
 }

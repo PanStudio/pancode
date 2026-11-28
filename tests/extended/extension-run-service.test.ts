@@ -67,7 +67,7 @@ import {
 } from "../../src/domains/install/copilot-sdk-install.js";
 import type { SessionEntry } from "../../src/domains/session/entries.js";
 import { foldRunDigest } from "../../src/domains/session/run-digest.js";
-import { findPinnedTool, resolveVendoredBinary } from "../../src/lib/programs/index.js";
+import { findPinnedProgram, resolveVendoredBinary } from "../../src/lib/programs/index.js";
 import { runParkedInterview } from "../../src/tools/extension-interview.js";
 import { isolatePancodeEnv } from "../harness/scratch-env.js";
 
@@ -157,7 +157,7 @@ describe("extension run service", () => {
 		assert.equal(end.outcome, "succeeded");
 		assert.equal(end.end?.type, "run_end");
 		const call = h.calls[0] as Call;
-		assert.deepEqual(call.args.slice(0, 6), ["/pancode.js", "run", "--cwd", "/t/a1", "--target", "openai-codex"]);
+		assert.deepEqual(call.args.slice(0, 6), ["/pancode.js", "run", "--cwd", "/t/a1", "--connection", "openai-codex"]);
 		assert.ok(call.args.includes("--max-cost-usd") && call.args[call.args.indexOf("--max-cost-usd") + 1] === "2");
 		assert.deepEqual(call.args.slice(-4), ["--output-format", "stream-json", "--", "do it"]);
 		assert.equal(call.answers, "yes\n");
@@ -1027,13 +1027,13 @@ describe("extension run service: routes a run may leave to the operator", () => 
 		return { service, calls, cleanup: () => rmSync(tempRoot, { recursive: true, force: true }) };
 	}
 
-	it("omits --target and --model when a run names neither, and passes the default target's credentials", async () => {
+	it("omits --connection and --model when a run names neither, and passes the default target's credentials", async () => {
 		const h = routed("chat");
 		try {
 			const { id } = await h.service.start({ prompt: "go", timeoutSeconds: 60, delegate: false });
 			await h.service.wait(id);
 			const call = h.calls[0] as Call;
-			assert.equal(call.args.includes("--target"), false);
+			assert.equal(call.args.includes("--connection"), false);
 			assert.equal(call.args.includes("--model"), false);
 			assert.deepEqual(call.args.slice(1, 5), ["run", "--cwd", "/w", "--no-delegate"]);
 			assert.equal(call.options.env?.CHAT_KEY, "c");
@@ -1062,7 +1062,7 @@ describe("extension run service: routes a run may leave to the operator", () => 
 			await h.service.wait(id);
 			const call = h.calls[0] as Call;
 			assert.equal(call.args.includes("--no-delegate"), false);
-			assert.deepEqual(call.args.slice(4, 8), ["--target", "other", "--model", "m"]);
+			assert.deepEqual(call.args.slice(4, 8), ["--connection", "other", "--model", "m"]);
 			assert.equal(call.options.env?.OTHER_KEY, "o");
 			assert.equal(call.options.env?.CHAT_KEY, undefined);
 		} finally {
@@ -1306,7 +1306,7 @@ describe("a run home's digest", () => {
 		);
 		writeFileSync(join(sdk, "sdk.mjs"), "export class CopilotClient {}\n");
 		const operatorTools = join(env.dir, "operator-data", "tools");
-		const herdr = findPinnedTool("herdr");
+		const herdr = findPinnedProgram("herdr");
 		assert.ok(herdr !== null);
 		const herdrBinary = join(operatorTools, herdr.id, herdr.version, herdr.primaryBinary);
 		mkdirSync(join(herdrBinary, ".."), { recursive: true });

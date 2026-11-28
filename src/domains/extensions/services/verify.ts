@@ -63,7 +63,7 @@ export function createExtensionCheckReceipts(max = 256): ExtensionCheckReceipts 
 }
 
 export interface ExtensionVerifyServiceDeps {
-	settings(): Readonly<Pick<PancodeSettings, "safety" | "targets">> | undefined;
+	settings(): Readonly<Pick<PancodeSettings, "safety" | "connections">> | undefined;
 	resolvePlace(place: ExtensionWorkPlace): Promise<{ cwd: string; root: string }>;
 	receipts: ExtensionCheckReceipts;
 	/** For a derived check, which runs through `pancode verifiers dry-run` in the place. */

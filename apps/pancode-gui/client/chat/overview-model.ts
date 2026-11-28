@@ -89,7 +89,7 @@ export function taskStateWord(session: Pick<PaneSession, "state" | "contextWork"
 	if (!last) return "Not started";
 	if (last.queued) return "Waiting for a slot";
 	if (last.status === "failed") return "Failed";
-	if (last.status === "cancelled") return "Stopped";
+	if (last.status === "cancelled") return "Canceled";
 	return isStoppedEarly(turnEnding(last)) ? "Stopped early" : "Complete";
 }
 

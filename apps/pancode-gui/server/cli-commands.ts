@@ -4,17 +4,17 @@ import { type Static, Type } from "typebox";
 import { Value } from "typebox/value";
 import { ArenaChoice, ArenaMatchId, ArenaNote, ArenaStartRequest } from "../contracts/arena.js";
 import { Id, Sha256 } from "../contracts/common.js";
-import { MachineAdd, MachineId } from "../contracts/machines.js";
+import { NodeAdd, NodeId } from "../contracts/nodes.js";
 import { ResearchCampaignId, ResearchStartRequest } from "../contracts/research.js";
 import { MemoryDecision, MemoryId, TrustSurface } from "../contracts/review.js";
 import { AppProblem } from "./services/problem.js";
 
 const closed = { additionalProperties: false };
 export const CliCommand = Type.Union([
-	Type.Object({ kind: Type.Literal("machines.list") }, closed),
-	Type.Object({ kind: Type.Literal("machines.add"), machine: MachineAdd }, closed),
-	Type.Object({ kind: Type.Literal("machines.remove"), id: MachineId }, closed),
-	Type.Object({ kind: Type.Literal("machines.check"), id: MachineId }, closed),
+	Type.Object({ kind: Type.Literal("nodes.list") }, closed),
+	Type.Object({ kind: Type.Literal("nodes.add"), machine: NodeAdd }, closed),
+	Type.Object({ kind: Type.Literal("nodes.remove"), id: NodeId }, closed),
+	Type.Object({ kind: Type.Literal("nodes.check"), id: NodeId }, closed),
 	Type.Object({ kind: Type.Literal("hub.agents") }, closed),
 	Type.Object({ kind: Type.Literal("hub.verifiers") }, closed),
 	Type.Object({ kind: Type.Literal("usage.report"), installation: Type.Optional(Type.Literal(true)) }, closed),
@@ -55,9 +55,9 @@ export function commandPlan(input: unknown, cwd?: string): { argv: string[]; out
 	if (!Value.Check(CliCommand, input))
 		throw new AppProblem("validation", "CLI command is outside the supported command table.");
 	switch (input.kind) {
-		case "machines.list":
+		case "nodes.list":
 			return { argv: ["fleet", "nodes", "list", "--json"], output: "json" };
-		case "machines.add": {
+		case "nodes.add": {
 			const node = input.machine;
 			return {
 				argv: [
@@ -76,9 +76,9 @@ export function commandPlan(input: unknown, cwd?: string): { argv: string[]; out
 				output: "exit",
 			};
 		}
-		case "machines.remove":
+		case "nodes.remove":
 			return { argv: ["fleet", "nodes", "remove", input.id], output: "exit" };
-		case "machines.check":
+		case "nodes.check":
 			return { argv: ["fleet", "nodes", "test", input.id, "--record", "--json"], output: "json" };
 		case "hub.agents":
 			return { argv: ["agents", "--json"], output: "json" };
@@ -91,17 +91,17 @@ export function commandPlan(input: unknown, cwd?: string): { argv: string[]; out
 		case "run.verify":
 			return { argv: ["fleet", "verify", input.id, "--json"], output: "json" };
 		case "targets.use":
-			return { argv: ["targets", "use", input.id], output: "exit" };
+			return { argv: ["connections", "use", input.id], output: "exit" };
 		case "targets.remove":
-			return { argv: ["targets", "remove", input.id], output: "exit" };
+			return { argv: ["connections", "remove", input.id], output: "exit" };
 		case "targets.signout":
 			return { argv: ["auth", "logout", input.id], output: "exit" };
 		case "routing.models":
 			return { argv: ["models", "--json", "--offline"], output: "json" };
 		case "routing.profiles":
-			return { argv: ["targets", "profile", "list", "--json"], output: "json" };
+			return { argv: ["connections", "profile", "list", "--json"], output: "json" };
 		case "routing.bindings":
-			return { argv: ["targets", "profile", "bindings", "--json"], output: "json" };
+			return { argv: ["connections", "profile", "bindings", "--json"], output: "json" };
 		case "arena.list":
 			return { argv: ["arena", "list", "--json"], output: "json" };
 		case "arena.standings":

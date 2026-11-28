@@ -6,7 +6,7 @@ import type { Static, TSchema } from "typebox";
 import { Value } from "typebox/value";
 import type { ArtifactRead } from "../../contracts/artifacts.js";
 import { ArtifactList, ArtifactPage } from "../../contracts/artifacts.js";
-import { AsideAnswer, AsideCancelled, AsideDrafts } from "../../contracts/aside.js";
+import { AsideAnswer, AsideCanceled, AsideDrafts } from "../../contracts/aside.js";
 import {
 	attachmentWeight,
 	TURN_IMAGES_MAX_BASE64,
@@ -36,7 +36,7 @@ import {
 	type FleetRunRequest,
 	FleetRunResult,
 } from "../../contracts/fleet-run.js";
-import { HandoffCancelled, HandoffCommitted, HandoffDraft } from "../../contracts/handoff.js";
+import { HandoffCanceled, HandoffCommitted, HandoffDraft } from "../../contracts/handoff.js";
 import {
 	INTERVIEW_CANCEL_METHOD,
 	INTERVIEW_REQUEST_METHOD,
@@ -743,7 +743,7 @@ export class Supervisor {
 		if (entry.rebase) throw new AppProblem("conflict", "The conversation is moving to another branch.");
 		if (entry.drafting) throw new AppProblem("conflict", "PanCode is drawing up a handoff for this conversation.");
 		if (entry.contextCommand || this.snapshot(id).contextWork?.active)
-			throw new AppProblem("conflict", "Context work is running in this task. Wait for it or stop it.");
+			throw new AppProblem("conflict", "Context work is running in this session. Wait for it or stop it.");
 		if (images.length > 0 && !entry.client.capabilities.images)
 			throw new AppProblem("conflict", "This PanCode build does not accept images with a request.");
 		if (files.length > 0 && !entry.client.capabilities.embeddedContext)
@@ -1048,7 +1048,7 @@ export class Supervisor {
 		if (update.sessionUpdate === "config_option_update") {
 			const options = projectConfigOptions(update.configOptions);
 			if (options === undefined) throw new AppProblem("upstream_acp", "PanCode omitted session configuration.");
-			const target = record(meta[ACP_SESSION_META_KEY]).target;
+			const target = record(meta[ACP_SESSION_META_KEY]).connection;
 			const config = {
 				...entry.client.config,
 				options,
@@ -1207,7 +1207,7 @@ export class Supervisor {
 	}
 	decide(id: string, permissionId: string, decision: PermissionDecision) {
 		const permissions = this.active(id).permissions;
-		if (!permissions) throw new AppProblem("conflict", "This task has no approval waiting.");
+		if (!permissions) throw new AppProblem("conflict", "This session has no approval waiting.");
 		permissions.decide(permissionId, decision);
 		return {};
 	}
@@ -1257,9 +1257,9 @@ export class Supervisor {
 	}
 	settings(id: string, patch?: SafeSettingsPatch) {
 		if (patch)
-			for (const key of ["chat.target", "chat.model"] as const) {
+			for (const key of ["chat.connection", "chat.model"] as const) {
 				const value = patch[key];
-				if (value && Buffer.byteLength(value) > (key === "chat.target" ? 128 : 256))
+				if (value && Buffer.byteLength(value) > (key === "chat.connection" ? 128 : 256))
 					throw new AppProblem("validation", "Setting exceeds its UTF-8 byte limit.");
 			}
 		return this.projected(
@@ -1290,21 +1290,21 @@ export class Supervisor {
 	async targets(id: string) {
 		const client = this.active(id).client;
 		if (!client.capabilities.targets?.list)
-			throw new AppProblem("unsupported", "This PanCode build does not expose target inventory.");
+			throw new AppProblem("unsupported", "This PanCode build does not expose connection inventory.");
 		const raw = Value.Clean(AcpTargetList, await client.request(ACP_TARGETS_LIST_METHOD, {}));
 		if (!Value.Check(AcpTargetList, raw))
-			throw new AppProblem("upstream_acp", "PanCode returned an invalid target list.");
+			throw new AppProblem("upstream_acp", "PanCode returned an invalid connection list.");
 		const projected = Value.Clean(SessionTargets, {
 			targets: raw.targets,
 			truncated: record(raw._meta)[ACP_TRUNCATED_META_KEY] === true,
 		});
 		if (!Value.Check(SessionTargets, projected))
-			throw new AppProblem("upstream_acp", "PanCode returned an invalid target list.");
+			throw new AppProblem("upstream_acp", "PanCode returned an invalid connection list.");
 		return projected;
 	}
 	probe(id: string, targetId: string) {
 		if (!this.active(id).client.capabilities.targets?.probe)
-			throw new AppProblem("unsupported", "This PanCode build does not expose target probes.");
+			throw new AppProblem("unsupported", "This PanCode build does not expose connection probes.");
 		return this.projected(id, ACP_TARGETS_PROBE_METHOD, { targetId }, TargetProbe);
 	}
 	async autonomy(id: string, level?: Static<typeof AutonomyLevel>) {
@@ -1628,7 +1628,7 @@ export class Supervisor {
 	}
 	cancelAside(id: string) {
 		this.asiding(id);
-		return this.projected(id, ACP_ASIDE_CANCEL_METHOD, { sessionId: id }, AsideCancelled);
+		return this.projected(id, ACP_ASIDE_CANCEL_METHOD, { sessionId: id }, AsideCanceled);
 	}
 	private extending(id: string) {
 		const entry = this.active(id);
@@ -1803,7 +1803,7 @@ export class Supervisor {
 	}
 	cancelHandoff(id: string, handoffId: string) {
 		this.handing(id);
-		return this.projected(id, ACP_HANDOFF_CANCEL_METHOD, { sessionId: id, handoffId }, HandoffCancelled);
+		return this.projected(id, ACP_HANDOFF_CANCEL_METHOD, { sessionId: id, handoffId }, HandoffCanceled);
 	}
 	private boardWrites(id: string, method: "supersede" | "proposeMemory") {
 		const entry = this.active(id);
@@ -2142,7 +2142,7 @@ export class Supervisor {
 	private snapshotting(id: string) {
 		const entry = this.active(id);
 		const methods = entry.client.capabilities.snapshots;
-		if (!methods) throw new AppProblem("conflict", "File snapshots are not available for this task.");
+		if (!methods) throw new AppProblem("conflict", "File snapshots are not available for this session.");
 		return { entry, methods };
 	}
 }

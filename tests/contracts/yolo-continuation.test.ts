@@ -8,8 +8,9 @@ import type { ProvidersContract } from "../../src/domains/providers/index.js";
 import type { SessionContract, TurnInput } from "../../src/domains/session/contract.js";
 import type { SessionEntry } from "../../src/domains/session/entries.js";
 import type { AgentEvent, AgentMessage } from "../../src/engine/types.js";
+import { budgetCrossingContinues } from "../../src/session-control/chat-loop/tool-options.js";
 import type { CreateChatLoopDeps } from "../../src/session-control/chat-loop.js";
-import { budgetCrossingContinues, createChatLoop } from "../../src/session-control/chat-loop.js";
+import { createChatLoop } from "../../src/session-control/chat-loop.js";
 import type { MachineTurnResult } from "../../src/session-control/job-turn-types.js";
 import { subscribeLoopGuardStop } from "../../src/session-control/loop-guard-interrupt.js";
 import { dispatchStubContext } from "../harness/dispatch-stub-context.js";
@@ -43,11 +44,11 @@ async function harness(script: readonly Step[], options: { autonomy?: "yolo" | "
 	const settings = structuredClone(DEFAULT_SETTINGS);
 	settings.chat.prewarm = false;
 	if (options.runtimeId !== undefined)
-		settings.targets = [{ id: "fixture", runtime: options.runtimeId, defaultModel: "fixture-model" }];
+		settings.connections = [{ id: "fixture", runtime: options.runtimeId, defaultModel: "fixture-model" }];
 	const context = dispatchStubContext({ settings });
-	const target = settings.targets[0];
+	const target = settings.connections[0];
 	ok(target);
-	settings.chat.target = target.id;
+	settings.chat.connection = target.id;
 	settings.chat.model = target.defaultModel ?? "gpt-4o";
 	const entries: SessionEntry[] = [];
 	let leaf: string | null = null;

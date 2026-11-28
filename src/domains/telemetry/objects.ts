@@ -2,13 +2,14 @@
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 
 import { closeSync, constants, fstatSync, lstatSync, openSync, readFileSync } from "node:fs";
-import { lstat, mkdir, open } from "node:fs/promises";
+import { lstat, open } from "node:fs/promises";
 import { join } from "node:path";
 import type { TSchema } from "typebox";
 import { Type } from "typebox";
 import { Value } from "typebox/value";
 import { canonicalJsonStrict } from "../../core/canonical-json.js";
 import { sha256Hex } from "../../core/hash.js";
+import { makeDirectory } from "../../core/make-directory.js";
 import { safeResourceWriteAsync } from "../../core/safe-resource-write.js";
 import { literalUnion } from "../../core/telemetry/enums.js";
 import { EvidenceFindingsObjectSchema } from "../../core/telemetry/evidence-schemas.js";
@@ -190,7 +191,7 @@ export function telemetryPromptStructure(prompt: {
 
 async function objectDirectory(scopeDirectory: string, create: boolean): Promise<string | null> {
 	const directory = telemetryObjectsDirectory(scopeDirectory);
-	if (create) await mkdir(directory, { recursive: true, mode: 0o700 });
+	if (create) await makeDirectory(directory, 0o700);
 	try {
 		const stat = await lstat(directory);
 		if (!stat.isDirectory() || stat.isSymbolicLink()) throw new Error("telemetry objects directory is not a directory");

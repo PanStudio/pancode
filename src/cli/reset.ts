@@ -12,9 +12,9 @@ import {
 	resolvePancodeDirs,
 } from "../core/xdg.js";
 import { GUI_UNINSTALL_ADVICE, prepareGuiUninstall } from "./gui.js";
-import { writeCliFailure } from "./kit/json-out.js";
-import { CliUsageError } from "./kit/usage-error.js";
-import { createLifecyclePresenter, type LifecycleItem, measurePath } from "./lifecycle-presenter.js";
+import { createInstallPresenter, type InstallItem, measurePath } from "./install-presenter.js";
+import { writeCliFailure } from "./lib/json-out.js";
+import { CliUsageError } from "./lib/usage-error.js";
 import { type RemovalFailure, refuseForOpenSessions, removePath, reportRemovalFailures } from "./removal.js";
 
 const HELP = `pancode reset --state|--data|--cache|--auth|--settings|--all [--dry-run] [--yes] [--json]
@@ -50,7 +50,7 @@ const ROOT_NOTES = {
 	data:
 		"Data holds memory, the project store and vendored tools; stored blobs and records are not recoverable, and the tools have to be downloaded again.",
 	settings: "Settings return to their defaults.",
-	auth: "Saved API keys are gone; each target has to be authenticated again.",
+	auth: "Saved API keys are gone; each connection has to be authenticated again.",
 	cache: "Cache is disposable and rebuilds itself.",
 	all: "Everything goes: settings, credentials, memory, the project store, transcripts, and caches. A clean install remains.",
 } as const;
@@ -224,7 +224,7 @@ export async function runResetCommand(argv: ReadonlyArray<string>): Promise<numb
 	}
 	const settingsPath = join(dirs.config, "settings.yaml");
 	const credentialsPath = join(dirs.config, "credentials.yaml");
-	const presenter = createLifecyclePresenter({ json: args.json, dryRun: args.dryRun });
+	const presenter = createInstallPresenter({ json: args.json, dryRun: args.dryRun });
 
 	presenter.header("Reset PanCode", "reset");
 
@@ -248,7 +248,7 @@ export async function runResetCommand(argv: ReadonlyArray<string>): Promise<numb
 	const stateSize = measurePath(dirs.state);
 	const cacheSize = measurePath(dirs.cache);
 
-	const items: LifecycleItem[] = [];
+	const items: InstallItem[] = [];
 
 	// State
 	if (resetState) {
@@ -401,8 +401,8 @@ export async function runResetCommand(argv: ReadonlyArray<string>): Promise<numb
 		if (!confirmed) {
 			// Exit 0 is the v1 contract for a declined prompt; convention C8's exit 1
 			// waits for a versioned opt-in because it changes an exit code.
-			presenter.warn("Reset cancelled");
-			presenter.done("Cancelled");
+			presenter.warn("Reset canceled");
+			presenter.done("Canceled");
 			return 0;
 		}
 	}

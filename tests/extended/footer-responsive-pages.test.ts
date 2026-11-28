@@ -163,7 +163,7 @@ test("compact tier stays at most 2 rows even when busy with alerts, and ASCII id
 		state.notices = [];
 		const busyRows = renderCompactDashboard(state, 96);
 		strictEqual(busyRows.length, 2);
-		match(stripTerminalSequences(busyRows[0] ?? ""), /Esc stops/);
+		match(stripTerminalSequences(busyRows[0] ?? ""), /Esc cancels/);
 		match(stripTerminalSequences(busyRows[1] ?? ""), /▐∀▌/);
 	} finally {
 		setPresentationTier(prevTier);
@@ -517,11 +517,12 @@ test("Alt+U boxed island deck matches geometry, detailed default/welcome auto-fo
 		quiet: false,
 	};
 	yoloState.session.autonomyWindow = {
-		caps: { turns: 100, minutes: 120, tokens: 0, usd: 0 },
-		usage: { turns: 0, activeMs: 0, tokens: 0, usd: 0 },
+		caps: { toolCalls: 100, minutes: 120, tokens: 0 },
+		usage: { toolCalls: 0, activeMs: 0, tokens: 0 },
+		turn: { toolCalls: 0, budget: 40 },
+		halted: null,
 		osSandbox: true,
-		paused: false,
-	} as never;
+	};
 	const yoloDeck96 = renderDeckDrawer(yoloState, 96, 40).map(stripTerminalSequences).join("\n");
 	doesNotMatch(yoloDeck96, /tu…/u);
 	match(yoloDeck96, /YOLO/u);

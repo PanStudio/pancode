@@ -367,5 +367,5 @@ function formatResultLine(
 			? requested
 			: `${requested} (${served.servedAsRequested ? `${served.calls} call${served.calls === 1 ? "" : "s"}` : served.text})`;
 	const gatewayRouting = runGatewayRoutingLabel(r);
-	return `result: ${r.runId} agent=${r.agentId} exit=${r.exitCode}${verification} target=${r.targetId} model=${model}${gatewayRouting ? ` ${gatewayRouting}` : ""} tokens=${renderFactField(r.spend.totalTokens)}${reasoning}${failure} start=${r.startedAt} end=${r.endedAt}`;
+	return `result: ${r.runId} agent=${r.agentId} exit=${r.exitCode}${verification} connection=${r.targetId} model=${model}${gatewayRouting ? ` ${gatewayRouting}` : ""} tokens=${renderFactField(r.spend.totalTokens)}${reasoning}${failure} start=${r.startedAt} end=${r.endedAt}`;
 }

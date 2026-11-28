@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import { createInterface, type Interface } from "node:readline/promises";
 import { railPrefix } from "./configure-target.js";
-import { createLifecyclePresenter } from "./lifecycle-presenter.js";
+import { createInstallPresenter } from "./install-presenter.js";
 import { canSelect, promptSelect, promptText } from "./select.js";
 
 export class ConfigureNavigation extends Error {
@@ -47,7 +47,7 @@ export class ConfigurePrompts {
 		}
 		const result = await promptText({
 			heading: ["", label],
-			railPrefix: railPrefix(createLifecyclePresenter({ stream: this.output }).isPlain()),
+			railPrefix: railPrefix(createInstallPresenter({ stream: this.output }).isPlain()),
 			initial,
 			mask,
 			backLabel: "back",
@@ -63,7 +63,7 @@ export class ConfigurePrompts {
 		if (!this.interactive) return this.text(`${label} [${choices.join("|")}]`, current);
 		const result = await promptSelect({
 			heading: ["", label],
-			railPrefix: railPrefix(createLifecyclePresenter({ stream: this.output }).isPlain()),
+			railPrefix: railPrefix(createInstallPresenter({ stream: this.output }).isPlain()),
 			choices: choices.map((value) => ({ value, label: value })),
 			initialIndex: Math.max(0, choices.indexOf(current)),
 			...(searchable ? { searchable: true, maxVisible: 8 } : {}),

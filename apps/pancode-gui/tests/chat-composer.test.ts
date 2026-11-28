@@ -249,13 +249,13 @@ test("a window that only views the task offers no send, steer or shell line, and
 	for (const text of ["fix the build", "!ls"]) {
 		assert.deepEqual(submitIntent(draft({ text }), { ...viewing, shell: true }), {
 			kind: "blocked",
-			reason: "Firefox on laptop controls this task. Take control to send from this window.",
+			reason: "Firefox on laptop controls this session. Take control to send from this window.",
 		});
 	}
 	assert.equal(submitIntent(draft(), { ...viewing, turnRunning: true }).kind, "blocked");
 	assert.deepEqual(composerDelivery(viewing, DEFAULT_STEER_MODE, false, false), {
 		label: "Viewing",
-		detail: "Firefox on laptop controls this task.",
+		detail: "Firefox on laptop controls this session.",
 		tone: "warn",
 	});
 	assert.equal(submitIntent(draft(), situation()).kind, "prompt");
@@ -577,7 +577,7 @@ test("a completed turn footer carries its time, tokens and tool count, and an un
 
 test("the Detailed line reports route, speed, the prompt split and cache only when they were reported", () => {
 	const view = turnOutcome(
-		turn({ details: { model: "qwen3.8-27b", target: "lab-gpu", ttftMs: 420, outputTokensPerSecond: 38.4 } }),
+		turn({ details: { model: "qwen3.8-27b", connection: "lab-gpu", ttftMs: 420, outputTokensPerSecond: 38.4 } }),
 		0,
 	);
 	assert.deepEqual(view.nerd, [
@@ -600,7 +600,7 @@ test("the Detailed line reports route, speed, the prompt split and cache only wh
 	assert.deepEqual(
 		view.breakdown.filter((row) => row.group === "Model").map((row) => [row.label, row.value]),
 		[
-			["Target", "lab-gpu"],
+			["Connection", "lab-gpu"],
 			["Model", "qwen3.8-27b"],
 		],
 	);
@@ -664,7 +664,7 @@ test("a failed turn shows its problem detail and its stop reason; a stopped one 
 	assert.equal(failed.stopReason, "refusal");
 	const stopped = turnOutcome(turn({ status: "cancelled", problem: null }), 0);
 	assert.equal(stopped.tone, "neutral");
-	assert.equal(stopped.label, "Stopped");
+	assert.equal(stopped.label, "Canceled");
 	assert.equal(stopped.stopReason, null);
 	assert.equal(turnOutcome(turn({ status: "running", usage: null, finishedAt: null }), 0).tone, "running");
 });

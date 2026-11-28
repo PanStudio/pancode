@@ -10,7 +10,7 @@ import type { CliRunner } from "./cli-runner.js";
 import { AppProblem } from "./problem.js";
 import type { WorkspaceService } from "./workspaces.js";
 
-const unreadable = () => new AppProblem("unavailable", "The saved task list could not be read.");
+const unreadable = () => new AppProblem("unavailable", "The saved session list could not be read.");
 const notFound = () => new AppProblem("not_found", "Session was not found in this workspace's ledger.");
 const SURFACE_WORDS: Readonly<Record<LiveElsewhere["surface"], string>> = {
 	terminal: "It is live in the terminal",
@@ -115,6 +115,7 @@ export class SessionService {
 					if (!meta || row.cwd !== cwd) throw new AppProblem("upstream_acp", "PanCode omitted workspace session metadata.");
 					const projected = Value.Clean(SessionSummary, {
 						...meta,
+						target: meta.connection,
 						id: row.sessionId,
 						workspaceId,
 						...(row.title !== undefined ? { name: row.title } : {}),
@@ -163,7 +164,7 @@ export class SessionService {
 		if (!this.cli) throw new AppProblem("unsupported", "This server cannot take a session over.");
 		const { path } = await this.workspaces.get(workspaceId);
 		const before = (await this.find(workspaceId, id)).liveElsewhere;
-		if (!before) return { released: true, message: "No other process holds this task." };
+		if (!before) return { released: true, message: "No other process holds this session." };
 		if (!before.canTakeOver)
 			throw new AppProblem(
 				"conflict",

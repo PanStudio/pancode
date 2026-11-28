@@ -647,7 +647,7 @@ const TOOL_ROWS: Readonly<Record<string, ToolRowSpec>> = {
 	[ToolNames.Steer]: {
 		class: "delegate",
 		verbs: ["steering", "steered"],
-		verbsFor: (args) => (args.action === "cancel" ? ["cancelling", "cancelled"] : null),
+		verbsFor: (args) => (args.action === "cancel" ? ["canceling", "canceled"] : null),
 		object: shared(ToolNames.Steer),
 		consumes: ["run_id", "action"],
 	},

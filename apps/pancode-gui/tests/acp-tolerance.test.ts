@@ -92,7 +92,7 @@ test("an engine process that ends on its own fails the turn, parks the task and 
 	const snapshot = h.supervisor.get(session.id),
 		turn = snapshot.turns.at(-1);
 	assert.equal(turn?.status, "failed");
-	assert.equal(turn?.problem?.detail, "The PanCode engine process for this task ended unexpectedly.");
+	assert.equal(turn?.problem?.detail, "The PanCode engine process for this session ended unexpectedly.");
 	assert.ok(snapshot.telemetry?.notices?.some((notice) => notice.startsWith("The engine process ended unexpectedly.")));
 });
 

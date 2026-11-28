@@ -2,9 +2,9 @@
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import type { PluginScope } from "../../src/domains/plugins/types.js";
 import type {
+	HubActionPlan,
 	HubApplyResult,
 	HubEntryKind,
-	HubLifecyclePlan,
 	HubOperation,
 	HubPlanStep,
 	HubRequirementRef,
@@ -25,7 +25,7 @@ export interface HubPlanFixtureOptions {
 }
 
 /** One reviewed plan, in the domain's own shape, for layout and wording tests. */
-export function hubPlanFixture(options: HubPlanFixtureOptions = {}): HubLifecyclePlan {
+export function hubPlanFixture(options: HubPlanFixtureOptions = {}): HubActionPlan {
 	const ref = options.ref ?? "plugin:fixture";
 	const [kind, name] = ref.split(":") as [HubEntryKind, string];
 	const operation = options.operation ?? "install";

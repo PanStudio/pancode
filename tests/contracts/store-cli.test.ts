@@ -141,7 +141,7 @@ describe("pancode store", () => {
 			writeFileSync(join(root, "a.dat"), "second\n");
 			const tool = createStoreTool({ getCwd: () => root, writable: true });
 			strictEqual((await tool.run({ op: "put", tag: "sim", path: "a.dat" })).kind, "ok");
-			strictEqual((await storeCommandResult(["rm", "sim:a.dat", "--yes"], root)).code, 0);
+			strictEqual((await storeCommandResult(["remove", "sim:a.dat", "--yes"], root)).code, 0);
 			const { records } = await readBlobHistory(await openStoreBackend(root), "sim", "a.dat");
 			deepStrictEqual(
 				records.map((record) => [record.kind, record.producedBy?.actor]),
@@ -153,27 +153,27 @@ describe("pancode store", () => {
 			);
 		}));
 
-	it("rm-tag dry run exits 0 and a missing tag exits non-zero", () =>
+	it("remove-tag dry run exits 0 and a missing tag exits non-zero", () =>
 		withWorkspace(async (root) => {
 			writeFileSync(join(root, "a.dat"), "x");
 			await storePut(root, "sim", "a.dat");
-			strictEqual((await storeCommandResult(["rm-tag", "sim"], root)).code, 0);
-			await rejects(storeCommandResult(["rm-tag", "absent"], root), /no tag named absent/u);
+			strictEqual((await storeCommandResult(["remove-tag", "sim"], root)).code, 0);
+			await rejects(storeCommandResult(["remove-tag", "absent"], root), /no tag named absent/u);
 		}));
 
-	it("rm removes one blob only with --yes", () =>
+	it("remove removes one blob only with --yes", () =>
 		withWorkspace(async (root) => {
 			for (const name of ["a.dat", "b.dat"]) {
 				writeFileSync(join(root, name), name);
 				await storePut(root, "sim", name);
 			}
 			const backend = await openStoreBackend(root);
-			strictEqual((await storeCommandResult(["rm", "sim:a.dat"], root)).code, 0);
+			strictEqual((await storeCommandResult(["remove", "sim:a.dat"], root)).code, 0);
 			ok((await backend.statBlob("sim", "a.dat")) !== null);
-			strictEqual((await storeCommandResult(["rm", "sim:a.dat", "--yes"], root)).code, 0);
+			strictEqual((await storeCommandResult(["remove", "sim:a.dat", "--yes"], root)).code, 0);
 			strictEqual(await backend.statBlob("sim", "a.dat"), null);
 			ok((await backend.statBlob("sim", "b.dat")) !== null);
-			await rejects(storeCommandResult(["rm", "sim:a.dat"], root), /not in the store/u);
+			await rejects(storeCommandResult(["remove", "sim:a.dat"], root), /not in the store/u);
 		}));
 
 	// Constructed: a trusted tracked settings file with a project id and a store left under the path key.

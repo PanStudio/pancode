@@ -22,7 +22,7 @@ import { parse } from "yaml";
 import { reviewExtensionEnvelope } from "../src/domains/extensions/envelope-review.js";
 import { fetchPluginCommit, type PluginSource } from "../src/domains/plugins/catalog.js";
 import type { HubRowSource, HubTier } from "../src/domains/plugins/hub-types.js";
-import { type HubPackageValidationResult, validateHubPackage } from "../src/domains/resources/hub-validation.js";
+import { type HubPackValidationResult, validateHubPack } from "../src/domains/resources/hub-validation.js";
 import { buildRegistryRow, packLicense, type RegistryRow, rowFileProblems } from "./pin-hub-remote.js";
 
 const ROW_FILE = /^hub\/community\/([^/]+)\/([^/]+)\.yaml$/;
@@ -56,10 +56,10 @@ export interface ChangedFile {
 
 export interface HubReviewDeps {
 	fetchPluginCommit: (source: HubRowSource) => PluginSource;
-	validateHubPackage: (root: string) => HubPackageValidationResult;
+	validateHubPack: (root: string) => HubPackValidationResult;
 }
 
-const defaultDeps: HubReviewDeps = { fetchPluginCommit, validateHubPackage };
+const defaultDeps: HubReviewDeps = { fetchPluginCommit, validateHubPack };
 
 const EXACT_VERSION = /^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.+-]+)?$/;
 
@@ -248,7 +248,7 @@ export function reviewHubChanges(
 			let previous: PluginSource | undefined;
 			try {
 				fetched = deps.fetchPluginCommit(source);
-				const result = deps.validateHubPackage(fetched.root);
+				const result = deps.validateHubPack(fetched.root);
 				if (!result.valid || !result.manifest) {
 					const messages = [
 						...result.diagnostics.map((d) => d.message),

@@ -3,7 +3,7 @@
 import type { IconName } from "../design/icons.js";
 import type { SlashEntry } from "./slash-model.js";
 
-export const ACTION_GROUPS = ["Conversation", "Task details", "More actions"] as const;
+export const ACTION_GROUPS = ["Conversation", "Session details", "More actions"] as const;
 export type ActionGroup = (typeof ACTION_GROUPS)[number];
 export interface VisualAction {
 	readonly entry: SlashEntry;
@@ -19,29 +19,29 @@ export function actionLabel(name: string): string {
 }
 
 const PANE_COPY: Readonly<Record<string, { title: string; icon: IconName }>> = {
-	context: { title: "Conversation memory", icon: "layers" },
+	context: { title: "Context window", icon: "layers" },
 	usage: { title: "Usage and quota", icon: "usage" },
 	tasks: { title: "Tasks and decisions", icon: "listChecks" },
 	decisions: { title: "Decisions", icon: "evidence" },
-	fleet: { title: "Live agents", icon: "fleet" },
-	memory: { title: "What PanCode learned", icon: "archive" },
+	fleet: { title: "Fleet workers", icon: "fleet" },
+	memory: { title: "Memory", icon: "archive" },
 };
 const ACTION_COPY: Readonly<Record<string, { title: string; description: string }>> = {
-	tree: { title: "Conversation history", description: "Return to an earlier point or try another direction" },
-	fork: { title: "Try another direction", description: "Start a separate conversation from an earlier reply" },
+	tree: { title: "Session tree", description: "Return to an earlier point or fork into a new session" },
+	fork: { title: "Fork session", description: "Start a new session from an earlier reply" },
 	handoff: {
-		title: "Continue in a new task",
-		description: "Review a summary and carry your work into a fresh conversation",
+		title: "Hand off to a new session",
+		description: "Review a summary and carry your work into a fresh session",
 	},
-	btw: { title: "Side question", description: "Ask a quick question without interrupting the main conversation" },
-	draft: { title: "Compare approaches", description: "Explore different ways to tackle your request" },
-	extensions: { title: "Tools and add-ons", description: "See the tools available to this task" },
-	"fleet-run": { title: "Run a workflow", description: "Choose a saved workflow and review it before starting" },
+	btw: { title: "Side question", description: "Ask a quick question without interrupting the main session" },
+	draft: { title: "Drafts", description: "Draft answers in parallel and compare them" },
+	extensions: { title: "Extensions", description: "Inspect and reload this session's extensions" },
+	"fleet-run": { title: "Run a playbook", description: "Choose a saved playbook and review it before starting" },
 };
 // Every command the engine offers gets a written title; a bare command name ("Mcp", "Oracle") reads as jargon.
 const COMMAND_TITLES: Readonly<Record<string, string>> = {
 	doctor: "Check PanCode",
-	"context compact": "Make room in conversation",
+	"context compact": "Compact session context",
 	// Reset clears the project's context files (it can delete PanCode.md), not this conversation.
 	"context reset": "Reset project context",
 	"context recover": "Resume a paused handoff",
@@ -56,7 +56,7 @@ const COMMAND_TITLES: Readonly<Record<string, string>> = {
 	"loop status": "Loop status",
 	"loop pause": "Pause a loop",
 	"loop resume": "Resume a loop",
-	"loop stop": "Stop a loop",
+	"loop cancel": "Cancel a loop",
 	mcp: "MCP servers",
 	"mcp list": "List MCP servers",
 	"mcp trust": "Trust an MCP server",
@@ -65,12 +65,12 @@ const COMMAND_TITLES: Readonly<Record<string, string>> = {
 	"archive export": "Export an archive",
 	"archive import": "Import an archive",
 	"fleet share": "Share a worker result",
-	"memory seed": "Seed the task bank",
-	skill: "Use a skill",
+	"memory seed": "Seed task memory",
+	skill: "Invoke a skill",
 	"tasks add": "Add a task",
-	"tasks hand": "Assign a task",
-	"tasks done": "Complete a task",
-	"tasks drop": "Remove a task",
+	"tasks hand": "Hand a task",
+	"tasks done": "Mark a task done",
+	"tasks remove": "Drop a task",
 };
 const ACTION_ICONS: Readonly<Record<string, IconName>> = {
 	tree: "branch",
@@ -101,7 +101,7 @@ export function visualActions(entries: readonly SlashEntry[], query: string): re
 				title: action?.title ?? pane?.title ?? COMMAND_TITLES[entry.name] ?? actionLabel(entry.name),
 				description: action?.description ?? entry.summary,
 				icon: entry.kind === "action" ? (ACTION_ICONS[entry.action] ?? "overview") : (pane?.icon ?? "bolt"),
-				group: entry.kind === "action" ? "Conversation" : entry.kind === "pane" ? "Task details" : "More actions",
+				group: entry.kind === "action" ? "Conversation" : entry.kind === "pane" ? "Session details" : "More actions",
 			};
 		})
 		.filter((item) =>

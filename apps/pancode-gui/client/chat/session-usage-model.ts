@@ -254,8 +254,8 @@ export function usageSummary(
 		source: spend.source,
 		note: !sessionOpen
 			? totals.length > 0
-				? "Last recorded totals. Open this task to refresh model details and provider quota."
-				: "No usage totals were recorded. Open this task to read its usage."
+				? "Last recorded totals. Open this session to refresh model details and provider quota."
+				: "No usage totals were recorded. Open this session to read its usage."
 			: spend.source === "telemetry"
 				? "PanCode's telemetry figures for this conversation; a partial sum reads as a lower bound with its gap."
 				: recorded?.session

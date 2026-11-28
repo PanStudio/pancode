@@ -295,7 +295,7 @@ export function createReloadClasses(deps: ReloadClassesDeps): ReloadClassesContr
 					}
 				}
 				lines.push(
-					"Restart-bound classes: compiled source (everything under src/**/*.ts), core tool schemas, provider runtimes, runtime plugins, safety rule packs, config/session schemas and pane host are not reloaded by these commands.",
+					"Restart-bound classes: compiled source (everything under src/**/*.ts), core tool schemas, provider runtimes, provider packages, safety rule packs, config/session schemas and pane host are not reloaded by these commands.",
 				);
 				deps.bus.emit("session.reloaded", { target, failed });
 				return { text: lines.join("\n"), failed };

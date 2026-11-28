@@ -389,7 +389,7 @@ describe("middleware hook boundary", () => {
 			// Steering triage settles on its typed route: acted when the verdict applied, expired when the queue moved on.
 			for (const current of [true, false])
 				await runTriageRound({
-					triage: { target: null, minQueued: 2, timeoutMs: 1000 },
+					triage: { connection: null, minQueued: 2, timeoutMs: 1000 },
 					systemOne: {
 						bound: () => true,
 						ask: async () => ({
@@ -491,9 +491,9 @@ describe("middleware hook boundary", () => {
 			const settings = structuredClone(DEFAULT_SETTINGS);
 			settings.chat.prewarm = false;
 			const stubContext = dispatchStubContext({ settings });
-			const target = settings.targets[0];
+			const target = settings.connections[0];
 			ok(target);
-			settings.chat.target = target.id;
+			settings.chat.connection = target.id;
 			settings.chat.model = target.defaultModel ?? "gpt-4o";
 			const entries: SessionEntry[] = [];
 			let leaf: string | null = null;

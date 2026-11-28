@@ -166,7 +166,7 @@ function boardFactLines(
 			[
 				cardUnitsLine(
 					theme,
-					"target",
+					"connection",
 					[
 						theme.fg("footerIdentity", formatRowRoute(row)),
 						...(row.node === undefined || row.node === "local" ? [] : [theme.fg("body", `on node ${row.node}`)]),

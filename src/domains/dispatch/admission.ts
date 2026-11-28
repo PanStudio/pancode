@@ -126,7 +126,7 @@ export function createLeaseSlotGuard(
 	};
 }
 
-const URL_SLOT_REMEDY = "raise this target's maxConcurrentRequests to the server's actual slot count";
+const URL_SLOT_REMEDY = "raise this connection's maxConcurrentRequests to the server's actual slot count";
 
 /** Reason code a dispatch refused for a fresh provider quota denial records on its denied `tool.decided` row. */
 export const PROVIDER_QUOTA_DENIED_REASON = "provider-quota-denied";

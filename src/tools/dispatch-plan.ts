@@ -412,7 +412,7 @@ function taskViews(args: Record<string, unknown>): DispatchPlanTaskView[] {
 	const sharedAgent = str(args.agent) ?? "coder";
 	const sharedModel = str(args.model);
 	const sharedNode = str(args.node);
-	const sharedTarget = str(args.target);
+	const sharedTarget = str(args.connection);
 	return tasks.map((item) => {
 		const record = isRecord(item) ? item : {};
 		const view: DispatchPlanTaskView = {
@@ -442,7 +442,7 @@ function taskViews(args: Record<string, unknown>): DispatchPlanTaskView[] {
 		if (model !== undefined) view.model = model;
 		const node = str(record.node) ?? sharedNode;
 		if (node !== undefined) view.node = node;
-		const target = str(record.target) ?? sharedTarget;
+		const target = str(record.connection) ?? sharedTarget;
 		if (target !== undefined) view.target = target;
 		const failover = failoverModeOf(record.failover) ?? failoverModeOf(args.failover);
 		if (failover !== undefined) view.failover = failover;
@@ -521,7 +521,7 @@ function renderPlanText(
 	}
 	for (const [index, task] of tasks.entries()) {
 		const model = task.model !== undefined ? ` model=${safeField(task.model)}` : "";
-		const target = task.target !== undefined ? ` target=${safeField(task.target)}` : "";
+		const target = task.target !== undefined ? ` connection=${safeField(task.target)}` : "";
 		const node = ` node=${safeField(task.node ?? "local")}${
 			task.nodeKind !== undefined ? ` kind=${task.nodeKind}` : ""
 		}${task.nodeHost !== undefined ? ` host=${safeField(task.nodeHost)}` : ""}`;
@@ -555,7 +555,7 @@ function renderPlanText(
 		if (task.allowedCandidates !== undefined) {
 			for (const [candidateIndex, candidate] of task.allowedCandidates.entries()) {
 				lines.push(
-					`    candidate#${candidateIndex + 1} agent=${safeField(candidate.agentId)} target=${safeField(candidate.target)} model=${safeField(candidate.model)} node=${safeField(candidate.node)}`,
+					`    candidate#${candidateIndex + 1} agent=${safeField(candidate.agentId)} connection=${safeField(candidate.target)} model=${safeField(candidate.model)} node=${safeField(candidate.node)}`,
 				);
 			}
 		}

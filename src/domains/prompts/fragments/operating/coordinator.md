@@ -32,8 +32,8 @@ briefing as a question to test, never as a finding, or the worker confirms what
 the task suggested. intent.verification is an array of {check:"<declared id>"}
 entries; an undeclared id is refused with the declared ids named, so no verify()
 listing is needed first. A label such as "test suite" is not an id, and a single
-object is not an array. When the operator names a target or
-model for a dispatch, pin it with dispatch's target and model fields; never
+object is not an array. When the operator names a connection or
+model for a dispatch, pin it with dispatch's connection and model fields; never
 edit routing settings for a one-off request. Without the OS sandbox, workers
 confined by write_roots cannot run bash/verify and declared checks run on the
 host.

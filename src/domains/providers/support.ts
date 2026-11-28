@@ -225,7 +225,7 @@ export function configuredTargetsForRuntime(
 	runtimeId: string,
 ): ReadonlyArray<TargetDescriptor> {
 	const canonical = getRuntimeIfRegistered(runtimeId)?.id ?? runtimeId;
-	return settings.targets.filter(
+	return settings.connections.filter(
 		(target) => (getRuntimeIfRegistered(target.runtime)?.id ?? target.runtime) === canonical,
 	);
 }
@@ -237,7 +237,7 @@ export function resolveProviderReference(
 ): ResolvedProviderReference | null {
 	const trimmed = input.trim();
 	if (trimmed.length === 0) return null;
-	const target = settings.targets.find((entry) => entry.id === trimmed) ?? null;
+	const target = settings.connections.find((entry) => entry.id === trimmed) ?? null;
 	if (target) {
 		const runtime = getRuntime(target.runtime);
 		if (!runtime) return null;

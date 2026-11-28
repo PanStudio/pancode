@@ -229,7 +229,7 @@ describe("dispatch admission through the target breaker", () => {
 			strictEqual(opened.length, 1);
 			strictEqual(opened[0]?.state, "open");
 			strictEqual(opened[0]?.reason, "target-transient");
-			strictEqual(opened[0]?.targetId, settings.fleet.default.target);
+			strictEqual(opened[0]?.targetId, settings.fleet.default.connection);
 			ok((opened[0]?.remainingMs ?? 0) > 0 && (opened[0]?.remainingMs ?? 0) <= 15_000);
 
 			offset += 15_000;

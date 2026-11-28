@@ -80,7 +80,7 @@ export function requirePricedRefusal(
 	env: NodeJS.ProcessEnv = process.env,
 ): string | undefined {
 	if (pricedBy !== "none" || runOverrides(env).requirePriced !== true) return undefined;
-	return `--require-priced: ${route} has no known pricing; declare targets[].pricing for it or choose a priced route`;
+	return `--require-priced: ${route} has no known pricing; declare connections[].pricing for it or choose a priced route`;
 }
 
 /**

@@ -79,7 +79,7 @@ export interface StoreCliContext {
 	hashMaxBytes?: number;
 	/** The provenance a put records; default the stored bytes' identity, the source path and the note. */
 	provenance?: (input: StoreCliPutInput) => StorePutRecordFields | Promise<StorePutRecordFields>;
-	/** Asked before `rm` and `rm-tag` without `--yes`; default ask on a terminal, else preview. */
+	/** Asked before `remove` and `remove-tag` without `--yes`; default ask on a terminal, else preview. */
 	confirm?: (question: string) => Promise<boolean>;
 	/** Default `createLocalStoreBackend` over the roots above, or `createSharedStoreBackend` when `shared`. */
 	openBackend?: () => Promise<StoreBackend>;
@@ -89,14 +89,14 @@ export class StoreCliUsageError extends Error {}
 
 const VERBS = [
 	"tags",
-	"ls",
+	"list",
 	"stat",
 	"history",
 	"verify",
 	"put",
 	"get",
-	"rm",
-	"rm-tag",
+	"remove",
+	"remove-tag",
 	"adopt",
 	"where",
 	"usage",
@@ -112,14 +112,14 @@ the same from the main checkout and every task worktree of it.
 
 Commands:
   ${command} tags [--json]
-  ${command} ls <tag> [pattern] [--json]
+  ${command} list <tag> [pattern] [--json]
   ${command} stat <tag>:<blob> [--json]
   ${command} history <tag>:<blob> [--json]
   ${command} verify <tag> [pattern] [--hash-large] [--record-unrecorded] [--json]
   ${command} put <tag> <file> [--blob <name>] [--note <text>] [--link] [--json]
   ${command} get <tag>:<blob> [--to <path>] [--json]
-  ${command} rm <tag>:<blob> --yes [--json]
-  ${command} rm-tag <tag> --yes [--json]
+  ${command} remove <tag>:<blob> --yes [--json]
+  ${command} remove-tag <tag> --yes [--json]
   ${command} adopt [<projectKey>] [--json]
   ${command} where [--json]
   ${command} usage [tag] [--json]
@@ -138,7 +138,7 @@ file's blocks by a reflink where the file system supports it and copies
 otherwise; the output says which.
 usage counts blobs and bytes per tag and per store root by walking the store,
 with each root's file system free space (not a quota).
-rm and rm-tag without --yes delete nothing, print what they would delete and
+remove and remove-tag without --yes delete nothing, print what they would delete and
 exit 0; a missing tag or blob exits 1.
 adopt without a key lists store directories whose project root no longer
 exists and that carry no project id; with a key it moves that store to this
@@ -822,7 +822,7 @@ async function execute(
 			].join("\n");
 			return { code: 0, data, text };
 		}
-		case "ls": {
+		case "list": {
 			const data = await storeList(context, checkTagArg(first), second);
 			const rows = data.blobs.map((b) => [
 				b.blob,
@@ -904,7 +904,7 @@ async function execute(
 			const data = await storeGet(context, tag, blob, args.values.get("to"));
 			return { code: 0, data, text: data.path };
 		}
-		case "rm": {
+		case "remove": {
 			const { tag, blob } = parseRef(first);
 			const yes = args.yes || (await confirmed(context, `Delete ${tag}:${blob} from the store?`));
 			const data = await storeRemoveBlob(context, tag, blob, yes);
@@ -912,7 +912,7 @@ async function execute(
 			if (!data.deleted) return { code: 0, data, text: `Would delete ${what}. Nothing deleted; rerun with --yes.` };
 			return { code: 0, data, text: `Deleted ${what}; its records remain.` };
 		}
-		case "rm-tag": {
+		case "remove-tag": {
 			const tag = checkTagArg(first);
 			const yes = args.yes || (await confirmed(context, `Delete tag ${tag} and every blob in it?`));
 			const data = await storeCliRemoveTag(context, tag, yes);

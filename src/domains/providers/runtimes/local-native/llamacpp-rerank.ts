@@ -48,7 +48,7 @@ const llamacppRerankRuntime: RuntimeDescriptor = {
 	hidden: true,
 	async probe(target: TargetDescriptor, ctx: ProbeContext): Promise<ProbeResult> {
 		const base = targetUrl(target);
-		if (!base) return { ok: false, error: "target has no url" };
+		if (!base) return { ok: false, error: "connection has no url" };
 		const healthOpts = { url: `${base}/health`, timeoutMs: ctx.httpTimeoutMs } as const;
 		const health = await (ctx.signal ? probeHttp({ ...healthOpts, signal: ctx.signal }) : probeHttp(healthOpts));
 		if (!health.ok) return health;
@@ -82,7 +82,7 @@ const llamacppRerankRuntime: RuntimeDescriptor = {
 	},
 	async rerank(target: TargetDescriptor, query: string, documents: string[], ctx: ProbeContext): Promise<RerankResult> {
 		const base = targetUrl(target);
-		if (!base) throw new Error("target has no url");
+		if (!base) throw new Error("connection has no url");
 		const modelId = target.defaultModel ?? "default";
 		const req = {
 			url: `${base}/reranking`,

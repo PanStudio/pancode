@@ -237,7 +237,7 @@ export function providerFailureHeadline(route: ProviderFailureRoute): string | n
 	if (route.stage === "auth") {
 		if (status !== null)
 			return route.noCredential === true
-				? "The endpoint asks for a credential; this target sends none."
+				? "The endpoint asks for a credential; this connection sends none."
 				: "The provider refused the credential.";
 		// PanCode's own refusal names the file and the fix, so it leads.
 		if (errorClass === "credential_refused") return null;
@@ -354,7 +354,7 @@ export function providerFailureAdvice(route: ProviderFailureRoute, text?: string
 	}
 	if (errorClass === "http_429") return `${RESEND} once the limit clears ${GLYPH.sep} ${SWITCH_ROUTE}.`;
 	if (/^http_5/u.test(errorClass)) return `${RESEND} once it recovers ${GLYPH.sep} ${SWITCH_ROUTE}.`;
-	return `${SWITCH_ROUTE} ${GLYPH.sep} ${configure} edits this target.`;
+	return `${SWITCH_ROUTE} ${GLYPH.sep} ${configure} edits this connection.`;
 }
 
 const ERROR_MARKER = /^\[error\]\s*/u;

@@ -7,7 +7,7 @@ import { type HubOriginShape, hubCopyStateWords, hubOriginLabel } from "../../..
 import type { HubApplyResult, HubInventory, HubPlan } from "../../contracts/hub.js";
 import type { StatusTone } from "../design/status.js";
 
-export type Package = Static<typeof HubInventory>["packages"][number];
+export type HubPack = Static<typeof HubInventory>["packages"][number];
 export type Plan = Static<typeof HubPlan>;
 export type PlanStep = Plan["steps"][number];
 export type Applied = Static<typeof HubApplyResult>;
@@ -59,14 +59,14 @@ export function copyOperations(state: string): Operation[] {
 	return ["update", "remove"];
 }
 /** With no workspace open there is no project to install into, so only the user copy can be added. */
-export function missingScopes(pkg: Package, workspace = true): Scope[] {
+export function missingScopes(pkg: HubPack, workspace = true): Scope[] {
 	return (workspace ? (["user", "project"] as const) : (["user"] as const)).filter(
 		(scope) => !pkg.copies.some((copy) => copy.scope === scope),
 	);
 }
 
 /** A query also matches the components a package provides, so searching for a component finds its install target. */
-export function matchesPackage(pkg: Package, query: string): boolean {
+export function matchesHubPack(pkg: HubPack, query: string): boolean {
 	const needle = query.trim().toLocaleLowerCase("en-US");
 	if (!needle) return true;
 	const provided = (pkg.provides ?? []).map((item) => `${String(item.kind)} ${String(item.name)}`);
@@ -85,7 +85,7 @@ export function matchesPackage(pkg: Package, query: string): boolean {
 		.includes(needle);
 }
 
-export function originSentence(pkg: Package): string {
+export function originSentence(pkg: HubPack): string {
 	const origin = pkg.origin as HubOriginShape;
 	return origin.kind === undefined && pkg.catalogOrigin === "installed"
 		? "Installed; no catalog row"

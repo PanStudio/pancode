@@ -7,7 +7,7 @@
  * the user scope saves through `updateSettings` (settings lock, re-read,
  * re-validate) and the project scope through the trusted project-local writer,
  * which approves the bytes it writes. Routing paths are refused with a pointer
- * to `targets use` and `configure`, which own target selection.
+ * to `connections use` and `configure`, which own target selection.
  */
 import { lstatSync, readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -31,10 +31,10 @@ import { StateFileLockTimeoutError, withStateFileLockSync } from "../core/state-
 import { captureProjectSurface, recordProjectSurfaceTrust } from "../core/workspace-trust.js";
 import { renderYamlPreservingLayout } from "../core/yaml-preserve.js";
 import { settingsRuntimeFacts } from "../domains/providers/settings-facts.js";
-import { EXIT_CODES } from "./kit/exit-codes.js";
-import { parseCommandFlags } from "./kit/flags.js";
-import { jsonDocument, writeCliFailure, writeJson } from "./kit/json-out.js";
-import type { ErrorSlug } from "./kit/slugs.js";
+import { EXIT_CODES } from "./lib/exit-codes.js";
+import { parseCommandFlags } from "./lib/flags.js";
+import { jsonDocument, writeCliFailure, writeJson } from "./lib/json-out.js";
+import type { ErrorSlug } from "./lib/slugs.js";
 
 type Verb = "get" | "set" | "unset";
 type Source = "default" | "user" | "project" | "project.local" | "cli";
@@ -48,16 +48,17 @@ class SettingNotFoundError extends Error {}
 
 /** Routing has its own commands, which validate targets and clear stale model overrides together (review H20). */
 function routingPointer(path: string): string | null {
-	if (path === "targets" || path.startsWith("targets.")) return "targets are created and edited with pancode configure";
+	if (path === "connections" || path.startsWith("connections."))
+		return "connections are created and edited with pancode configure";
 	if (path === "fleet" || path.startsWith("fleet."))
-		return "fleet routing is set with pancode targets use --fleet-target, pancode targets profile, or pancode configure";
+		return "fleet routing is set with pancode connections use --fleet-connection, pancode connections profile, or pancode configure";
 	if (
-		path === "chat.target" ||
+		path === "chat.connection" ||
 		path === "chat.model" ||
-		path === "context.memory.target" ||
+		path === "context.memory.connection" ||
 		path === "context.memory.model"
 	)
-		return "routing is set with pancode targets use or pancode configure";
+		return "routing is set with pancode connections use or pancode configure";
 	return null;
 }
 

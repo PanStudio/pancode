@@ -49,9 +49,9 @@ export interface Destination {
  */
 export const DESTINATIONS: readonly Destination[] = [
 	{ label: "Traces", path: "/traces", keywords: ["runs", "forensics"] },
-	{ label: "Toolchain", path: "/toolchain", keywords: ["tools", "install"] },
+	{ label: "Programs", path: "/programs", keywords: ["programs", "tools", "install"] },
 	{ label: "Sessions", path: "/sessions", keywords: ["tasks", "conversations", "history", "resume"] },
-	{ label: "Machines", path: "/machines", keywords: ["hosts", "remote", "servers", "attach"] },
+	{ label: "Nodes", path: "/nodes", keywords: ["machines", "hosts", "remote", "servers", "attach"] },
 	{ label: "Settings", path: "/settings", keywords: ["configuration", "preferences"] },
 	{ label: "General settings", path: "/settings/general", keywords: ["theme", "appearance", "install", "app"] },
 	{ label: "Model settings", path: "/settings/models", keywords: ["model", "default", "thinking", "connection"] },
@@ -70,7 +70,7 @@ export const DESTINATIONS: readonly Destination[] = [
 	{ label: "Hub", path: "/hub", keywords: ["packs", "skills", "components", "agents", "extensions"] },
 	{ label: "System", path: "/system", keywords: ["doctor", "health", "paths"] },
 	{ label: "Usage", path: "/usage", keywords: ["tokens", "cost", "spend", "report"] },
-	{ label: "Targets", path: "/settings/targets", keywords: ["providers", "models"] },
+	{ label: "Connections", path: "/settings/connections", keywords: ["providers", "models"] },
 	{ label: "Routing", path: "/settings/routing", keywords: ["profiles", "bindings", "offline"] },
 	{ label: "Effective settings", path: "/settings/effective", keywords: ["values", "layers", "origin"] },
 	{ label: "Why these settings", path: "/settings/why", keywords: ["provenance", "source"] },
@@ -183,8 +183,8 @@ export function appCommands(situation: CommandSituation, handlers: CommandHandle
 	if (newTask)
 		commands.push({
 			id: "task.new",
-			title: "New task",
-			group: "Task",
+			title: "New session",
+			group: "Session",
 			keywords: ["start", "conversation", "chat", "session", "compose"],
 			binding: "newTask",
 			available: true,
@@ -193,9 +193,9 @@ export function appCommands(situation: CommandSituation, handlers: CommandHandle
 	if (openWorkspace)
 		commands.push({
 			id: "workspace.open",
-			title: "Open workspace",
-			group: "Task",
-			keywords: ["project", "folder", "directory", "add"],
+			title: "Open project",
+			group: "Session",
+			keywords: ["workspace", "folder", "directory", "add"],
 			binding: "openWorkspace",
 			available: true,
 			run: openWorkspace,
@@ -206,14 +206,14 @@ export function appCommands(situation: CommandSituation, handlers: CommandHandle
 				id: `task.${task.id}`,
 				title: task.title,
 				group: task.project,
-				keywords: [task.project, task.open ? "open" : "saved", "task", "conversation"],
+				keywords: [task.project, task.open ? "open" : "saved", "session", "conversation"],
 				available: task.id !== sessionId,
 				run: () => openTask(task.id),
 			});
 	if (sessionId !== null && handlers.openWindow)
 		commands.push({
 			id: "session.window",
-			title: "Open this task in a new window",
+			title: "Open this session in a new window",
 			group: "Session",
 			keywords: ["second", "another", "split", "side"],
 			binding: "newWindow",
@@ -223,9 +223,9 @@ export function appCommands(situation: CommandSituation, handlers: CommandHandle
 	if (sessionId !== null) {
 		commands.push({
 			id: "session.cancel",
-			title: "Stop the running turn",
+			title: "Cancel the running turn",
 			group: "Session",
-			keywords: ["cancel", "interrupt", "halt"],
+			keywords: ["stop", "interrupt", "halt"],
 			binding: "cancelTurn",
 			available: runningTurnId !== null,
 			run: () => {
@@ -256,9 +256,9 @@ export function appCommands(situation: CommandSituation, handlers: CommandHandle
 		] as const)
 			commands.push({
 				id: `session.download.${format}`,
-				title: `Download transcript as ${name}`,
+				title: `Export transcript as ${name}`,
 				group: "Session",
-				keywords: ["export", "save", "transcript", format],
+				keywords: ["download", "export", "save", "transcript", format],
 				available: sessionOpen,
 				run: () => handlers.navigate(`/sessions/${sessionId}?download=${format}`),
 			});
@@ -281,7 +281,7 @@ export function appCommands(situation: CommandSituation, handlers: CommandHandle
 				id: `task-command.${row.name}`,
 				// A row that will ask for more says so, the way a menu item that opens a dialog does.
 				title: row.needsArgs ? `${row.summary}…` : row.summary,
-				group: "This task",
+				group: "This session",
 				keywords: [row.name, ...row.name.split(" "), "command"],
 				available: true,
 				run: () => (row.needsArgs ? fillTaskCommand(row.name) : runTaskCommand(row.name)),

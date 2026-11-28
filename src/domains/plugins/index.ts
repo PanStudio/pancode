@@ -11,11 +11,12 @@ export {
 export { passDerived, withPluginDiscoveryPass } from "./discovery-pass.js";
 export {
 	clipAtWord,
+	HUB_PLUGIN_BACKED_KINDS,
 	type HubAuditState,
 	type HubCategory,
 	type HubComponentKind,
 	type HubEntryKind,
-	type HubPackageEntry,
+	type HubPackEntry,
 	type HubProvidedResource,
 	type HubRequirementRef,
 	type HubTier,
@@ -39,7 +40,7 @@ export {
 	auditPluginInstallRecords,
 	disablePlugin,
 	enablePlugin,
-	installHubPackage,
+	installHubPack,
 	installPlugin,
 	listInstalledPlugins,
 	newlyBrokenDependents,

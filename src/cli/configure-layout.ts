@@ -140,7 +140,7 @@ const LIST_MIN_MODELS = 16;
  */
 export function formatRuntimeList(rows: ReadonlyArray<RuntimeListRow>, width: number): string[] {
 	if (rows.length === 0) return [];
-	const targetCells = rows.map((row) => `targets=${row.targets}`);
+	const targetCells = rows.map((row) => `connections=${row.targets}`);
 	const idWidth = maxLength(rows.map((row) => row.runtimeId));
 	const labelWidth = maxLength(rows.map((row) => row.label));
 	const authWidth = maxLength(rows.map((row) => row.auth));

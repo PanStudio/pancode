@@ -39,7 +39,7 @@ export function semanticUsable(
 ): semantic is PancodeSettings["context"]["semantic"] & { target: string; model: string; assetIdentity: string } {
 	return (
 		semantic?.enabled === true &&
-		Boolean(semantic.target?.trim() && semantic.model?.trim() && semantic.assetIdentity?.trim())
+		Boolean(semantic.connection?.trim() && semantic.model?.trim() && semantic.assetIdentity?.trim())
 	);
 }
 
@@ -49,7 +49,7 @@ const reportedSettingsWarnings = new Set<string>();
 export function reportSettingsWarnings(settings: Readonly<PancodeSettings>): void {
 	const semantic = settings.context.semantic;
 	if (!semantic.enabled || semanticUsable(semantic)) return;
-	const missing = (["target", "model", "assetIdentity"] as const)
+	const missing = (["connection", "model", "assetIdentity"] as const)
 		.filter((key) => !semantic[key]?.trim())
 		.map((key) => `context.semantic.${key}`);
 	const warning = `Settings warning: context.semantic.enabled is inactive; missing ${missing.join(", ")}. Run \`pancode semantic configure\` to pin them.`;
@@ -130,7 +130,7 @@ export function validateSettingsFile(): SettingsValidationResult {
 	const parsed = read.document;
 	// An empty file parses as null; it holds no settings, so it reads as an empty map.
 	const result = validateSettings(parsed ?? {});
-	markUserTargets(result.settings.targets);
+	markUserTargets(result.settings.connections);
 	const projectIdIssue = userStoreProjectIdIssue(parsed);
 	if (projectIdIssue === null) return result;
 	delete result.settings.store.projectId;
@@ -363,7 +363,7 @@ export function updateSettings(mutate: SettingsMutator, options: SettingsUpdateO
 }
 
 /**
- * Settings mutations shared by the `pancode targets …` CLI (inside
+ * Settings mutations shared by the `pancode connections …` CLI (inside
  * updateSettings) and the settings overlay's Fleet and Targets rows (on the
  * effective view, committed per leaf). Registry-backed eligibility checks stay with the caller.
  */
@@ -378,10 +378,10 @@ export interface UseTargetOptions {
 export type TargetSelectionRole = "chat" | "fleet" | "memory";
 
 /**
- * A role flag scopes `targets use` to the roles it names, and `--model` is only
+ * A role flag scopes `connections use` to the roles it names, and `--model` is only
  * the fallback for a selected role that has no model flag of its own. When no
  * selected role falls back to it, it would be dropped without a word, so the
- * call is refused instead. `targets use blade --model X --fleet-target Y
+ * call is refused instead. `connections use blade --model X --fleet-connection Y
  * --fleet-model Z` changed fleet alone and left chat where it was.
  */
 export function unusedSharedModelReason(targetId: string, options: UseTargetOptions): string | null {
@@ -400,7 +400,7 @@ export function unusedSharedModelReason(targetId: string, options: UseTargetOpti
 	const flags = [
 		options.orchestratorModel !== undefined ? "--orchestrator-model" : null,
 		options.backgroundModel !== undefined ? "--background-model" : null,
-		options.workerTargetId !== undefined ? "--fleet-target" : null,
+		options.workerTargetId !== undefined ? "--fleet-connection" : null,
 		options.workerModel !== undefined ? "--fleet-model" : null,
 	].filter((flag): flag is string => flag !== null);
 	return `--model '${options.model}' would not be used: ${flags.join(" and ")} select${flags.length === 1 ? "s" : ""} only the roles named, and none of them falls back to --model. To set the chat model, pass --orchestrator-model '${options.model}', or drop the role flags to set chat and fleet together.`;
@@ -417,12 +417,12 @@ export function useTargetInSettings(
 ): { workerTargetId: string; roles: TargetSelectionRole[]; changedRoles: TargetSelectionRole[] } | null {
 	const refusal = unusedSharedModelReason(targetId, options);
 	if (refusal !== null) throw new TargetUseRefusal(refusal);
-	const target = settings.targets.find((entry) => entry.id === targetId);
+	const target = settings.connections.find((entry) => entry.id === targetId);
 	if (!target) return null;
 	// A worker target of its own is the split topology; its model defaults to that node's own default.
 	const workerTarget =
 		options.workerTargetId !== undefined && options.workerTargetId !== target.id
-			? settings.targets.find((entry) => entry.id === options.workerTargetId)
+			? settings.connections.find((entry) => entry.id === options.workerTargetId)
 			: target;
 	if (!workerTarget) return null;
 	const scoped =
@@ -445,8 +445,8 @@ export function useTargetInSettings(
 				: role === "fleet"
 					? (options.workerModel ?? (workerTarget === target ? sharedModel : (workerTarget.defaultModel ?? null)))
 					: (options.backgroundModel ?? null);
-		if (current.target !== nextTarget || current.model !== nextModel) changedRoles.push(role);
-		current.target = nextTarget;
+		if (current.connection !== nextTarget || current.model !== nextModel) changedRoles.push(role);
+		current.connection = nextTarget;
 		current.model = nextModel;
 	}
 	return { workerTargetId: workerTarget.id, roles, changedRoles };
@@ -454,22 +454,22 @@ export function useTargetInSettings(
 
 /** Drop a target and every routing field, profile, and scope entry that named it. */
 export function removeTargetFromSettings(settings: PancodeSettings, id: string): boolean {
-	if (!settings.targets.some((entry) => entry.id === id)) return false;
-	settings.targets = settings.targets.filter((entry) => entry.id !== id);
-	if (settings.chat.target === id) {
-		settings.chat.target = null;
+	if (!settings.connections.some((entry) => entry.id === id)) return false;
+	settings.connections = settings.connections.filter((entry) => entry.id !== id);
+	if (settings.chat.connection === id) {
+		settings.chat.connection = null;
 		settings.chat.model = null;
 	}
-	if (settings.context.memory.target === id) {
-		settings.context.memory.target = null;
+	if (settings.context.memory.connection === id) {
+		settings.context.memory.connection = null;
 		settings.context.memory.model = null;
 	}
-	if (settings.fleet.default.target === id) {
-		settings.fleet.default.target = null;
+	if (settings.fleet.default.connection === id) {
+		settings.fleet.default.connection = null;
 		settings.fleet.default.model = null;
 	}
 	for (const [name, profile] of Object.entries(settings.fleet.profiles)) {
-		if (profile.target === id) delete settings.fleet.profiles[name];
+		if (profile.connection === id) delete settings.fleet.profiles[name];
 	}
 	settings.chat.modelPicker.cycleSet = settings.chat.modelPicker.cycleSet.filter((entry) => entry.split("/")[0] !== id);
 	settings.chat.modelPicker.favorites = settings.chat.modelPicker.favorites.filter(
@@ -485,11 +485,11 @@ export function setFleetProfileInSettings(
 	targetId: string,
 	options: { model?: string; thinkingLevel?: ThinkingLevel } = {},
 ): boolean {
-	const target = settings.targets.find((entry) => entry.id === targetId);
+	const target = settings.connections.find((entry) => entry.id === targetId);
 	if (!target) return false;
 	const existing = settings.fleet.profiles[name];
 	settings.fleet.profiles[name] = {
-		target: target.id,
+		connection: target.id,
 		model: options.model ?? target.defaultModel ?? null,
 		thinkingLevel: options.thinkingLevel ?? existing?.thinkingLevel ?? "off",
 	};

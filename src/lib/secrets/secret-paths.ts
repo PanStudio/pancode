@@ -139,7 +139,7 @@ export function conditionalSecretPaths(): string[] {
 	const paths: string[] = [];
 	if (settings !== null && mcp !== null) {
 		const headers = (document: unknown) =>
-			yamlEntries(document, "targets").some((target) =>
+			yamlEntries(document, "connections").some((target) =>
 				nonEmptyMap((target as { auth?: { headers?: unknown } } | null)?.auth?.headers),
 			);
 		const namesHeaders = (text: string) => /\bheaders\s*:/u.test(text);

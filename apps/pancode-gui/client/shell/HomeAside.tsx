@@ -9,9 +9,9 @@ import { Icon } from "../design/icons.js";
 import { StatusMark } from "../design/status.js";
 import { useSetupStatus } from "../pages/target-onboarding.js";
 import { setAsideExpanded, useAsideExpanded } from "./aside-state.js";
+import { useSessionOverview } from "./sessions.js";
 import { useShell } from "./shell-context.js";
 import { activeWork, isHeld, isUntouched, STATE_LABELS, taskTitle } from "./shell-model.js";
-import { useSessionOverview } from "./tasks.js";
 import "../chat/pane.css";
 import { workspacesQuery } from "../api/queries.js";
 
@@ -67,7 +67,7 @@ export function HomeAside({ client, workspace }: { client: Client; workspace: Wo
 								</h2>
 								{workspace ? (
 									<Link className="pane-link" to={`/workspaces/${workspace.id}/sessions`}>
-										All tasks
+										All sessions
 									</Link>
 								) : null}
 							</header>
@@ -79,7 +79,7 @@ export function HomeAside({ client, workspace }: { client: Client; workspace: Wo
 									</p>
 								</>
 							) : (
-								<p className="pane-empty">Open a workspace to start a task in it.</p>
+								<p className="pane-empty">Open a workspace to start a session in it.</p>
 							)}
 						</section>
 
@@ -149,7 +149,7 @@ export function HomeAside({ client, workspace }: { client: Client; workspace: Wo
 									))}
 								</ul>
 							) : (
-								<p className="pane-empty">No task is running.</p>
+								<p className="pane-empty">No session is running.</p>
 							)}
 						</section>
 					</div>

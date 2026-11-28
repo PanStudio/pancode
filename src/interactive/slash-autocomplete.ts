@@ -217,7 +217,7 @@ export function compactArgumentHint(args: CommandArgsSpec | undefined): string |
 const COMPLETION_SLOT_MANIFEST: Readonly<Record<string, CompletionSlotName>> = {
 	"run:pos:agent": "agents",
 	"run:flag:--agent-profile": "agent-profiles",
-	"run:flag:--target": "targets",
+	"run:flag:--connection": "targets",
 	"run:flag:--model": "models",
 	"council:flag:--roster": "rosters",
 	"skill:pos:name": "skills",
@@ -225,7 +225,7 @@ const COMPLETION_SLOT_MANIFEST: Readonly<Record<string, CompletionSlotName>> = {
 	"fleet/run:pos:playbook": "playbooks",
 	"tasks/hand:pos:id": "tasks",
 	"tasks/done:pos:id": "tasks",
-	"tasks/drop:pos:id": "tasks",
+	"tasks/remove:pos:id": "tasks",
 	"view/verify:pos:runId": "runs",
 	"panes/open:pos:preset-or-argv": "pane-presets",
 	"model:pos:pattern": "models",

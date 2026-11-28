@@ -27,7 +27,7 @@ export const SETTINGS_AREAS = [
 	{
 		id: "workers",
 		label: "Workers",
-		description: "Workers and agents: default worker, profiles, agent routes, machines, limits, run history, and loops.",
+		description: "Workers and agents: default worker, profiles, agent routes, nodes, limits, run history, and loops.",
 	},
 	{
 		id: "context",
@@ -71,7 +71,7 @@ export const SETTINGS_AREA_GROUPS: Readonly<Record<SettingsAreaId, readonly stri
 		"Profiles",
 		"Agent routes",
 		"Automatic routing",
-		"Machines",
+		"Nodes",
 		"Limits & retries",
 		"Run history",
 		"Loops",
@@ -129,12 +129,13 @@ const place = (area: SettingsAreaId, group = ""): SettingsPlacement => ({ area, 
  * path. Anything unplaced falls into Advanced "Other" so no row is unreachable.
  */
 export function settingsPlacementForRow(id: string, path: string): SettingsPlacement {
-	if (path === "targets[].funding") return place("models", "Funding");
-	if (id === "targets" || id === "targets.add-cta" || under(path, "targets")) return place("models", "Connections");
+	if (path === "connections[].funding") return place("models", "Funding");
+	if (id === "connections" || id === "connections.add-cta" || under(path, "connections"))
+		return place("models", "Connections");
 	if (id.startsWith("maintenance.")) return place("advanced", "Maintenance");
 	if (RAW_COLLECTIONS.has(path) && !GUIDED_ROW_IDS.has(id)) return place("advanced", "Raw collections");
 	switch (path) {
-		case "chat.target":
+		case "chat.connection":
 		case "chat.model":
 			return place("models", "Chat model");
 		case "chat.thinkingLevel":
@@ -168,13 +169,13 @@ export function settingsPlacementForRow(id: string, path: string): SettingsPlace
 			return place("workspace", "Task copies");
 		case "fleet.concurrency":
 		case "fleet.staggerSharedPrefix":
-			return place("workers", "Machines");
+			return place("workers", "Nodes");
 		case "fleet.limits.toolCallsPerRun":
 		case "fleet.limits.runTimeoutMs":
 		case "fleet.retry.maxRetries":
 			return place("workers", "Limits & retries");
 		case "fleet.limits.internalRunTimeoutMs":
-		case "safety.limits.workerResponseSeconds":
+		case "safety.limits.workerResponseTimeoutMs":
 		case "fleet.retry.routeCooldownMs":
 		case "fleet.retry.breakerThreshold":
 			return place("advanced", "Worker timing");
@@ -190,8 +191,8 @@ export function settingsPlacementForRow(id: string, path: string): SettingsPlace
 		case "integrations.externalAgents.defaults.turnTimeoutMs":
 		case "integrations.externalAgents.defaults.permissionTimeoutMs":
 			return place("advanced", "External agent timing");
-		case "integrations.runtimePlugins":
-			return place("workspace", "Plugins");
+		case "integrations.providerPackages":
+			return place("workspace", "Provider packages");
 		case "context.toolResultMaxBytes":
 		case "safety.limits.readBytesPerCall":
 		case "safety.limits.observationBytesPerTurn":
@@ -208,7 +209,7 @@ export function settingsPlacementForRow(id: string, path: string): SettingsPlace
 		case "context.workingSet.protectLastTurns":
 			return place("context", "Context cleanup");
 		case "context.memory.enabled":
-		case "context.memory.target":
+		case "context.memory.connection":
 		case "context.memory.model":
 		case "context.memory.thinkingLevel":
 		case "context.memory.cadenceToolCalls":
@@ -221,7 +222,7 @@ export function settingsPlacementForRow(id: string, path: string): SettingsPlace
 		case "context.memory.surfaces.history":
 			return place("context", "Proactive memory");
 		case "context.semantic.enabled":
-		case "context.semantic.target":
+		case "context.semantic.connection":
 		case "context.semantic.model":
 		case "context.semantic.assetIdentity":
 		case "context.semantic.projectorIdentity":
@@ -232,7 +233,7 @@ export function settingsPlacementForRow(id: string, path: string): SettingsPlace
 			return place("context", "Semantic search");
 		case "safety.autonomy":
 		case "safety.snapshots":
-		case "safety.unattendedAfterSeconds":
+		case "safety.unattendedAfterMs":
 		case "safety.yoloAccepted":
 		case "safety.yoloConfinement":
 		case "safety.yoloUnconfinedAccepted":
@@ -245,11 +246,11 @@ export function settingsPlacementForRow(id: string, path: string): SettingsPlace
 		case "safety.limits.autonomousToolCalls":
 		case "safety.limits.autonomousMinutes":
 		case "safety.limits.autonomousTokens":
-		case "safety.limits.bashIdleSeconds":
+		case "safety.limits.bashIdleTimeoutMs":
 			return place("safety", "Spending & tool limits");
 		case "safety.sandbox":
 		case "safety.sandboxPassEnv":
-		case "safety.liveCheckTargets":
+		case "safety.liveCheckConnections":
 		case "safety.sandboxUnixSockets":
 		case "safety.sandboxUnconfinedLocalWorkers":
 		case "safety.workerIsolation":
@@ -266,14 +267,13 @@ export function settingsPlacementForRow(id: string, path: string): SettingsPlace
 	if (under(path, "interface.panes")) return place("workspace", "Panes");
 	if (under(path, "integrations.git")) return place("workspace", "Git");
 	if (under(path, "store")) return place("workspace", "Store");
-	if (under(path, "integrations.projectResources")) return place("workspace", "Hub");
 	if (under(path, "integrations.hub")) return place("workspace", "Hub");
 	if (under(path, "turnControl")) return place("workers", "Before PanCode answers");
 	if (under(path, "fleet.agentProfiles")) return place("workers", "Agent routes");
 	if (under(path, "fleet.default")) return place("workers", "Default worker");
 	if (under(path, "fleet.profiles")) return place("workers", "Profiles");
 	if (path === "fleet.defaultNode" || under(path, "fleet.nodes") || under(path, "fleet.endpoints"))
-		return place("workers", "Machines");
+		return place("workers", "Nodes");
 	if (under(path, "fleet.history")) return place("workers", "Run history");
 	if (under(path, "fleet.permissions")) return place("safety", "Worker approvals");
 	if (under(path, "safety.resources")) return place("safety", "Sandbox");

@@ -77,7 +77,7 @@ export function makeOpenAICompatRuntime(spec: OpenAICompatSpec): RuntimeDescript
 		defaultCapabilities: spec.defaultCapabilities,
 		async probe(target: TargetDescriptor, ctx: ProbeContext): Promise<ProbeResult> {
 			const base = probeBase(target);
-			if (!base) return { ok: false, error: "target has no url" };
+			if (!base) return { ok: false, error: "connection has no url" };
 			const health = await probeUrl(`${base}${healthPath}`, ctx, "GET", headers(target, ctx));
 			if (!health.ok) return health;
 			const catalog = await probeOpenAIModelCatalog(base, ctx, modelsPath, headers(target, ctx));
@@ -102,7 +102,7 @@ export function makeOpenAICompatRuntime(spec: OpenAICompatSpec): RuntimeDescript
 		},
 		async probeReasoning(target: TargetDescriptor, modelId: string, ctx: ProbeContext): Promise<ReasoningProbeResult> {
 			const base = probeBase(target);
-			if (!base) return { reasoning: false, latencyMs: 0, error: "target has no url" };
+			if (!base) return { reasoning: false, latencyMs: 0, error: "connection has no url" };
 			const apiKeyEnv = target.auth?.apiKeyEnvVar;
 			const apiKey =
 				ctx.authToken ?? (apiKeyEnv && ctx.credentialsPresent.has(apiKeyEnv) ? process.env[apiKeyEnv] : undefined);

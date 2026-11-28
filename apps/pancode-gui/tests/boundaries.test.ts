@@ -38,6 +38,8 @@ const httpModules = new Map([
 	["src/acp/errors.ts", new Set(["AcpTimeoutError", "AcpProtocolError"])],
 	...acpWireTypes.map((path) => [path, new Set(["*"])] as const),
 	["src/core/xdg.ts", new Set(["resolvePancodeDirs", "xdgBaseDir"])],
+	["src/core/duration.ts", new Set(["parseDuration"])],
+	["src/core/timers.ts", new Set(["MAX_TIMER_DELAY_MS"])],
 	["src/core/package-root.ts", new Set(["resolvePackageRoot"])],
 	["src/core/path-containment.ts", new Set(["relativePathEscapes"])],
 	["src/core/context-operation.ts", new Set(["ACP_CONTEXT_STATUS_METHOD"])],
@@ -47,6 +49,8 @@ const httpModules = new Map([
 	],
 	// The background setup's publish lock is the engine's one advisory file lock.
 	["src/core/state-file-lock.ts", new Set(["StateFileLockTimeoutError", "withStateFileLock"])],
+	// App state directories are made with the engine's bounded mkdir, so a removed home cannot hold shutdown.
+	["src/core/make-directory.ts", new Set(["makeDirectory"])],
 	["src/domains/install/install-method.ts", new Set(["readInstallerRecord"])],
 	["src/domains/install/version.ts", new Set(["getVersionInfo"])],
 	// The approval card reads the scope out of the session option the engine names with this prefix.
@@ -297,9 +301,9 @@ test("source import targets, shim exports, worker ownership, and process chokepo
 
 test("boundary checker rejects representative bypasses", () => {
 	for (const source of [
-		'import { toolStatuses } from "../../../../src/lib/programs/index.js";',
+		'import { programStatuses } from "../../../../src/lib/programs/index.js";',
 		'import { Worker as Thread } from "node:worker_threads";',
-		'export * from "../pancode/adapters/toolchain.js";',
+		'export * from "../pancode/adapters/programs.js";',
 		"const module = await import(path);",
 		'import cp from "child_process";',
 		'import { request } from "node:https";',

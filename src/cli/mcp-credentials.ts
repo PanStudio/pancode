@@ -187,7 +187,7 @@ export async function mcpLoginOutput(argv: ReadonlyArray<string>): Promise<McpCo
 			const value = await readApiKey(
 				`Full ${binding.header} header value for ${id} (credential ${binding.key}, sent only to ${binding.origin})`,
 			);
-			if (value === null) return fail(1, "login cancelled; nothing was stored");
+			if (value === null) return fail(1, "login canceled; nothing was stored");
 			values.push(value);
 		}
 	} else {

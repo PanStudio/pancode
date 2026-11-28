@@ -104,7 +104,7 @@ function formatSideQuestionBody(
 			),
 		);
 	} else if (phase.kind === "aborted") {
-		lines.push(theme.fg("menuDescription", "cancelled"));
+		lines.push(theme.fg("menuDescription", "canceled"));
 		if (route !== null) lines.push(routeLine("asked", route, contentWidth));
 	} else {
 		if (body.length === 0) lines.push(theme.fg("annotation", "the model returned no text"));

@@ -254,7 +254,7 @@ export interface RuntimeDescriptor {
 	/**
 	 * Set when the provider serves model ids its live listing leaves out (the
 	 * Copilot runtime does not list every model an account can call). An id
-	 * named on this target alone, as `target/model` or under `--target`, then
+	 * named on this target alone, as `target/model` or under `--connection`, then
 	 * resolves as typed. Resolution only: before a main turn's request the live
 	 * list is asked once and an id it lacks is refused (row 384).
 	 */

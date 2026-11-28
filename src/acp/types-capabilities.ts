@@ -159,7 +159,7 @@ export const AcpFleetCapability = Type.Object(
 		version: Type.Literal(1),
 		preview: wireMethod,
 		run: wireMethod,
-		/** Terminal dispatch frames carry `_meta["pancode/run-result"]`. */
+		/** Terminal dispatch frames carry `_meta["pancode/runResult"]`. */
 		runResultFacts: Type.Optional(Type.Boolean()),
 		/** `preview` and `run` accept `resume`, a prior root whose successful prefix the run replays. */
 		resume: Type.Optional(Type.Literal(true)),

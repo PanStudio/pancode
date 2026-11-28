@@ -4,7 +4,7 @@ import type { CopilotContextTier, TargetDescriptor } from "../domains/providers/
 
 export const HELP = `pancode configure
 
-Configure model targets and runtime settings for chat and fleet dispatch.
+Configure model connections and runtime settings for chat and fleet dispatch.
 
 Usage:
   pancode configure                   guided setup, endpoint shortcut, or settings
@@ -20,9 +20,9 @@ Usage:
                                          validate and review before saving
   pancode configure --interop         review detected coding agents as delegation peers
   pancode configure --import <path|https-url> [--yes] [--replace]
-                                         add the targets a lab or site setup file
+                                         add the connections a lab or site setup file
                                          names; shows each address and asks once
-  pancode configure --list            list target runtimes (user-facing only)
+  pancode configure --list            list connection runtimes (user-facing only)
   pancode configure --list --all      list every registered runtime including aliases
   pancode configure --id <targetId> [flags] --runtime <runtimeId>
   pancode configure --help, -h        show this message
@@ -32,29 +32,29 @@ quits. Where the terminal cannot support that, the same menus are numbered and
 answered by typing a number, b for back, or q to quit.
 
 Non-interactive flags:
-  --id <targetId>                  target id to register (required when non-interactive)
+  --id <targetId>                  connection id to register (required when non-interactive)
   --runtime <runtimeId>            runtime to use when registering non-interactively
-  --url <url>                      target base URL (http(s):// or ws://)
-  --model <wireModelId>            default model id for this target
+  --url <url>                      connection base URL (http(s):// or ws://)
+  --model <wireModelId>            default model id for this connection
   --orchestrator-model <id>        model to use when setting chat default
   --background-model <id>          model to use for proactive task memory
   --fleet-model <id>               model to use when setting fleet default
                                    (mutually exclusive with --agent-profile)
-  --agent-profile <name>           save this target as a named fleet profile
+  --agent-profile <name>           save this connection as a named fleet profile
   --agent-profile-model <id>       model to use for --agent-profile
   --bind-agent <agentId>           bind this --agent-profile to an agent
   --api-key-env <VAR>              read API key from this env var at call time
   --api-key <literal>              store API key in credentials.yaml
   --force                          save a model outside the runtime catalog, or one the
-                                   target does not advertise, without refusing
-  --gateway                        mark the target as a gateway
+                                   connection does not advertise, without refusing
+  --gateway                        mark the connection as a gateway
   --lifecycle <user-managed|pancode-managed>
                                    resident model lifecycle policy
-  --set-orchestrator               use this target for chat
+  --set-orchestrator               use this connection for chat
   --verify                         with --id: send one short test request first; save only if it answers
   --no-verify                      guided setup saves without sending its test request
-  --set-background                 use this target for proactive task memory
-  --set-fleet-default              use this target for the fleet default
+  --set-background                 use this connection for proactive task memory
+  --set-fleet-default              use this connection for the fleet default
   --context-window <N>             capability override
   --max-tokens <N>                 output token capability override
   --reasoning <true|false>         capability override

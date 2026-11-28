@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
-import { existsSync, mkdirSync, readdirSync, realpathSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, readdirSync, realpathSync, statSync, writeFileSync } from "node:fs";
 import { homedir, platform } from "node:os";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
+import { makeDirectorySync } from "./make-directory.js";
 import { isStrictDescendant } from "./path-containment.js";
 
 /**
@@ -400,7 +401,7 @@ function platformDefaults(): PancodeDirs {
 function ensureDir(dir: string, marker?: PancodeDirRole): string {
 	const created = marker !== undefined && !existsSync(dir);
 	try {
-		mkdirSync(dir, { recursive: true, mode: 0o700 });
+		makeDirectorySync(dir, 0o700);
 	} catch (err) {
 		const e = err as NodeJS.ErrnoException;
 		if (e.code !== "EEXIST") throw err;

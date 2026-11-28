@@ -9,7 +9,8 @@
  *   pancode fleet view <runId|fleetRootId>  one run's transcript, or a root's step index
  *   pancode fleet code-steps <rootId> [--json]  deterministic code steps of one fleet root
  *   pancode fleet admission [status|drain|open] [--json]  read, close or reopen durable dispatch admission
- *   pancode fleet cancel <runId>             cancel one run from any terminal
+ *   pancode fleet stop <fleetRootId>         stop a fleet root so it stays resumable with fleet run --resume
+ *   pancode fleet cancel <runId>             cancel one worker run from any terminal
  *
  * Playbooks are repo-owned policy (.pancode/playbooks/<name>.md); the fleet
  * runs them. Preflight fails with zero side effects: nothing is dispatched until the playbook
@@ -23,6 +24,7 @@ import { closeSync, mkdirSync, openSync, readFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { type PancodeSettings, readSettings } from "../core/config.js";
 import { loadDomains } from "../core/domain-loader.js";
+import { parseDuration } from "../core/duration.js";
 import { sha256Hex } from "../core/hash.js";
 import type { FactSum } from "../core/telemetry/fact.js";
 import { factKnownValue, usdAmountOrFact } from "../core/telemetry/known.js";
@@ -104,10 +106,9 @@ import { answerFleetHelp, FLEET_HELP as HELP } from "./fleet-help.js";
 import { runFleetWithShutdown } from "./fleet-lifecycle.js";
 import { createFleetReporter } from "./fleet-reporting.js";
 import { admissionStatus, type FleetAdmissionStatus, runFleetStatus } from "./fleet-status.js";
-import { parseDuration } from "./kit/duration.js";
-import { EXIT_CODES } from "./kit/exit-codes.js";
-import { parseCommandFlags } from "./kit/flags.js";
-import { jsonDocument, writeCliFailure, writeJson } from "./kit/json-out.js";
+import { EXIT_CODES } from "./lib/exit-codes.js";
+import { parseCommandFlags } from "./lib/flags.js";
+import { jsonDocument, writeCliFailure, writeJson } from "./lib/json-out.js";
 import { type RunCause, resolveRunExit, signalForExitCode } from "./modes/run-json-schema-v2.js";
 import { playbookAgents, playbookPreflightDiagnostic } from "./playbook-preflight.js";
 import { parsePlaybookVars } from "./playbook-vars.js";
@@ -298,8 +299,8 @@ function parseFleetRunArgs(args: ReadonlyArray<string>): FleetRunOptions | { err
 }
 
 type FleetStepOutcome = "succeeded" | "failed" | "replayed";
-/** `canceled` is a durable root cancel request (`fleet cancel <root>`). */
-type FleetStopCause = "deadline" | "max_cost_usd" | "canceled";
+/** `stopped` is a durable root stop request (`fleet stop <root>`). */
+type FleetStopCause = "deadline" | "max_cost_usd" | "stopped";
 type FleetCost = FleetRunOutcome["totalCost"];
 type FleetUsage = FleetRunOutcome["totalUsage"];
 
@@ -610,7 +611,7 @@ async function runFleetTracked(
 			if (planned.reason === "running") {
 				return exitWith(
 					refuse(
-						`resume run '${resumeId}' is still running in process ${planned.pid}; wait for it to settle or cancel it first`,
+						`resume run '${resumeId}' is still running in process ${planned.pid}; wait for it to settle or stop it first`,
 					),
 					stopRun,
 				);
@@ -675,10 +676,10 @@ async function runFleetTracked(
 			stopRun,
 		);
 	}
-	/** A durable root cancel request stops the fleet: checked now, before each step starts, and on a short poll. */
+	/** A durable root stop request stops the fleet: checked now, before each step starts, and on a short poll. */
 	const checkRootCancel = (): void => {
 		if (limitStop.signal.aborted || readRootCancelRequest(fleetRootId) === null) return;
-		stopFleet("canceled", `cancel requested for fleet root ${fleetRootId}; stopping the fleet`);
+		stopFleet("stopped", `stop requested for fleet root ${fleetRootId}; stopping the fleet`);
 	};
 	checkRootCancel();
 	const cancelPoll = setInterval(checkRootCancel, ROOT_CANCEL_POLL_MS);
@@ -901,8 +902,8 @@ async function finishFleetRun(
 	const resolve = (): { exitCode: number; causes: RunCause[] } => {
 		const facts: RunCause[] = [];
 		if (signaled) facts.push({ code: "interrupted", signal: signalForExitCode(settledCode) });
-		// An operator cancel through `fleet cancel <root>` is an interruption without a signal.
-		if (track.stopCause === "canceled") facts.push({ code: "interrupted", signal: null, by: "fleet_cancel" });
+		// An operator stop through `fleet stop <root>` is an interruption without a signal.
+		if (track.stopCause === "stopped") facts.push({ code: "interrupted", signal: null, by: "fleet_stop" });
 		if (track.stopCause === "deadline") facts.push({ code: "deadline", timeoutMs: track.limits.timeoutMs });
 		if (options.formatGiven && reporter.readerClosed()) facts.push({ code: "reader_closed" });
 		if (track.stopCause === "max_cost_usd") {
@@ -1151,6 +1152,8 @@ export async function runFleetCommand(args: ReadonlyArray<string>): Promise<numb
 			return runAdmission(args.slice(1));
 		case "list":
 			return (await import("./fleet-list.js")).runFleetList(args.slice(1));
+		case "stop":
+			return (await import("./fleet-cancel.js")).runFleetStop(args.slice(1));
 		case "cancel":
 			return (await import("./fleet-cancel.js")).runFleetCancel(args.slice(1));
 		case "wait":

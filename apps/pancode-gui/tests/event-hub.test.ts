@@ -8,13 +8,13 @@ import { harness } from "./harness/app.js";
 
 test("ring has independent count and byte bounds, ordered replay and epoch/eviction resync", () => {
 	const hub = new EventHub();
-	for (let i = 0; i < 4200; i++) hub.publish({ type: "toolchain.changed", payload: { id: "herdr" } });
+	for (let i = 0; i < 4200; i++) hub.publish({ type: "programs.changed", payload: { id: "herdr" } });
 	assert.equal(hub.size, 4096);
 	assert.ok(hub.byteSize <= 8 * 1024 * 1024);
 	const missed: Event[] = [];
 	hub.connect(`${hub.epoch}:4197`, (event) => missed.push(event))();
 	assert.deepEqual(
-		missed.filter((event) => event.type === "toolchain.changed").map((event) => event.seq),
+		missed.filter((event) => event.type === "programs.changed").map((event) => event.seq),
 		[4198, 4199, 4200],
 	);
 	const old: Event[] = [];

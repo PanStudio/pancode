@@ -7,7 +7,7 @@ import { test } from "node:test";
 import { setTimeout } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import { type CliCommand, commandPlan } from "../server/cli-commands.js";
-import { CliCancelled, CliRunner } from "../server/services/cli-runner.js";
+import { CliCanceled, CliRunner } from "../server/services/cli-runner.js";
 import { AppProblem } from "../server/services/problem.js";
 import { SetupService } from "../server/services/setup.js";
 import { scratchHome } from "./harness/scratch-home.js";
@@ -49,7 +49,7 @@ test("setup shutdown waits for starting children and refuses subsequent starts",
 test("CLI runner: closed command table, exact argv, canonical cwd and prose outcomes", async () => {
 	for (const input of [
 		[],
-		["targets", "--json"],
+		["connections", "--json"],
 		{ kind: "shell", text: "echo hi" },
 		{ kind: "routing.models", extra: "--online" },
 		{ kind: "targets.use", id: "--help" },
@@ -72,11 +72,11 @@ test("CLI runner: closed command table, exact argv, canonical cwd and prose outc
 	const runner = new CliRunner({ ...h.env, PANCODE_WEB_CLI: fixture, PANCODE_WEB_COMMAND_LOG: log });
 	try {
 		const commands: { command: CliCommand; argv: string[] }[] = [
-			{ command: { kind: "targets.use", id: "local-1" }, argv: ["targets", "use", "local-1"] },
-			{ command: { kind: "targets.remove", id: "local-1" }, argv: ["targets", "remove", "local-1"] },
+			{ command: { kind: "targets.use", id: "local-1" }, argv: ["connections", "use", "local-1"] },
+			{ command: { kind: "targets.remove", id: "local-1" }, argv: ["connections", "remove", "local-1"] },
 			{ command: { kind: "routing.models" }, argv: ["models", "--json", "--offline"] },
-			{ command: { kind: "routing.profiles" }, argv: ["targets", "profile", "list", "--json"] },
-			{ command: { kind: "routing.bindings" }, argv: ["targets", "profile", "bindings", "--json"] },
+			{ command: { kind: "routing.profiles" }, argv: ["connections", "profile", "list", "--json"] },
+			{ command: { kind: "routing.bindings" }, argv: ["connections", "profile", "bindings", "--json"] },
 			{ command: { kind: "memory.list" }, argv: ["memory", "list", "--json"] },
 			{
 				command: { kind: "memory.decide", id: "mem-0123456789abcdef", decision: "reject" },
@@ -140,7 +140,7 @@ test("CLI runner: cancellation observes SIGTERM, reaps the child, and closes adm
 	try {
 		const controller = new AbortController();
 		const pending = runner.run({ kind: "routing.models" }, h.path, controller.signal);
-		const rejected = assert.rejects(pending, CliCancelled);
+		const rejected = assert.rejects(pending, CliCanceled);
 		let pid = 0;
 		for (let i = 0; i < 6000; i++) {
 			const line = await readFile(log, "utf8").catch(() => "");

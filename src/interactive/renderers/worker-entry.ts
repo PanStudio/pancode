@@ -475,7 +475,7 @@ function cancelLines(entry: WorkerEntryState, width: number): string[] {
 	// The process's own signal note says how it was stopped, not who stopped it, so the card says only that it was.
 	const headline = workerFailureHeadline(entry.result.failureMessage);
 	// So does the worker's own note that its control channel closed, which is how a stop reaches a worker.
-	const why = headline === null || /\bSIG[A-Z]+\b|control channel closed/u.test(headline) ? "cancelled" : headline;
+	const why = headline === null || /\bSIG[A-Z]+\b|control channel closed/u.test(headline) ? "canceled" : headline;
 	const task = entry.result.taskWorktree;
 	const placement = entry.result.placement;
 	const worktree =
@@ -489,8 +489,8 @@ function cancelLines(entry: WorkerEntryState, width: number): string[] {
 				? `its worktree stays on branch ${placement.branch}`
 				: null;
 	// The row already says cancelled; this is only for who stopped it and what became of its worktree.
-	if (why === "cancelled" && worktree === null) return [];
-	const text = `${GLYPH.cancelled} ${why.startsWith("cancelled") ? why : `cancelled: ${why}`}${worktree === null ? "" : `${SEPARATOR}${worktree}`}`;
+	if (why === "canceled" && worktree === null) return [];
+	const text = `${GLYPH.cancelled} ${why.startsWith("canceled") ? why : `canceled: ${why}`}${worktree === null ? "" : `${SEPARATOR}${worktree}`}`;
 	return [
 		...railLines(sanitizeCallTargetText(text), "toolMetadata", width),
 		...(task?.kept === true && task.changedPaths > 0 ? branchCommandLines(task.branch, width) : []),

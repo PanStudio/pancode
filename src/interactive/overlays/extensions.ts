@@ -8,7 +8,7 @@
  */
 
 import { readLifecycleReceipts } from "../../core/hub-receipts.js";
-import { packageActivityText, recentPackageActivity } from "../../core/package-activity.js";
+import { packageActivityText, recentPackActivity } from "../../core/pack-activity.js";
 import { tierPolicy } from "../../core/presentation-tier.js";
 import { extensionIdentity } from "../../domains/extensions/activity.js";
 import type { InstalledExtension } from "../../domains/extensions/index.js";
@@ -365,7 +365,7 @@ export function openExtensionsOverlay(
 							value: `${receipt.operation} ${receiptTime(receipt.at)} by ${receipt.actor}; ${receipt.id}@${receipt.version}; digest ${receipt.contentDigest}; operation ${receipt.operationId}`,
 							tone: "muted",
 						});
-					for (const row of provenance ? displaySafe(recentPackageActivity(ext.id)) : [])
+					for (const row of provenance ? displaySafe(recentPackActivity(ext.id)) : [])
 						facts.push({ label: "Activity", value: `${row.at} ${packageActivityText(row)}`, tone: "muted" });
 					const hint = next();
 					// The title and the state chips stay pinned while the rest scrolls;

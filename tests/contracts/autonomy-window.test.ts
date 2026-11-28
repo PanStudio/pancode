@@ -593,7 +593,7 @@ test("the footer shows YOLO mode, escalates ending/paused windows to the alert r
 		{ ...status, halted: { kind: "calls", limit: 600, detail: "600-call cap", usage: status.usage } },
 		160,
 	);
-	match(paused, /yolo paused · Enter continues/u);
+	match(paused, /YOLO paused · Enter continues/u);
 
 	// At 70/73 the turn's budget is nearly spent, so the window escalates to the alert row, narrow form when narrow.
 	const turn = { ...status, turn: { toolCalls: 70, budget: 73 } };
@@ -622,9 +622,9 @@ function gatedLoop(halt: { current: AutonomyHalt | null }) {
 	const settings = structuredClone(DEFAULT_SETTINGS);
 	settings.chat.prewarm = false;
 	const context = dispatchStubContext({ settings });
-	const target = settings.targets[0];
+	const target = settings.connections[0];
 	if (!target) throw new Error("fixture target missing");
-	settings.chat.target = target.id;
+	settings.chat.connection = target.id;
 	settings.chat.model = target.defaultModel ?? "gpt-4o";
 	const entries: SessionEntry[] = [];
 	const session = {
@@ -754,7 +754,7 @@ test("the judge host reports its escalation, which a paused yolo window latches 
 	const rules = ["remote-code", "publish", "unclear", "destroy-data"];
 	const seat = createSafetyJudgeHost({
 		settings: () =>
-			({ ...DEFAULT_SETTINGS, chat: { ...DEFAULT_SETTINGS.chat, target: "local", model: "m" } }) as PancodeSettings,
+			({ ...DEFAULT_SETTINGS, chat: { ...DEFAULT_SETTINGS.chat, connection: "local", model: "m" } }) as PancodeSettings,
 		// The pause counts blocks under distinct rules only (FX-36).
 		complete: async () => ({ text: JSON.stringify({ verdict: "block", rule: rules.shift(), reason: "Not asked for." }) }),
 		session: () => session,

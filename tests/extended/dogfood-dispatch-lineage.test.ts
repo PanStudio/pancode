@@ -58,12 +58,12 @@ async function fixture(
 ) {
 	const settings = structuredClone(DEFAULT_SETTINGS);
 	settings.chat.prewarm = false;
-	settings.chat.target = "fixture";
+	settings.chat.connection = "fixture";
 	settings.chat.model = "fixture-model";
 	settings.safety.autonomy = "yolo";
 	settings.fleet.retry.maxRetries = transientFailure ? 1 : 0;
-	settings.targets = [{ id: "fixture", runtime: "fixture", defaultModel: "fixture-model" }];
-	settings.fleet.default = { target: "fixture", model: "fixture-model", thinkingLevel: "off" };
+	settings.connections = [{ id: "fixture", runtime: "fixture", defaultModel: "fixture-model" }];
+	settings.fleet.default = { connection: "fixture", model: "fixture-model", thinkingLevel: "off" };
 	settings.fleet.profiles = {};
 	const capabilities = { ...EMPTY_CAPABILITIES, chat: true, tools: true, contextWindow: 131072, maxTokens: 4096 };
 	const runtime: RuntimeDescriptor = {
@@ -317,8 +317,8 @@ for (const mode of ["single", "parallel", "review", "compete", "council"] as con
 					? {
 							mode,
 							members: [
-								{ label: "a", target: "fixture" },
-								{ label: "b", target: "fixture" },
+								{ label: "a", connection: "fixture" },
+								{ label: "b", connection: "fixture" },
 							],
 							synthesis: "judge",
 						}

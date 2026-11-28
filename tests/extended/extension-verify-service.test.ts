@@ -66,7 +66,7 @@ function project(launchArgs: string[] = ["-e", "process.exit(9)"]) {
 	git(repo, "-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "-q", "-m", "base");
 	const receipts = createExtensionCheckReceipts();
 	const verify = createExtensionVerifyService({
-		settings: () => ({ safety: { sandbox: "off" } }) as unknown as Pick<PancodeSettings, "safety" | "targets">,
+		settings: () => ({ safety: { sandbox: "off" } }) as unknown as Pick<PancodeSettings, "safety" | "connections">,
 		resolvePlace: async () => ({ cwd: repo, root: repo }),
 		receipts,
 		launch: { file: process.execPath, args: launchArgs, env: {} },
@@ -329,7 +329,7 @@ describe("extension claims service", () => {
 		});
 		t.after(() => worktrees.dispose());
 		const verify = createExtensionVerifyService({
-			settings: () => ({ safety: { sandbox: "off" } }) as unknown as Pick<PancodeSettings, "safety" | "targets">,
+			settings: () => ({ safety: { sandbox: "off" } }) as unknown as Pick<PancodeSettings, "safety" | "connections">,
 			resolvePlace: (place) => worktrees.resolvePlace(place),
 			receipts,
 			launch: { file: process.execPath, args: ["-e", "process.exit(9)"], env: {} },

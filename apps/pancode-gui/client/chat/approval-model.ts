@@ -385,14 +385,14 @@ export interface ApprovalAction {
 
 const REJECT: ApprovalAction = {
 	decision: "reject",
-	label: "Reject",
+	label: "Deny",
 	variant: "quiet",
 	description: "Denies this one request. The turn continues.",
 	keybinding: "reject",
 };
 const REJECT_AND_STOP: ApprovalAction = {
 	decision: "reject-and-stop",
-	label: "Reject and stop the turn",
+	label: "Deny and stop",
 	variant: "quiet",
 	description: "Denies this request and every other parked request from this turn, and cancels the turn.",
 	keybinding: null,
@@ -414,7 +414,7 @@ const ALLOW_ONCE: ApprovalAction = {
 };
 const EGRESS_REJECT: ApprovalAction = {
 	decision: "reject",
-	label: "Reject",
+	label: "Deny",
 	variant: "quiet",
 	description: "Refuses this origin; this session does not ask about it again.",
 	keybinding: "reject",

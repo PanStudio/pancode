@@ -14,12 +14,12 @@ import type {
 	HubCopy,
 	HubCopyInspection,
 	HubInventory,
-	HubPackageRecord,
+	HubPackRecord,
 	HubRefreshResult,
 } from "../../src/domains/resources/index.js";
 import { type OverlayHandle, type TUI, visibleWidth } from "../../src/engine/tui.js";
 import { openHubOverlay } from "../../src/interactive/overlays/hub.js";
-import type { HubLifecyclePort } from "../../src/interactive/overlays/hub-lifecycle.js";
+import type { HubActionPort } from "../../src/interactive/overlays/hub-actions.js";
 import {
 	buildHubRows,
 	type HubView,
@@ -37,7 +37,7 @@ import {
 import type { ListOverlayItem } from "../../src/interactive/overlays/list-overlay-model.js";
 import { hubApplyFixture, hubPlanFixture } from "../harness/hub-plan-fixture.js";
 
-function record(overrides: Partial<HubPackageRecord> = {}): HubPackageRecord {
+function record(overrides: Partial<HubPackRecord> = {}): HubPackRecord {
 	return {
 		ref: "plugin:demo-pack",
 		kind: "plugin",
@@ -444,7 +444,7 @@ function harness(
 		fleetRuns: [] as string[],
 		imports: 0,
 	};
-	const lifecycle: HubLifecyclePort = {
+	const lifecycle: HubActionPort = {
 		plan: (request) => {
 			state.planned.push({
 				operation: request.operation,
@@ -550,7 +550,7 @@ function harness(
 			return {
 				published: true,
 				installed: "vendor-pack",
-				admission: { trust: "foreign", gate: "integrations.projectResources.trustProjectImports", gateEnabled: "unknown" },
+				admission: { trust: "foreign", gate: "integrations.hub.trustProjectImports", gateEnabled: "unknown" },
 				diagnostics: [],
 			} as never;
 		},
@@ -672,7 +672,7 @@ describe("The hub browser behavior", () => {
 		state.review?.cancel();
 		equal(state.applied, 0);
 		equal(state.released, 1, "cancel releases the staged source");
-		match(state.notices.map(([, text]) => text).join(" "), /cancelled; nothing was written/);
+		match(state.notices.map(([, text]) => text).join(" "), /canceled; nothing was written/);
 	});
 
 	it("applies an accepted plan once and reports the session refresh separately", () => {
@@ -896,7 +896,7 @@ describe("The hub browser behavior", () => {
 		state.review?.cancel();
 		equal(state.imports, 0);
 		equal(state.importsReleased, 1);
-		match(state.notices.map(([, text]) => text).join(" "), /cancelled; nothing was written/);
+		match(state.notices.map(([, text]) => text).join(" "), /canceled; nothing was written/);
 	});
 
 	it("releases a pending review when the browser closes under it", () => {

@@ -941,7 +941,7 @@ test("an operator /run resumes with its command above its card, the spend its li
 			],
 		},
 	]);
-	const command = "/run documenter --target blade --model dynamo/qwopus document the retry options";
+	const command = "/run documenter --connection blade --model dynamo/qwopus document the retry options";
 	let style: "standard" | "detailed" = "standard";
 	const view = telemetryViewOf(
 		"run-replay",
@@ -985,7 +985,7 @@ test("an operator /run resumes with its command above its card, the spend its li
 	const replayed = createChatPanel({ getOutputStyle: () => style, getTelemetry: () => view });
 	rehydrateChatPanelFromTurns(replayed, entries, { readWorkerRunResult: () => receipt });
 	const plain = (panel: ReturnType<typeof createChatPanel>) => panel.render(100).map(stripTerminalSequences).join("\n");
-	assert.match(plain(replayed), /^▌ \/run documenter --target blade/u);
+	assert.match(plain(replayed), /^▌ \/run documenter --connection blade/u);
 	assert.match(plain(replayed), /0 calls · 18.2k tokens/u);
 	assert.match(plain(replayed), /18.2k tokens/u);
 	assert.equal(plain(replayed), plain(live));
@@ -1058,9 +1058,9 @@ test("a collected block is persisted before the first model call while operator 
 	const settings = structuredClone(DEFAULT_SETTINGS);
 	settings.chat.prewarm = false;
 	const context = dispatchStubContext({ settings });
-	const target = settings.targets[0];
+	const target = settings.connections[0];
 	assert.ok(target);
-	settings.chat.target = target.id;
+	settings.chat.connection = target.id;
 	settings.chat.model = target.defaultModel ?? "gpt-4o";
 	const entries: SessionEntry[] = [];
 	let leaf: string | null = null;

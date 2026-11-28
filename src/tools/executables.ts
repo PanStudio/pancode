@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
-import { findExecutableOnPath, resolveToolBinary } from "../lib/programs/resolve.js";
+import { findExecutableOnPath, resolveProgramBinary } from "../lib/programs/resolve.js";
 
 export function resolveFdBinary(): string | null {
 	return findExecutableOnPath("fd") ?? findExecutableOnPath("fdfind");
@@ -20,8 +20,8 @@ export function resolveRgBinary(): string | null {
  * vendors.
  *
  * Callers that need to explain the answer (doctor, `pancode programs status`)
- * want `resolveToolBinary` instead: this returns only the path to run.
+ * want `resolveProgramBinary` instead: this returns only the path to run.
  */
 export function resolveBinary(name: string): string | null {
-	return resolveToolBinary(name).binaryPath;
+	return resolveProgramBinary(name).binaryPath;
 }

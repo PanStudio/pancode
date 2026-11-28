@@ -34,7 +34,7 @@ export function unpricedRunRoutes(
 	reach: "all" | "delegating" | "main" = "all",
 ): string[] {
 	if (!providers) return [];
-	const routes: Array<{ target: string | null | undefined; model?: string | null | undefined }> = [settings.chat];
+	const routes: Array<{ connection: string | null | undefined; model?: string | null | undefined }> = [settings.chat];
 	if (reach !== "main") {
 		routes.push(
 			settings.fleet.default,
@@ -42,19 +42,19 @@ export function unpricedRunRoutes(
 			...Object.values(settings.fleet.rosters).flatMap((roster) => roster.members),
 		);
 	}
-	if (reach === "all") routes.push(...settings.targets.map((target) => ({ target: target.id })));
+	if (reach === "all") routes.push(...settings.connections.map((target) => ({ connection: target.id })));
 	const compaction = settings.context.compaction.model;
 	if (compaction) {
 		try {
 			const selected = resolveModelReference(compaction, providers, { use: "chat" });
-			if (selected.ref && !selected.warning) routes.push(selected.ref);
+			if (selected.ref && !selected.warning) routes.push({ connection: selected.ref.target, model: selected.ref.model });
 		} catch {
 			// An invalid compaction pattern fails compaction itself with its own message.
 		}
 	}
 	const unpriced = new Set<string>();
 	for (const route of routes) {
-		const target = resolveTarget(providers, route.target);
+		const target = resolveTarget(providers, route.connection);
 		const runtime = target ? providers.getRuntime(target.runtime) : null;
 		const model = route.model ?? target?.defaultModel;
 		if (!target || !runtime || !model) continue;

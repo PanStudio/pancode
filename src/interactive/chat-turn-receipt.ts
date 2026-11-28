@@ -40,7 +40,7 @@ export function renderTurnUsageLine(
 ): string[] {
 	const outcome = usage.outcome ?? "Done";
 	// Every form leads with the outcome glyph and word; an operator's stop reads as one (`⊘ Stopped`).
-	const word = outcome === "Cancelled" ? "Stopped" : outcome;
+	const word = outcome === "Cancelled" ? "Canceled" : outcome;
 	// When the turn ended closes every receipt, after the outcome and duration a reader scans for first.
 	const ended = usage.endedAtMs === undefined ? null : wallClockLocal(usage.endedAtMs, nowMs);
 	const endedFact = ended === null ? [] : [ended];

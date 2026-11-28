@@ -267,7 +267,7 @@ function loadReportHost(
 					const settings = deps.app.getSettings?.();
 					const autonomy = settings?.safety.autonomy;
 					// Session meta names the target; the report's Runtime line wants that target's runtime.
-					const runtime = settings?.targets.find((target) => target.id === meta.target)?.runtime;
+					const runtime = settings?.connections.find((target) => target.id === meta.target)?.runtime;
 					return {
 						id: meta.id,
 						cwd: meta.cwd,
@@ -278,7 +278,7 @@ function loadReportHost(
 						},
 					};
 				},
-				identitySettings: () => ({ targets: deps.app.getSettings?.().targets ?? [] }),
+				identitySettings: () => ({ connections: deps.app.getSettings?.().connections ?? [] }),
 				flushTelemetry: () => deps.app.telemetry.flush(),
 				telemetryProcess: () => telemetryProcessId(),
 				...(deps.takeReportOffer ? { takeOffer: deps.takeReportOffer } : {}),
@@ -471,7 +471,7 @@ export function createOverlayLifecycle(deps: OverlayLifecycleRuntimeDeps): Overl
 				auditReason: "operator stopped the turn at a permission prompt",
 			}),
 		...(deps.onOperatorParked ? { onOperatorParked: deps.onOperatorParked } : {}),
-		getUnattendedWindowMs: () => unattendedWindowMs(deps.app.getSettings?.().safety.unattendedAfterSeconds),
+		getUnattendedWindowMs: () => unattendedWindowMs(deps.app.getSettings?.().safety.unattendedAfterMs),
 	});
 	// A worker row names `[Enter] on the card` only for the run whose approval card is docked here.
 	bindDockedWorkerApproval(() => {
@@ -510,7 +510,7 @@ export function createOverlayLifecycle(deps: OverlayLifecycleRuntimeDeps): Overl
 			const safety = deps.app.getSettings?.().safety;
 			const lastInput = deps.lastOperatorInputAt?.();
 			const away = awaySince !== null && (lastInput === undefined || lastInput < awaySince);
-			return askUserWindowMs(safety?.unattendedAfterSeconds, {
+			return askUserWindowMs(safety?.unattendedAfterMs, {
 				yolo: safety?.autonomy === "yolo",
 				away,
 				operatorOnly: questions.some((question) => question.operator_only === true),

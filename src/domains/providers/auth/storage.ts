@@ -84,7 +84,7 @@ export class AuthStorageDamagedError extends Error {
 				`refusing to write credentials: ${damage}.`,
 				path ? `File: ${path}` : null,
 				"Writing would replace the whole file and lose whatever is stored there.",
-				"Move the file aside once you have recovered anything you need, then log in again.",
+				"Move the file aside once you have recovered anything you need, then sign in again.",
 			]
 				.filter((line): line is string => line !== null)
 				.join(" "),
@@ -355,7 +355,7 @@ export function resolveAuthTarget(target: TargetDescriptor, runtime: RuntimeAuth
 	if (projectKey !== null && projectKey === targetEnvVar) {
 		authTarget.projectKeyEnvVar = projectKey;
 	} else if (projectUrl) {
-		authTarget.credentialRefusal = `project settings point target ${target.id} at ${projectUrl}; PanCode does not send your stored or environment ${providerId} credential to a URL a project chose. Define this target in your user settings to use it.`;
+		authTarget.credentialRefusal = `project settings point connection ${target.id} at ${projectUrl}; PanCode does not send your stored or environment ${providerId} credential to a URL a project chose. Define this connection in your user settings to use it.`;
 	}
 	return authTarget;
 }
@@ -580,7 +580,7 @@ export class AuthStorage {
 			throw new Error("auth.setRuntimeOverride: empty targetId");
 		}
 		const resolved = normalizeStoredApiKeyRef(apiKey);
-		if (!resolved) throw new Error(`auth.setRuntimeOverride: empty key for target=${targetId}`);
+		if (!resolved) throw new Error(`auth.setRuntimeOverride: empty key for connection=${targetId}`);
 		this.runtimeOverrides.set(targetId, resolved);
 	}
 

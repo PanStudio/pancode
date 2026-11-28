@@ -44,7 +44,7 @@ import { isHubKind } from "./hub-types.js";
 import { pluginContentDigest } from "./integrity.js";
 import { pluginBaseDir, pluginDataDir } from "./paths.js";
 import type {
-	HubPackageInstallInput,
+	HubPackInstallInput,
 	InstalledPlugin,
 	PluginDiagnostic,
 	PluginDiagnosticCode,
@@ -61,7 +61,7 @@ import { FOREIGN_PACKAGE_FORMATS, isForeignPluginOrigin } from "./types.js";
 import { verifiedPluginCandidate } from "./verified-tree.js";
 
 /** sourcePath is a prepared package root containing plugin.json for the declared kind. */
-export function installHubPackage(input: HubPackageInstallInput): PluginMutationResult {
+export function installHubPack(input: HubPackInstallInput): PluginMutationResult {
 	const { kind, sourcePath, ...options } = input;
 	return installPlugin(sourcePath, { ...options, expectedKind: kind });
 }

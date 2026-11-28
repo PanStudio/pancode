@@ -90,12 +90,12 @@ test("real built CLI streams through HTTP; E3 records one, two, three ACP child 
 	assert.equal(settings.editable.length, 4);
 	const updated = await server.request(`/api/sessions/${id}/settings`, "PATCH", { "chat.thinkingLevel": "off" });
 	assert.equal(updated.status, 200, await updated.clone().text());
-	const targets = await json(await server.request(`/api/sessions/${id}/targets`), routes.sessionTargets.response);
+	const targets = await json(await server.request(`/api/sessions/${id}/connections`), routes.sessionTargets.response);
 	assert.ok(targets.targets.length > 0);
 	const target = targets.targets[0];
 	assert.ok(target);
 	const probe = await json(
-		await server.post(`/api/sessions/${id}/targets/${target.id}/probe`),
+		await server.post(`/api/sessions/${id}/connections/${target.id}/probe`),
 		routes.probeSessionTarget.response,
 	);
 	assert.equal(probe.healthy, true);

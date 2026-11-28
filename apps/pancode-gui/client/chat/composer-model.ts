@@ -169,7 +169,7 @@ export interface ComposerSituation {
 
 /** Why a viewing window's composer takes nothing: the server refuses every message from a window without control. */
 const viewingReason = (controller: string) =>
-	`${controller} controls this task. Take control to send from this window.`;
+	`${controller} controls this session. Take control to send from this window.`;
 
 export interface ShellLine {
 	readonly command: string;
@@ -190,8 +190,8 @@ export function shellNotice(text: string, shell: boolean): string | null {
 	const line = shell ? shellLine(text) : null;
 	if (line === null) return null;
 	return line.excludeFromContext
-		? "Runs in this task's shell as you. The output is recorded and kept out of PanCode's context."
-		: "Runs in this task's shell as you. PanCode sees the command and its output. Start with !! to keep the output out of its context.";
+		? "Runs in this session's shell as you. The output is recorded and kept out of PanCode's context."
+		: "Runs in this session's shell as you. PanCode sees the command and its output. Start with !! to keep the output out of its context.";
 }
 
 /** A shell line runs as the operator and carries no attachments. */
@@ -228,7 +228,7 @@ export function composerPlaceholder(
 	return sessionState !== "open" && sessionState !== "parked"
 		? "This conversation is not open"
 		: viewing !== null
-			? `Viewing. ${viewing} controls this task.`
+			? `Viewing. ${viewing} controls this session.`
 			: running
 				? steering.steer || steering.queue
 					? "Steer Panos while it works"
@@ -239,11 +239,11 @@ export function composerPlaceholder(
 }
 
 const CLOSED_SESSION_REASON: Readonly<Record<string, string>> = {
-	starting: "This task is still starting. It takes a message once Panos answers.",
-	parked: "This task is paused. Resume it before sending.",
-	unknown: "This task is not reachable right now, so nothing can be sent to it.",
-	closed: "This task is closed. Start a new one to keep working.",
-	failed: "This task failed. Start a new one to keep working.",
+	starting: "This session is still starting. It takes a message once Panos answers.",
+	parked: "This session is paused. Resume it before sending.",
+	unknown: "This session is not reachable right now, so nothing can be sent to it.",
+	closed: "This session is closed. Start a new one to keep working.",
+	failed: "This session failed. Start a new one to keep working.",
 };
 
 function blocked(reason: string): SubmitIntent {
@@ -295,7 +295,7 @@ export function submitIntent(draft: Draft, situation: ComposerSituation): Submit
 	if (situation.sessionControl) return blocked(controlMessage(situation.sessionControl));
 	if (situation.viewing !== undefined) return blocked(viewingReason(situation.viewing));
 	if (situation.sessionState !== "open")
-		return blocked(CLOSED_SESSION_REASON[situation.sessionState] ?? "This task cannot take a message.");
+		return blocked(CLOSED_SESSION_REASON[situation.sessionState] ?? "This session cannot take a message.");
 	const text = draft.text.trim();
 	if (text === "") return blocked("Write a message first.");
 	if (situation.unknownSlash !== undefined) return blocked(situation.unknownSlash);
@@ -900,7 +900,7 @@ const OUTCOME: Readonly<Record<Turn["status"], { tone: OutcomeTone; glyph: strin
 	succeeded: { tone: "success", glyph: "✓", label: "Done" },
 	failed: { tone: "fail", glyph: "✕", label: "Failed" },
 	// Stopping is not failing, and it is not waiting either: a stopped turn is a neutral report.
-	cancelled: { tone: "neutral", glyph: "–", label: "Stopped" },
+	cancelled: { tone: "neutral", glyph: "–", label: "Canceled" },
 };
 
 // A succeeded row whose stop reason says the answer is not whole: never a success mark.
@@ -935,9 +935,9 @@ export function turnOutcome(turn: Turn, activity: TurnActivity | number): TurnOu
 		factRef?: string;
 	}[] = [];
 	const model = turn.details?.model;
-	const target = turn.details?.target;
+	const target = turn.details?.connection;
 	// The route is the engine's report of what served the turn: the target, then the model on it.
-	if (target) breakdown.push({ group: "Model", label: "Target", value: target });
+	if (target) breakdown.push({ group: "Model", label: "Connection", value: target });
 	if (model) breakdown.push({ group: "Model", label: "Model", value: model });
 	if (target || model) nerd.push({ label: "Route", value: [target, model].filter(Boolean).join(" · ") });
 	const usage = turn.usage;
@@ -1080,11 +1080,11 @@ export function composerDelivery(
 			tone: situation.sessionControl === "unresolved" ? "warn" : "running",
 		};
 	if (situation.viewing !== undefined)
-		return { label: "Viewing", detail: `${situation.viewing} controls this task.`, tone: "warn" };
+		return { label: "Viewing", detail: `${situation.viewing} controls this session.`, tone: "warn" };
 	if (situation.sessionState !== "open")
 		return {
 			label: situation.sessionState === "parked" ? "Paused" : "Unavailable",
-			detail: CLOSED_SESSION_REASON[situation.sessionState] ?? "This task cannot take a message.",
+			detail: CLOSED_SESSION_REASON[situation.sessionState] ?? "This session cannot take a message.",
 			tone: "warn",
 		};
 	if (situation.unreached)

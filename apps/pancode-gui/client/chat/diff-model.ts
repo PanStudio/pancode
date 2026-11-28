@@ -485,7 +485,7 @@ export function diffPanel(inputs: DiffInputs): DiffPanel {
 			provenance === "unverified" && inputs.status === "unknown"
 				? "Application unverified · no terminal result"
 				: provenance === "rejected" && inputs.decision === "rejected"
-					? "Not applied · rejected"
+					? "Not applied · denied"
 					: PROVENANCE_LABEL[provenance];
 		return { provenance, label, diff: proposed, note, firstChangedLine, path };
 	}

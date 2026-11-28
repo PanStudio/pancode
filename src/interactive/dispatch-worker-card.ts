@@ -324,7 +324,7 @@ export function dispatchCardBody(
 
 	// The model id is user data and can outrun the card; mark the cut with `…`
 	// rather than hard-clipping it mid-token into a string that reads whole.
-	const targetKey = cardKvKey(theme, "target");
+	const targetKey = cardKvKey(theme, "connection");
 	// The route is the target and model. Enter adds how the worker reached it only when that is not the ordinary model
 	// call, because `http runtime` is a transport name that tells a person nothing they can act on.
 	const routeLabel = formatTargetLabel(row.targetId, row.wireModelId, { abbreviate: false });
@@ -477,7 +477,7 @@ export function dispatchCardBody(
 			? [
 					...(phaseCell === null ? [] : [cardUnitsLine(theme, "step", [theme.fg("info", phaseCell)], contentWidth)]),
 					...(options.expanded === true
-						? cardWrappedValueLines(theme, "target", theme.fg("body", route), contentWidth)
+						? cardWrappedValueLines(theme, "connection", theme.fg("body", route), contentWidth)
 						: [targetLine]),
 					cardUnitsLine(
 						theme,

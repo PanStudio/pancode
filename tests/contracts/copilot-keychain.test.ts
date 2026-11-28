@@ -121,7 +121,7 @@ test("a keychain-only login turns the chat target's Copilot connection row into 
 	mkdirSync(join(env.dir, "config"), { recursive: true });
 	writeFileSync(
 		join(env.dir, "config", "settings.yaml"),
-		"version: 2\ntargets:\n  - { id: copilot, runtime: copilot-sdk, defaultModel: some-model }\nchat:\n  target: copilot\n  model: some-model\n",
+		"version: 2\nconnections:\n  - { id: copilot, runtime: copilot-sdk, defaultModel: some-model }\nchat:\n  connection: copilot\n  model: some-model\n",
 	);
 	const connection = (rows: Awaited<ReturnType<typeof runDoctorModelChecks>>) =>
 		rows.find((row) => row.name === "connection copilot");
@@ -142,7 +142,7 @@ test("a keychain-only login turns the chat target's Copilot connection row into 
 test("doctor reports a model the Copilot runtime serves unlisted as info and proposes no repair", async () => {
 	writeFileSync(
 		join(env.dir, "config", "settings.yaml"),
-		"version: 2\ntargets:\n  - { id: copilot, runtime: copilot-sdk, wireModels: [claude-sonnet-5.5] }\nchat:\n  target: copilot\n  model: gemini-3.8-flash\n",
+		"version: 2\nconnections:\n  - { id: copilot, runtime: copilot-sdk, wireModels: [claude-sonnet-5.5] }\nchat:\n  connection: copilot\n  model: gemini-3.8-flash\n",
 	);
 	let asked = 0;
 	const rows = await runDoctorModelChecks({

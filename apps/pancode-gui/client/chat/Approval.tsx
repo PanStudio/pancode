@@ -363,7 +363,7 @@ function ApprovalButtons({
 			})}
 			{answering || answerSent ? (
 				<span className="approval-decision-progress" role="status">
-					{answerSent ? "Decision recorded; updating this task…" : "Sending your decision…"}
+					{answerSent ? "Decision recorded; updating this session…" : "Sending your decision…"}
 				</span>
 			) : null}
 		</>

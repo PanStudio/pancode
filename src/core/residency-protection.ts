@@ -38,6 +38,6 @@ export function protectedResidencyModels(settings: PancodeSettings): ProtectedMo
 	add(settings.context.memory.model, "memory");
 	add(settings.fleet.default.model, "worker");
 	for (const profile of Object.values(settings.fleet.profiles ?? {})) add(profile.model, "worker");
-	for (const target of settings.targets) add(target.defaultModel, "target-default");
+	for (const target of settings.connections) add(target.defaultModel, "target-default");
 	return [...byId].map(([modelId, role]) => ({ modelId, role }));
 }

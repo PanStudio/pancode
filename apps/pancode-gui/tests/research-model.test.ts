@@ -187,7 +187,7 @@ test("the form sends only a request the contract accepts", () => {
 		[{ scope: "--all" }, /cannot start with a dash/],
 		[{ maxWallMinutes: "-3" }, /Max wall minutes/],
 		[{ goal: "--yolo" }, /goal cannot start with a dash/],
-		[{ model: "m" }, /Pick the target/],
+		[{ model: "m" }, /Pick the connection/],
 		[{ target: "litellm", model: "bad model" }, /characters/],
 	];
 	for (const [change, problem] of refused) {

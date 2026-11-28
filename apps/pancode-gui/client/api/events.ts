@@ -324,14 +324,14 @@ export function subscribe(
 				void queries.cancelQueries({ queryKey: ["session-queue", resource], exact: true });
 				queries.setQueryData<QueueSnapshot>(["session-queue", resource], queueSnapshot(entries));
 			}
-			if (event.type === "toolchain.changed") invalidate.add("tools");
+			if (event.type === "programs.changed") invalidate.add("tools");
 			// A coalesced telemetry_update re-reads the moved topics for its session; nothing is folded here (#434).
 			if (event.type === "telemetry.updated") {
 				const keys = telemetry.get(event.payload.resource) ?? new Set<string>();
 				for (const key of telemetryInvalidations(event.payload.update)) keys.add(key);
 				telemetry.set(event.payload.resource, keys);
 			}
-			if (event.type === "machine.attach") invalidate.add("machine-attachments");
+			if (event.type === "node.attach") invalidate.add("node-attachments");
 			if (event.type === "session.control") {
 				const { resource, controller } = event.payload;
 				const key = ["session-control", resource];
@@ -476,8 +476,8 @@ export function subscribe(
 			"resync",
 			"operation.progress",
 			"operation.finished",
-			"toolchain.changed",
-			"machine.attach",
+			"programs.changed",
+			"node.attach",
 			"interview.changed",
 			"elicitation.changed",
 			"queue.changed",

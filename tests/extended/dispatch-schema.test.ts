@@ -234,7 +234,7 @@ describe("dispatch schema composition", () => {
 
 	it("advertises compete for a one-route fleet without a roster or adaptive routing", () => {
 		const composition = dispatchSchemaCompositionFor(
-			fleetWith({ default: { target: "mini", model: "ornith", thinkingLevel: "off" } }),
+			fleetWith({ default: { connection: "mini", model: "ornith", thinkingLevel: "off" } }),
 		);
 		assert.deepEqual(composition, { council: false, compete: true, adaptiveRouting: false });
 		const schema = buildDispatchParameters(composition);
@@ -247,21 +247,21 @@ describe("dispatch schema composition", () => {
 			rosters: {
 				panel: {
 					members: [
-						{ label: "a", target: "mini" },
-						{ label: "b", target: "dynamo" },
+						{ label: "a", connection: "mini" },
+						{ label: "b", connection: "dynamo" },
 					],
 				},
 			},
 		};
 		assert.equal(dispatchSchemaCompositionFor(fleetWith(roster)).council, true);
 		const twoRoutes = fleetWith({
-			default: { target: "mini", model: "ornith", thinkingLevel: "off" },
-			profiles: { code: { target: "mini", model: "qwen", thinkingLevel: "off" } },
+			default: { connection: "mini", model: "ornith", thinkingLevel: "off" },
+			profiles: { code: { connection: "mini", model: "qwen", thinkingLevel: "off" } },
 		});
 		assert.equal(dispatchSchemaCompositionFor(twoRoutes).compete, true);
 		const sameRouteTwice = fleetWith({
-			default: { target: "mini", model: "ornith", thinkingLevel: "off" },
-			profiles: { code: { target: "mini", model: "ornith", thinkingLevel: "off" } },
+			default: { connection: "mini", model: "ornith", thinkingLevel: "off" },
+			profiles: { code: { connection: "mini", model: "ornith", thinkingLevel: "off" } },
 		});
 		assert.equal(dispatchSchemaCompositionFor(sameRouteTwice).compete, true);
 		const adaptive = fleetWith({ adaptiveRouting: { roles: ["checker"], postures: ["balanced"], agentRoles: [] } });
@@ -357,8 +357,8 @@ describe("dispatch schema composition", () => {
 			mode: "council",
 			task: "compare",
 			members: [
-				{ label: "a", target: "mini" },
-				{ label: "b", target: "dynamo" },
+				{ label: "a", connection: "mini" },
+				{ label: "b", connection: "dynamo" },
 			],
 			candidates: 2,
 			routing: { posture: "balanced", maxCostUsd: 1 },

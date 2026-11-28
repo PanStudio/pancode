@@ -80,7 +80,7 @@ export interface JobControllerOptions {
 }
 export interface JobController {
 	create(input: JobCreateInput, owner: JobOwner): Promise<JobRecord>;
-	control(id: string, action: JobControlAction, owner: JobOwner): Promise<JobRecord>;
+	control(id: string, action: JobControlAction, owner: JobOwner, options?: { now?: boolean }): Promise<JobRecord>;
 	list(owner: JobOwner): JobRecord[];
 	get(id: string, owner: JobOwner): JobRecord | null;
 	/** Reconcile dead owners to paused/interrupted; never auto-resume. */

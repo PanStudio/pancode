@@ -145,7 +145,7 @@ describe("LM Studio load profile", () => {
 	it("settings accept parallel, speculativeDraftMaxTokens and per-model overrides", () => {
 		const { issues, settings } = validateSettings({
 			version: 2,
-			targets: [
+			connections: [
 				{
 					id: "blade",
 					runtime: "litellm",
@@ -158,13 +158,15 @@ describe("LM Studio load profile", () => {
 			],
 		});
 		deepStrictEqual(issues, []);
-		deepStrictEqual(settings.targets[0]?.lmstudio, {
+		deepStrictEqual(settings.connections[0]?.lmstudio, {
 			load: PROFILE,
 			models: { "dynamo/qwen3.8-27b": { load: { contextLength: 65536 } } },
 		});
 		const { issues: bad } = validateSettings({
 			version: 2,
-			targets: [{ id: "t", runtime: "lmstudio", url: "http://127.0.0.1:1", lmstudio: { load: { parallel: 0, mtp: 2 } } }],
+			connections: [
+				{ id: "t", runtime: "lmstudio", url: "http://127.0.0.1:1", lmstudio: { load: { parallel: 0, mtp: 2 } } },
+			],
 		});
 		ok(bad.some((issue) => issue.path.endsWith("lmstudio.load.parallel")));
 		ok(bad.some((issue) => issue.path.includes("mtp")));

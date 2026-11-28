@@ -17,6 +17,8 @@ export type * from "../../../../src/acp/types-tools.js";
 export type * from "../../../../src/acp/types-views.js";
 export { runningBuildId } from "../../../../src/core/build-info.js";
 export { ACP_CONTEXT_STATUS_METHOD } from "../../../../src/core/context-operation.js";
+export { parseDuration } from "../../../../src/core/duration.js";
+export { makeDirectory } from "../../../../src/core/make-directory.js";
 export { resolvePackageRoot } from "../../../../src/core/package-root.js";
 export { relativePathEscapes } from "../../../../src/core/path-containment.js";
 export {
@@ -36,6 +38,7 @@ export {
 	renderUsdLimit,
 	renderUsdSpend,
 } from "../../../../src/core/telemetry/render.js";
+export { MAX_TIMER_DELAY_MS } from "../../../../src/core/timers.js";
 export { resolvePancodeDirs, xdgBaseDir } from "../../../../src/core/xdg.js";
 export { readInstallerRecord } from "../../../../src/domains/install/install-method.js";
 export { getVersionInfo } from "../../../../src/domains/install/version.js";

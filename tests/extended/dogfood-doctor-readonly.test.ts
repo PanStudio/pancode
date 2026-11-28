@@ -114,7 +114,7 @@ describe("contracts/DOG-001 doctor credential reads", () => {
 					join(root, "config", "settings.yaml"),
 					[
 						"version: 2",
-						"targets:",
+						"connections:",
 						"  - id: fixture",
 						"    runtime: litellm",
 						`    url: http://127.0.0.1:${(server.address() as AddressInfo).port}`,
@@ -122,7 +122,7 @@ describe("contracts/DOG-001 doctor credential reads", () => {
 						stored ? "      apiKeyRef: fixture" : "      apiKeyEnvVar: DOGFOOD_DOCTOR_KEY",
 						`    defaultModel: ${MODEL}`,
 						"chat:",
-						"  target: fixture",
+						"  connection: fixture",
 						`  model: ${MODEL}`,
 						"  prewarm: false",
 						"",
@@ -146,7 +146,10 @@ describe("contracts/DOG-001 doctor credential reads", () => {
 						};
 						const credential = report.findings.find((finding) => finding.name === "credentials");
 						strictEqual(credential?.ok, true);
-						match(credential?.detail ?? "", stored ? /^600$/ : /^none saved; save a key with `pancode auth login <target>`$/);
+						match(
+							credential?.detail ?? "",
+							stored ? /^600$/ : /^none saved; save a key with `pancode auth login <connection>`$/,
+						);
 						const model = report.findings.find((finding) => finding.name === "model fixture");
 						strictEqual(model?.ok, true);
 						match(model?.detail ?? "", /found in live list from /);

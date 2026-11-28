@@ -390,17 +390,17 @@ export function loadModelProfiles(
  * a difference means a `model-catalog.d` overlay disagrees with the profile.
  */
 export function compareConfiguredModelProfiles(
-	settings: Pick<PancodeSettings, "targets" | "chat" | "fleet" | "context">,
+	settings: Pick<PancodeSettings, "connections" | "chat" | "fleet" | "context">,
 	profiles: ModelProfiles,
 	fallback: Pick<KnowledgeBase, "lookup">,
 ): ProfileComparison[] {
 	const rows: ProfileComparison[] = [];
-	for (const target of settings.targets) {
+	for (const target of settings.connections) {
 		const models = new Set<string>();
 		if (target.defaultModel?.trim()) models.add(target.defaultModel.trim());
-		if (settings.chat.target === target.id && settings.chat.model?.trim()) models.add(settings.chat.model.trim());
+		if (settings.chat.connection === target.id && settings.chat.model?.trim()) models.add(settings.chat.model.trim());
 		for (const route of [settings.fleet.default, ...Object.values(settings.fleet.profiles), settings.context.memory]) {
-			if (route.target === target.id && route.model?.trim()) models.add(route.model.trim());
+			if (route.connection === target.id && route.model?.trim()) models.add(route.model.trim());
 		}
 		for (const modelId of models.size ? models : [null]) {
 			const profile = modelId ? (profiles.lookup(modelId, target.runtime)?.profile ?? null) : null;

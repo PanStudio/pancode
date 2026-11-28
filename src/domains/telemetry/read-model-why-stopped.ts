@@ -213,14 +213,14 @@ export function whyStopped(source: SessionSource, options: ReadOptions = {}): Wh
 	if (autonomy?.halt)
 		findings.push(
 			autonomy.halt.kind === "judge"
-				? `Yolo ended the run at ${autonomy.halt.at}: the safety judge blocked too many calls (judge-streak).`
+				? `YOLO ended the run at ${autonomy.halt.at}: the safety judge blocked too many calls (judge-streak).`
 				: autonomy.halt.kind === "exploration"
-					? `Yolo ended the run at ${autonomy.halt.at}: the read-streak decision gate refused two rounds of reads after every note (exploration_stalled).`
-					: `Yolo paused at ${autonomy.halt.at} on its ${autonomy.halt.limit !== undefined ? `${renderCount(autonomy.halt.limit)}-` : ""}${autonomy.halt.kind === "calls" ? "call" : autonomy.halt.kind === "minutes" ? "minute" : "token"} cap (autonomous-cap).`,
+					? `YOLO ended the run at ${autonomy.halt.at}: the read-streak decision gate refused two rounds of reads after every note (exploration_stalled).`
+					: `YOLO paused at ${autonomy.halt.at} on its ${autonomy.halt.limit !== undefined ? `${renderCount(autonomy.halt.limit)}-` : ""}${autonomy.halt.kind === "calls" ? "call" : autonomy.halt.kind === "minutes" ? "minute" : "token"} cap (autonomous-cap).`,
 		);
 	if (autonomy && autonomy.openDecisions > 0)
 		findings.push(
-			`Yolo left ${renderCount(autonomy.openDecisions)} open ${autonomy.openDecisions === 1 ? "decision" : "decisions"} for the operator: ${autonomy.kinds.map((row) => `${renderCount(row.count)} ${row.kind}`).join(", ")}.`,
+			`YOLO left ${renderCount(autonomy.openDecisions)} open ${autonomy.openDecisions === 1 ? "decision" : "decisions"} for the operator: ${autonomy.kinds.map((row) => `${renderCount(row.count)} ${row.kind}`).join(", ")}.`,
 		);
 	if (life.closed)
 		findings.push(`The session closed at ${life.closed.at}${life.closed.reason ? ` (${life.closed.reason})` : ""}.`);

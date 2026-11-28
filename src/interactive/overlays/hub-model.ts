@@ -28,7 +28,7 @@ import {
 	type HubEntryKind,
 	type HubInventory,
 	type HubOrigin,
-	type HubPackageRecord,
+	type HubPackRecord,
 	type HubPairs,
 	type HubProvidedResource,
 } from "../../domains/resources/index.js";
@@ -69,11 +69,11 @@ export interface HubView {
 
 /** What one row is, so an action never has to re-parse a row id it printed. */
 export type HubRowSubject =
-	| { kind: "package"; record: HubPackageRecord }
+	| { kind: "package"; record: HubPackRecord }
 	| { kind: "copy"; copy: HubCopy }
 	| { kind: "component"; resource: HubComponent }
 	| { kind: "member"; owner: HubCopy; member: HubCopyInspection["resources"][number] }
-	| { kind: "hint"; record: HubPackageRecord; hint: HubProvidedResource }
+	| { kind: "hint"; record: HubPackRecord; hint: HubProvidedResource }
 	| { kind: "notice"; message: string };
 
 const HUB_GROUP_INSTALLED = "Installed";
@@ -243,7 +243,7 @@ export interface HubRowActions {
 	reasons: string[];
 }
 
-function ownerScopeOf(record: HubPackageRecord, scope: PluginScope): { scope: PluginScope } | undefined {
+function ownerScopeOf(record: HubPackRecord, scope: PluginScope): { scope: PluginScope } | undefined {
 	return record.copies.find((copy) => copy.scope === scope);
 }
 
@@ -563,7 +563,7 @@ function loadedEntry(resource: HubComponent): { kind: string; name: string; note
  * detailed every fact with the components the package contains and the packages it requires.
  */
 function packageDetail(
-	record: HubPackageRecord,
+	record: HubPackRecord,
 	view: HubView,
 	actions: HubRowActions,
 	pairs: HubPairs | undefined,
@@ -1180,7 +1180,7 @@ export function buildHubRows(options: HubRowOptions): HubRowSet {
 	});
 	const version = (text: string | undefined): string => (text ? `v${text}` : "");
 
-	const packageRow = (record: HubPackageRecord): void => {
+	const packageRow = (record: HubPackRecord): void => {
 		const subject: HubRowSubject = { kind: "package", record };
 		const actions = hubRowActions(subject, view);
 		const here = record.copies.find((copy) => copy.scope === view.scope);

@@ -3,7 +3,7 @@
 import { parseRunCliArgs } from "./args.js";
 
 export const RUN_USAGE =
-	'usage: pancode run [--cwd <dir>] [--target <id>] [--model <wireId>] [--thinking <level>] [--autonomy <level>] [--systemone <engine|off>] [--read-only] [--record] [--output-format text|json|stream-json] [--resume <id|prefix|name>|--continue] [--fork] [--name <text>] [--fail-on-noop] [--timeout <duration>] [--verify "<cmd>" [--verify-timeout <duration>]] [--max-cost-usd <N>] [--max-requests <N>] [--max-tool-calls <N>] [--sandbox required] [--require-priced] [--answers <file.yaml>] [--agent <recipe-id> [--continue <runId>] [--review <runId|pancode/task/<runId>>]] [--] "<task>" [-]\n   or: pancode run [flags] -\n   or: pancode run --task-file <path|-> [--trust-task-file] [flags]\n';
+	'usage: pancode run [--cwd <dir>] [--connection <id>] [--model <wireId>] [--thinking <level>] [--autonomy <level>] [--systemone <engine|off>] [--read-only] [--record] [--output-format text|json|stream-json] [--resume <id|prefix|name>|--continue] [--fork] [--name <text>] [--fail-on-noop] [--timeout <duration>] [--verify "<cmd>" [--verify-timeout <duration>]] [--max-cost-usd <N>] [--max-requests <N>] [--max-tool-calls <N>] [--sandbox required] [--require-priced] [--answers <file.yaml>] [--agent <recipe-id> [--continue <runId>] [--review <runId|pancode/task/<runId>>]] [--] "<task>" [-]\n   or: pancode run [flags] -\n   or: pancode run --task-file <path|-> [--trust-task-file] [flags]\n';
 
 export const RUN_HELP = `pancode run [flags] [--] "<task>"
 
@@ -19,7 +19,7 @@ Flags:
   --trust-task-file         accept envelope keys that widen what the host does (verify, yolo autonomy, cwd);
                             without it they are exit 2 (task_authority)
   --cwd <dir>               run as if started in <dir>; applies to --agent too
-  --target <id>             one-run main-agent or dispatch target override
+  --connection <id>         one-run main-agent or dispatch connection override
   --model <wireId>          one-run model override
   --thinking <level>        one-run thinking level: off|minimal|low|medium|high|xhigh|max
   --autonomy <level>        main-agent autonomy: default|yolo. At default the safety judge (safety.judge.enabled)
@@ -29,7 +29,7 @@ Flags:
                             reach --on-permission. Operator-only asks skip the judge: a dispatch plan (two or more
                             tasks, compete, council or a remote node) with a writer in it is refused at default and
                             runs at yolo; a plan whose every task is read-only runs at either
-  --systemone <engine|off>  System One for this run: jev, memory, main, an engine, a target, or off
+  --systemone <engine|off>  System One for this run: jev, memory, main, an engine, a connection, or off
   --read-only               refuse writes, edits and asks; shell commands run only in a read-only sandbox,
                             where a write fails, and delegations run read-only; with --agent, the dispatch is read-only
   --record                  save a bounded redacted display asciicast for --agent dispatch
@@ -108,16 +108,16 @@ Flags:
                             when it stops the run. Spend can pass it by the model calls already in flight then: one per
                             running worker plus the main agent's. Unpriced routes are not bounded; stderr names each
                             configured one: chat, compaction, fleet default, fleet profiles (which recipe pins name),
-                            roster members and every target at its default model. A model the main agent names for one
+                            roster members and every connection at its default model. A model the main agent names for one
                             dispatch is not checked. With --agent: the worker's route is admitted only when its
                             conservative cost estimate is under N
   --answers <file.yaml>     answer the questions only the author may answer (extension interviews, operator_only
                             ask_user questions) from this file; an unanswered one ends the run with exit 5 (see below)
   --agent <recipe-id>       dispatch a fleet agent instead of the main agent
   --agent-profile <name>    named fleet profile for dispatch
-  --agent-runtime <id>      pick the first fleet profile whose target uses this runtime
+  --agent-runtime <id>      pick the first fleet profile whose connection uses this runtime
   --tool-profile <name>     restrict dispatched-agent tools: minimal-local|science-local|full-agent
-  --require <capability>    capability the dispatch target must advertise (repeatable)
+  --require <capability>    capability the dispatch connection must advertise (repeatable)
   --worktree                run the --agent worker in a PanCode-created task worktree, kept on its branch for review
   --review <run>            review a fleet run's kept task branch (run id or pancode/task/<run id>): the --agent
                             worker runs read-only in that branch's worktree, with branch, base, destination and
@@ -178,7 +178,7 @@ file and the entry. Rules never match the model's ordinary ask_user questions:
 such a call is refused as having no operator, as in a run without the file, and
 the model goes on from its stated defaults. An author question no entry
 matches, or whose matching choice is not offered, is never answered for you:
-its round is cancelled as "unscripted", the turn stops, and the run exits 5
+its round is canceled as "unscripted", the turn stops, and the run exits 5
 with outcome "failed" and outcomeDetail "unscripted", naming the question's
 header or id so the file can be extended. Permission asks stay denied. A file
 that cannot be read or fails validation is a usage error (exit 2) naming the

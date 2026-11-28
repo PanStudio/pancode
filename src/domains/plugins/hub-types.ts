@@ -7,12 +7,12 @@ export type HubEntryKind = "skill" | "plugin" | "extension";
 export type HubRequirementRef = `${HubEntryKind}:${string}`;
 
 /** Plugin-backed package formats: they install through the plugin writer. A standalone extension has its own manifest and writer. */
-export const HUB_KINDS: readonly Exclude<HubEntryKind, "extension">[] = ["plugin", "skill"];
+export const HUB_PLUGIN_BACKED_KINDS: readonly Exclude<HubEntryKind, "extension">[] = ["plugin", "skill"];
 
 export function isHubKind(value: unknown): value is HubEntryKind {
 	return (
 		value === "extension" ||
-		(typeof value === "string" && HUB_KINDS.includes(value as Exclude<HubEntryKind, "extension">))
+		(typeof value === "string" && HUB_PLUGIN_BACKED_KINDS.includes(value as Exclude<HubEntryKind, "extension">))
 	);
 }
 
@@ -76,7 +76,7 @@ export interface HubRowSource {
 }
 
 /** The same record is used in bundled, user, and project hub indexes. */
-export interface HubPackageEntry {
+export interface HubPackEntry {
 	kind: HubEntryKind;
 	name: string;
 	description: string;

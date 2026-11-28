@@ -4,7 +4,7 @@ import { flagValuePlaceholder, renderArgsSpec } from "../core/views/slash-words.
 import type { SlashCommand } from "./slash-command-types.js";
 
 export interface CommandFlagSpec {
-	/** Unique flag name, e.g. "--target". */
+	/** Unique flag name, e.g. "--connection". */
 	name: string;
 	/** True when the flag consumes the next token as its value. */
 	takesValue?: boolean;
@@ -55,7 +55,7 @@ export type CompletionSlotName = (typeof COMPLETION_SLOT_NAMES)[number];
 export interface CommandArgsSpec {
 	flags?: ReadonlyArray<CommandFlagSpec>;
 	positionals?: ReadonlyArray<CommandPositionalSpec>;
-	/** Subcommands with their own args, e.g. share export/import. */
+	/** Subcommands with their own args, e.g. archive export/import. */
 	subcommands?: Record<string, CommandArgsSpec>;
 	/**
 	 * For commands shaped like `<name> <rest...>`, continue recognizing

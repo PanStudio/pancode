@@ -19,7 +19,7 @@ import { type HubRevocation, parseHubRevocations } from "../../core/hub-revocati
 import { safeResourceWrite } from "../../core/safe-resource-write.js";
 import { pancodeStateDir } from "../../core/xdg.js";
 import { parseHubIndexRows } from "../plugins/catalog.js";
-import type { HubPackageEntry } from "../plugins/hub-types.js";
+import type { HubPackEntry } from "../plugins/hub-types.js";
 import { HUB_ROOT_PUBLIC_KEYS } from "./hub-keys.js";
 import {
 	type HubKeyCertificate,
@@ -362,7 +362,7 @@ export type RemoteIndexStatus = "off" | "none" | "expired" | "damaged" | "curren
 export function remoteIndexRows(
 	diagnostics: string[],
 	options: { now?: () => Date; stateDir?: string; packsRoot: string; url?: string },
-): { rows: HubPackageEntry[]; status: RemoteIndexStatus; state?: HubTrustState } {
+): { rows: HubPackEntry[]; status: RemoteIndexStatus; state?: HubTrustState } {
 	if ((options.url ?? configuredHubIndexUrl()) === "") return { rows: [], status: "off" };
 	const stateDir = stateDirOf(options);
 	const state = readHubTrustState(stateDir);

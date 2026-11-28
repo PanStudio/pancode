@@ -88,7 +88,7 @@ function authHeaders(ctx: ProbeContext): Record<string, string> {
 }
 
 async function discover(target: TargetDescriptor, ctx: ProbeContext): Promise<ProbeResult> {
-	if (!target.url) return { ok: false, error: "ALCF target has no url" };
+	if (!target.url) return { ok: false, error: "ALCF connection has no url" };
 	const cluster = clusterFromUrl(target.url);
 	if (!cluster) {
 		return { ok: false, error: `cannot determine ALCF cluster from url ${target.url}` };

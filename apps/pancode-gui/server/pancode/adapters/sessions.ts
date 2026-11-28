@@ -71,7 +71,7 @@ type LiveElsewhereRow = {
 };
 const SURFACES = { tui: "terminal", run: "headless", acp: "app" } as const;
 const HISTORY_LIMIT = 2_000;
-const unreadable = () => new AppProblem("unavailable", "The saved task list could not be read.");
+const unreadable = () => new AppProblem("unavailable", "The saved session list could not be read.");
 /**
  * The process that holds this session open, when it is another one: its live record names the surface and when it
  * opened. This app's own engine children are live too; the server, which knows their pids, drops those.

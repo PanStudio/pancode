@@ -1,29 +1,29 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
-export type { ToolFetcher, ToolInstallResult } from "./install.js";
-export { installPinnedTool, installTool } from "./install.js";
-export { toolchainRoot, toolVersionDir } from "./paths.js";
+export type { ProgramFetcher, ProgramInstallResult } from "./install.js";
+export { installPinnedProgram, installProgram } from "./install.js";
+export { programsRoot, programVersionDir } from "./paths.js";
 export {
-	currentToolPlatform,
-	findPinnedTool,
-	PINNED_TOOLS,
+	currentProgramPlatform,
+	findPinnedProgram,
+	PINNED_PROGRAMS,
 } from "./registry.js";
-export { installedToolVersions, removeTool } from "./remove.js";
+export { installedProgramVersions, removeProgram } from "./remove.js";
 export {
 	describeFloorRejection,
 	describeResolution,
 	installRemedy,
-	pinnedToolMissing,
+	pinnedProgramMissing,
+	programStatus,
+	programStatuses,
 	resolvePinnedEntryBinary,
-	resolveToolBinary,
+	resolveProgramBinary,
 	resolveVendoredBinary,
-	toolStatus,
-	toolStatuses,
 } from "./resolve.js";
 export type {
-	PinnedTool,
-	PinnedToolDownload,
-	ToolPlatform,
-	ToolResolution,
-	ToolStatus,
+	PinnedProgram,
+	PinnedProgramDownload,
+	ProgramPlatform,
+	ProgramResolution,
+	ProgramStatus,
 } from "./types.js";

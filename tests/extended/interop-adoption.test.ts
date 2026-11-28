@@ -27,7 +27,7 @@ import {
 	clearPluginSnapshots,
 	disablePlugin,
 	enablePlugin,
-	installHubPackage,
+	installHubPack,
 	listInstalledPlugins,
 	PLUGIN_SCHEMA,
 	readPluginInstallRecord,
@@ -502,7 +502,7 @@ describe("interop discovery and adoption", () => {
 				},
 			}),
 		);
-		const added = installHubPackage({
+		const added = installHubPack({
 			kind: "skill",
 			sourcePath: dependency,
 			scope: "user",

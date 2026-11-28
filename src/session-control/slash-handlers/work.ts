@@ -48,7 +48,7 @@ export const WORK_SLASH_COMMANDS: ReadonlyArray<BuiltinSlashCommand> = [
 			flags: [
 				{ name: "--agent-profile", takesValue: true, valueName: "profile" },
 				{ name: "--runtime", takesValue: true, valueName: "runtimeId" },
-				{ name: "--target", takesValue: true, valueName: "id" },
+				{ name: "--connection", takesValue: true, valueName: "id" },
 				{ name: "--worktree" },
 				{ name: "--read-only" },
 				{ name: "--model", takesValue: true, valueName: "id" },
@@ -72,7 +72,7 @@ export const WORK_SLASH_COMMANDS: ReadonlyArray<BuiltinSlashCommand> = [
 			const workerRuntime = parsed.flags.get("--runtime");
 			if (typeof workerRuntime === "string") options.workerRuntime = workerRuntime;
 
-			const target = parsed.flags.get("--target");
+			const target = parsed.flags.get("--connection");
 			if (typeof target === "string") options.target = target;
 			if (parsed.flags.has("--worktree")) options.worktree = true;
 			if (parsed.flags.has("--read-only")) options.readOnly = true;
@@ -249,7 +249,7 @@ export const WORK_SLASH_COMMANDS: ReadonlyArray<BuiltinSlashCommand> = [
 				{ name: "--rounds", takesValue: true, valueName: "n" },
 				{ name: "--synthesis", takesValue: true, values: COUNCIL_SYNTHESIS_MODES },
 				{ name: "--agent", takesValue: true, valueName: "id" },
-				{ name: "--deadline", takesValue: true, valueName: "N|Ns|Nm" },
+				{ name: "--deadline", takesValue: true, valueName: "duration" },
 			],
 			positionals: [{ name: "task", required: true, rest: true }],
 		},
@@ -265,7 +265,7 @@ export const WORK_SLASH_COMMANDS: ReadonlyArray<BuiltinSlashCommand> = [
 			const deadline = parsed.flags.get("--deadline");
 			if (typeof deadline === "string") {
 				const ms = parseCouncilDeadline(deadline);
-				if (ms === undefined) return usageError("council", "--deadline takes seconds, Ns or Nm");
+				if (ms === undefined) return usageError("council", "--deadline takes a duration such as 30s, 5m or 500ms");
 				options.memberDeadlineMs = ms;
 			}
 			const rounds = parsed.flags.get("--rounds");
@@ -309,9 +309,9 @@ export const WORK_SLASH_COMMANDS: ReadonlyArray<BuiltinSlashCommand> = [
 			parseFlagsBeforeRest: true,
 			flags: [
 				{ name: "--options", takesValue: true, valueName: "a|b|c" },
-				{ name: "--models", takesValue: true, valueName: "target[/model],..." },
+				{ name: "--models", takesValue: true, valueName: "connection[/model],..." },
 				{ name: "--rationale", takesValue: false },
-				{ name: "--deadline", takesValue: true, valueName: "N|Ns|Nm" },
+				{ name: "--deadline", takesValue: true, valueName: "duration" },
 			],
 			positionals: [{ name: "n question", required: true, rest: true }],
 		},
@@ -339,7 +339,7 @@ export const WORK_SLASH_COMMANDS: ReadonlyArray<BuiltinSlashCommand> = [
 			const deadline = parsed.flags.get("--deadline");
 			if (typeof deadline === "string") {
 				const ms = parseCouncilDeadline(deadline);
-				if (ms === undefined) return usageError("poll", "--deadline takes seconds, Ns or Nm");
+				if (ms === undefined) return usageError("poll", "--deadline takes a duration such as 30s, 5m or 500ms");
 				options.memberDeadlineMs = ms;
 			}
 			return { kind: "poll", options, source: trimmed };
@@ -364,7 +364,7 @@ export const WORK_SLASH_COMMANDS: ReadonlyArray<BuiltinSlashCommand> = [
 			injectsUserTurnExcept: LOOP_OBSERVE_VERBS,
 			reads: ["", "status"],
 			// Resume restarts jobs that fire turns, so a ceiling does not admit it.
-			sessionOnly: ["stop", "pause"],
+			sessionOnly: ["cancel", "pause"],
 		},
 		description: "Run a bounded recurring job: a main-context task or a typed command",
 		group: "Work",
@@ -388,7 +388,7 @@ export const WORK_SLASH_COMMANDS: ReadonlyArray<BuiltinSlashCommand> = [
 				status: { positionals: [{ name: "id", required: false }] },
 				pause: { positionals: [{ name: "id", required: true }] },
 				resume: { positionals: [{ name: "id", required: true }] },
-				stop: { flags: [{ name: "--now" }], positionals: [{ name: "id", required: false }] },
+				cancel: { flags: [{ name: "--now" }], positionals: [{ name: "id", required: false }] },
 			},
 		},
 		subcommandDescriptions: LOOP_SUBCOMMAND_DESCRIPTIONS,

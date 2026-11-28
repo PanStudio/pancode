@@ -36,7 +36,7 @@ test("built PanCode preserves declared gateway thinking controls through startup
 		mkdirSync(workspace);
 		mkdirSync(join(home.dir, "config"), { recursive: true });
 		const settings = structuredClone(DEFAULT_SETTINGS);
-		settings.targets = [
+		settings.connections = [
 			{
 				id: "gateway",
 				runtime: "litellm",
@@ -45,7 +45,7 @@ test("built PanCode preserves declared gateway thinking controls through startup
 				auth: { apiKeyEnvVar: "GATEWAY_THINKING_FIXTURE_KEY" },
 			},
 		];
-		settings.chat.target = "gateway";
+		settings.chat.connection = "gateway";
 		settings.chat.model = fixture.modelId;
 		settings.chat.thinkingLevel = "off";
 		settings.context.memory.enabled = false;

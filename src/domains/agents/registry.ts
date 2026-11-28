@@ -14,7 +14,7 @@ import { enabledPluginResourceRoots, withPluginDiscoveryPass } from "../plugins/
 import type { LoadSkillsInput, SkillList } from "../resources/skills/loader.js";
 import { parseFrontmatter } from "./frontmatter.js";
 import { cachedFrontmatterParser, withFrontmatterCache } from "./frontmatter-cache.js";
-import { resolvePackageReferences } from "./package-references.js";
+import { resolvePackReferences } from "./pack-references.js";
 import { type AgentRecipe, type RecipeSource, recipeIdFromPath } from "./recipe.js";
 import { parseAgentRecipeSchema } from "./recipe-schema.js";
 import { assertAgentSpecPolicy, isShadowAgent, normalizeAgentSpec } from "./spec.js";
@@ -100,13 +100,13 @@ function resolveBoundSkills(loadSkills: SkillCatalogLoader, recipe: AgentRecipe,
 		source.source === "plugin"
 			? boundSkillCatalog(loadSkills, {
 					cwd: source.cwd ?? process.cwd(),
-					trustProjectCompatRoots: readSettings().integrations.projectResources.trustProjectImports,
+					trustProjectCompatRoots: readSettings().integrations.hub.trustProjectImports,
 					disableDiscovery: true,
 					explicitSkillPaths: source.skillRoot === undefined ? [] : [source.skillRoot],
 				})
 			: boundSkillCatalog(loadSkills, {
 					cwd: source.cwd ?? process.cwd(),
-					trustProjectCompatRoots: readSettings().integrations.projectResources.trustProjectImports,
+					trustProjectCompatRoots: readSettings().integrations.hub.trustProjectImports,
 					...(source.source === "builtin" && existsSync(packageSkills) ? { explicitSkillPaths: [packageSkills] } : {}),
 				});
 	if (source.source === "plugin" && source.skillRoot !== undefined) {
@@ -176,7 +176,7 @@ export function loadRecipesFromDir(
 				filepath,
 				cachedFrontmatterParser(filepath, { mtimeMs, size }),
 			);
-			const body = resolvePackageReferences(rawBody, {
+			const body = resolvePackReferences(rawBody, {
 				...(source.rootPath ? { rootPath: source.rootPath } : {}),
 				plugin: source.source === "plugin",
 			});

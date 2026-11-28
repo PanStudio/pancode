@@ -89,7 +89,7 @@ export function ContextWorkCard({
 							aria-disabled={cancelling || undefined}
 							onClick={cancelling ? undefined : onCancel}
 						>
-							{cancelling ? "Stopping…" : cancelLabel}
+							{cancelling ? "Canceling…" : cancelLabel}
 						</button>
 					) : null}
 					{!view.live && onDismiss ? (
@@ -108,7 +108,7 @@ export function ContextWorkCard({
 			    it, so a tick of work never reads aloud; a failure is the one thing that interrupts. */}
 			<div className="context-work__body" role="status">
 				<span className="sr-only">
-					{view.label}. {view.live && cancelling ? "Stopping. " : ""}
+					{view.label}. {view.live && cancelling ? "Canceling. " : ""}
 				</span>
 				{view.message ? (
 					<p className="context-work__message">

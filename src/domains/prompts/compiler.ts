@@ -460,8 +460,8 @@ function settingsChangePolicy(inputs: SessionPromptInputs, autonomyLevel: string
 		turnAllowsTool(inputs.turnConstraints, "configure_pancode")
 	)
 		return autonomyLevel === "yolo" || inputs.headless === true || inputs.turnConstraints?.readOnly === true
-			? 'To change a PanCode setting or add a target, call gateway(op="call", capability="configure_pancode") with action="preview". This session cannot apply it: show the operator the returned diff and steps. Never run pancode configure, targets or auth commands yourself.'
-			: 'To change a PanCode setting or add a target, call gateway(op="call", capability="configure_pancode") with action="preview", then apply the returned proposal id. The operator approves the exact diff on a card, and a stale or refused proposal changes nothing. Never run pancode configure, targets or auth commands yourself.';
+			? 'To change a PanCode setting or add a connection, call gateway(op="call", capability="configure_pancode") with action="preview". This session cannot apply it: show the operator the returned diff and steps. Never run pancode configure, connections or auth commands yourself.'
+			: 'To change a PanCode setting or add a connection, call gateway(op="call", capability="configure_pancode") with action="preview", then apply the returned proposal id. The operator approves the exact diff on a card, and a stale or refused proposal changes nothing. Never run pancode configure, connections or auth commands yourself.';
 	return "Changing a setting is the operator's step: name the /settings area or the pancode configure command that changes it.";
 }
 
@@ -755,7 +755,7 @@ const HARNESS_ROUTING_ROW =
 	'Questions about PanCode itself: gateway(op="call", capability="pancode_docs", args={query:"<the question>"}) first, live values from gateway(op="call", capability="context", args={scope:"settings"}), changes through configure_pancode; those results and pancode_hub kind=playbook or kind=agent carry the procedure under Guidance. Never for a question about the workspace.';
 
 const SETTINGS_ROUTING_ROW =
-	'Questions about PanCode\'s own settings, targets, profiles or limits: gateway(op="call", capability="context", args={scope:"settings"}) for live values; the result carries the procedure under Guidance.';
+	'Questions about PanCode\'s own settings, connections, profiles or limits: gateway(op="call", capability="context", args={scope:"settings"}) for live values; the result carries the procedure under Guidance.';
 
 const GATEWAY_CALLING_RULE =
 	'Call a (gateway) entry with gateway(op="call", capability="<name>", args={...}); naming it does not attach it. With no arguments shown, gateway(op="describe", capability="<name>") first; never guess argument names. Not listed: gateway(op="find", query="<two to four words>"). Discovery grants no authority.';
@@ -808,7 +808,7 @@ function renderToolContractBlock(inputs: SessionPromptInputs, autonomyLevel: str
 			"# Tool Contract",
 			TOOL_RESULT_TRUST_CONTRACT,
 			"Provider tool calls: unavailable.",
-			"This target cannot call tools; answer from the visible user request and compact context only.",
+			"This connection cannot call tools; answer from the visible user request and compact context only.",
 		].join("\n");
 	}
 	const { names, admitted, hasGateway, reachable, mapped } = sessionReach(inputs);
@@ -953,7 +953,7 @@ function renderWorkerToolContractBlock(inputs: WorkerPromptInputs): string {
 		return [
 			"# Tool Contract",
 			TOOL_RESULT_TRUST_CONTRACT,
-			"Canonical PanCode tool calls are unavailable on this target.",
+			"Canonical PanCode tool calls are unavailable on this connection.",
 			"Answer from the assigned task and dynamic messages only; do not claim that inspection or changes were performed.",
 		].join("\n");
 	}
@@ -961,8 +961,8 @@ function renderWorkerToolContractBlock(inputs: WorkerPromptInputs): string {
 		return [
 			"# Tool Contract",
 			TOOL_RESULT_TRUST_CONTRACT,
-			"This delegated target's tool inventory is unknown to PanCode.",
-			"Use only tools the target actually exposes and only when the assigned task requires them; do not infer a complete tool surface from this prompt.",
+			"This delegated connection's tool inventory is unknown to PanCode.",
+			"Use only tools the connection actually exposes and only when the assigned task requires them; do not infer a complete tool surface from this prompt.",
 		].join("\n");
 	}
 
@@ -1054,7 +1054,7 @@ function renderRetrievalHintsBlock(inputs: SessionPromptInputs): string {
 	if (inputs.providerSupportsTools === false) {
 		return [
 			"# Retrieval Hints",
-			"Repository details are intentionally compact because this target has no tool channel.",
+			"Repository details are intentionally compact because this connection has no tool channel.",
 			"Use only facts present in the current turn and say what file-specific context would be needed for precise code work.",
 		].join("\n");
 	}

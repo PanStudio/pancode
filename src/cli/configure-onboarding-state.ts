@@ -14,7 +14,7 @@ import type { ConfigureCategory } from "./configure-layout.js";
 import type { WireModelInventory } from "./configure-target.js";
 import { buildDescriptor, targetApiKeyRef } from "./configure-target.js";
 import type { DetectedChatRoute } from "./detect-chat-routes.js";
-import type { LifecyclePresenter } from "./lifecycle-presenter.js";
+import type { InstallPresenter } from "./install-presenter.js";
 
 export interface OnboardingStreams {
 	in: NodeJS.ReadableStream;
@@ -114,7 +114,7 @@ export interface Wizard {
 	text: ConfigureWizardHost["text"];
 	host?: ConfigureWizardHost;
 	streams: OnboardingStreams;
-	presenter: LifecyclePresenter;
+	presenter: InstallPresenter;
 	rail: string;
 	input: NodeJS.ReadStream;
 	output: NodeJS.WriteStream;
@@ -187,7 +187,7 @@ export function draftDescriptor(answers: Answers, runtime: RuntimeDescriptor, wi
 	}
 	const apiKeyRef =
 		answers.credential === "stored"
-			? targetApiKeyRef(answers.targetId ?? runtime.id, readSettings().targets)
+			? targetApiKeyRef(answers.targetId ?? runtime.id, readSettings().connections)
 			: answers.credential === "keep" && runtime.auth === "api-key"
 				? (answers.existing?.auth?.apiKeyRef ?? runtime.id)
 				: undefined;

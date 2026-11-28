@@ -41,7 +41,7 @@ export function ExploreDrawer({
 					maxLength={128}
 					value={query}
 					onChange={(event) => setQuery(event.target.value)}
-					placeholder="Try machines, memory, costs or skills…"
+					placeholder="Try nodes, memory, costs or skills…"
 				/>
 			</label>
 			<nav className="wb-explore__groups" aria-label="Explore PanCode">

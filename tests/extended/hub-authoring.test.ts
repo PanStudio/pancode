@@ -9,7 +9,7 @@ import { parse as parseYaml } from "yaml";
 
 import { runHubCommand } from "../../src/cli/hub.js";
 import { listInstalledPlugins, readPluginManifest } from "../../src/domains/plugins/index.js";
-import { validateHubPackage } from "../../src/domains/resources/hub-validation.js";
+import { validateHubPack } from "../../src/domains/resources/hub-validation.js";
 import { loadSkills, skillCatalogValidity } from "../../src/domains/resources/skills/loader.js";
 import { isolatePancodeEnv } from "../harness/scratch-env.js";
 
@@ -69,13 +69,13 @@ describe("The hub pack authoring templates", () => {
 		);
 	});
 
-	it("both templates pass validateHubPackage and pancode hub validate CLI", async () => {
+	it("both templates pass validateHubPack and pancode hub validate CLI", async () => {
 		for (const kind of TEMPLATE_KINDS) {
 			const templateDir = join(TEMPLATES_DIR, kind);
-			const validation = validateHubPackage(templateDir);
+			const validation = validateHubPack(templateDir);
 			ok(
 				validation.valid,
-				`template '${kind}' failed validateHubPackage: ${JSON.stringify(validation.validation.diagnostics)}`,
+				`template '${kind}' failed validateHubPack: ${JSON.stringify(validation.validation.diagnostics)}`,
 			);
 			ok(validation.manifestValid, `template '${kind}' manifest should be valid`);
 			ok(validation.validation.contentValid, `template '${kind}' content should be valid`);
@@ -114,7 +114,7 @@ describe("The hub pack authoring templates", () => {
 				"---\nversion: 1\nname: bad-agent\naudience: invalid-audience\n---\nPersona body without required fields.\n",
 			);
 
-			const res = validateHubPackage(pkgDir);
+			const res = validateHubPack(pkgDir);
 			equal(res.valid, false);
 			equal(res.manifestValid, true);
 			equal(res.validation.contentValid, false);
@@ -170,7 +170,7 @@ Fleet instructions.
 `,
 			);
 
-			const res = validateHubPackage(pkgDir);
+			const res = validateHubPack(pkgDir);
 			equal(res.valid, false);
 			equal(res.manifestValid, true);
 			equal(res.validation.contentValid, false);
@@ -213,7 +213,7 @@ Refer to \${component:resource:missing-document} before proceeding.
 `,
 			);
 
-			const res = validateHubPackage(pkgDir);
+			const res = validateHubPack(pkgDir);
 			equal(res.valid, false);
 			equal(res.manifestValid, true);
 			equal(res.validation.contentValid, false);
@@ -270,7 +270,7 @@ Persona body.
 `,
 			);
 
-			const res = validateHubPackage(pkgDir);
+			const res = validateHubPack(pkgDir);
 			equal(res.valid, false);
 			equal(res.manifestValid, true);
 			equal(res.validation.contentValid, false);
@@ -313,7 +313,7 @@ Check \${pluginRoot}/assets/nonexistent-file.txt
 `,
 			);
 
-			const res = validateHubPackage(pkgDir);
+			const res = validateHubPack(pkgDir);
 			equal(res.valid, false);
 			equal(res.manifestValid, true);
 			equal(res.validation.contentValid, false);
@@ -348,7 +348,7 @@ Check \${pluginRoot}/assets/nonexistent-file.txt
 					},
 				}),
 			);
-			const res = validateHubPackage(pkgDir);
+			const res = validateHubPack(pkgDir);
 			equal(res.valid, false);
 			equal(res.manifestValid, true);
 			equal(res.validation.contentValid, false);
@@ -367,7 +367,7 @@ Check \${pluginRoot}/assets/nonexistent-file.txt
 			// Run validation on all templates
 			for (const kind of TEMPLATE_KINDS) {
 				const templateDir = join(TEMPLATES_DIR, kind);
-				validateHubPackage(templateDir);
+				validateHubPack(templateDir);
 				await runHubCommand(["validate", templateDir, "--json"]);
 			}
 
@@ -404,7 +404,7 @@ Check \${pluginRoot}/assets/nonexistent-file.txt
 		ok(packagePaths.length > 0, "hub/packs must hold curated packs");
 
 		for (const pkgPath of packagePaths) {
-			const res = validateHubPackage(pkgPath);
+			const res = validateHubPack(pkgPath);
 			ok(
 				res.valid,
 				`curated package at '${pkgPath}' must be valid. Diagnostics: ${JSON.stringify(res.validation.diagnostics)}`,
@@ -640,7 +640,7 @@ Run curation on {{datasetPath}}.
 				}),
 			);
 
-			const res = validateHubPackage(pkgDir);
+			const res = validateHubPack(pkgDir);
 			ok(res.manifestValid, "manifest must be valid");
 			ok(
 				res.validation.contentValid,
@@ -744,7 +744,7 @@ Refer to \${pluginRoot}/../../outside.txt
 `,
 			);
 
-			const res = validateHubPackage(pkgDir);
+			const res = validateHubPack(pkgDir);
 			equal(res.manifestValid, true);
 			equal(res.valid, false);
 			equal(res.validation.contentValid, false);

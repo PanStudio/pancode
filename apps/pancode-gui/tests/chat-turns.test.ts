@@ -777,7 +777,7 @@ test("compaction attempts report their outcome without inferring success for fra
 		["completed", "Context compacted", "neutral"],
 		["unchanged", "Context unchanged", "neutral"],
 		["failed", "Compaction failed", "fail"],
-		["cancelled", "Compaction stopped", "neutral"],
+		["cancelled", "Compaction canceled", "neutral"],
 		[undefined, "Compaction attempt ended", "unverified"],
 	] as const) {
 		const projected = fleetEvent(
@@ -825,7 +825,7 @@ test("a malformed payload never throws and never invents a value", () => {
 	]);
 	assert.match(summary.compaction?.detail ?? "", /an unreported condition/);
 	assert.match(summary.toolBudget?.detail ?? "", /^a tool was called not reported times/);
-	assert.equal(summary.providers[0]?.key, "unnamed target");
+	assert.equal(summary.providers[0]?.key, "unnamed connection");
 	assert.equal(summary.providers[0]?.tone, "unverified");
 	assert.equal(summary.contextWarning, null, "a non-string warning is not a warning");
 });
@@ -879,13 +879,13 @@ test("routeFacts names the reported route and never guesses one it was not told"
 	assert.equal(reported.text, "alpha · m-1");
 	assert.equal(reported.tone, "success");
 	assert.match(reported.title, /Thinking: low\./);
-	assert.match(reported.spoken, /Target alpha:/);
+	assert.match(reported.spoken, /Connection alpha:/);
 	assert.doesNotMatch(reported.spoken, /\.\./, "a detail that ends its own sentence gets no second stop");
 
 	const automatic = routeFacts({ target: null, model: null, thinking: "off" }, summarizeHealth([]));
 	assert.equal(automatic.text, "automatic routing · default model");
 	assert.equal(automatic.tone, "unverified", "no probe has run, so the glyph is not a healthy one");
-	assert.match(automatic.spoken, /No target health reported/);
+	assert.match(automatic.spoken, /No connection health reported/);
 
 	const unreported = routeFacts(undefined, summarizeHealth([]));
 	assert.equal(unreported.text, "Model not reported");
@@ -893,7 +893,7 @@ test("routeFacts names the reported route and never guesses one it was not told"
 	const onlyHealth = routeFacts(undefined, healthy);
 	assert.equal(onlyHealth.text, "Model not reported", "provider health does not identify the session route");
 	assert.equal(onlyHealth.tone, "unverified");
-	assert.match(onlyHealth.title, /No target health reported/);
+	assert.match(onlyHealth.title, /No connection health reported/);
 	assert.match(onlyHealth.spoken, /^Model not reported\./);
 	const multipleProviders = routeFacts(
 		undefined,
@@ -904,11 +904,11 @@ test("routeFacts names the reported route and never guesses one it was not told"
 	);
 	assert.equal(multipleProviders.text, "Model not reported");
 	assert.equal(multipleProviders.tone, "unverified");
-	assert.match(multipleProviders.title, /No target health reported/);
+	assert.match(multipleProviders.title, /No connection health reported/);
 	assert.doesNotMatch(multipleProviders.spoken, /alpha|beta/);
 	const otherTarget = routeFacts({ target: "beta", model: "m-2", thinking: "off" }, healthy);
 	assert.equal(otherTarget.tone, "unverified", "health for alpha does not verify beta");
-	assert.match(otherTarget.title, /No target health reported/);
+	assert.match(otherTarget.title, /No connection health reported/);
 	assert.equal(routeFacts(undefined, summarizeHealth([]), { options: [] }).text, "Model not reported");
 });
 
@@ -926,7 +926,7 @@ test("conversation routing takes reported current values and keeps target change
 	};
 	const settings = {
 		settings: {
-			chat: { target: "saved-target", model: "saved-model", thinkingLevel: "off" as const },
+			chat: { connection: "saved-target", model: "saved-model", thinkingLevel: "off" as const },
 			safety: { autonomy: "default" as const },
 		},
 		editable: [],
@@ -936,12 +936,12 @@ test("conversation routing takes reported current values and keeps target change
 	assert.ok(draft);
 	const next = { target: "other-target", model: "next-model", thinking: "low" };
 	assert.deepEqual(conversationChanges(next, draft), [
-		{ configId: "target", value: "other-target" },
+		{ configId: "connection", value: "other-target" },
 		{ configId: "model", value: "next-model" },
 		{ configId: "thinkingLevel", value: "low" },
 	]);
 	assert.deepEqual(savedRoutePatch(next, draft), {
-		"chat.target": "other-target",
+		"chat.connection": "other-target",
 		"chat.model": "next-model",
 		"chat.thinkingLevel": "low",
 	});

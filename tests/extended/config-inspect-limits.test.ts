@@ -21,11 +21,11 @@ test("config inspection includes effective safety limits for defaults and config
 		deepStrictEqual(defaults.detail, DEFAULT_SETTINGS.safety.limits);
 		strictEqual(defaults.reloadClass, "next-turn");
 		updateSettings((settings) => {
-			settings.safety.limits.workerResponseSeconds = 321;
+			settings.safety.limits.workerResponseTimeoutMs = 321_000;
 			return settings;
 		});
 		const configured = JSON.parse(JSON.stringify(limits()));
-		strictEqual(configured.detail.workerResponseSeconds, 321);
+		strictEqual(configured.detail.workerResponseTimeoutMs, 321_000);
 		strictEqual(configured.detail.readBytesPerCall, DEFAULT_SETTINGS.safety.limits.readBytesPerCall);
 	} finally {
 		scratch.restore();
@@ -60,13 +60,13 @@ test("config inspection lists the keys a layer set, not the merged section aroun
 		const workspace = join(scratch.dir, "workspace");
 		mkdirSync(workspace);
 		mkdirSync(join(settingsPath(), ".."), { recursive: true });
-		writeFileSync(settingsPath(), "version: 1\nchat:\n  target: openai-codex\n  model: gpt-6-luna\n");
+		writeFileSync(settingsPath(), "version: 1\nchat:\n  connection: openai-codex\n  model: gpt-6-luna\n");
 		const rows = buildCustomizationGraph(workspace).settings;
 		deepStrictEqual(
 			rows.filter((row) => row.key.startsWith("chat")).map((row) => [row.key, row.source]),
 			[
+				["chat.connection", "user"],
 				["chat.model", "user"],
-				["chat.target", "user"],
 			],
 		);
 	} finally {

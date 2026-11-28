@@ -22,7 +22,7 @@ import { isWorkerSurfaceExcludedTool } from "../../tools/policy.js";
 import { mcpSkillReferenceServer } from "../mcp/skills.js";
 import type { Skill, SkillList } from "../resources/skills/loader.js";
 import { parseFrontmatter } from "./frontmatter.js";
-import { resolvePackageReferences } from "./package-references.js";
+import { resolvePackReferences } from "./pack-references.js";
 import type { AgentRecipe } from "./recipe.js";
 import { parseAgentRecipeSchemaIssues } from "./recipe-schema.js";
 import { type AgentRecipeDiagnostic, discoverAgentRecipes, type SkillCatalogLoader } from "./registry.js";
@@ -275,7 +275,7 @@ function recipeIssues(file: HarnessRecipeFile, input: HarnessInput): HarnessIssu
 		return issues;
 	}
 	try {
-		body = resolvePackageReferences(body, { plugin: false });
+		body = resolvePackReferences(body, { plugin: false });
 	} catch (error) {
 		push("body", error instanceof Error ? error.message : String(error));
 	}
@@ -322,7 +322,7 @@ function recipeIssues(file: HarnessRecipeFile, input: HarnessInput): HarnessIssu
 		if (untrusted !== undefined) {
 			push(
 				"skills",
-				`names skill '${skillName}', which exists at ${displayPath(input.workspaceRoot, untrusted.filePath)} but is not trusted, so the recipe cannot bind it and is quarantined; move the skill under .pancode/skills/ or trust its root with integrations.projectResources.trustProjectImports`,
+				`names skill '${skillName}', which exists at ${displayPath(input.workspaceRoot, untrusted.filePath)} but is not trusted, so the recipe cannot bind it and is quarantined; move the skill under .pancode/skills/ or trust its root with integrations.hub.trustProjectImports`,
 			);
 			continue;
 		}
@@ -405,7 +405,7 @@ function modelIssue(
 	return {
 		file,
 		field,
-		message: `names model '${model}', which target '${targetId}' does not list${suggestion(model, target.wireModels)}; its recorded models are ${listOf(target.wireModels)}`,
+		message: `names model '${model}', which connection '${targetId}' does not list${suggestion(model, target.wireModels)}; its recorded models are ${listOf(target.wireModels)}`,
 	};
 }
 
@@ -421,16 +421,16 @@ function settingsIssues(input: HarnessInput): HarnessIssue[] {
 		for (const [name, profile] of Object.entries(fleet.profiles)) {
 			if (!isRecord(profile)) continue;
 			const field = `fleet.profiles.${name}`;
-			if (typeof profile.target === "string" && !targetIds.includes(profile.target)) {
+			if (typeof profile.connection === "string" && !targetIds.includes(profile.connection)) {
 				issues.push({
 					file,
-					field: `${field}.target`,
-					message: `names target '${profile.target}', which is not configured${suggestion(profile.target, targetIds)}; the profile is dropped silently and every agent bound to it falls back to fleet.default, so use one of ${listOf(targetIds)} or add the target with \`pancode configure\``,
+					field: `${field}.connection`,
+					message: `names connection '${profile.connection}', which is not configured${suggestion(profile.connection, targetIds)}; the profile is dropped silently and every agent bound to it falls back to fleet.default, so use one of ${listOf(targetIds)} or add the connection with \`pancode configure\``,
 				});
 				continue;
 			}
-			if (typeof profile.target === "string") {
-				const issue = modelIssue(file, `${field}.model`, profile.model, profile.target, input);
+			if (typeof profile.connection === "string") {
+				const issue = modelIssue(file, `${field}.model`, profile.model, profile.connection, input);
 				if (issue !== null) issues.push(issue);
 			}
 		}
@@ -449,8 +449,14 @@ function settingsIssues(input: HarnessInput): HarnessIssue[] {
 						message: `names agent '${agent}', which is not a loaded recipe${suggestion(agent, recipeIds)}; a council on roster '${name}' is refused with council_member_agent_unknown, so fix the id or add .pancode/agents/${agent}.md (loaded recipes: ${listOf(recipeIds, 12)})`,
 					});
 				}
-				if (typeof member.target !== "string") continue;
-				const issue = modelIssue(file, `fleet.rosters.${name}.members[${index}].model`, member.model, member.target, input);
+				if (typeof member.connection !== "string") continue;
+				const issue = modelIssue(
+					file,
+					`fleet.rosters.${name}.members[${index}].model`,
+					member.model,
+					member.connection,
+					input,
+				);
 				if (issue !== null) issues.push(issue);
 			}
 		}
@@ -562,7 +568,7 @@ export function collectHarnessInput(workspaceRoot: string, options: CollectHarne
 	}
 	let trustProjectImports = false;
 	try {
-		trustProjectImports = readSettings().integrations.projectResources.trustProjectImports;
+		trustProjectImports = readSettings().integrations.hub.trustProjectImports;
 	} catch {
 		// Invalid user settings are reported by doctor's settings row; bind against untrusted imports.
 	}
@@ -663,7 +669,7 @@ export function collectHarnessInput(workspaceRoot: string, options: CollectHarne
 			...(configDir === null ? [] : [path.join(configDir, "skills")]),
 		],
 		localSettings,
-		targets: layered?.settings.targets ?? [],
+		targets: layered?.settings.connections ?? [],
 		profileNames: [...new Set([...Object.keys(layered?.settings.fleet.profiles ?? {}), ...localProfileNames])],
 		externalAgentIds: layered?.settings.integrations.externalAgents.entries.map((agent) => agent.id) ?? [],
 		packageScripts: readPackageScripts(workspaceRoot),

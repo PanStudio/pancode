@@ -2,9 +2,9 @@
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import { readBuildProvenance, readPancodeVersionLabel, runningBuildId } from "../core/build-info.js";
 import { readPancodeVersion } from "../core/package-root.js";
-import { parseCommandFlags } from "./kit/flags.js";
-import { helpRequested } from "./kit/help.js";
-import { jsonDocument, writeCliFailure, writeJson } from "./kit/json-out.js";
+import { parseCommandFlags } from "./lib/flags.js";
+import { helpRequested } from "./lib/help.js";
+import { jsonDocument, writeCliFailure, writeJson } from "./lib/json-out.js";
 
 const HELP = `pancode version [--worker-specs | --build | --sandbox | --json]
 
@@ -87,8 +87,8 @@ export async function runVersionCommand(args: ReadonlyArray<string> = []): Promi
 		process.stdout.write(`${WORKER_SPEC_VERSIONS.join(" ")}\n`);
 		return 0;
 	}
-	const { findPinnedTool } = await import("../lib/programs/registry.js");
-	const herdr = findPinnedTool("herdr");
+	const { findPinnedProgram } = await import("../lib/programs/registry.js");
+	const herdr = findPinnedProgram("herdr");
 	if (flags.json) {
 		const { WORKER_SPEC_VERSIONS } = await import("../lib/worker-wire/spec-contract.js");
 		const build = readBuildProvenance();

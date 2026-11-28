@@ -22,7 +22,7 @@ import { isRecord } from "../../core/type-guards.js";
 import { failsTheSameOnBase } from "../../domains/dispatch/host-verification-note.js";
 import type { RunCallUsage, RunUsageFacts } from "../../domains/dispatch/run-call-usage.js";
 import type { RunResult } from "../../domains/dispatch/types.js";
-import { EXIT_CODES, EXPLORATION_STALLED_EXIT_CODE } from "../kit/exit-codes.js";
+import { EXIT_CODES, EXPLORATION_STALLED_EXIT_CODE } from "../lib/exit-codes.js";
 import type { RunJsonDispatchedRunOutcome, RunJsonVerifyResult } from "./run-json-schema.js";
 
 export const RUN_RESULT_SCHEMA_VERSION = 3;

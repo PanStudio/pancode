@@ -23,7 +23,7 @@ export function readSetupStatus(cwd?: string): SetupStatus {
 	const registry = getRuntimeRegistry();
 	if (registry.list().length === 0) registerBuiltinRuntimes(registry);
 	const settings = cwd ? readLayeredSettings(cwd).settings : readSettings();
-	const target = settings.targets.find((entry) => entry.id === settings.chat.target);
+	const target = settings.connections.find((entry) => entry.id === settings.chat.connection);
 	const runtime = target ? registry.get(target.runtime) : undefined;
 	const authTarget = target && runtime ? resolveAuthTarget(target, runtime) : undefined;
 	const envVariable = target?.auth?.apiKeyEnvVar?.trim();

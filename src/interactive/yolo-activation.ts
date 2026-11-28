@@ -21,10 +21,10 @@ import type { AskUserHandler, AskUserQuestion } from "../tools/ask-user.js";
 
 export type SettingScope = "session" | "project" | "global";
 
-export const YOLO_ACCEPT_LABEL = "Turn on yolo";
-export const YOLO_DECLINE_LABEL = "Stay at default";
-export const YOLO_UNCONFINED_ACCEPT_LABEL = "Run yolo unconfined";
-export const YOLO_UNCONFINED_DECLINE_LABEL = "Keep yolo contained";
+export const YOLO_ACCEPT_LABEL = "Turn on YOLO";
+export const YOLO_DECLINE_LABEL = "Stay at Default";
+export const YOLO_UNCONFINED_ACCEPT_LABEL = "Run YOLO unconfined";
+export const YOLO_UNCONFINED_DECLINE_LABEL = "Keep YOLO contained";
 
 /** The acceptance card, asked through the existing ask_user card; its sandbox and judge lines say what this host runs. */
 function yoloAcceptanceQuestion(settings: PancodeSettings | undefined): AskUserQuestion {
@@ -33,17 +33,17 @@ function yoloAcceptanceQuestion(settings: PancodeSettings | undefined): AskUserQ
 	const notes = yoloContainmentNotes(safety?.sandbox ?? "auto", sandboxAvailability(), judgeOn);
 	const risky = "risky calls (leaving the sandbox, writes outside the workspace, destructive git, pushes and publishes)";
 	return {
-		header: "Yolo",
+		header: "YOLO",
 		question: [
-			"Turn on yolo? It runs long jobs without approval stops:",
+			"Turn on YOLO? It runs long jobs without approval stops:",
 			"- No approval cards: a call that would need your approval is refused back to PanCode instead. PanCode still asks you questions (interviews, plan closes, choices only you can make); one nobody answers in time takes its recommended option unless that option leaves the workspace.",
 			`- ${notes.backend !== null ? `Commands stay in the ${notes.backend} OS sandbox: the workspace and scratch roots are writable, credentials and secret files are hidden.` : `Commands run without an OS sandbox (${notes.why}), as default runs them; credentials and secret files are not hidden from them.`} ${judgeOn ? `The safety judge reviews ${risky} and allows only what your request asked for.` : `The safety judge is off (safety.judge.enabled), so ${risky} are refused.`}`,
 			"- The floor still blocks deleting /, your home directory or a system tree, mkfs, writes to a block device, fork bombs, and writes into PanCode's own state. Rules in an approved .pancode/safety.yaml hold.",
-			"- Workspace snapshots and the telemetry journals stay on, so /rewind can restore files. Yolo is refused as root outside a container.",
+			"- Workspace snapshots and the telemetry journals stay on, so /rewind can restore files. YOLO is refused as root outside a container.",
 			"You accept once; safety.yoloAccepted in your user settings records it.",
 		].join("\n"),
 		options: [
-			{ label: YOLO_ACCEPT_LABEL, description: "Record the acceptance and switch to yolo." },
+			{ label: YOLO_ACCEPT_LABEL, description: "Record the acceptance and switch to YOLO." },
 			{ label: YOLO_DECLINE_LABEL, description: "Keep approval stops; nothing is saved." },
 		],
 	};
@@ -52,18 +52,18 @@ function yoloAcceptanceQuestion(settings: PancodeSettings | undefined): AskUserQ
 /** The unconfined acceptance card: today's skip-permissions yolo (#407). */
 function yoloUnconfinedAcceptanceQuestion(): AskUserQuestion {
 	return {
-		header: "Unconfined yolo",
+		header: "Unconfined YOLO",
 		question: [
-			"Run yolo unconfined? It is the skip-permissions mode:",
+			"Run YOLO unconfined? It is the skip-permissions mode:",
 			"- No approval stops and no safety judge. Edits, commands, scripts, git history changes and outward actions run as called.",
 			"- No sandbox by default. Commands and scripts run as you, with your credentials, unless safety.sandbox is required.",
 			"- The floor still blocks deleting or overwriting /, your home directory or a system tree, mkfs, wipefs, writes to a block device, fork bombs, and writes into PanCode's own config, state and trust records. Rules in an approved .pancode/safety.yaml hold.",
-			"Contained yolo already runs without approval stops; choose unconfined only when your work needs what the sandbox hides.",
+			"Contained YOLO already runs without approval stops; choose unconfined only when your work needs what the sandbox hides.",
 			"You accept once; safety.yoloUnconfinedAccepted in your user settings records it.",
 		].join("\n"),
 		options: [
-			{ label: YOLO_UNCONFINED_ACCEPT_LABEL, description: "Record the acceptance and run yolo unconfined." },
-			{ label: YOLO_UNCONFINED_DECLINE_LABEL, description: "Yolo stays contained; nothing is saved." },
+			{ label: YOLO_UNCONFINED_ACCEPT_LABEL, description: "Record the acceptance and run YOLO unconfined." },
+			{ label: YOLO_UNCONFINED_DECLINE_LABEL, description: "YOLO stays contained; nothing is saved." },
 		],
 	};
 }
@@ -108,13 +108,13 @@ export function createYoloActivation(deps: YoloActivationDeps): YoloActivation {
 			if (result.unavailable === true) {
 				deps.notify(
 					"info",
-					"Yolo needs a one-time acceptance; turn it on again once the screen is free.",
+					"YOLO needs a one-time acceptance; turn it on again once the screen is free.",
 					"safety:yolo-accept",
 				);
 				return;
 			}
 			if (result.cancelled === true || result.answers[0]?.options?.includes(YOLO_ACCEPT_LABEL) !== true) {
-				deps.notify("info", "Yolo stays off; autonomy is default.", "safety:yolo-accept");
+				deps.notify("info", "YOLO stays off; autonomy is Default.", "safety:yolo-accept");
 				return;
 			}
 			const current = deps.getSettings();
@@ -130,7 +130,7 @@ export function createYoloActivation(deps: YoloActivationDeps): YoloActivation {
 		} catch (error) {
 			deps.notify(
 				"error",
-				`Yolo was not turned on: ${error instanceof Error ? error.message : String(error)}`,
+				`YOLO was not turned on: ${error instanceof Error ? error.message : String(error)}`,
 				"safety:yolo-accept",
 			);
 		} finally {
@@ -147,13 +147,13 @@ export function createYoloActivation(deps: YoloActivationDeps): YoloActivation {
 			if (result.unavailable === true) {
 				deps.notify(
 					"info",
-					"Unconfined yolo needs a one-time acceptance; choose it again once the screen is free.",
+					"Unconfined YOLO needs a one-time acceptance; choose it again once the screen is free.",
 					"safety:yolo-unconfined-accept",
 				);
 				return;
 			}
 			if (result.cancelled === true || result.answers[0]?.options?.includes(YOLO_UNCONFINED_ACCEPT_LABEL) !== true) {
-				deps.notify("info", "Yolo stays contained.", "safety:yolo-unconfined-accept");
+				deps.notify("info", "YOLO stays contained.", "safety:yolo-unconfined-accept");
 				return;
 			}
 			const current = deps.getSettings();
@@ -168,7 +168,7 @@ export function createYoloActivation(deps: YoloActivationDeps): YoloActivation {
 		} catch (error) {
 			deps.notify(
 				"error",
-				`Yolo stays contained: ${error instanceof Error ? error.message : String(error)}`,
+				`YOLO stays contained: ${error instanceof Error ? error.message : String(error)}`,
 				"safety:yolo-unconfined-accept",
 			);
 		} finally {

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import { enabledPluginResourceRoots } from "../plugins/index.js";
-import { resolvePackagePathReference, resolvePackageReferences } from "./package-references.js";
+import { resolvePackPathReference, resolvePackReferences } from "./pack-references.js";
 /**
  * Repo-owned playbooks (Symphony P5: work policy lives in the repo, versioned
  * and strictly validated). A playbook is what the fleet runs.
@@ -865,7 +865,7 @@ function validateV5Declarations(playbook: Playbook): void {
 	if (playbook.version < PLAYBOOK_DYNAMIC_STEP_VERSION) return;
 	const route = (id: string, value: { target?: string; profile?: string }): void => {
 		if (value.target !== undefined && value.profile !== undefined) {
-			throw new Error(`playbook ${playbook.path}: step '${id}' may declare target or profile, never both`);
+			throw new Error(`playbook ${playbook.path}: step '${id}' may declare connection or profile, never both`);
 		}
 	};
 	for (const step of playbook.steps) {
@@ -1064,14 +1064,14 @@ export function resolvePlaybookReferences(
 	// Authored text is resolved after schema parsing; paths cannot inject YAML keys.
 	return {
 		...playbook,
-		body: resolvePackageReferences(playbook.body, context),
+		body: resolvePackReferences(playbook.body, context),
 		steps: playbook.steps.map((step) => {
 			if (step.kind === "code" && step.args)
-				return { ...step, args: step.args.map((arg) => resolvePackagePathReference(arg, context)) };
+				return { ...step, args: step.args.map((arg) => resolvePackPathReference(arg, context)) };
 			if (step.kind === "loop" && step.check.kind === "code" && step.check.args)
 				return {
 					...step,
-					check: { ...step.check, args: step.check.args.map((arg) => resolvePackagePathReference(arg, context)) },
+					check: { ...step.check, args: step.check.args.map((arg) => resolvePackPathReference(arg, context)) },
 				};
 			return step;
 		}),

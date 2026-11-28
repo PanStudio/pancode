@@ -23,7 +23,7 @@ import type { PendingSkillRequest } from "../../../core/skill-activation.js";
 import { isToolLimitName } from "../../../core/tool-limit-flags.js";
 import { isHarnessExtensionToolName, isMcpToolName, type ToolName, ToolNames } from "../../../core/tool-names.js";
 import { pancodeConfigDir } from "../../../core/xdg.js";
-import { cachedFrontmatterParser, resolvePackageReferences, withFrontmatterCache } from "../../agents/index.js";
+import { cachedFrontmatterParser, resolvePackReferences, withFrontmatterCache } from "../../agents/index.js";
 import type { HubAuditState } from "../../plugins/hub-types.js";
 import {
 	committedPluginResourceRoots,
@@ -168,7 +168,7 @@ export interface Skill {
 }
 
 export interface SkillRoot {
-	owner?: import("../../../core/package-identity.js").PackageIdentity;
+	owner?: import("../../../core/pack-identity.js").PackIdentity;
 	rootPath?: string;
 	plugin?: boolean;
 	path: string;
@@ -916,7 +916,7 @@ function loadSkillFile(
 	const disallowedTools = declaredToolSurface(parsed.frontmatter, "disallowed-tools", filePath, diagnostics);
 	let content: string;
 	try {
-		content = resolvePackageReferences(parsed.body.trim(), root);
+		content = resolvePackReferences(parsed.body.trim(), root);
 	} catch (error) {
 		diagnostics.push({ type: "warning", message: String(error), path: filePath });
 		return { candidate: null, diagnostics };

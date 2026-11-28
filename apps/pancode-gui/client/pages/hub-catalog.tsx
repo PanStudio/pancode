@@ -26,12 +26,12 @@ import {
 	copyState,
 	diskSentence,
 	effectSentence,
+	type HubPack,
 	missingScopes,
 	needsRequirements,
 	type Operation,
 	originSentence,
 	outcomeHeadline,
-	type Package,
 	type Plan,
 	type Scope,
 	scopeCopy,
@@ -431,7 +431,7 @@ export function HubCatalog({
 	client: Client;
 	/** `null` plans against the installation: user copies only. */
 	workspaceId: string | null;
-	packages: Package[];
+	packages: HubPack[];
 	filter: string;
 	compact?: boolean;
 	onReview?: (() => void) | undefined;

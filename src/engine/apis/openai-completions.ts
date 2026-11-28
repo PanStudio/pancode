@@ -906,13 +906,13 @@ function malformedToolArgsMessage(
 	// Pi 1.3 empties the arguments of a call whose JSON did not parse and names the fault (upstream #10897). The
 	// call still fails closed here, but as malformed JSON rather than as the empty-arguments template fault.
 	if (argumentsError !== undefined)
-		return `Tool-call arguments are not valid JSON for target '${target}' model '${model.id}' tool '${toolName}' on an OpenAI-compatible runtime: ${argumentsError.split("\n", 1)[0]}`;
+		return `Tool-call arguments are not valid JSON for connection '${target}' model '${model.id}' tool '${toolName}' on an OpenAI-compatible runtime: ${argumentsError.split("\n", 1)[0]}`;
 	const required = requiredFields.length > 0 ? ` Required fields: ${requiredFields.join(", ")}.` : "";
 	const workaround =
 		model.provider === "llamacpp" || runtime === "llamacpp"
 			? "For llama.cpp, verify --jinja, the model chat template, reasoning flags, and tool parser support for this model."
 			: "For LM Studio, verify the model's tool-use capability and active chat template in LM Studio.";
-	return `OpenAI-compatible runtime returned empty tool-call arguments for target '${target}' model '${model.id}' tool '${toolName}'.${required} ${workaround}`;
+	return `OpenAI-compatible runtime returned empty tool-call arguments for connection '${target}' model '${model.id}' tool '${toolName}'.${required} ${workaround}`;
 }
 
 function finalErrorFromPartial(partial: AssistantMessage, message: string): AssistantMessage {

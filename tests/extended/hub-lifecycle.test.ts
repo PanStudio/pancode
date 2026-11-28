@@ -25,11 +25,11 @@ import {
 } from "../../src/domains/plugins/index.js";
 import type { PluginScope } from "../../src/domains/plugins/types.js";
 import {
-	applyHubLifecycle,
+	applyHubAction,
 	type HubRefreshHost,
 	hubImportOutcome,
-	planHubLifecycle,
-	releaseHubLifecycle,
+	planHubAction,
+	releaseHubAction,
 	retryHubRefresh,
 } from "../../src/domains/resources/hub-actions.js";
 import { readHubInventory } from "../../src/domains/resources/hub-inventory.js";
@@ -105,8 +105,8 @@ function catalog(sources: string[]): void {
 }
 
 function install(ref: string, scope: PluginScope = "user", withRequirements = false) {
-	const plan = planHubLifecycle({ operation: "install", ref, scope, cwd: root, withRequirements });
-	const result = applyHubLifecycle(plan);
+	const plan = planHubAction({ operation: "install", ref, scope, cwd: root, withRequirements });
+	const result = applyHubAction(plan);
 	equal(
 		result.failed,
 		0,
@@ -152,8 +152,8 @@ describe("The hub lifecycle plans", () => {
 		const first = source({ name, version: "1.0.0" });
 		catalog([first]);
 		const before = readLifecycleReceipts(name).length;
-		const dry = planHubLifecycle({ operation: "install", ref: `plugin:${name}`, scope: "user", cwd: root });
-		applyHubLifecycle(dry, { dryRun: true });
+		const dry = planHubAction({ operation: "install", ref: `plugin:${name}`, scope: "user", cwd: root });
+		applyHubAction(dry, { dryRun: true });
 		equal(readLifecycleReceipts(name).length, before);
 		install(`plugin:${name}`);
 		const installed = readLifecycleReceipts(name).at(-1);
@@ -166,8 +166,8 @@ describe("The hub lifecycle plans", () => {
 		ok(!Number.isNaN(Date.parse(installed.at)));
 		const second = source({ name, version: "2.0.0" });
 		catalog([second]);
-		const update = planHubLifecycle({ operation: "update", ref: `plugin:${name}`, scope: "user", cwd: root });
-		applyHubLifecycle(update, { refresh: () => ({ status: "failed", error: "fixture refresh refused" }) });
+		const update = planHubAction({ operation: "update", ref: `plugin:${name}`, scope: "user", cwd: root });
+		applyHubAction(update, { refresh: () => ({ status: "failed", error: "fixture refresh refused" }) });
 		equal(readLifecycleReceipts(name).at(-1)?.operation, "update");
 		equal(readLifecycleReceipts(name).at(-1)?.version, "2.0.0");
 		removePlugin(name, { cwd: root, scope: "user", lifecycle: { actor: "model-confirmed" } });
@@ -281,8 +281,8 @@ describe("The hub lifecycle plans", () => {
 		const backups: string[] = [];
 		for (let i = 0; i < 5; i++) {
 			writeFileSync(path.join(copy("user", "recover")?.rootPath ?? "", "assets/evidence.txt"), `edit ${i}`);
-			const result = applyHubLifecycle(
-				planHubLifecycle({ operation: "update", ref: "plugin:recover", scope: "user", cwd: root, force: true }),
+			const result = applyHubAction(
+				planHubAction({ operation: "update", ref: "plugin:recover", scope: "user", cwd: root, force: true }),
 			);
 			equal(result.failed, 0);
 			const backup = result.outcomes[0]?.recovery?.packageBackup;
@@ -300,23 +300,23 @@ describe("The hub lifecycle plans", () => {
 		install("plugin:alpha");
 		const stateFile = pluginStatePath("user", root);
 
-		const removal = planHubLifecycle({ operation: "remove", ref: "plugin:alpha", scope: "user", cwd: root });
+		const removal = planHubAction({ operation: "remove", ref: "plugin:alpha", scope: "user", cwd: root });
 		writeFileSync(path.join(pluginBaseDir("user", root), "alpha", "assets", "evidence.txt"), "edited after review");
-		const staleTree = applyHubLifecycle(removal);
+		const staleTree = applyHubAction(removal);
 		equal(staleTree.outcomes[0]?.status, "failed");
 		equal(staleTree.outcomes[0]?.error?.code, "stale_plan");
 		equal(staleTree.outcomes[0]?.error?.changed?.fact, "tree");
 		ok(copy("user", "alpha"), "stale plan wrote nothing");
 
-		const toggle = planHubLifecycle({ operation: "disable", ref: "plugin:alpha", scope: "user", cwd: root });
+		const toggle = planHubAction({ operation: "disable", ref: "plugin:alpha", scope: "user", cwd: root });
 		disablePlugin("alpha", { cwd: root, scope: "user" });
-		const staleState = applyHubLifecycle(toggle);
+		const staleState = applyHubAction(toggle);
 		equal(staleState.outcomes[0]?.error?.code, "stale_plan");
 		equal(staleState.outcomes[0]?.error?.changed?.fact, "enabled");
 
 		// Restore the recorded bytes so only provenance differs from the reviewed plan.
 		writeFileSync(path.join(pluginBaseDir("user", root), "alpha", "assets", "evidence.txt"), "evidence 1.0.0");
-		const enable = planHubLifecycle({ operation: "enable", ref: "plugin:alpha", scope: "user", cwd: root });
+		const enable = planHubAction({ operation: "enable", ref: "plugin:alpha", scope: "user", cwd: root });
 		equal(enable.applicable, true, enable.steps[0]?.refusal);
 		const state = JSON.parse(readFileSync(stateFile, "utf8"));
 		state.installed.alpha.trust = "foreign";
@@ -327,7 +327,7 @@ describe("The hub lifecycle plans", () => {
 			format: "portable",
 		};
 		writeFileSync(stateFile, JSON.stringify(state));
-		const staleOrigin = applyHubLifecycle(enable);
+		const staleOrigin = applyHubAction(enable);
 		equal(staleOrigin.outcomes[0]?.error?.code, "stale_plan");
 		ok(["trust", "origin"].includes(String(staleOrigin.outcomes[0]?.error?.changed?.fact)));
 		equal(copy("user", "alpha")?.enabled, false, "identical bytes with changed provenance did not enable");
@@ -384,20 +384,20 @@ describe("The hub lifecycle plans", () => {
 		install("skill:shared", "user");
 		install("skill:shared", "project");
 		trustProjectPackages(root, "plugins");
-		const disable = planHubLifecycle({ operation: "disable", ref: "skill:shared", scope: "project", cwd: root });
+		const disable = planHubAction({ operation: "disable", ref: "skill:shared", scope: "project", cwd: root });
 		equal(disable.steps[0]?.effectiveAfter?.scope, "project");
 		equal(disable.steps[0]?.effectiveAfter?.loadable, false);
 		match(disable.steps[0]?.fallbackNote ?? "", /still shadows the user copy/);
-		const disabled = applyHubLifecycle(disable);
+		const disabled = applyHubAction(disable);
 		equal(disabled.committed, 1);
 		// The disable rewrote the project state bytes, so the approval is stale until re-approved.
 		deepStrictEqual(disabled.outcomes[0]?.verification?.effective, { scope: "user", loadable: true });
 		trustProjectPackages(root, "plugins");
 		equal(copy("user", "shared")?.loadable, false);
 
-		const remove = planHubLifecycle({ operation: "remove", ref: "skill:shared", scope: "project", cwd: root });
+		const remove = planHubAction({ operation: "remove", ref: "skill:shared", scope: "project", cwd: root });
 		equal(remove.steps[0]?.effectiveAfter?.scope, "user");
-		const removed = applyHubLifecycle(remove);
+		const removed = applyHubAction(remove);
 		equal(removed.outcomes[0]?.status, "committed");
 		equal(removed.outcomes[0]?.verification?.tree, "absent");
 		equal(removed.outcomes[0]?.verification?.record, "absent");
@@ -416,17 +416,17 @@ describe("The hub lifecycle plans", () => {
 		install("plugin:consumer");
 		install("plugin:spare");
 		// An orphan with an unmet requirement is pre-existing breakage; install it through the raw writer.
-		const orphanPlan = planHubLifecycle({ operation: "install", ref: "plugin:orphan", scope: "user", cwd: root });
+		const orphanPlan = planHubAction({ operation: "install", ref: "plugin:orphan", scope: "user", cwd: root });
 		equal(orphanPlan.applicable, false);
 		match(orphanPlan.steps[0]?.refusal ?? "", /hub_requirement_missing: skill:never/);
-		releaseHubLifecycle(orphanPlan);
+		releaseHubAction(orphanPlan);
 
-		const remove = planHubLifecycle({ operation: "remove", ref: "skill:dep", scope: "user", cwd: root });
+		const remove = planHubAction({ operation: "remove", ref: "skill:dep", scope: "user", cwd: root });
 		equal(remove.applicable, false);
 		deepStrictEqual(remove.steps[0]?.dependents.newlyBroken, [
 			{ ref: "plugin:consumer", scope: "user", missing: ["skill:dep"] },
 		]);
-		const refused = applyHubLifecycle(remove);
+		const refused = applyHubAction(remove);
 		equal(refused.outcomes[0]?.error?.code, "refused");
 		ok(copy("user", "dep"));
 
@@ -435,23 +435,23 @@ describe("The hub lifecycle plans", () => {
 		ok(copy("user", "dep"), "raw writer cannot bypass dependency safety");
 		equal(disablePlugin("dep", { cwd: root, scope: "user" }).diagnostics[0]?.code, "dependents");
 
-		const spare = planHubLifecycle({ operation: "remove", ref: "plugin:spare", scope: "user", cwd: root });
+		const spare = planHubAction({ operation: "remove", ref: "plugin:spare", scope: "user", cwd: root });
 		equal(spare.applicable, true, "unrelated removal is not blocked by other packages");
-		equal(applyHubLifecycle(spare).committed, 1);
+		equal(applyHubAction(spare).committed, 1);
 
-		const consumer = planHubLifecycle({ operation: "disable", ref: "plugin:consumer", scope: "user", cwd: root });
-		equal(applyHubLifecycle(consumer).committed, 1);
-		const afterwards = planHubLifecycle({ operation: "remove", ref: "skill:dep", scope: "user", cwd: root });
+		const consumer = planHubAction({ operation: "disable", ref: "plugin:consumer", scope: "user", cwd: root });
+		equal(applyHubAction(consumer).committed, 1);
+		const afterwards = planHubAction({ operation: "remove", ref: "skill:dep", scope: "user", cwd: root });
 		equal(afterwards.applicable, true, "a disabled dependent is not newly broken");
 	});
 
 	it("catches dependents installed after planning at the writer boundary", () => {
 		catalog([source({ name: "dep", kind: "skill" }), source({ name: "late", requires: ["skill:dep"] })]);
 		install("skill:dep");
-		const remove = planHubLifecycle({ operation: "remove", ref: "skill:dep", scope: "user", cwd: root });
+		const remove = planHubAction({ operation: "remove", ref: "skill:dep", scope: "user", cwd: root });
 		equal(remove.applicable, true);
 		install("plugin:late");
-		const result = applyHubLifecycle(remove);
+		const result = applyHubAction(remove);
 		equal(result.outcomes[0]?.status, "failed");
 		equal(result.outcomes[0]?.error?.code, "refused");
 		ok(copy("user", "dep"));
@@ -462,7 +462,7 @@ describe("The hub lifecycle plans", () => {
 		const second = source({ name: "second", kind: "skill" });
 		const target = source({ name: "target", requires: ["skill:first", "skill:second"] });
 		catalog([first, second, target]);
-		const plan = planHubLifecycle({
+		const plan = planHubAction({
 			operation: "install",
 			ref: "plugin:target",
 			scope: "user",
@@ -481,7 +481,7 @@ describe("The hub lifecycle plans", () => {
 		// Change the second dependency's source after review so its writer refuses the pinned digest.
 		writeFileSync(path.join(second, "assets", "evidence.txt"), "changed after review");
 		const refresh = stubHost();
-		const result = applyHubLifecycle(plan, { refresh: refresh.host });
+		const result = applyHubAction(plan, { refresh: refresh.host });
 		deepStrictEqual(
 			result.outcomes.map((item) => item.status),
 			["committed", "failed", "unattempted"],
@@ -503,14 +503,14 @@ describe("The hub lifecycle plans", () => {
 		install("plugin:edited");
 		const installed = path.join(pluginBaseDir("user", root), "edited");
 		writeFileSync(path.join(installed, "assets", "evidence.txt"), "local work");
-		const blocked = planHubLifecycle({ operation: "update", ref: "plugin:edited", scope: "user", cwd: root });
+		const blocked = planHubAction({ operation: "update", ref: "plugin:edited", scope: "user", cwd: root });
 		equal(blocked.applicable, false);
 		match(blocked.steps[0]?.refusal ?? "", /plugin_local_changes/);
-		releaseHubLifecycle(blocked);
+		releaseHubAction(blocked);
 
 		const v2 = source({ name: "edited", version: "1.1.0" });
 		catalog([v2]);
-		const update = planHubLifecycle({
+		const update = planHubAction({
 			operation: "update",
 			ref: "plugin:edited",
 			scope: "user",
@@ -518,7 +518,7 @@ describe("The hub lifecycle plans", () => {
 			force: true,
 		});
 		equal(update.applicable, true);
-		const updated = applyHubLifecycle(update);
+		const updated = applyHubAction(update);
 		equal(updated.outcomes[0]?.status, "committed");
 		const backup = updated.outcomes[0]?.recovery?.packageBackup;
 		ok(backup && existsSync(backup));
@@ -526,8 +526,8 @@ describe("The hub lifecycle plans", () => {
 		equal(copy("user", "edited")?.version, "1.1.0");
 
 		writeFileSync(path.join(installed, "assets", "evidence.txt"), "more local work");
-		const remove = planHubLifecycle({ operation: "remove", ref: "plugin:edited", scope: "user", cwd: root });
-		const removed = applyHubLifecycle(remove);
+		const remove = planHubAction({ operation: "remove", ref: "plugin:edited", scope: "user", cwd: root });
+		const removed = applyHubAction(remove);
 		equal(removed.outcomes[0]?.status, "committed");
 		ok(removed.outcomes[0]?.recovery?.packageBackup && existsSync(removed.outcomes[0].recovery.packageBackup));
 	});
@@ -562,21 +562,21 @@ describe("The hub lifecycle plans", () => {
 				}),
 			);
 			const stagedDirs = () => readFileSync(clones, "utf8").trim().split("\n");
-			const cancelled = planHubLifecycle({ operation: "install", ref: "plugin:remote", scope: "user", cwd: root });
+			const cancelled = planHubAction({ operation: "install", ref: "plugin:remote", scope: "user", cwd: root });
 			equal(cancelled.steps[0]?.source?.staged, true);
 			ok(existsSync(stagedDirs()[0] as string));
-			releaseHubLifecycle(cancelled);
+			releaseHubAction(cancelled);
 			equal(existsSync(stagedDirs()[0] as string), false);
 			equal(copy("user", "remote"), undefined, "cancel writes nothing");
 
-			const committed = planHubLifecycle({ operation: "install", ref: "plugin:remote", scope: "user", cwd: root });
-			const dry = applyHubLifecycle(committed, { dryRun: true });
+			const committed = planHubAction({ operation: "install", ref: "plugin:remote", scope: "user", cwd: root });
+			const dry = applyHubAction(committed, { dryRun: true });
 			equal(dry.unattempted, 1);
 			equal(copy("user", "remote"), undefined, "dry run writes nothing");
 			equal(existsSync(stagedDirs()[1] as string), false, "dry run released its staging");
 
-			const real = planHubLifecycle({ operation: "install", ref: "plugin:remote", scope: "user", cwd: root });
-			equal(applyHubLifecycle(real).committed, 1);
+			const real = planHubAction({ operation: "install", ref: "plugin:remote", scope: "user", cwd: root });
+			equal(applyHubAction(real).committed, 1);
 			equal(existsSync(stagedDirs()[2] as string), false);
 			const temp = readdirSync(tmpdir()).filter((name) => name.startsWith("pancode-plugin-"));
 			for (const dir of stagedDirs()) ok(!temp.includes(path.basename(dir)));
@@ -587,11 +587,11 @@ describe("The hub lifecycle plans", () => {
 
 	it("reports refresh failure separately, retries refresh only, and re-verifies after a successful refresh", () => {
 		catalog([source({ name: "refreshed", kind: "skill" })]);
-		const plan = planHubLifecycle({ operation: "install", ref: "skill:refreshed", scope: "user", cwd: root });
+		const plan = planHubAction({ operation: "install", ref: "skill:refreshed", scope: "user", cwd: root });
 		const failing: HubRefreshHost = () => {
 			throw new Error("namespace clash");
 		};
-		const result = applyHubLifecycle(plan, { refresh: failing });
+		const result = applyHubAction(plan, { refresh: failing });
 		equal(result.committed, 1);
 		deepStrictEqual(result.refresh, { status: "failed", error: "namespace clash" });
 		equal(result.outcomes[0]?.verification?.evidence, "pre-refresh");
@@ -605,13 +605,13 @@ describe("The hub lifecycle plans", () => {
 
 	it("keeps a durable commit when read-back verification fails and still refreshes", () => {
 		catalog([source({ name: "durable" })]);
-		const plan = planHubLifecycle({ operation: "install", ref: "plugin:durable", scope: "user", cwd: root });
+		const plan = planHubAction({ operation: "install", ref: "plugin:durable", scope: "user", cwd: root });
 		const refresh = stubHost();
 		const corrupting: HubRefreshHost = (cwd) => {
 			writeFileSync(pluginStatePath("user", root), "{broken");
 			return refresh.host(cwd);
 		};
-		const result = applyHubLifecycle(plan, { refresh: corrupting });
+		const result = applyHubAction(plan, { refresh: corrupting });
 		equal(result.outcomes[0]?.status, "committed");
 		equal(result.committed, 1);
 		equal(result.refresh.status, "refreshed");
@@ -625,16 +625,16 @@ describe("The hub lifecycle plans", () => {
 		catalog([source({ name: "locked", kind: "skill" })]);
 		install("skill:locked", "user");
 		install("skill:locked", "project");
-		const plan = planHubLifecycle({ operation: "remove", ref: "skill:locked", scope: "project", cwd: root });
+		const plan = planHubAction({ operation: "remove", ref: "skill:locked", scope: "project", cwd: root });
 		ok(
 			plan.steps[0]?.expected.some((fact) => fact.scope === "user"),
 			"peer copy is a reviewed fact",
 		);
-		const held = withPluginScopeLock("user", root, () => applyHubLifecycle(plan));
+		const held = withPluginScopeLock("user", root, () => applyHubAction(plan));
 		equal(held.outcomes[0]?.error?.code, "locked");
 		ok(copy("project", "locked"));
-		const again = planHubLifecycle({ operation: "remove", ref: "skill:locked", scope: "project", cwd: root });
-		equal(applyHubLifecycle(again).committed, 1);
+		const again = planHubAction({ operation: "remove", ref: "skill:locked", scope: "project", cwd: root });
+		equal(applyHubAction(again).committed, 1);
 	});
 
 	it("projects an import into the outcome shape with its actual kind and separate admission", () => {
@@ -721,11 +721,11 @@ describe("The hub lifecycle plans", () => {
 				],
 			}),
 		);
-		const plan = planHubLifecycle({ operation: "install", ref: "extension:gamma", scope: "user", cwd: root });
+		const plan = planHubAction({ operation: "install", ref: "extension:gamma", scope: "user", cwd: root });
 		const review = plan.reviews?.find((item) => item.ref === "extension:gamma");
 		ok(review?.envelopeDigest);
 		review.envelopeDigest = "0".repeat(64);
-		const refused = applyHubLifecycle(plan);
+		const refused = applyHubAction(plan);
 		equal(refused.outcomes[0]?.status, "failed");
 		match(String(refused.outcomes[0]?.error?.message), /envelope differs from the one reviewed/);
 		equal(listInstalledExtensions(root, { scope: "user", all: true }).length, 0);
@@ -780,16 +780,16 @@ describe("The hub lifecycle plans", () => {
 		};
 		writeExtension("1.0.0");
 		install("extension:delta");
-		const disable = applyHubLifecycle(
-			planHubLifecycle({ operation: "disable", ref: "extension:delta", scope: "user", cwd: root }),
+		const disable = applyHubAction(
+			planHubAction({ operation: "disable", ref: "extension:delta", scope: "user", cwd: root }),
 		);
 		equal(disable.outcomes[0]?.status, "committed");
 
 		writeExtension("1.0.1");
-		const plan = planHubLifecycle({ operation: "update", ref: "extension:delta", scope: "user", cwd: root });
+		const plan = planHubAction({ operation: "update", ref: "extension:delta", scope: "user", cwd: root });
 		equal(plan.steps[0]?.effectiveAfter?.state, "disabled");
 		equal(plan.steps[0]?.effectiveAfter?.loadable, false);
-		const updated = applyHubLifecycle(plan);
+		const updated = applyHubAction(plan);
 		equal(updated.outcomes[0]?.status, "committed");
 		const copyAfter = listInstalledExtensions(root, { scope: "user", all: true }).find((item) => item.id === "delta");
 		equal(copyAfter?.version, "1.0.1");

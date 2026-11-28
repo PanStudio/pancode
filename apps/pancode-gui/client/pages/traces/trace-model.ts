@@ -98,7 +98,7 @@ export function runModelSpend(report: CostReportV1): ModelSpend[] {
 		const slash = group.key.indexOf("/");
 		return {
 			key: group.key,
-			target: (slash < 0 ? "" : group.key.slice(0, slash)) || "Unknown target",
+			target: (slash < 0 ? "" : group.key.slice(0, slash)) || "Unknown connection",
 			model: (slash < 0 ? group.key : group.key.slice(slash + 1)) || "Unknown model",
 			calls: explainable(group.calls),
 			tokens: explainable(group.tokens),

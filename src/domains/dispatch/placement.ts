@@ -45,13 +45,13 @@ function unknownNodeError(requested: string, settings: Readonly<PancodeSettings>
 	if (Object.hasOwn(settings?.fleet?.profiles ?? {}, requested)) {
 		return admissionError(
 			`unknown fleet node '${requested}'; '${requested}' is a fleet profile. ` +
-				"The dispatch node field takes 'local' or a fleet.nodes id. Select the profile target/model in dispatch, or use --agent-profile in the CLI.",
+				"The dispatch node field takes 'local' or a fleet.nodes id. Select the profile connection/model in dispatch, or use --agent-profile in the CLI.",
 		);
 	}
-	if (settings?.targets.some((entry) => entry.id === requested)) {
+	if (settings?.connections.some((entry) => entry.id === requested)) {
 		return admissionError(
-			`unknown fleet node '${requested}'; '${requested}' is a target id. ` +
-				`The dispatch node field takes 'local' or a fleet.nodes id. Put '${requested}' in target and omit node.`,
+			`unknown fleet node '${requested}'; '${requested}' is a connection id. ` +
+				`The dispatch node field takes 'local' or a fleet.nodes id. Put '${requested}' in connection and omit node.`,
 		);
 	}
 	return admissionError(`unknown fleet node '${requested}'`);

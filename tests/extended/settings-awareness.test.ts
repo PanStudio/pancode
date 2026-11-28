@@ -10,7 +10,7 @@ import { createContextTool } from "../../src/tools/context/index.js";
 test("settings awareness reports effective limits and UI links without serializing private configuration", () => {
 	const settings = structuredClone(DEFAULT_SETTINGS);
 	settings.safety.limits.sessionCostUsd = 17;
-	settings.targets = [
+	settings.connections = [
 		{
 			id: "local",
 			runtime: "openai-compat",
@@ -70,13 +70,13 @@ test("context reads the current snapshot each time and refuses to invent a worke
 
 test("broad fleet questions expose live routing in one lookup without disclosing target secrets", async () => {
 	const settings = structuredClone(DEFAULT_SETTINGS);
-	settings.chat.target = "blade";
+	settings.chat.connection = "blade";
 	settings.chat.model = "dynamo/chat";
-	settings.fleet.default.target = "blade";
+	settings.fleet.default.connection = "blade";
 	settings.fleet.default.model = "mini/worker";
-	settings.fleet.profiles.research = { target: "cloud", model: "research-model", thinkingLevel: "low" };
+	settings.fleet.profiles.research = { connection: "cloud", model: "research-model", thinkingLevel: "low" };
 	settings.fleet.agentProfiles.researcher = "research";
-	settings.targets = [
+	settings.connections = [
 		{ id: "blade", runtime: "litellm", url: "https://PRIVATE_ENDPOINT", auth: { apiKeyEnvVar: "PRIVATE_KEY" } },
 	];
 	const tool = createContextTool({ getSettings: () => settings });
@@ -99,23 +99,23 @@ test("broad fleet questions expose live routing in one lookup without disclosing
 
 test("route provenance separates session overrides, saved routes and the fleet default (DF-7)", () => {
 	const saved = structuredClone(DEFAULT_SETTINGS);
-	saved.chat.target = "anthropic-max";
+	saved.chat.connection = "anthropic-max";
 	saved.chat.model = "claude-sonnet-5-5";
-	saved.context.memory.target = "litellm";
+	saved.context.memory.connection = "litellm";
 	saved.context.memory.model = "gemma";
-	saved.fleet.default.target = "openai-codex";
+	saved.fleet.default.connection = "openai-codex";
 	saved.fleet.default.model = "gpt-6.1-sol";
 	const effective = structuredClone(saved);
-	effective.chat.target = "litellm";
+	effective.chat.connection = "litellm";
 	effective.chat.model = "dynamo";
 	effective.context.memory.model = "dynamo";
 	effective.context.compaction.model = "litellm/dynamo";
 	const userPaths = new Set([
-		"chat.target",
+		"chat.connection",
 		"chat.model",
-		"context.memory.target",
+		"context.memory.connection",
 		"context.memory.model",
-		"fleet.default.target",
+		"fleet.default.connection",
 		"fleet.default.model",
 	]);
 	const provenance = resolveRouteProvenance(effective, saved, (path) => (userPaths.has(path) ? "user" : "built-in"));
@@ -126,12 +126,12 @@ test("route provenance separates session overrides, saved routes and the fleet d
 	);
 	const routing = settingsAwareness(effective, "", 0, 1, provenance).routing;
 	assert.deepEqual(routing.chat, {
-		target: "litellm",
+		connection: "litellm",
 		model: "dynamo",
 		thinkingLevel: saved.chat.thinkingLevel,
 		source: "session",
 		saved: {
-			target: "anthropic-max",
+			connection: "anthropic-max",
 			model: "claude-sonnet-5-5",
 			thinkingLevel: saved.chat.thinkingLevel,
 			source: "user",

@@ -118,7 +118,7 @@ export async function loadBootDomains(input: BootDomainsInput) {
 		acpHandshake?.initialized === true && acpHandshake.elicitationEnabled ? createAcpElicitationChannel() : undefined;
 	const acpInterviewChannel = acpInterviews
 		? createAcpInterviewChannel({
-				unattendedWindowMs: () => unattendedWindowMs(cells.getCurrentSettings().safety.unattendedAfterSeconds),
+				unattendedWindowMs: () => unattendedWindowMs(cells.getCurrentSettings().safety.unattendedAfterMs),
 			})
 		: undefined;
 	// The rung is settled once, before the config contract loads, off the

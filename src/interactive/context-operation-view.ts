@@ -38,7 +38,7 @@ export function outcomeWord(outcome: ContextOperationOutcome): string {
 		case "unchanged":
 			return "no change";
 		case "cancelled":
-			return "cancelled";
+			return "canceled";
 		case "failed":
 			return "failed";
 	}

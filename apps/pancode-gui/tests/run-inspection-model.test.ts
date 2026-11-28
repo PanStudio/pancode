@@ -165,7 +165,7 @@ test("a run's spend by model keeps each group's server words and reference, and 
 		runModelSpend(report).map((row) => [row.target, row.model, row.tokens.value, row.cost.factRef]),
 		[
 			["local", "qwen/coder", "240", "run:run-0#usd"],
-			["Unknown target", "fallback-only", "240", "run:run-0#usd"],
+			["Unknown connection", "fallback-only", "240", "run:run-0#usd"],
 		],
 	);
 });

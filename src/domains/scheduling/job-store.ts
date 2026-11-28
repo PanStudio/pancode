@@ -59,8 +59,7 @@ function validateRecord(value: unknown, owner: JobOwner): asserts value is JobRe
 		!(value.pendingReason === null || typeof value.pendingReason === "string") ||
 		!(value.persistenceError === null || typeof value.persistenceError === "string") ||
 		!(
-			value.reason === null ||
-			["count", "condition", "stopped", "canceled", "deadline", "failure"].includes(String(value.reason))
+			value.reason === null || ["count", "condition", "canceled", "deadline", "failure"].includes(String(value.reason))
 		) ||
 		!(
 			value.clockResumes === undefined ||

@@ -59,7 +59,7 @@ function baseUrl(target: TargetDescriptor): string | null {
 
 async function probe(target: TargetDescriptor, ctx: ProbeContext): Promise<ProbeResult> {
 	const base = baseUrl(target);
-	if (base === null) return { ok: false, error: `systemone target '${target.id}' needs a url` };
+	if (base === null) return { ok: false, error: `systemone connection '${target.id}' needs a url` };
 	const headers = authHeaders(target, ctx);
 	const get = <T>(url: string) => {
 		const opts = { url, timeoutMs: ctx.httpTimeoutMs, headers } as const;
@@ -113,7 +113,7 @@ const systemOneRuntime: RuntimeDescriptor = {
 	},
 	decide(target: TargetDescriptor, opts: DecideOptions, ctx: ProbeContext): Promise<DecideResult> {
 		const base = baseUrl(target);
-		if (base === null) return Promise.reject(new Error(`systemone target '${target.id}' needs a url`));
+		if (base === null) return Promise.reject(new Error(`systemone connection '${target.id}' needs a url`));
 		return postSystemOne(
 			{
 				baseUrl: base,

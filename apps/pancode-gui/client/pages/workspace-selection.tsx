@@ -51,7 +51,7 @@ export function WorkspacePicker({
 				</button>
 			</div>
 		);
-	if (workspaces.isPending) return <p role="status">Reading workspaces…</p>;
+	if (workspaces.isPending) return <p role="status">Reading projects…</p>;
 	if (!workspaces.data.length)
 		return (
 			<p>
@@ -64,10 +64,10 @@ export function WorkspacePicker({
 							: null}
 				{shell ? (
 					<button type="button" className="wb-link" onClick={shell.openWorkspace}>
-						Open a workspace
+						Open a project
 					</button>
 				) : (
-					<Link to="/">Open a workspace</Link>
+					<Link to="/">Open a project</Link>
 				)}{" "}
 				to{" "}
 				{purpose === "settings"

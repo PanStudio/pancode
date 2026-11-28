@@ -271,7 +271,7 @@ export function createChatLoopComposition(loop: ChatLoopScope, state: ChatLoopCo
 				throw new Error("Self-compaction requires a native runtime and a persisted operator turn.");
 			}
 			const revision = context.navigationRevision();
-			const route = `${deps.getSettings().chat.target}/${deps.getSettings().chat.model}`;
+			const route = `${deps.getSettings().chat.connection}/${deps.getSettings().chat.model}`;
 			return {
 				sessionId: meta.id,
 				leafTurnId: leaf,
@@ -286,7 +286,7 @@ export function createChatLoopComposition(loop: ChatLoopScope, state: ChatLoopCo
 							context.navigationRevision() === revision &&
 							state.runtime === runtime &&
 							state.activeUserTurnId === operator &&
-							`${deps.getSettings().chat.target}/${deps.getSettings().chat.model}` === route,
+							`${deps.getSettings().chat.connection}/${deps.getSettings().chat.model}` === route,
 					},
 				}),
 			};

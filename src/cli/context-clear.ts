@@ -72,7 +72,7 @@ export async function runContextClearCommand(args: string[]): Promise<number> {
 			confirmAll: () => answer("Also remove PANCODE.md? [y/N] "),
 		});
 		process.stdout.write(
-			`${formatContextOperationResult(operation.finish(result.action === "cancelled" ? "cancelled" : "completed", result.action === "cancelled" ? "Reset cancelled" : "Context reset finished", { facts: clearOperationFacts(result) }))}\n`,
+			`${formatContextOperationResult(operation.finish(result.action === "cancelled" ? "cancelled" : "completed", result.action === "cancelled" ? "Reset canceled" : "Context reset finished", { facts: clearOperationFacts(result) }))}\n`,
 		);
 		return 0;
 	} catch (err) {

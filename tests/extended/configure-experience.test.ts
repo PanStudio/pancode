@@ -107,7 +107,7 @@ test("doctor separates passive endpoint reachability from model-list verificatio
 	mkdirSync(join(home.dir, "config"), { recursive: true });
 	writeFileSync(
 		join(home.dir, "config", "settings.yaml"),
-		`version: 2\ntargets:\n  - id: local\n    runtime: openai-compat\n    url: ${url}\n    defaultModel: live-model\nchat:\n  target: local\n  model: live-model\n`,
+		`version: 2\nconnections:\n  - id: local\n    runtime: openai-compat\n    url: ${url}\n    defaultModel: live-model\nchat:\n  connection: local\n  model: live-model\n`,
 	);
 
 	const findings = await runDoctorModelChecks();
@@ -151,16 +151,16 @@ test("doctor makes unused failures warnings and active credential failures error
 	writeFileSync(
 		join(home.dir, "config/settings.yaml"),
 		`version: 2
- targets:
+ connections:
    - { id: active-failed, runtime: openai-compat, url: "http://127.0.0.1:1", defaultModel: m }
    - { id: unused-failed, runtime: openai-compat, url: "http://127.0.0.1:1", defaultModel: m }
    - { id: active-key, runtime: doctor-public-metadata, defaultModel: m }
    - { id: unused-key, runtime: doctor-public-metadata, defaultModel: m }
    - { id: active-no-probe, runtime: doctor-no-passive, defaultModel: m }
    - { id: unused-no-probe, runtime: doctor-no-passive, defaultModel: m }
- chat: { target: active-failed, model: m }
- fleet: { default: { target: active-key, model: m } }
- context: { memory: { target: active-no-probe, model: m } }
+ chat: { connection: active-failed, model: m }
+ fleet: { default: { connection: active-key, model: m } }
+ context: { memory: { connection: active-no-probe, model: m } }
  `.replace(/^ /gm, ""),
 	);
 	const findings = await runDoctorModelChecks();
@@ -205,9 +205,9 @@ test("doctor labels static model matches as catalog evidence without endpoint pr
 	writeFileSync(
 		join(home.dir, "config/settings.yaml"),
 		`version: 2
- targets:
+ connections:
    - { id: catalog, runtime: doctor-catalog-only, defaultModel: catalog-model }
- chat: { target: catalog, model: catalog-model }
+ chat: { connection: catalog, model: catalog-model }
  `.replace(/^ /gm, ""),
 	);
 	const findings = await runDoctorModelChecks();
@@ -240,9 +240,9 @@ test("doctor bounds the whole passive check and aborts unfinished probe work", a
 	writeFileSync(
 		join(home.dir, "config/settings.yaml"),
 		`version: 2
- targets:
+ connections:
    - { id: stalled, runtime: doctor-stalled, defaultModel: m }
- chat: { target: stalled, model: m }
+ chat: { connection: stalled, model: m }
  `.replace(/^ /gm, ""),
 	);
 	const start = Date.now();
@@ -277,10 +277,10 @@ test("standard doctor reads stored sign-in tokens without refreshing or changing
 	writeFileSync(
 		join(home.dir, "config/settings.yaml"),
 		`version: 2
- targets:
+ connections:
    - { id: expired-signin, runtime: doctor-oauth, defaultModel: m, auth: { oauthProfile: expired } }
    - { id: valid-signin, runtime: doctor-oauth, defaultModel: m, auth: { oauthProfile: valid } }
- chat: { target: expired-signin, model: m }
+ chat: { connection: expired-signin, model: m }
  `.replace(/^ /gm, ""),
 	);
 	const auth = openAuthStorage();
@@ -319,9 +319,9 @@ test("doctor reads earlier model-cache evidence without rewriting it or claiming
 	writeFileSync(
 		join(home.dir, "config/settings.yaml"),
 		`version: 2
- targets:
+ connections:
    - { id: cached, runtime: openai-compat, url: "http://127.0.0.1:1", defaultModel: cached-model }
- chat: { target: cached, model: cached-model }
+ chat: { connection: cached, model: cached-model }
  `.replace(/^ /gm, ""),
 	);
 	assert.equal(recordTargetModelSnapshot(target, ["cached-model"]), true);

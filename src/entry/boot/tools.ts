@@ -266,7 +266,7 @@ export function registerBootTools(input: BootToolsInput) {
 		jobTool: jobHost.tool,
 		jobs: jobHost.operations,
 		flow: flowPort,
-		...(resolvedSettings.fleet.profiles.vision?.target
+		...(resolvedSettings.fleet.profiles.vision?.connection
 			? {
 					visionSidecar,
 					getRecentVisionImages: () => {
@@ -320,7 +320,7 @@ export function registerBootTools(input: BootToolsInput) {
 				// The session header keeps the target the session was created with;
 				// routing changed in the TUI or over ACP only appends ledger entries.
 				// The prompt path reports the runtime it actually compiled for.
-				const settingsTarget = getCurrentSettings().chat.target;
+				const settingsTarget = getCurrentSettings().chat.connection;
 				const runtimeId =
 					lastMemoryPromptRuntimeId ?? (settingsTarget ? providers.getTarget(settingsTarget)?.runtime : undefined);
 				return {
@@ -393,7 +393,7 @@ export function registerBootTools(input: BootToolsInput) {
 		...(config ? { getWorkerRosters: () => config.get().fleet.rosters } : {}),
 		...(config ? { getDispatchSchemaComposition: () => dispatchSchemaCompositionFor(config.get().fleet) } : {}),
 		getSkillLoaderOptions: () => ({
-			trustProjectCompatRoots: config?.get().integrations.projectResources.trustProjectImports === true,
+			trustProjectCompatRoots: config?.get().integrations.hub.trustProjectImports === true,
 			disableDiscovery: options.noSkills === true || options.headless?.noSkills === true,
 			...(options.skillPaths && options.skillPaths.length > 0
 				? { explicitSkillPaths: options.skillPaths }
@@ -465,7 +465,7 @@ export function registerBootTools(input: BootToolsInput) {
 		else process.stderr.write(notice);
 	}
 	// A headless `--session`/`--continue` resumed before the route was seeded;
-	// restore it now, letting an explicit --target/--model/--thinking win.
+	// restore it now, letting an explicit --connection/--model/--thinking win.
 	if (resumedSessionAtBoot) {
 		const notice = restoreResumedRoute({
 			route: options.headless?.target !== undefined || options.headless?.model !== undefined,

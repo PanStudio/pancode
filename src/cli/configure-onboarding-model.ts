@@ -183,7 +183,7 @@ export const MODEL_STEP: Step = {
 			heading: [
 				"",
 				chalk.bold("Which model?"),
-				chalk.dim(inventoryNote(runtime, inventory) ?? "read live from the target just now"),
+				chalk.dim(inventoryNote(runtime, inventory) ?? "read live from the connection just now"),
 			],
 			choices: models.map((model) => {
 				const state = inventory.modelStates?.[model]?.state;
@@ -267,7 +267,7 @@ export const THINKING_STEP: Step = {
 				chalk.dim(
 					answers.mode === "first"
 						? "changeable any time in `pancode configure`"
-						: "off disables reasoning for this target; chat and fleet thinking defaults stay unchanged",
+						: "off disables reasoning for this connection; chat and fleet thinking defaults stay unchanged",
 				),
 			],
 			choices: THINKING_LEVELS.map((level) => ({ value: level, label: level, hint: THINKING_HINTS[level] })),

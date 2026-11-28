@@ -110,8 +110,8 @@ export const BranchPanel = memo(function BranchPanel({
 	const tip = view?.rows.find((row) => row.tip && row.active);
 	const body = (
 		<>
-			{!sessionOpen ? <p>This task is not open. Open it to read its branches.</p> : null}
-			{sessionOpen && !supported ? <p>PanCode does not report branches for this task.</p> : null}
+			{!sessionOpen ? <p>This session is not open. Open it to read its branches.</p> : null}
+			{sessionOpen && !supported ? <p>PanCode does not report branches for this session.</p> : null}
 			{tree.isPending && sessionOpen && supported && !data ? <p>Reading the branches…</p> : null}
 			{tree.error ? (
 				<div className="pane-inspection-error" role="alert">

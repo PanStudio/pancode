@@ -20,10 +20,10 @@ export type RouteName = "chat" | "memory" | "compaction" | "fleet";
 const ROUTE_NAMES: ReadonlyArray<RouteName> = ["chat", "memory", "compaction", "fleet"];
 
 const ROUTE_PATHS: Readonly<Record<RouteName, ReadonlyArray<string>>> = {
-	chat: ["chat.target", "chat.model", "chat.thinkingLevel"],
-	memory: ["context.memory.target", "context.memory.model"],
+	chat: ["chat.connection", "chat.model", "chat.thinkingLevel"],
+	memory: ["context.memory.connection", "context.memory.model"],
 	compaction: ["context.compaction.model"],
-	fleet: ["fleet.default.target", "fleet.default.model", "fleet.default.thinkingLevel"],
+	fleet: ["fleet.default.connection", "fleet.default.model", "fleet.default.thinkingLevel"],
 };
 
 const LAYER_RANK: Readonly<Record<SettingsOrigin, number>> = {
@@ -47,7 +47,7 @@ export interface RouteProvenance {
 export function routeFields(route: RouteName, settings: Readonly<PancodeSettings>): Record<string, unknown> {
 	if (route === "memory") {
 		const { target, model } = resolveMemoryRoute(settings);
-		return { target, model };
+		return { connection: target, model };
 	}
 	const fields: Record<string, unknown> = {};
 	for (const path of ROUTE_PATHS[route])

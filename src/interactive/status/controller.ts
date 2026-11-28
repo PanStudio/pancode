@@ -102,7 +102,7 @@ export function createStatusController(deps: StatusControllerDeps): StatusContro
 	const currentTarget = (): { targetId: string; modelId: string } => {
 		const settings = deps.getSettings?.();
 		return {
-			targetId: settings?.chat?.target ?? "",
+			targetId: settings?.chat?.connection ?? "",
 			modelId: settings?.chat?.model ?? "",
 		};
 	};

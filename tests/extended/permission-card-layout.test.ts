@@ -195,12 +195,12 @@ test("a permission card refreshes portable hints when the menu key changes", () 
 	try {
 		const body = createPermissionOverlayBody(WRITE_VIEW);
 		const text = () => plain(body.render(contentWidth(120))).join(" ");
-		match(text(), /\[Ctrl\+G X\] stop/u);
+		match(text(), /\[Ctrl\+G X\] deny and stop/u);
 		manager.reload({ "pancode.leader": "ctrl+b" });
-		match(text(), /\[Ctrl\+B X\] stop/u);
+		match(text(), /\[Ctrl\+B X\] deny and stop/u);
 		doesNotMatch(text(), /Ctrl\+G/u);
 		manager.reload({ "pancode.leader": [] });
-		match(text(), /\[Alt\+X\] stop/u);
+		match(text(), /\[Alt\+X\] deny and stop/u);
 	} finally {
 		setKeybindings(previous);
 		if (terminal === undefined) delete process.env.TERM_PROGRAM;
@@ -228,7 +228,10 @@ for (const columns of [80, 120, 160]) {
 		ok(lines.length <= 10, `${lines.length} rows: the folded card stays short`);
 		ok(!joined.includes("Hard-blocked actions remain blocked"), "standing terms are folded");
 		ok(!joined.includes("Consequence:"), "standing terms are folded");
-		match(joined, /\[Enter\] allow\s+runs this one call \[Esc\] deny\s+skips it \[Alt\+X\] stop\s+ends the turn/u);
+		match(
+			joined,
+			/\[Enter\] allow\s+runs this one call \[Esc\] deny\s+skips it \[Alt\+X\] deny and stop\s+ends the turn/u,
+		);
 		match(lines[0] ?? "", /default autonomy/u);
 
 		body.toggleTerms();
@@ -314,7 +317,7 @@ test("the footer names the terms key and drops it before any answer key", () => 
 	match(wide, /\[Alt\+T\] terms/u);
 	match(wide, /\[Enter\] allow/u);
 	doesNotMatch(wide, /allow once/u);
-	match(wide, /\[Alt\+X\] stop turn/u);
+	match(wide, /\[Alt\+X\] deny and stop/u);
 	const open = permissionOverlayHint(100, false, "closed", "open");
 	match(open, /\[Esc\] hide terms/u);
 	doesNotMatch(open, /\[Alt\+T\]/u);

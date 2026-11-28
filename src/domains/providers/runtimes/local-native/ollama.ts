@@ -147,7 +147,7 @@ const ollamaRuntime: RuntimeDescriptor = {
 	coldContextWindowCap: PANCODE_MIN_CONTEXT_WINDOW,
 	async probe(target: TargetDescriptor, ctx: ProbeContext): Promise<ProbeResult> {
 		const base = targetRootUrl(target);
-		if (!base) return { ok: false, error: "target has no url" };
+		if (!base) return { ok: false, error: "connection has no url" };
 		const headers = probeHeaders(target, ctx);
 		const opts = { url: `${base}/api/tags`, headers, timeoutMs: ctx.httpTimeoutMs } as const;
 		const result = await (ctx.signal

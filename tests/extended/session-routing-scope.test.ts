@@ -27,16 +27,16 @@ import { isolatePancodeEnv } from "../harness/scratch-env.js";
 
 function twoTargetSettings(): PancodeSettings {
 	const settings = structuredClone(DEFAULT_SETTINGS);
-	settings.targets = [
+	settings.connections = [
 		{ id: "alpha", runtime: "openai-compat", url: "http://127.0.0.1:1/v1", defaultModel: "alpha-default" },
 		{ id: "beta", runtime: "openai-compat", url: "http://127.0.0.1:2/v1", defaultModel: "beta-default" },
 	];
-	settings.chat.target = "alpha";
+	settings.chat.connection = "alpha";
 	settings.chat.model = "alpha-default";
 	settings.chat.thinkingLevel = "off";
-	settings.context.memory.target = "alpha";
+	settings.context.memory.connection = "alpha";
 	settings.context.memory.model = "alpha-default";
-	settings.fleet.default.target = "alpha";
+	settings.fleet.default.connection = "alpha";
 	settings.fleet.default.model = "alpha-default";
 	return settings;
 }
@@ -47,11 +47,11 @@ function entry(fields: Record<string, unknown>): SessionEntry {
 
 test("a model-only settings save carries the target the model was picked on", () => {
 	const settings = twoTargetSettings();
-	settings.chat.target = "beta";
+	settings.chat.connection = "beta";
 	settings.chat.model = "beta-large";
-	settings.context.memory.target = "beta";
+	settings.context.memory.connection = "beta";
 	settings.context.memory.model = "beta-small";
-	settings.fleet.default.target = "beta";
+	settings.fleet.default.connection = "beta";
 	settings.fleet.default.model = "beta-worker";
 	// A global save merges only the patched fields into settings.yaml, so a
 	// model without its target paired the file's target with a model it never had.
@@ -224,7 +224,8 @@ test("restoring a resumed route patches the session and records a route the sess
 				currentSettings: () => live,
 				defaultThinkingLevel: () => "off",
 				applyPatch: (patch) => {
-					Object.assign(live.chat, patch.orchestrator);
+					const { target, ...rest } = patch.orchestrator ?? {};
+					Object.assign(live.chat, rest, target === undefined ? {} : { connection: target });
 				},
 				persistThinkingLevel: () => {
 					thinkingPersisted += 1;
@@ -238,7 +239,7 @@ test("restoring a resumed route patches the session and records a route the sess
 		entry({ kind: "modelChange", provider: "openai-compat", modelId: "beta-default", target: "beta" }),
 	]);
 	assert.equal(moved.notice, null);
-	assert.equal(moved.chat.target, "beta");
+	assert.equal(moved.chat.connection, "beta");
 	assert.deepEqual(moved.appended, []);
 	assert.equal(moved.thinkingPersisted, 1);
 
@@ -259,7 +260,7 @@ test("restoring a resumed route patches the session and records a route the sess
 			route: true,
 		},
 	);
-	assert.equal(pinned.chat.target, "alpha");
+	assert.equal(pinned.chat.connection, "alpha");
 	assert.equal(pinned.appended.length, 1);
 
 	assert.equal(
@@ -278,9 +279,9 @@ test("a thinking change is recorded in the session it took effect in", async () 
 	const settings = structuredClone(DEFAULT_SETTINGS);
 	settings.chat.prewarm = false;
 	const context = dispatchStubContext({ settings });
-	const target = settings.targets[0];
+	const target = settings.connections[0];
 	assert.ok(target);
-	settings.chat.target = target.id;
+	settings.chat.connection = target.id;
 	settings.chat.model = target.defaultModel ?? "gpt-4o";
 	// The default route supports only off, so the settings default is clamped before the first row (bt-37).
 	settings.chat.thinkingLevel = "low";
@@ -367,10 +368,10 @@ test("a live probe exercises the session's chat model, not the one another sessi
 		} as never);
 		ensurePancodeState();
 		updateSettings((settings) => {
-			settings.targets = [
+			settings.connections = [
 				{ id: "probe", runtime: "route-probe-fixture", url: "http://127.0.0.1:9/v1", defaultModel: "probe-default" },
 			];
-			settings.chat.target = "probe";
+			settings.chat.connection = "probe";
 			settings.chat.model = "saved-by-another-session";
 		});
 		let session: PancodeSettings | undefined;

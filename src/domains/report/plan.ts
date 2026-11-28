@@ -53,8 +53,8 @@ export function reportHostProbes(deps: ReportHostProbeDeps, env: NodeJS.ProcessE
 		});
 	const findGh = async (): Promise<string | null> => {
 		if (deps.findGh) return deps.findGh();
-		const { resolveToolBinary } = await import("../../lib/programs/index.js");
-		return resolveToolBinary("gh").binaryPath;
+		const { resolveProgramBinary } = await import("../../lib/programs/index.js");
+		return resolveProgramBinary("gh").binaryPath;
 	};
 	// The preview names the transport from what is on this machine; it never asks GitHub who is signed in.
 	const offline = async (): Promise<ReportPlanTransport> => {
@@ -141,7 +141,7 @@ const MASK_NOUNS: Readonly<Record<MaskKind, [string, string]>> = {
 	project: ["project name", "project names"],
 	branch: ["branch name", "branch names"],
 	remote: ["repository name", "repository names"],
-	target: ["target name", "target names"],
+	target: ["connection name", "connection names"],
 };
 
 export function maskNoun(kind: MaskKind, count: number): string {

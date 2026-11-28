@@ -114,9 +114,9 @@ function workerSilenceForms(
 	const limit = limitWords === null ? null : `reply limit ${limitWords}`;
 	const wide =
 		limitWords === null
-			? "x in /fleet stops it"
-			: `PanCode ends a reply after ${limitWords} ${GLYPH.sep} x in /fleet stops it`;
-	const short = limit === null ? "x in /fleet stops it" : `${limit} ${GLYPH.sep} x in /fleet stops it`;
+			? "x in /fleet cancels it"
+			: `PanCode ends a reply after ${limitWords} ${GLYPH.sep} x in /fleet cancels it`;
+	const short = limit === null ? "x in /fleet cancels it" : `${limit} ${GLYPH.sep} x in /fleet cancels it`;
 	// With no history the limit outranks `usual unknown`, so that clause trails where a row drops it first.
 	const middle =
 		known === null

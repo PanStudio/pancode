@@ -7,7 +7,7 @@
 import type { DecisionSuperseded, MemoryProposed, SessionBoard } from "../../contracts/board.js";
 import type { StatusTone } from "../design/status.js";
 
-export type OperatorTaskAction = "hand" | "done" | "drop";
+export type OperatorTaskAction = "hand" | "done" | "remove";
 
 export interface OperatorTaskRow {
 	id: string;
@@ -75,7 +75,7 @@ function planState(status: string): [StatusTone, string] {
 		case "blocked":
 			return ["warn", "Blocked"];
 		case "cancelled":
-			return ["neutral", "Cancelled"];
+			return ["neutral", "Canceled"];
 		default:
 			return ["unverified", status];
 	}
@@ -122,10 +122,10 @@ export function boardView(board: SessionBoard): BoardView {
 				// Settled tasks take no action; a live one can be finished or dropped by its owner.
 				actions:
 					task.status === "open"
-						? ["hand", "done", "drop"]
+						? ["hand", "done", "remove"]
 						: task.status === "done" || task.status === "dropped"
 							? []
-							: ["done", "drop"],
+							: ["done", "remove"],
 			};
 		}),
 		plan:
@@ -189,7 +189,7 @@ export function supersedeOutcome(
 /** The Decisions section's empty line: none recorded, or none still active while earlier ones remain. */
 export function decisionsEmptyLine(view: Pick<BoardView, "activeDecisions" | "earlierDecisions">): string | null {
 	if (view.activeDecisions.length > 0) return null;
-	if (view.earlierDecisions.length === 0) return "No decision has been recorded in this task.";
+	if (view.earlierDecisions.length === 0) return "No decision has been recorded in this session.";
 	return view.earlierDecisions.length === 1
 		? "No decision is active. The earlier one is below."
 		: `No decision is active. The ${view.earlierDecisions.length} earlier ones are below.`;

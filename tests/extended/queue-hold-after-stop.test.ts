@@ -197,9 +197,9 @@ it("a queued entry refused for its task constraints returns to the head of the q
 	const settings = structuredClone(DEFAULT_SETTINGS);
 	settings.chat.prewarm = false;
 	const context = dispatchStubContext({ settings });
-	const target = settings.targets[0];
+	const target = settings.connections[0];
 	assert.ok(target);
-	settings.chat.target = target.id;
+	settings.chat.connection = target.id;
 	settings.chat.model = target.defaultModel ?? "gpt-4o";
 	let release!: () => void;
 	const turnHeld = new Promise<void>((resolve) => {

@@ -531,7 +531,7 @@ export function createPanesRuntime(deps: PanesRuntimeDeps): PanesOperations {
 					label,
 					title: label,
 					// A second PanCode must run against this PanCode's directories and keys, not the pane host's.
-					...(request.peer === "pancode" ? { env: pancodePaneEnv(process.env, deps.getSettings().targets) } : {}),
+					...(request.peer === "pancode" ? { env: pancodePaneEnv(process.env, deps.getSettings().connections) } : {}),
 				});
 				if (ref === null) return { status: "unavailable", reason: `pane host refused to open ${label}` };
 				if ("refused" in ref) return { status: "refused", reason: ref.refused };

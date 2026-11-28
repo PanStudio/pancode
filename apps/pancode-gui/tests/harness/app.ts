@@ -19,9 +19,10 @@ import { EventHub } from "../../server/services/event-hub.js";
 import { EvidenceService } from "../../server/services/evidence.js";
 import { FleetService } from "../../server/services/fleet.js";
 import { HubService } from "../../server/services/hub.js";
-import { MachineAttachments } from "../../server/services/machine-attach.js";
+import { NodeAttachments } from "../../server/services/node-attach.js";
 import { OperationRegistry } from "../../server/services/operations.js";
 import { ProblemReportsService } from "../../server/services/problem-reports.js";
+import { ProgramsService } from "../../server/services/programs.js";
 import { ProjectReviewService } from "../../server/services/project-review.js";
 import { ReportsService } from "../../server/services/reports.js";
 import { ResearchService } from "../../server/services/research.js";
@@ -31,7 +32,6 @@ import { SetupService } from "../../server/services/setup.js";
 import { SystemService } from "../../server/services/system.js";
 import { TargetsService } from "../../server/services/targets-cli.js";
 import { TelemetryService } from "../../server/services/telemetry.js";
-import { ToolchainService } from "../../server/services/toolchain.js";
 import { TraceService } from "../../server/services/traces.js";
 import { WorkspaceService } from "../../server/services/workspaces.js";
 import { AppFiles } from "../../server/state/files.js";
@@ -118,9 +118,9 @@ async function boot(
 	);
 	const setup = new SetupService(reads, cliEnv, workspaces);
 	// Wired as the server wires it, so the machine switcher reads the scratch home's (empty) node registry.
-	const attachments = new MachineAttachments({
+	const attachments = new NodeAttachments({
 		endpoints: async () =>
-			reads.call("machines.endpoints", { cwd: await realpath(join(home.path, "state")) }, { deadlineMs: 65_000 }),
+			reads.call("nodes.endpoints", { cwd: await realpath(join(home.path, "state")) }, { deadlineMs: 65_000 }),
 		local: () => ({ pancode: getVersionInfo().pancode, build: runningBuildId }),
 		hub,
 		env,
@@ -131,7 +131,7 @@ async function boot(
 		origin: options.origin ?? (() => "http://127.0.0.1:4317"),
 		hub,
 		operations,
-		toolchain: new ToolchainService(reads, ops, operations, hub),
+		toolchain: new ProgramsService(reads, ops, operations, hub),
 		attachments,
 		traces: new TraceService(reads),
 		telemetry: new TelemetryService(reads, (id) => supervisor.knows(id)),

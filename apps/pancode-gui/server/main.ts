@@ -33,10 +33,11 @@ import { FleetService } from "./services/fleet.js";
 import { HubService } from "./services/hub.js";
 import { IdleExit } from "./services/idle-exit.js";
 import { lifecycleLog } from "./services/log.js";
-import { MachineAttachments } from "./services/machine-attach.js";
-import { MachinesService } from "./services/machines.js";
+import { NodeAttachments } from "./services/node-attach.js";
+import { NodesService } from "./services/nodes.js";
 import { OperationRegistry } from "./services/operations.js";
 import { ProblemReportsService } from "./services/problem-reports.js";
+import { ProgramsService } from "./services/programs.js";
 import { ProjectReviewService } from "./services/project-review.js";
 import { ReportsService } from "./services/reports.js";
 import { ResearchService } from "./services/research.js";
@@ -46,7 +47,6 @@ import { SetupService } from "./services/setup.js";
 import { SystemService } from "./services/system.js";
 import { TargetsService } from "./services/targets-cli.js";
 import { TelemetryService } from "./services/telemetry.js";
-import { ToolchainService } from "./services/toolchain.js";
 import { TraceService } from "./services/traces.js";
 import { WorkspaceService } from "./services/workspaces.js";
 import { AppFiles } from "./state/files.js";
@@ -253,9 +253,9 @@ export async function main(args = process.argv.slice(2)) {
 		throw error;
 	}
 	let origin = `http://127.0.0.1:${port}`;
-	const attachments = new MachineAttachments({
+	const attachments = new NodeAttachments({
 		// The registry is user-level; the state directory is a canonical cwd the CLI runner accepts.
-		endpoints: async () => reads.call("machines.endpoints", { cwd: await realpath(stateRoot) }, { deadlineMs: 65_000 }),
+		endpoints: async () => reads.call("nodes.endpoints", { cwd: await realpath(stateRoot) }, { deadlineMs: 65_000 }),
 		local: () => ({ pancode: getVersionInfo().pancode, build: runningBuildId }),
 		hub,
 		env,
@@ -268,13 +268,13 @@ export async function main(args = process.argv.slice(2)) {
 		origin: () => origin,
 		hub,
 		operations,
-		toolchain: new ToolchainService(reads, ops, operations, hub),
+		toolchain: new ProgramsService(reads, ops, operations, hub),
 		traces: new TraceService(reads),
 		telemetry: new TelemetryService(reads, (id) => supervisor.knows(id)),
 		settings: settingsService,
 		setup,
 		fleet: new FleetService(reads),
-		machines: new MachinesService(reads, ops, workspaces, operations, attachments),
+		machines: new NodesService(reads, ops, workspaces, operations, attachments),
 		attachments,
 		system: new SystemService(reads, workspaces, ops),
 		hubService: new HubService(reads, cli, workspaces, ops),

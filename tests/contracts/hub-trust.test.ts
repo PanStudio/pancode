@@ -22,11 +22,7 @@ import { stringify } from "yaml";
 import { runHubCommand } from "../../src/cli/hub.js";
 import { readSettings } from "../../src/core/config.js";
 import { revokedHubDigests } from "../../src/core/hub-revocations.js";
-import {
-	bindPackageActivitySink,
-	flushPackageActivities,
-	type PackageActivity,
-} from "../../src/core/package-activity.js";
+import { bindPackActivitySink, flushPackActivities, type PackActivity } from "../../src/core/pack-activity.js";
 import { pancodeStateDir } from "../../src/core/xdg.js";
 import { validateExtensionPackage } from "../../src/domains/extensions/authoring/validate.js";
 import { parseExtensionManifest } from "../../src/domains/extensions/discovery.js";
@@ -610,8 +606,8 @@ test("a revoked running extension is retired with installation-revoked on the ne
 		isIdle: () => true,
 		stateDir: () => path.join(env.dir, "state"),
 	});
-	const activity: PackageActivity[] = [];
-	const unbind = bindPackageActivitySink((row) => {
+	const activity: PackActivity[] = [];
+	const unbind = bindPackActivitySink((row) => {
 		activity.push(row);
 		return true;
 	});
@@ -629,7 +625,7 @@ test("a revoked running extension is retired with installation-revoked on the ne
 		JSON.stringify({ revoked: [{ sha256: digest, reason: "synthetic revocation", date: "2019-05-01" }] }),
 	);
 	runtime.maintenance();
-	flushPackageActivities();
+	flushPackActivities();
 	ok(
 		activity.some(
 			(row) => row.kind === "runtime_retire" && row.owner.id === "lab_status.v1" && row.outcome === "installation-revoked",

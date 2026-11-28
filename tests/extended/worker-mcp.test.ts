@@ -828,8 +828,8 @@ describe("native worker MCP capabilities", () => {
 		// come first, or the operator is asked to install a runtime that is refused.
 		process.env.PANCODE_CLAUDE_SDK_DIR = join(env.dir, "no-sdk");
 		const settings = structuredClone(DEFAULT_SETTINGS);
-		settings.targets = [{ id: "sdk", runtime: "claude-sdk", defaultModel: "claude-sonnet-5-5" }];
-		settings.fleet.default.target = "sdk";
+		settings.connections = [{ id: "sdk", runtime: "claude-sdk", defaultModel: "claude-sonnet-5-5" }];
+		settings.fleet.default.connection = "sdk";
 		settings.fleet.default.model = "claude-sonnet-5-5";
 		const context = dispatchStubContext({
 			settings,

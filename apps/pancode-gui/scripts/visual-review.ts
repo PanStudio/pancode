@@ -37,7 +37,7 @@ const SHOTS = [
 	"fleet-history",
 	"evidence",
 	"hub",
-	"toolchain",
+	"programs",
 	"settings",
 	"system",
 	"approval",
@@ -200,7 +200,7 @@ if (values.serve) {
 				["fleet-history", "/fleet"],
 				["evidence", "/evidence"],
 				["hub", "/hub"],
-				["toolchain", "/toolchain"],
+				["programs", "/programs"],
 				["settings", "/settings"],
 				["system", "/system"],
 			] as const)
@@ -229,7 +229,7 @@ if (values.serve) {
 				// appeared yet when the page lands, so the turn itself must read as settled.
 				await page.locator(".chat-turn.is-settled").first().waitFor();
 				await page.locator(".chat-turn.is-live").waitFor({ state: "detached" });
-				await page.getByRole("button", { name: "Stop turn", exact: true }).waitFor({ state: "detached" });
+				await page.getByRole("button", { name: "Cancel turn", exact: true }).waitFor({ state: "detached" });
 				// The route picker needs the route facts, so it is photographed only with --route.
 				if (want("picker") && values.route) {
 					const picker = page.locator(".route-picker");
@@ -248,7 +248,7 @@ if (values.serve) {
 				}
 				const send = async (text: string) => {
 					// A message sent while a turn runs is queued as direction, not started as a turn.
-					await page.getByRole("button", { name: "Stop turn", exact: true }).waitFor({ state: "detached" });
+					await page.getByRole("button", { name: "Cancel turn", exact: true }).waitFor({ state: "detached" });
 					await field.fill(text);
 					await page.locator(".composer__submit").click();
 				};
@@ -291,11 +291,11 @@ if (values.serve) {
 						await page.getByRole("button", { name: "Send guidance", exact: true }).click();
 						await page.getByText("Guidance queued. The worker reads it at its next step.", { exact: true }).waitFor();
 						await shot("fleet-guided");
-						await page.getByRole("button", { name: "Stop scout", exact: true }).click();
+						await page.getByRole("button", { name: "Cancel scout", exact: true }).click();
 						await shot("fleet-stop");
 						await page.getByRole("button", { name: "Keep running", exact: true }).click();
 					}
-					await page.getByRole("button", { name: "Stop turn", exact: true }).click();
+					await page.getByRole("button", { name: "Cancel turn", exact: true }).click();
 					await page.getByRole("button", { name: "Guide scout", exact: true }).waitFor({ state: "detached" });
 					if (want("fleet")) await shot("fleet-settled");
 				}

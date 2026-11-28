@@ -16,16 +16,16 @@ import { existsSync, readdirSync, rmdirSync, rmSync } from "node:fs";
 import path from "node:path";
 import { type ExtensionBinaryDeclaration, RESERVED_BINARY_ENV } from "@pancode/sdk/pack";
 import {
-	currentToolPlatform,
-	installPinnedTool,
-	type PinnedTool,
-	type PinnedToolDownload,
+	currentProgramPlatform,
+	installPinnedProgram,
+	type PinnedProgram,
+	type PinnedProgramDownload,
+	type ProgramFetcher,
+	type ProgramInstallResult,
+	type ProgramPlatform,
+	type ProgramResolution,
+	programsRoot,
 	resolvePinnedEntryBinary,
-	type ToolFetcher,
-	type ToolInstallResult,
-	type ToolPlatform,
-	type ToolResolution,
-	toolchainRoot,
 } from "../../../lib/programs/index.js";
 import { listInstalledExtensions } from "../state.js";
 
@@ -40,16 +40,16 @@ export const BINARY_RUN_LIMITS = Object.freeze({
 });
 
 /** Where an extension's vendored binaries live: `<data>/tools/ext/<id>/`. */
-export function packBinaryRoot(extensionId: string, root: string = toolchainRoot()): string {
+export function packBinaryRoot(extensionId: string, root: string = programsRoot()): string {
 	return path.join(root, "ext", extensionId);
 }
 
 /** The toolchain row a declaration stands for, so install and the resolution ladder are the ones `pancode programs` uses. */
-function packBinaryTool(extensionId: string, binary: ExtensionBinaryDeclaration): PinnedTool {
-	const downloads: Partial<Record<ToolPlatform, PinnedToolDownload>> = {};
+function packBinaryTool(extensionId: string, binary: ExtensionBinaryDeclaration): PinnedProgram {
+	const downloads: Partial<Record<ProgramPlatform, PinnedProgramDownload>> = {};
 	for (const [platform, asset] of Object.entries(binary.downloads)) {
 		if (!asset) continue;
-		downloads[platform as ToolPlatform] = {
+		downloads[platform as ProgramPlatform] = {
 			url: asset.url,
 			sha256: asset.sha256,
 			archive: asset.archive,
@@ -75,7 +75,7 @@ function packBinaryTool(extensionId: string, binary: ExtensionBinaryDeclaration)
 
 export interface PackBinaryInstallOptions {
 	root?: string;
-	fetch?: ToolFetcher;
+	fetch?: ProgramFetcher;
 	mirror?: string | null;
 	onProgress?: (message: string) => void;
 }
@@ -89,11 +89,11 @@ export async function installPackBinaries(
 	extensionId: string,
 	binaries: ReadonlyArray<ExtensionBinaryDeclaration>,
 	options: PackBinaryInstallOptions = {},
-): Promise<ToolInstallResult[]> {
-	const results: ToolInstallResult[] = [];
+): Promise<ProgramInstallResult[]> {
+	const results: ProgramInstallResult[] = [];
 	for (const binary of binaries)
 		results.push(
-			await installPinnedTool(packBinaryTool(extensionId, binary), {
+			await installPinnedProgram(packBinaryTool(extensionId, binary), {
 				...(options.root !== undefined ? { root: options.root } : {}),
 				...(options.fetch ? { fetch: options.fetch } : {}),
 				...(options.mirror !== undefined ? { mirror: options.mirror } : {}),
@@ -144,7 +144,7 @@ export async function syncPackBinaries(
 }
 
 /** Delete every vendored binary of an extension. Nothing installed is success. */
-export function removePackBinaries(extensionId: string, root: string = toolchainRoot()): void {
+export function removePackBinaries(extensionId: string, root: string = programsRoot()): void {
 	const dir = packBinaryRoot(extensionId, root);
 	if (!existsSync(dir)) return;
 	rmSync(dir, { recursive: true, force: true });
@@ -156,13 +156,13 @@ export function removePackBinaries(extensionId: string, root: string = toolchain
 }
 
 /** Where a declared binary resolves: the vendored copy at its pin, never a program on PATH. */
-export function resolvePackBinary(extensionId: string, binary: ExtensionBinaryDeclaration): ToolResolution {
+export function resolvePackBinary(extensionId: string, binary: ExtensionBinaryDeclaration): ProgramResolution {
 	return resolvePinnedEntryBinary(packBinaryTool(extensionId, binary), binary.name);
 }
 
 /** The pinned copy's expected sha256 for the current platform, or undefined if this platform has no pin. */
 export function packBinarySha256(binary: ExtensionBinaryDeclaration): string | undefined {
-	const platform = currentToolPlatform();
+	const platform = currentProgramPlatform();
 	return platform === null ? undefined : binary.downloads[platform]?.sha256;
 }
 
@@ -173,7 +173,7 @@ export function packBinaryPath(
 ): { path: string } | { reason: string } {
 	const resolution = resolvePackBinary(extensionId, binary);
 	if (resolution.binaryPath !== null) return { path: resolution.binaryPath };
-	const platform = currentToolPlatform();
+	const platform = currentProgramPlatform();
 	if (platform === null || binary.downloads[platform] === undefined)
 		return {
 			reason: `${binary.name} has no pinned build for ${platform ?? `${process.platform}-${process.arch}`}`,

@@ -506,7 +506,7 @@ export function chatHarness(options: ChatHarnessOptions) {
 	const contextWindow = route.window ?? DEFAULT_WINDOW;
 	const settings = structuredClone(DEFAULT_SETTINGS);
 	settings.chat.prewarm = false;
-	settings.chat.target = CAPTURE_TARGET_A;
+	settings.chat.connection = CAPTURE_TARGET_A;
 	settings.chat.model = CAPTURE_MODEL;
 	settings.chat.thinkingLevel = "off";
 	const factsFor = (id: string): RouteFacts => (id === CAPTURE_TARGET_B ? { ...route, ...options.routeB } : route);
@@ -524,7 +524,7 @@ export function chatHarness(options: ChatHarnessOptions) {
 			},
 		};
 	};
-	settings.targets = [target(CAPTURE_TARGET_A), target(CAPTURE_TARGET_B)] as typeof settings.targets;
+	settings.connections = [target(CAPTURE_TARGET_A), target(CAPTURE_TARGET_B)] as typeof settings.connections;
 	if (route.tier)
 		settings.models = { ...settings.models, [CAPTURE_MODEL]: { tier: route.tier } } as typeof settings.models;
 	const base = litellm.synthesizeModel(target(CAPTURE_TARGET_A), CAPTURE_MODEL, null) as Model<"openai-completions">;

@@ -28,7 +28,7 @@ import {
 } from "../domains/claims/index.js";
 import { exportClaims, importClaims, importOriginLabel } from "../domains/claims/transfer.js";
 import { printError } from "./argv.js";
-import { writeCliFailure } from "./kit/json-out.js";
+import { writeCliFailure } from "./lib/json-out.js";
 
 /** One diagnostic and a pointer to help, never the whole page (C3); `--json` adds the failure document. */
 function usageError(path: ReadonlyArray<string>, message: string, json: boolean, code = 2): number {

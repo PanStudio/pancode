@@ -18,7 +18,7 @@ import { bundledHubIndexPath, parsePluginGithubSource } from "../plugins/catalog
 import type {
 	HubComponentKind,
 	HubEntryKind,
-	HubPackageEntry,
+	HubPackEntry,
 	HubProvidedResource,
 	HubRequirementRef,
 } from "../plugins/index.js";
@@ -29,17 +29,17 @@ import {
 	isHubKind,
 	withPluginDiscoveryPass,
 } from "../plugins/index.js";
-import type { ForeignPackageFormat, InstalledPlugin, PluginInstallRecord, PluginScope } from "../plugins/types.js";
+import type { ForeignPackFormat, InstalledPlugin, PluginInstallRecord, PluginScope } from "../plugins/types.js";
 import type { ResourceDiagnostic } from "./collision.js";
 import { discoverHub } from "./hub.js";
 import {
 	hubCopySourceId,
 	hubNamespace,
 	installedCopiesNamed,
-	listInstalledHubPackages as listInstalledPlugins,
+	listInstalledHubPacks as listInstalledPlugins,
 	readHubInstallRecord,
-} from "./hub-packages.js";
-import { type HubValidationPrerequisite, validateHubPackage } from "./hub-validation.js";
+} from "./hub-packs.js";
+import { type HubValidationPrerequisite, validateHubPack } from "./hub-validation.js";
 import { loadPromptTemplates, type PromptTemplate } from "./prompts/loader.js";
 import { loadSkills, type Skill } from "./skills/loader.js";
 
@@ -89,7 +89,7 @@ export interface HubCopy {
 	trust: "trusted" | "foreign";
 	overriddenBy?: PluginScope;
 	origin: HubOrigin;
-	format?: ForeignPackageFormat;
+	format?: ForeignPackFormat;
 	recordedDigest?: string;
 	observedDigest?: string;
 	installedAt?: string;
@@ -98,7 +98,7 @@ export interface HubCopy {
 	diagnostics: string[];
 }
 
-export interface HubPackageRecord {
+export interface HubPackRecord {
 	ref: HubRequirementRef;
 	kind: HubEntryKind;
 	name: string;
@@ -108,11 +108,11 @@ export interface HubPackageRecord {
 	sourceUrl: string;
 	requires?: HubRequirementRef[];
 	origin: HubOrigin;
-	format?: ForeignPackageFormat;
+	format?: ForeignPackFormat;
 	/** Hints only; absent means contents are unknown until inspection. */
 	provides?: HubProvidedResource[];
 	/** Which reader produced the row: a catalog, a scoped index, or install state alone. */
-	catalogOrigin: HubPackageEntry["origin"];
+	catalogOrigin: HubPackEntry["origin"];
 	/** The copies of this package, each with the version on disk, which an update leaves behind the catalog's. */
 	copies: Array<{ scope: PluginScope; state: HubCopyState; version?: string; update?: HubCopyUpdate }>;
 	refusal?: string;
@@ -133,7 +133,7 @@ export interface HubComponent {
 	source: { class: HubComponentSourceClass; id: string; scope: "package" | "user" | "project" };
 	owner?: { ref: HubRequirementRef; scope: PluginScope; componentId?: string };
 	origin: HubOrigin;
-	format?: ForeignPackageFormat;
+	format?: ForeignPackFormat;
 	availability: HubComponentAvailability;
 	reason?: string;
 	trusted: boolean;
@@ -147,7 +147,7 @@ export interface HubInventory {
 	generatedAt: string;
 	cwd: string;
 	audience: "operator" | "model";
-	packages: HubPackageRecord[];
+	packages: HubPackRecord[];
 	copies: HubCopy[];
 	resources: HubComponent[];
 	diagnostics: string[];
@@ -312,21 +312,21 @@ function compatHost(sourceId: string): string | undefined {
 	return host && host !== "unknown" ? host : undefined;
 }
 
-function formatForHost(host: string | undefined): ForeignPackageFormat | undefined {
+function formatForHost(host: string | undefined): ForeignPackFormat | undefined {
 	if (host === "claude" || host === "claude-code") return "claude-code";
 	if (host === "codex") return "codex";
 	return undefined;
 }
 
 export type HubOriginEvidence =
-	| { kind: "catalog-row"; entry: HubPackageEntry }
+	| { kind: "catalog-row"; entry: HubPackEntry }
 	| { kind: "install-record"; record: PluginInstallRecord | undefined; rootPath: string }
 	| { kind: "resource-root"; sourceId: string; path: string };
 
 /** One rule shared by CLI, context and UI. Author metadata never reaches it. */
 export function classifyHubOrigin(evidence: HubOriginEvidence): {
 	origin: HubOrigin;
-	format?: ForeignPackageFormat;
+	format?: ForeignPackFormat;
 } {
 	if (evidence.kind === "catalog-row") {
 		const { entry } = evidence;
@@ -463,7 +463,7 @@ function projectCopy(plugin: InstalledPlugin, cwd: string, record = safeInstallR
  * source, so a matching catalog version says nothing about it. An older catalog
  * version is not an update either, because a downgrade is an explicit install.
  */
-function catalogCopyUpdate(copy: HubCopy, entry: HubPackageEntry): HubCopyUpdate | undefined {
+function catalogCopyUpdate(copy: HubCopy, entry: HubPackEntry): HubCopyUpdate | undefined {
 	if (entry.origin === "installed" || !entry.version) return undefined;
 	if (isSemanticVersion(copy.version) && satisfiesSemVerRange(entry.version, `>${copy.version}`))
 		return { version: entry.version, reason: "newer-version" };
@@ -548,7 +548,7 @@ function resourceOrigin(
 	sourceId: string,
 	filePath: string,
 	owner: HubCopy | undefined,
-): { origin: HubOrigin; format?: ForeignPackageFormat } {
+): { origin: HubOrigin; format?: ForeignPackFormat } {
 	if (owner) return { origin: owner.origin, ...(owner.format ? { format: owner.format } : {}) };
 	return classifyHubOrigin({ kind: "resource-root", sourceId, path: filePath });
 }
@@ -569,7 +569,7 @@ function fromSkill(skill: Skill, index: OwnerIndex): HubComponent {
 		? skill.diagnostics.find((item) => item.type === "error" || item.type === "collision")?.message
 		: !skill.trusted
 			? skill.source === "plugin"
-				? "imported pack is untrusted; review it and enable integrations.projectResources.trustProjectImports"
+				? "imported pack is untrusted; review it and enable integrations.hub.trustProjectImports"
 				: "discovered only; explicitly import into PanCode with interop adopt or hub import"
 			: undefined;
 	const scope = skill.scope === "cli" ? "user" : skill.scope;
@@ -605,7 +605,7 @@ function fromPrompt(template: PromptTemplate, index: OwnerIndex): HubComponent {
 		? template.unavailable
 		: !template.trusted
 			? scope === "package"
-				? "imported pack is untrusted; review it and enable integrations.projectResources.trustProjectImports"
+				? "imported pack is untrusted; review it and enable integrations.hub.trustProjectImports"
 				: "discovered only; explicitly import into PanCode with interop adopt or hub import"
 			: undefined;
 	return {
@@ -838,7 +838,7 @@ function matchesQuery(options: HubInventoryOptions, ...fields: ReadonlyArray<str
 }
 
 function packageMatches(
-	record: HubPackageRecord,
+	record: HubPackRecord,
 	options: HubInventoryOptions,
 	selection: Selection,
 	triggers: ReadonlyArray<string> = [],
@@ -906,7 +906,7 @@ function audienceAdmits(resource: HubComponent, options: HubInventoryOptions): b
 function trustSetting(explicit: boolean | undefined): boolean {
 	if (explicit !== undefined) return explicit;
 	try {
-		return readSettings().integrations.projectResources.trustProjectImports;
+		return readSettings().integrations.hub.trustProjectImports;
 	} catch {
 		return false;
 	}
@@ -959,7 +959,7 @@ function readHubInventoryInPass(options: HubInventoryOptions): HubInventory {
 	const copiesByRef = new Map<string, HubCopy[]>();
 	for (const copy of copies) copiesByRef.set(copy.ref, [...(copiesByRef.get(copy.ref) ?? []), copy]);
 
-	const packages = new Bounded<HubPackageRecord>(HUB_INVENTORY_LIMITS.packages);
+	const packages = new Bounded<HubPackRecord>(HUB_INVENTORY_LIMITS.packages);
 	if (include.packages) {
 		const discovery = discoverHub({ cwd, ...(options.catalog ? { catalog: options.catalog } : {}) });
 		for (const message of discovery.diagnostics) note(message);
@@ -976,7 +976,7 @@ function readHubInventoryInPass(options: HubInventoryOptions): HubInventory {
 				const update = catalogCopyUpdate(copy, entry);
 				if (update) copy.update = update;
 			}
-			const record: HubPackageRecord = {
+			const record: HubPackRecord = {
 				ref,
 				kind: entry.kind,
 				name: entry.name,
@@ -1168,7 +1168,7 @@ export function inspectHubCopy(ref: string, options: { cwd?: string; scope?: Plu
 	const copy = projectCopy(plugin, cwd);
 	if (!existsSync(plugin.rootPath))
 		return { copy, resources: [], ancillary: [], prerequisites: [], diagnostics: ["pack root is missing"] };
-	const result = validateHubPackage(plugin.rootPath, { cwd });
+	const result = validateHubPack(plugin.rootPath, { cwd });
 	const components = new Map(
 		(result.manifest?.pancode.components ?? []).map((component) => [`${component.kind}:${component.id}`, component.id]),
 	);

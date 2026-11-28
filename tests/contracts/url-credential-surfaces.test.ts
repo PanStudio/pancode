@@ -1036,7 +1036,7 @@ test("a headless failure hides the password in the target URL it names", () => {
 	} as never;
 	strictEqual(
 		prefixHeadlessFailure(chat, "Connection error"),
-		"target 'mock-chat' (openai-compat https://alice:[redacted]@127.0.0.1:9/v1): Connection error",
+		"connection 'mock-chat' (openai-compat https://alice:[redacted]@127.0.0.1:9/v1): Connection error",
 	);
 	ok(!prefixHeadlessFailure(chat, `fetch failed for ${url}`).includes("hunter2"));
 });

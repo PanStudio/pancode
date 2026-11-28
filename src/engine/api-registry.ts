@@ -132,7 +132,7 @@ function resolved(api: Api): EngineRegisteredApiProvider {
 function refusePiCopilotProvider(model: Model<Api>): void {
 	if (model.provider === "github-copilot") {
 		throw new Error(
-			"PanCode does not stream through Pi's github-copilot provider; use a target on the copilot-sdk runtime.",
+			"PanCode does not stream through Pi's github-copilot provider; use a connection on the copilot-sdk runtime.",
 		);
 	}
 }

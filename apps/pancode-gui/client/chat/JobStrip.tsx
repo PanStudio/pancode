@@ -15,7 +15,7 @@ import { capabilityRefusal } from "./composer-model.js";
 import {
 	JOB_ACTION_LABELS,
 	JOB_CONFIRMATIONS,
-	type JobControlAction,
+	type JobStripAction,
 	jobRowView,
 	liveJobsLabel,
 	visibleJobs,
@@ -34,18 +34,21 @@ function JobControls({
 	client: Client;
 	sessionId: string;
 	jobId: string;
-	actions: readonly JobControlAction[];
+	actions: readonly JobStripAction[];
 }) {
-	const [confirm, setConfirm] = useState<"stop" | "cancel" | null>(null);
+	const [confirm, setConfirm] = useState<"cancel" | "cancel-now" | null>(null);
 	const [outcome, setOutcome] = useState<Outcome | null>(null);
-	// Pause and resume go through the same `/loop` command the terminal types. Stop and cancel stay two
-	// distinct requests: stop lets the current run settle, cancel aborts it.
+	// Pause, resume, cancel and cancel-now go through the same `/loop` command the terminal types.
+	// Cancel lets the current run settle; cancel-now passes `--now` to abort it.
 	const control = useMutation({
-		mutationFn: (action: JobControlAction) =>
+		mutationFn: (action: JobStripAction) =>
 			client.call(routes.invokeSessionCommand, {
 				params: { id: sessionId },
 				query: {},
-				body: { command: "loop", argv: [action, jobId] },
+				body: {
+					command: "loop",
+					argv: action === "cancel-now" ? ["cancel", jobId, "--now"] : [action, jobId],
+				},
 			}),
 		onSuccess: (result) => {
 			setOutcome({
@@ -74,7 +77,7 @@ function JobControls({
 							aria-label={`${JOB_ACTION_LABELS[action]} loop ${jobId}`}
 							onClick={() => {
 								setOutcome(null);
-								if (action === "stop" || action === "cancel") setConfirm(action);
+								if (action === "cancel" || action === "cancel-now") setConfirm(action);
 								else control.mutate(action);
 							}}
 						>

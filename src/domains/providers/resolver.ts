@@ -223,7 +223,7 @@ export function resolveModelReference(
 	const { base, thinkingLevel } = splitThinkingSuffix(trimmed);
 	const candidates = collectCandidates(providers);
 	if (candidates.length === 0) {
-		return { ref: null, error: "no targets configured; add one with `pancode configure`" };
+		return { ref: null, error: "no connections configured; add one with `pancode configure`" };
 	}
 
 	// #416: worker aliases cannot shadow chat families; versioned ids keep explicit refusals.
@@ -239,7 +239,7 @@ export function resolveModelReference(
 		if (targets.length > 0) {
 			return {
 				ref: null,
-				error: `pattern "${base}" matched ${targets.length === 1 ? "target" : "targets"} ${targets.join(", ")}, but ${targets.length === 1 ? "it is" : "they are"} not chat-eligible; chat needs a loaded HTTP runtime with chat enabled`,
+				error: `pattern "${base}" matched ${targets.length === 1 ? "connection" : "connections"} ${targets.join(", ")}, but ${targets.length === 1 ? "it is" : "they are"} not chat-eligible; chat needs a loaded HTTP runtime with chat enabled`,
 			};
 		}
 	}
@@ -282,6 +282,6 @@ function resolveUnlisted(
 	if (first === undefined || qualifier !== null) return null;
 	return {
 		ref: null,
-		error: `no models match pattern "${base}"; ${serving.join(", ")} ${serving.length === 1 ? "serves models it does" : "serve models they do"} not list, so name it on a target, as ${first}/${base}`,
+		error: `no models match pattern "${base}"; ${serving.join(", ")} ${serving.length === 1 ? "serves models it does" : "serve models they do"} not list, so name it on a connection, as ${first}/${base}`,
 	};
 }

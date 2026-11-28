@@ -3,11 +3,11 @@
 export type { AgentsContract } from "./contract.js";
 export { cachedFrontmatterParser, withFrontmatterCache, withFrontmatterCacheReadOnly } from "./frontmatter-cache.js";
 export {
-	type PackageReferenceContext,
+	type PackReferenceContext,
 	pluginResourceComponents,
-	resolvePackagePathReference,
-	resolvePackageReferences,
-} from "./package-references.js";
+	resolvePackPathReference,
+	resolvePackReferences,
+} from "./pack-references.js";
 export type {
 	Playbook,
 	PlaybookListing,

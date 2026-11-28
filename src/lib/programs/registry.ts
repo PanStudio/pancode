@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
-import type { PinnedTool, ToolPlatform } from "./types.js";
+import type { PinnedProgram, ProgramPlatform } from "./types.js";
 
 /**
  * The pinned table.
@@ -31,7 +31,7 @@ import type { PinnedTool, ToolPlatform } from "./types.js";
  * behind, so `describeResolution` in `resolve.ts` is required to name what it
  * found, the floor it missed, and the command that fixes it.
  */
-export const PINNED_TOOLS: ReadonlyArray<PinnedTool> = [
+export const PINNED_PROGRAMS: ReadonlyArray<PinnedProgram> = [
 	{
 		id: "asciinema",
 		notice: [
@@ -295,7 +295,7 @@ export const PINNED_TOOLS: ReadonlyArray<PinnedTool> = [
 ];
 
 /** The registry's platform key for the running process, or null when unmapped. */
-export function currentToolPlatform(): ToolPlatform | null {
+export function currentProgramPlatform(): ProgramPlatform | null {
 	const platform = process.platform;
 	const arch = process.arch;
 	if (platform === "linux") {
@@ -313,8 +313,8 @@ export function currentToolPlatform(): ToolPlatform | null {
 }
 
 /** The row with this id. */
-export function findPinnedTool(id: string): PinnedTool | null {
-	return PINNED_TOOLS.find((entry) => entry.id === id) ?? null;
+export function findPinnedProgram(id: string): PinnedProgram | null {
+	return PINNED_PROGRAMS.find((entry) => entry.id === id) ?? null;
 }
 
 /**
@@ -323,7 +323,7 @@ export function findPinnedTool(id: string): PinnedTool | null {
  * Resolution is asked for by binary name (`ya` belongs to yazi), so the lookup
  * has to cover every name an entry installs, not just the tool id.
  */
-export function findPinnedToolByBinary(name: string): PinnedTool | null {
+export function findPinnedProgramByBinary(name: string): PinnedProgram | null {
 	const bare = name.endsWith(".exe") ? name.slice(0, -4) : name;
-	return PINNED_TOOLS.find((entry) => entry.binaries.includes(bare)) ?? null;
+	return PINNED_PROGRAMS.find((entry) => entry.binaries.includes(bare)) ?? null;
 }

@@ -372,7 +372,7 @@ export function resourceDetails(
 			row.availability === "available"
 				? collection === "Prompts"
 					? "A saved starting point you can invoke for a conversation or task."
-					: "A saved workflow that coordinates steps and specialists. Inspect its source before running it."
+					: "A saved playbook that coordinates steps and specialists. Inspect its source before running it."
 				: `This copy is ${String(row.availability ?? "unavailable")}. ${word(row.reason) ?? "Review the source and discovery notes for the cause."}`,
 		facts: [
 			fact("Availability", word(row.availability)),

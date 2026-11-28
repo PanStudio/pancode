@@ -142,7 +142,7 @@ const PANES: readonly PaneSpec[] = [
 		id: "decisions",
 		name: "decisions",
 		view: { view: "board", section: "decisions" },
-		summary: "Open this task's decisions beside the conversation",
+		summary: "Open this session's decisions beside the conversation",
 		supported: (capabilities) => !!capabilities.board,
 	},
 	{
@@ -157,7 +157,7 @@ const PANES: readonly PaneSpec[] = [
 		id: "memory",
 		name: "memory",
 		view: { view: "board", section: "memory" },
-		summary: "Open what PanCode learned in this task beside the conversation",
+		summary: "Open what PanCode learned in this session beside the conversation",
 		supported: (capabilities) => !!capabilities.board,
 	},
 ];
@@ -374,26 +374,30 @@ const terminalOnly = (name: string): SlashAliasSpec => ({
 export const SLASH_ALIASES: readonly SlashAliasSpec[] = [
 	{
 		names: ["compact"],
-		summary: "Compact this conversation's context. Words after the name guide the summary",
+		summary: "Compact this session's context. Words after the name guide the summary",
 		hint: "[instructions]",
 		target: { kind: "command", command: "context", subcommand: "compact", passRest: true },
 		available: (facts) => hasSubcommand(facts, "context", "compact"),
 	},
 	{
 		names: ["init"],
-		summary: "Run /context init in this task",
+		summary: "Run /context init in this session",
 		target: { kind: "command", command: "context", subcommand: "init", passRest: false },
 		available: (facts) => hasSubcommand(facts, "context", "init"),
 	},
 	{
 		names: ["model", "thinking"],
-		summary: "Choose the model and thinking level for this conversation",
+		summary: "Choose the model and thinking level for this session",
 		target: { kind: "control", control: "model" },
 	},
-	{ names: ["new", "clear"], summary: "Start a new task in this project", target: { kind: "control", control: "new" } },
+	{
+		names: ["new", "clear"],
+		summary: "Start a new session in this project",
+		target: { kind: "control", control: "new" },
+	},
 	{
 		names: ["status", "cost", "usage"],
-		summary: "Open usage and cost beside the conversation",
+		summary: "Open usage and cost beside the session",
 		target: { kind: "pane", view: "usage" },
 		available: (facts) => !!facts.capabilities?.telemetry && facts.paneAvailable,
 	},
@@ -402,38 +406,38 @@ export const SLASH_ALIASES: readonly SlashAliasSpec[] = [
 	{
 		names: ["login"],
 		summary: "Manage saved connections in Settings",
-		target: { kind: "navigate", path: "/settings/targets" },
+		target: { kind: "navigate", path: "/settings/connections" },
 	},
 	{
 		names: ["tree"],
-		summary: "Continue from an earlier turn or fork from it",
+		summary: "Open session tree to continue from an earlier turn or fork from it",
 		target: { kind: "action", action: "tree" },
 		available: (facts) => !!facts.capabilities?.branches,
 	},
 	{
 		names: ["fork"],
-		summary: "Start a new conversation from a turn",
+		summary: "Fork from an earlier turn into a new session",
 		target: { kind: "action", action: "fork" },
 		available: (facts) => !!facts.capabilities?.branches?.fork,
 	},
 	{
 		names: ["resume"],
-		summary: "Open Sessions to continue another task",
+		summary: "Open Sessions to resume another session",
 		target: { kind: "navigate", path: "/sessions" },
 	},
 	{ names: ["hub"], summary: "Open the hub", target: { kind: "navigate", path: "/hub" } },
-	{ names: ["research"], summary: "Open Research", target: { kind: "navigate", path: "/research" } },
 	{
 		names: ["quit", "exit"],
-		summary: "Close this task from the task menu",
+		summary: "Exit PanCode in the terminal; close a session from the session menu on desktop",
 		target: {
 			kind: "notice",
-			message: "Close this task from the task menu, or close the window. PanCode keeps running.",
+			message:
+				"In the terminal, /quit exits PanCode. On the desktop, close this session from the session menu or close the window.",
 		},
 	},
 	{
 		names: ["rename"],
-		summary: "Rename this task",
+		summary: "Rename this session",
 		hint: "<name>",
 		needsText: true,
 		target: { kind: "control", control: "rename" },
@@ -454,20 +458,20 @@ export const SLASH_ALIASES: readonly SlashAliasSpec[] = [
 	},
 	{
 		names: ["draft"],
-		summary: "Draft a request several ways and compare them",
+		summary: "Draft answers in parallel and compare them",
 		hint: "[request]",
 		target: { kind: "action", action: "draft" },
 		available: (facts) => !!facts.capabilities?.aside?.draft,
 	},
 	{
 		names: ["reload"],
-		summary: "Reload this task's extension runtimes",
+		summary: "Open Extensions to reload this session's extension runtimes",
 		target: { kind: "action", action: "extensions" },
 		available: (facts) => !!facts.capabilities?.extensions,
 	},
 	{
 		names: ["view"],
-		summary: "Open this task's artifacts beside the conversation",
+		summary: "Open this session's artifacts beside the session",
 		target: { kind: "pane", view: "artifacts" },
 		available: (facts) => facts.paneAvailable,
 	},
@@ -478,7 +482,7 @@ export const SLASH_ALIASES: readonly SlashAliasSpec[] = [
 	},
 	{
 		names: ["trust"],
-		summary: "Review the project files this task ignored, in the task overview",
+		summary: "Review the project files this session ignored, in the session overview",
 		target: { kind: "pane", view: "session" },
 		available: (facts) => facts.paneAvailable,
 	},
@@ -525,7 +529,10 @@ export function resolveAlias(text: string, facts: SlashFacts): { alias: SlashAli
 	const after = pair && second !== undefined ? rest.slice(second.length).trim() : rest;
 	if (spec.available && !spec.available(facts))
 		return {
-			alias: { ...aliasFor(name, spec), target: { kind: "notice", message: `/${name} is not available in this task.` } },
+			alias: {
+				...aliasFor(name, spec),
+				target: { kind: "notice", message: `/${name} is not available in this session.` },
+			},
 			rest: after,
 		};
 	return { alias: aliasFor(name, spec), rest: after };

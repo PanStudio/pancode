@@ -5,7 +5,7 @@ import { ClientIdentity } from "./auth.js";
 import { Id } from "./common.js";
 import { ElicitationPrompt } from "./elicitation.js";
 import { InterviewRound } from "./interviews.js";
-import { MachineAttachment } from "./machines.js";
+import { NodeAttachment } from "./nodes.js";
 import { Operation, Progress } from "./operations.js";
 import { SessionDeltas } from "./sessions.js";
 import { QUEUE_MAX_ENTRIES, QueueEntry } from "./steering.js";
@@ -83,7 +83,7 @@ export const Event = Type.Union([
 		type: Type.Literal("operation.finished"),
 		payload: Type.Object({ ...resource, kind: Type.String(), operation: Type.Optional(Operation) }),
 	}),
-	Type.Object({ ...base, type: Type.Literal("toolchain.changed"), payload: Type.Object({ id: Id }) }),
+	Type.Object({ ...base, type: Type.Literal("programs.changed"), payload: Type.Object({ id: Id }) }),
 	/**
 	 * The agent's coalesced telemetry_update for a session this host holds (at most 10 Hz, never per token): an
 	 * invalidation only, naming the topics whose reads moved; the client re-reads and folds nothing (#434).
@@ -110,7 +110,7 @@ export const Event = Type.Union([
 		),
 	}),
 	/** This app's attachment to a node's own GUI changed state. */
-	Type.Object({ ...base, type: Type.Literal("machine.attach"), payload: MachineAttachment }),
+	Type.Object({ ...base, type: Type.Literal("node.attach"), payload: NodeAttachment }),
 	/** A launch found the app window open and asks it to show a page. The window the launcher focused takes it. */
 	Type.Object({
 		...base,

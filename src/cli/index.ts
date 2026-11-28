@@ -67,7 +67,7 @@ import { traceBoot } from "../core/boot-trace.js";
 import { incompleteInstallationAdvice } from "../core/incomplete-installation.js";
 import { installProxyFromEnv } from "../core/proxy-env.js";
 import { extractGlobalFlags, parseFlags, printError } from "./argv.js";
-import { didYouMean } from "./kit/did-you-mean.js";
+import { didYouMean } from "./lib/did-you-mean.js";
 
 const HELP = `PanCode command line
 
@@ -89,10 +89,10 @@ Sessions and fleet runs:
   pancode telemetry <verb>     read session and run telemetry, cost, quota and health
 
 Setup:
-  pancode configure            guided setup for targets, models and settings
-  pancode targets              list configured targets, health, auth, and capabilities
-  pancode models [search]      list models for configured targets
-  pancode auth <verb>          list, check, log in to or log out of targets and runtimes
+  pancode configure            guided setup for connections, models and settings
+  pancode connections          list configured connections, health, auth, and capabilities
+  pancode models [search]      list models for configured connections
+  pancode auth <verb>          list, check, sign in to or sign out of connections and runtimes
   pancode config inspect [--json]  inspect effective customization and provenance
   pancode doctor [--fix]       diagnose state; --fix creates or repairs it
   pancode paths|reset|uninstall|upgrade  directories, state recovery, removal, upgrade
@@ -101,7 +101,7 @@ Setup:
 Project and hub:
   pancode context <verb>       PANCODE.md, codemap, wiki and working set for this project
   pancode agents|tasks|verifiers|memory|claims|store  recipes, tasks, checks, memory, claims, store
-  pancode hub|extensions|mcp|share  packs, extension authoring, MCP servers, archives
+  pancode hub|extensions|mcp|archive  packs, extension authoring, MCP servers, archives
   pancode programs|interop|panes  pinned programs, external coding agents, the pane host
   pancode semantic             search
   pancode report|usage         reports to the maintainers, cross-session usage facts
@@ -110,7 +110,7 @@ Project and hub:
 Interactive options:
   --resume, -r [id]  --continue, -c  --fork  --session-file <path>  --demo|--no-demo  --with-panes
   --autonomy default|yolo  --allow-tools|--deny-tools|--delegate-tools <names>  --max-context-tokens <N>
-  --target <id>  --model <ref>  --api-key <key>  --skill <path>  --no-skills  --no-context-files, -nc
+  --connection <id>  --model <ref>  --api-key <key>  --skill <path>  --no-skills  --no-context-files, -nc
 
 Run 'pancode <command> --help' for one command, 'pancode --help --all' for every command path.
 `;
@@ -370,20 +370,23 @@ async function main(argv: string[]): Promise<number> {
 	}
 	if (route !== undefined && subcommand) {
 		const flags = [
-			...(route.target === undefined ? [] : [`--target ${route.target}`]),
+			...(route.target === undefined ? [] : [`--connection ${route.target}`]),
 			...(route.model === undefined ? [] : [`--model ${route.model}`]),
 		].join(" ");
 		printError(
 			subcommand === "run"
 				? `${flags} before a subcommand applies to the interactive session only; pass it after it: pancode run ${flags} "<task>"`
-				: `--target and --model before a subcommand apply to the interactive session only; pancode ${subcommand} does not honor them.`,
+				: `--connection and --model before a subcommand apply to the interactive session only; pancode ${subcommand} does not honor them.`,
 		);
 		return 2;
 	}
 	if (route?.target !== undefined) {
 		const { explicitTargetMissing } = await import("./run.js");
 		if (explicitTargetMissing(route.target)) {
-			printError(`target '${route.target}' not found in settings.targets`, "pancode targets lists the configured ones.");
+			printError(
+				`connection '${route.target}' not found in settings.connections`,
+				"pancode connections lists the configured ones.",
+			);
 			return 2;
 		}
 	}
@@ -446,7 +449,7 @@ const COMMAND_HANDLERS = new Map<string, CommandHandler>([
 	["auth", async (subArgs) => (await import("./auth.js")).runAuthCommand(subArgs)],
 	["config", async (subArgs) => (await import("./config.js")).runConfigCommand(subArgs)],
 	["configure", async (subArgs) => (await import("./configure.js")).runConfigureCommand(subArgs)],
-	["targets", async (subArgs) => (await import("./targets.js")).runTargetsCommand(subArgs)],
+	["connections", async (subArgs) => (await import("./targets.js")).runTargetsCommand(subArgs)],
 	["models", async (subArgs) => (await import("./models.js")).runModelsCommand(subArgs)],
 	["agents", async (subArgs) => (await import("./agents.js")).runAgentsCommand(subArgs)],
 	["evidence", async (subArgs) => (await import("./evidence.js")).runEvidenceCommand(subArgs)],
@@ -499,7 +502,7 @@ const COMMAND_HANDLERS = new Map<string, CommandHandler>([
 	["store", async (subArgs) => (await import("./store.js")).runStoreCommand(subArgs)],
 	["verifiers", async (subArgs) => (await import("./verifiers.js")).runVerifiersCommand(subArgs)],
 	["gui", async (subArgs) => (await import("./gui.js")).runGuiCommand(subArgs)],
-	["share", async (subArgs) => (await import("./share.js")).runShareCommand(subArgs)],
+	["archive", async (subArgs) => (await import("./archive.js")).runArchiveCommand(subArgs)],
 	["context", async (subArgs) => (await import("./context.js")).runContextCommand(subArgs)],
 	[
 		"run",

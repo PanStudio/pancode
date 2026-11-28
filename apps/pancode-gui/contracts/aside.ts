@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import {
 	AcpAsideAnswerSchema,
-	AcpAsideCancelledSchema,
+	AcpAsideCanceledSchema,
 	AcpAsideDraftsSchema,
 	AcpAsideCapability as AsideCapability,
 } from "./wire.js";
@@ -37,4 +37,4 @@ export const AsideDraftRequest = Type.Object(
 export const AsideDrafts = AcpAsideDraftsSchema;
 export type AsideDrafts = Static<typeof AsideDrafts>;
 
-export const AsideCancelled = AcpAsideCancelledSchema;
+export const AsideCanceled = AcpAsideCanceledSchema;

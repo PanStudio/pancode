@@ -49,7 +49,7 @@ export async function loginOAuthRuntime(
 		rl = {
 			question: async (message: string) => {
 				const result = await host.text({ heading: message, mask: true });
-				if (result.kind !== "value") throw new Error("Sign-in cancelled");
+				if (result.kind !== "value") throw new Error("Sign-in canceled");
 				return result.value;
 			},
 		};

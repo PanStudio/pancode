@@ -60,7 +60,7 @@ test("a terminal name resolves to the app's control for it, and the catalog's ow
 	assert.deepEqual(resolveAlias("/rename  Release notes ", facts()), {
 		alias: {
 			name: "rename",
-			summary: "Rename this task",
+			summary: "Rename this session",
 			target: { kind: "control", control: "rename" },
 			needsText: true,
 		},
@@ -81,11 +81,17 @@ test("a name this task cannot serve says so instead of reaching the agent", () =
 		return target?.kind === "notice" ? target.message : null;
 	};
 	const noContext = { version: 1 as const, commands: [command("doctor")], prompts: [] };
-	assert.equal(notice("/compact", { catalog: noContext }), "/compact is not available in this task.");
-	assert.equal(notice("/init", { catalog: undefined }), "/init is not available in this task.");
-	assert.equal(notice("/tree", { capabilities: { commands: true } as never }), "/tree is not available in this task.");
-	assert.equal(notice("/usage", { paneAvailable: false }), "/usage is not available in this task.");
-	assert.equal(notice("/quit", {}), "Close this task from the task menu, or close the window. PanCode keeps running.");
+	assert.equal(notice("/compact", { catalog: noContext }), "/compact is not available in this session.");
+	assert.equal(notice("/init", { catalog: undefined }), "/init is not available in this session.");
+	assert.equal(
+		notice("/tree", { capabilities: { commands: true } as never }),
+		"/tree is not available in this session.",
+	);
+	assert.equal(notice("/usage", { paneAvailable: false }), "/usage is not available in this session.");
+	assert.equal(
+		notice("/quit", {}),
+		"In the terminal, /quit exits PanCode. On the desktop, close this session from the session menu or close the window.",
+	);
 	assert.equal(notice("/panes", {}), "/panes is a terminal command and has no equivalent in PanCode on the desktop.");
 });
 
@@ -197,10 +203,10 @@ test("the palette lists the agent's prompt templates last and finds rows by the 
 	assert.deepEqual(names("comp").slice(0, 1), ["context compact"], "a later word of the name ranks before letters");
 	assert.equal(
 		argumentHint({
-			flags: [{ name: "--target", takesValue: true, valueName: "target" }],
+			flags: [{ name: "--connection", takesValue: true, valueName: "connection" }],
 			positionals: [{ name: "task", required: true, rest: true }],
 		} as never),
-		"[--target <target>] <task>",
+		"[--connection <connection>] <task>",
 	);
 });
 

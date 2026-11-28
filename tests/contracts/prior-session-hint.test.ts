@@ -132,7 +132,7 @@ it("a session holding an information-flow restriction offers its id and time, ne
 		const base = { parentTurnId: null, timestamp: at };
 		const entries = [
 			{ ...base, kind: "message", turnId: "u1", role: "user", payload: { text: "first prompt words" } },
-			{ ...base, kind: "custom", turnId: "f1", customType: "pancode_flow_restriction", data: { set: {} } },
+			{ ...base, kind: "custom", turnId: "f1", customType: "pancode_flow_restrictions", data: { set: {} } },
 			{ ...base, kind: "sessionInfo", turnId: "n1", name: "name after the read" },
 			{ ...base, kind: "message", turnId: "u2", role: "user", payload: { text: "second prompt" } },
 		];

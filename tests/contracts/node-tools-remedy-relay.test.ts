@@ -12,7 +12,7 @@ describe("node tools remedy relay", () => {
 		const relayed = nodeComponentRemedyEvent(frame, "loop");
 		const text = JSON.stringify(relayed);
 		doesNotMatch(text, /Run: pancode programs install copilot-sdk/);
-		match(text, /pancode fleet nodes tools install loop copilot-sdk --yes/);
+		match(text, /pancode fleet nodes programs install loop copilot-sdk --yes/);
 		deepStrictEqual(frame.detail.lines, [message]);
 		deepStrictEqual(relayed.count, 1);
 	});

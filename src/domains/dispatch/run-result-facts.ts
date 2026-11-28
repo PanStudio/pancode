@@ -368,7 +368,7 @@ export function readRunResultFactsForReplay(runId: string, stateDir = pancodeSta
 }
 
 /**
- * The wire shape of `_meta["pancode/run-result"]` on an ACP terminal fleet frame. `trust` is the artifact-integrity
+ * The wire shape of `_meta["pancode/runResult"]` on an ACP terminal fleet frame. `trust` is the artifact-integrity
  * word the TUI footer prints and `validation` its quality clause, so a client shows the same words without
  * re-implementing the trust projection.
  */

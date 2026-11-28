@@ -80,7 +80,7 @@ export function permissionHintEntries(
 	inspection: PermissionInspectionHint = "none",
 	terms?: PermissionTermsHint,
 	scrollable = false,
-	stopVerb = "stop turn",
+	stopVerb = "deny and stop",
 	choices?: PermissionChoicesHint,
 ): HintEntry[] {
 	const below = choices === "below";

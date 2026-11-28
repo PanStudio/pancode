@@ -55,7 +55,7 @@ const LABELS: EngineCapabilities = {
 };
 
 const ENTRY: TriageEntry = { id: "q1", text: "stop, wrong branch", kind: "steer" };
-const SETTINGS = { target: null, minQueued: 2, timeoutMs: 8000 };
+const SETTINGS = { connection: null, minQueued: 2, timeoutMs: 8000 };
 
 /** Answers every relation with `relation` at `mass` and every urgency with `now`. */
 function engine(
@@ -100,7 +100,7 @@ interface Ran {
 async function round(input: {
 	systemOne?: Pick<SystemOne, "bound" | "ask">;
 	asked?: ReadonlyArray<TriageEntry>;
-	triage?: { target: string | null; minQueued: number; timeoutMs: number };
+	triage?: { connection: string | null; minQueued: number; timeoutMs: number };
 	current?: () => boolean;
 }): Promise<Ran> {
 	const ran: Ran = { applied: null, side: 0 };
@@ -159,12 +159,12 @@ test("a lone entry a failing route could not read stays put, because the side mo
 	strictEqual(ran.applied, null);
 });
 
-test("an explicit target keeps the side model and asks no route", async () => {
+test("an explicit connection keeps the side model and asks no route", async () => {
 	const typed = engine(MASS, "stop", 0.99);
 	const ran = await round({
 		systemOne: over(typed),
 		asked: [ENTRY, { ...ENTRY, id: "q2" }],
-		triage: { ...SETTINGS, target: "side" },
+		triage: { ...SETTINGS, connection: "side" },
 	});
 	strictEqual(ran.side, 1);
 	strictEqual(typed.asked.length, 0);
@@ -215,7 +215,7 @@ test("a lone entry is read when a route answers, and the side model keeps its fl
 	strictEqual(triageFloor(SETTINGS, bound), 1);
 	strictEqual(triageFloor(SETTINGS, unbound), 2);
 	strictEqual(triageFloor(SETTINGS, undefined), 2);
-	strictEqual(triageFloor({ ...SETTINGS, target: "side" }, bound), 2);
+	strictEqual(triageFloor({ ...SETTINGS, connection: "side" }, bound), 2);
 	const ran = await round({ systemOne: bound });
 	strictEqual(ran.applied?.length, 1);
 });
@@ -242,9 +242,9 @@ test("a steer through the chat api, as the headless steer channel and ACP send i
 	settings.chat.prewarm = false;
 	settings.chat.steering.triage.enabled = true;
 	const context = dispatchStubContext({ settings });
-	const target = settings.targets[0];
+	const target = settings.connections[0];
 	ok(target);
-	settings.chat.target = target.id;
+	settings.chat.connection = target.id;
 	settings.chat.model = target.defaultModel ?? "gpt-4o";
 	let release!: () => void;
 	const turnHeld = new Promise<void>((resolve) => {
@@ -300,9 +300,9 @@ test("a constrained turn queued while a run streams is triaged, and its pinned c
 	settings.chat.prewarm = false;
 	settings.chat.steering.triage.enabled = true;
 	const context = dispatchStubContext({ settings });
-	const target = settings.targets[0];
+	const target = settings.connections[0];
 	ok(target);
-	settings.chat.target = target.id;
+	settings.chat.connection = target.id;
 	settings.chat.model = target.defaultModel ?? "gpt-4o";
 	let release!: () => void;
 	const turnHeld = new Promise<void>((resolve) => {
@@ -362,18 +362,19 @@ for (const [level, enableThinking] of [
 		const fixture = await startGatewayThinkingFixture(undefined, "local/gemma-4-26b-a4b-it", undefined, "{}");
 		const settings = structuredClone(DEFAULT_SETTINGS);
 		settings.chat.prewarm = false;
-		settings.targets = [{ id: "gw", runtime: "litellm", url: fixture.url, defaultModel: fixture.modelId }];
-		settings.chat.target = "gw";
+		settings.connections = [{ id: "gw", runtime: "litellm", url: fixture.url, defaultModel: fixture.modelId }];
+		settings.chat.connection = "gw";
 		settings.chat.model = fixture.modelId;
 		settings.chat.steering.triage = {
 			...settings.chat.steering.triage,
 			enabled: true,
-			target: "gw",
+			connection: "gw",
 			model: fixture.modelId,
 			thinkingLevel: level,
 		};
 		const bundle = createProvidersBundle(dispatchStubContext({ settings }));
-		for (const target of settings.targets) bundle.contract.auth.setRuntimeOverrideForTarget(target, litellm, "fixture");
+		for (const target of settings.connections)
+			bundle.contract.auth.setRuntimeOverrideForTarget(target, litellm, "fixture");
 		await bundle.extension.start();
 		// A live session's route has been probed; the gateway's thinking controls come from that metadata.
 		await bundle.contract.probeTarget("gw", { reasoning: false });
@@ -435,9 +436,9 @@ test("a steer triage reads as a stop redirects a headless run to answer it; only
 	settings.chat.prewarm = false;
 	settings.chat.steering.triage.enabled = true;
 	const context = dispatchStubContext({ settings });
-	const target = settings.targets[0];
+	const target = settings.connections[0];
 	ok(target);
-	settings.chat.target = target.id;
+	settings.chat.connection = target.id;
 	settings.chat.model = target.defaultModel ?? "gpt-4o";
 	// The first queued line reads as a stop; the line after it is ordinary work.
 	const typed: DecisionEngine = {

@@ -37,7 +37,7 @@ export function autonomyMenu(autonomy: AutonomyRead): AutonomyMenu {
 			current: unrecognized === undefined && level === autonomy.level,
 			disabled: unrecognized !== undefined,
 		})),
-		confirmation: `Switch this task to Run without approvals? ${modeDescription(autonomy, "yolo")} It lasts until the task closes.`,
+		confirmation: `Switch this session to YOLO? ${modeDescription(autonomy, "yolo")} It lasts until the session closes.`,
 	};
 }
 

@@ -21,5 +21,5 @@ export function takeOverExplanation(live: LiveElsewhere): string {
 	if (!live.canTakeOver) return "It cannot be asked to end from here. Close it where it runs, then resume it here.";
 	if (live.stale)
 		return `Its heartbeat has stopped, so Take over releases it. If pid ${live.pid} on ${live.host} wakes, it finds the release and writes nothing more.`;
-	return `Take over asks pid ${live.pid} on ${live.host} to end. It says it was taken over, writes nothing more, and this task resumes here.`;
+	return `Take over asks pid ${live.pid} on ${live.host} to end. It says it was taken over, writes nothing more, and this session resumes here.`;
 }

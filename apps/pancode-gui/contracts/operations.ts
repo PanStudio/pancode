@@ -3,8 +3,8 @@
 import { type Static, Type } from "typebox";
 import { Id, Problem } from "./common.js";
 import { EvidenceOperationResult } from "./evidence.js";
+import { ProgramResult } from "./programs.js";
 import { TargetOperationResult } from "./targets-cli.js";
-import { ToolResult } from "./toolchain.js";
 
 export const Progress = Type.Object({ at: Type.String(), message: Type.String() }, { additionalProperties: false });
 const base = {
@@ -15,7 +15,7 @@ const base = {
 	startedAt: Type.String(),
 	progress: Type.Array(Progress, { maxItems: 256 }),
 };
-export const OperationResult = Type.Union([ToolResult, TargetOperationResult, EvidenceOperationResult]);
+export const OperationResult = Type.Union([ProgramResult, TargetOperationResult, EvidenceOperationResult]);
 export type OperationResult = Static<typeof OperationResult>;
 export const Operation = Type.Union([
 	Type.Object(

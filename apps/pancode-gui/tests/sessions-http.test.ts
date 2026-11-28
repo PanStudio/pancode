@@ -29,7 +29,7 @@ test("ACP problems explain missing credentials and failed turns without forwardi
 		).problem;
 	const missing = failure("prompt_not_admitted", "authentication-required");
 	assert.equal(missing.code, "upstream_acp");
-	assert.match(missing.detail, /credentials.*selected target/);
+	assert.match(missing.detail, /credentials.*selected connection/);
 	assert.match(missing.detail, /pancode auth login/);
 	assert.match(missing.detail, /close and reopen/);
 	assert.match(failure("turn_failed").detail, /session's trace/);

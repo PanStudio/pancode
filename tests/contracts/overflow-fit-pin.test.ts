@@ -198,15 +198,15 @@ function harness(
 ) {
 	const settings = structuredClone(DEFAULT_SETTINGS);
 	settings.chat.prewarm = false;
-	settings.chat.target = target.id;
+	settings.chat.connection = target.id;
 	settings.chat.model = model.id;
 	settings.chat.thinkingLevel = "low";
 	settings.context.workingSet.protectLastSteps = protectLastSteps;
 	settings.context.workingSet.target = 0.6;
 	settings.context.compaction.threshold = 0.8;
-	settings.targets = [
+	settings.connections = [
 		{ ...target, defaultModel: model.id, capabilities: { contextWindow: window } },
-	] as typeof settings.targets;
+	] as typeof settings.connections;
 	const runtime: RuntimeDescriptor = {
 		...litellm,
 		auth: "none",

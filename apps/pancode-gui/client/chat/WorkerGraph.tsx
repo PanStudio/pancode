@@ -10,7 +10,7 @@ import { StatusMark, TONE_GLYPHS } from "../design/status.js";
 import { useCopy } from "../render/Markdown.js";
 import { requestReport } from "../report/report-events.js";
 import { failedRunReport } from "../report/report-model.js";
-import { useSessionWorkers } from "../shell/tasks.js";
+import { useSessionWorkers } from "../shell/sessions.js";
 import { steeringAffordances } from "./composer-model.js";
 import { FleetRunPanel } from "./FleetRunPanel.js";
 import { RunSteer, type RunSteering } from "./FleetStrip.js";
@@ -224,10 +224,10 @@ export const WorkerGraph = memo(function WorkerGraph({
 						<dt>failed</dt>
 						<dd>{graph.failed}</dd>
 					</div>
-					{graph.stopped > 0 ? (
+					{graph.canceled > 0 ? (
 						<div>
-							<dt>stopped</dt>
-							<dd>{graph.stopped}</dd>
+							<dt>canceled</dt>
+							<dd>{graph.canceled}</dd>
 						</div>
 					) : null}
 				</dl>
@@ -263,7 +263,7 @@ export const WorkerGraph = memo(function WorkerGraph({
 				) : null}
 			</div>
 			{graph.nodes.length === 0 ? (
-				<p className="pane-empty agents-empty">No agents have been dispatched in this task.</p>
+				<p className="pane-empty agents-empty">No agents have been dispatched in this session.</p>
 			) : shown.length === 0 ? (
 				<p className="pane-empty agents-empty">Every dispatched agent has settled.</p>
 			) : null}

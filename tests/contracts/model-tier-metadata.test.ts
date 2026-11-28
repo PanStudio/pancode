@@ -66,7 +66,7 @@ describe("model tier", () => {
 		ok(refused.issues.some((issue) => issue.path === "models.llama-3.1-8b.tier"));
 
 		const settings = structuredClone(DEFAULT_SETTINGS);
-		settings.targets = [
+		settings.connections = [
 			{ id: "tier-heuristic", runtime: "openai-compat", url: "http://127.0.0.1:1", defaultModel: "qwen3-8b" },
 			{ id: "tier-override", runtime: "openai-compat", url: "http://127.0.0.1:1", defaultModel: "llama-3.1-8b" },
 		];

@@ -22,7 +22,7 @@ test("doctor proposes the provider catalog model and changes it only after confi
 	mkdirSync(join(home.dir, "config"), { recursive: true });
 	const file = join(home.dir, "config", "settings.yaml");
 	const original =
-		"version: 2\ntargets:\n  - { id: anthropic, runtime: anthropic }\ncontext:\n  memory:\n    target: anthropic\n    model: claude-haiku-4.5 # keep the note\n";
+		"version: 2\nconnections:\n  - { id: anthropic, runtime: anthropic }\ncontext:\n  memory:\n    connection: anthropic\n    model: claude-haiku-4.5 # keep the note\n";
 	writeFileSync(file, original);
 	const before = await runDoctorModelChecks({ fix: true, confirm: async () => false });
 	match(
@@ -53,7 +53,7 @@ test("run --agent with an API key refuses a target on an unregistered runtime", 
 	mkdirSync(cwd);
 	writeFileSync(
 		join(home.dir, "config", "settings.yaml"),
-		"version: 2\ntargets:\n  - { id: box, runtime: no-such-runtime, defaultModel: llama3 }\n",
+		"version: 2\nconnections:\n  - { id: box, runtime: no-such-runtime, defaultModel: llama3 }\n",
 	);
 	let stderr = "";
 	t.mock.method(process.stderr, "write", (chunk: string | Uint8Array) => {
@@ -63,15 +63,15 @@ test("run --agent with an API key refuses a target on an unregistered runtime", 
 	process.chdir(cwd);
 	try {
 		const run = (target: string) =>
-			runPancodeRun(["--agent", "coder", "--read-only", "--target", target, "audit"], {
+			runPancodeRun(["--agent", "coder", "--read-only", "--connection", target, "audit"], {
 				apiKey: "fixture-key",
 				noContextFiles: true,
 			});
 		strictEqual(await run("box"), 1);
-		match(stderr, /cannot use target 'box': runtime 'no-such-runtime' is not registered/u);
+		match(stderr, /cannot use connection 'box': runtime 'no-such-runtime' is not registered/u);
 		stderr = "";
 		strictEqual(await run("nosuch"), 2);
-		match(stderr, /target 'nosuch' not found/u);
+		match(stderr, /connection 'nosuch' not found/u);
 	} finally {
 		process.chdir(original);
 		home.restore();

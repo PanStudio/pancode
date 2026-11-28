@@ -366,7 +366,7 @@ async function ensureLmStudioResidencyUnlocked(
 		if (!explicitLoad) return unleased(model.id);
 		const resident = catalog.models.flatMap((entry) => entry.loadedInstances.map((instance) => instance.id));
 		throw new Error(
-			`LM Studio target '${info.targetId}' does not advertise model '${model.id}'. Resident instances: ${resident.length > 0 ? resident.join(", ") : "none"}. Configure an explicit LM Studio load before requesting an unlisted model.`,
+			`LM Studio connection '${info.targetId}' does not advertise model '${model.id}'. Resident instances: ${resident.length > 0 ? resident.join(", ") : "none"}. Configure an explicit LM Studio load before requesting an unlisted model.`,
 		);
 	}
 	if (resolution.wireModelId !== model.id) {
@@ -376,7 +376,7 @@ async function ensureLmStudioResidencyUnlocked(
 			targetId: info.targetId,
 			runtimeId: "lmstudio",
 			model: model.id,
-			message: `LM Studio resolved '${model.id}' to loaded instance '${resolution.wireModelId}' on target '${info.targetId}'.`,
+			message: `LM Studio resolved '${model.id}' to loaded instance '${resolution.wireModelId}' on connection '${info.targetId}'.`,
 			detail: { requestedModel: model.id, wireModel: resolution.wireModelId },
 		});
 	}
@@ -442,7 +442,7 @@ async function ensureLmStudioResidencyUnlocked(
 				targetId: info.targetId,
 				runtimeId: "lmstudio",
 				model: modelKey,
-				message: `'${modelKey}' on target '${info.targetId}' differs from its load profile (${drift.join(", ")}) but another PanCode request is using it; PanCode reloads it on a later turn once it is idle.`,
+				message: `'${modelKey}' on connection '${info.targetId}' differs from its load profile (${drift.join(", ")}) but another PanCode request is using it; PanCode reloads it on a later turn once it is idle.`,
 			});
 			return leased(keepLoaded());
 		}
@@ -467,7 +467,7 @@ async function ensureLmStudioResidencyUnlocked(
 			targetId: info.targetId,
 			runtimeId: "lmstudio",
 			model: modelKey,
-			message: `reloading '${modelKey}' on target '${info.targetId}' to match its load profile: ${drift.join(", ")}`,
+			message: `reloading '${modelKey}' on connection '${info.targetId}' to match its load profile: ${drift.join(", ")}`,
 			detail: { instance: stale, drift: drift.join("; ") },
 		});
 	}
@@ -499,7 +499,7 @@ async function ensureLmStudioResidencyUnlocked(
 			targetId: info.targetId,
 			runtimeId: "lmstudio",
 			model: entry.modelKey,
-			message: `unloading '${entry.modelKey}', which PanCode loaded earlier on target '${info.targetId}', before loading '${modelKey}'`,
+			message: `unloading '${entry.modelKey}', which PanCode loaded earlier on connection '${info.targetId}', before loading '${modelKey}'`,
 			detail: { instance: entry.identifier, replacement: modelKey },
 		});
 	}
@@ -587,7 +587,7 @@ async function ensureLmStudioResidencyUnlocked(
 				targetId: info.targetId,
 				runtimeId: "lmstudio",
 				model: modelKey,
-				message: `LM Studio loaded '${modelKey}' on target '${info.targetId}' but not as its load profile asks (${unmet.join(", ")}). PanCode keeps it${served} and will not reload it for this profile.`,
+				message: `LM Studio loaded '${modelKey}' on connection '${info.targetId}' but not as its load profile asks (${unmet.join(", ")}). PanCode keeps it${served} and will not reload it for this profile.`,
 				detail: { unmet: unmet.join("; ") },
 			});
 		}
@@ -687,7 +687,7 @@ async function ensureLmStudioResidencyUnlocked(
 		const pin = replacedDrift.join(", ");
 		if (outcome.error !== undefined) {
 			throw new Error(
-				`LM Studio could not load '${replaced.modelKey}' on target '${info.targetId}' to match its load profile (${pin}): ${reason}. PanCode could not restore the previous instance (${outcome.error}).`,
+				`LM Studio could not load '${replaced.modelKey}' on connection '${info.targetId}' to match its load profile (${pin}): ${reason}. PanCode could not restore the previous instance (${outcome.error}).`,
 				{ cause: error },
 			);
 		}
@@ -701,7 +701,7 @@ async function ensureLmStudioResidencyUnlocked(
 			targetId: info.targetId,
 			runtimeId: "lmstudio",
 			model: modelKey,
-			message: `LM Studio could not load '${modelKey}' on target '${info.targetId}' to match its load profile (${pin}): ${reason}. PanCode restored the previous instance${outcome.window !== undefined ? `, which serves ${outcome.window} tokens` : ""}, and will not retry this profile until the instance or the profile changes.`,
+			message: `LM Studio could not load '${modelKey}' on connection '${info.targetId}' to match its load profile (${pin}): ${reason}. PanCode restored the previous instance${outcome.window !== undefined ? `, which serves ${outcome.window} tokens` : ""}, and will not retry this profile until the instance or the profile changes.`,
 			detail: { unmet: pin },
 		});
 		return leased(outcome.instanceId ?? model.id);
@@ -853,7 +853,7 @@ export async function listLmStudioResidentModels(
 	options: { apiKey?: string; signal?: AbortSignal } = {},
 ): Promise<ResidentModelInfo[]> {
 	const target = targetForModel(model);
-	if (!target) throw new Error("no LM Studio target for model");
+	if (!target) throw new Error("no LM Studio connection for model");
 	const catalog = await listLmStudioModels(target, {
 		credentialsPresent: new Set<string>(),
 		httpTimeoutMs: 1_500,

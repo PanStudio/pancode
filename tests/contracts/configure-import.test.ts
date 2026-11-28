@@ -15,7 +15,7 @@ import { registerBuiltinRuntimes } from "../../src/domains/providers/runtimes/bu
 import { isolatePancodeEnv } from "../harness/scratch-env.js";
 
 const LAB = `notes: The lab gateway. Ask Ana for a key.
-targets:
+connections:
   - id: lab
     runtime: litellm
     url: https://llm.lab.example.edu
@@ -23,9 +23,9 @@ targets:
     auth:
       apiKeyEnvVar: LAB_API_KEY
 chat:
-  target: lab
+  connection: lab
 fleet:
-  target: lab
+  connection: lab
 `;
 
 function capture() {
@@ -44,7 +44,7 @@ test("a setup file accepts targets and defaults, and refuses a secret or a trust
 	assert.equal(parsed.file.targets[0]?.auth?.apiKeyEnvVar, "LAB_API_KEY");
 	assert.deepEqual(parsed.file.chat, { target: "lab" });
 
-	const refused = parseSetupFile(`targets:
+	const refused = parseSetupFile(`connections:
   - id: lab
     runtime: litellm
     url: https://llm.lab.example.edu
@@ -56,7 +56,7 @@ safety:
 `);
 	assert.ok(!refused.ok);
 	const errors = refused.errors.join("\n");
-	for (const key of ["targets[0].auth.apiKey", "targets[0].trustedUnmediated", "safety"])
+	for (const key of ["connections[0].auth.apiKey", "connections[0].trustedUnmediated", "safety"])
 		assert.ok(errors.includes(key), errors);
 });
 
@@ -90,36 +90,36 @@ test("importing adds the target and both defaults, re-importing is a no-op, and 
 	assert.match(first.text(), /prompts go to https:\/\/llm\.lab\.example\.edu/);
 	assert.match(first.text(), /LAB_API_KEY/);
 	const saved = readSettings();
-	assert.equal(saved.targets.find((target) => target.id === "lab")?.runtime, "litellm");
-	assert.equal(saved.chat.target, "lab");
+	assert.equal(saved.connections.find((target) => target.id === "lab")?.runtime, "litellm");
+	assert.equal(saved.chat.connection, "lab");
 	assert.equal(saved.chat.model, "qwen3-coder");
-	assert.equal(saved.fleet.default.target, "lab");
+	assert.equal(saved.fleet.default.connection, "lab");
 
 	const again = capture();
 	assert.equal(await runConfigureImport(file, { yes: true, replace: false, out: again.out }), 0);
 	assert.match(again.text(), /already imported; nothing changed/);
 
 	updateSettings((settings) => {
-		const lab = settings.targets.find((target) => target.id === "lab");
+		const lab = settings.connections.find((target) => target.id === "lab");
 		if (lab) lab.url = "https://other.example.edu";
 	});
 	const parsed = parseSetupFile(LAB);
 	assert.ok(parsed.ok);
 	assert.deepEqual(planImport(readSettings(), parsed.file, false).collisions, ["lab"]);
 	assert.equal(await runConfigureImport(file, { yes: true, replace: false, out: capture().out }), 1);
-	assert.equal(readSettings().targets.find((target) => target.id === "lab")?.url, "https://other.example.edu");
+	assert.equal(readSettings().connections.find((target) => target.id === "lab")?.url, "https://other.example.edu");
 	assert.equal(await runConfigureImport(file, { yes: true, replace: true, out: capture().out }), 0);
-	assert.equal(readSettings().targets.find((target) => target.id === "lab")?.url, "https://llm.lab.example.edu");
+	assert.equal(readSettings().connections.find((target) => target.id === "lab")?.url, "https://llm.lab.example.edu");
 
 	// No terminal to answer and no --yes: the file is read and previewed, then refused with nothing written.
 	updateSettings((settings) => {
-		settings.targets = settings.targets.filter((target) => target.id !== "lab");
+		settings.connections = settings.connections.filter((target) => target.id !== "lab");
 	});
 	const unattended = capture();
 	assert.equal(await runConfigureImport(file, { yes: false, replace: false, out: unattended.out }), 2);
 	assert.match(unattended.text(), /prompts go to https:\/\/llm\.lab\.example\.edu/);
 	assert.equal(
-		readSettings().targets.some((target) => target.id === "lab"),
+		readSettings().connections.some((target) => target.id === "lab"),
 		false,
 	);
 	// A missing file says so (exit 1) rather than asking for --yes.

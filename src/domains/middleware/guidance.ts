@@ -86,7 +86,7 @@ const QUESTION =
 	/\b(?:how\s+(?:do|can|should)\s+i|is\s+there\s+a\s+way|can\s+(?:i|you)|where\s+(?:do|can|is)|what(?:'s|\s+is)\s+the)\b/iu;
 const ABOUT_PANCODE = /\b(?:pancode(?:-coder)?|this\s+(?:harness|tool|cli|agent))\b/iu;
 const SETTINGS_CHANGE =
-	/\b(?:switch|change|use|set|pick|select)\b.{0,40}\b(?:model|provider|target|thinking(?:\s+level)?|autonomy|settings?)\b/iu;
+	/\b(?:switch|change|use|set|pick|select)\b.{0,40}\b(?:model|provider|target|connection|thinking(?:\s+level)?|autonomy|settings?)\b/iu;
 const WRITE_TESTS = /\b(?:write|add|create)\b.{0,30}\b(?:unit\s+|regression\s+)?tests?\b/iu;
 const CORRECTION =
 	/^\s*(?:no\b[,.!]?|nope\b|undo\b|revert\s+that|go\s+back|that'?s\s+(?:wrong|not)|not\s+what\s+i|wait\b[,.!])/iu;
@@ -104,7 +104,7 @@ const USAGE_QUESTION =
 /** Harness topics a question can be about, recorded in the profile. */
 const TOPICS: ReadonlyArray<[string, RegExp]> = [
 	["settings", /\b(?:settings?|config(?:ure|uration)?|preferences?)\b/iu],
-	["model", /\b(?:models?|providers?|targets?|thinking)\b/iu],
+	["model", /\b(?:models?|providers?|targets?|connections?|thinking)\b/iu],
 	["keys", /\b(?:shortcuts?|keybindings?|hotkeys?|keys?)\b/iu],
 	["agents", /\b(?:agents?|dispatch|fleet|workers?|delegat\w*)\b/iu],
 	["sessions", /\b(?:sessions?|resume|history|fork|tree)\b/iu],
@@ -264,7 +264,7 @@ export const GUIDANCE_LESSONS: ReadonlyArray<GuidanceLesson> = [
 		id: "doctor",
 		feature: "/doctor",
 		score: (turn) => (harnessQuestionTopics(turn.prompt).includes("setup") ? SPECIFIC_SCORE : 0),
-		text: () => "/doctor checks this install, targets and credentials; /doctor --deep adds live tool probes.",
+		text: () => "/doctor checks this install, connections and credentials; /doctor --deep adds live tool probes.",
 	},
 	{
 		id: "hub",

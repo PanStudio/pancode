@@ -21,7 +21,7 @@ const HOT_RELOAD_FIELDS = new Set<string>([
 	// reads it per call, so a raise lifts a live wait (#424).
 	"safety.limits.sessionCostUsd",
 	// The main session reads it on every foreground bash call, so the next one observes a change (FX-32).
-	"safety.limits.bashIdleSeconds",
+	"safety.limits.bashIdleTimeoutMs",
 	"chat.modelPicker",
 	// The keepalive reads it before every refresh, so a change applies to the next one (#423).
 	"chat.cacheKeepalive",
@@ -54,7 +54,7 @@ const HOT_RELOAD_FIELDS = new Set<string>([
 	// into each new WorkerSpec, so a running worker keeps the list it started with.
 	"safety.sandboxPassEnv",
 	// Read per contained call in the main session; workers never read it.
-	"safety.liveCheckTargets",
+	"safety.liveCheckConnections",
 	// Read the same way: per contained call in the main session, into each
 	// new WorkerSpec for workers.
 	"safety.sandboxUnixSockets",
@@ -77,7 +77,7 @@ const HOT_RELOAD_FIELDS = new Set<string>([
 	"safety.validationWrappers",
 	// Each permission card and ask_user round reads it when it starts waiting,
 	// so the next one observes a change; a running countdown keeps its window.
-	"safety.unattendedAfterSeconds",
+	"safety.unattendedAfterMs",
 	// Read at each interactive yolo activation, so the next toggle observes it (#407).
 	"safety.yoloAccepted",
 	// The main registry and dispatch read it at every admission and permit, so
@@ -108,7 +108,7 @@ const NEXT_TURN_FIELDS = new Set<string>([
 	"turnControl",
 	// An engine resolves per call; the use that registers consult at startup is restart-required.
 	"systemOne",
-	"targets",
+	"connections",
 	"funding",
 	"chat",
 	"fleet.default",
@@ -127,7 +127,7 @@ const NEXT_TURN_FIELDS = new Set<string>([
 	"fleet.keepPeerInstructionFiles",
 	"context",
 	"safety.limits",
-	"safety.limits.workerResponseSeconds",
+	"safety.limits.workerResponseTimeoutMs",
 	// Dispatch reads both into each new WorkerSpec; a running worker keeps the
 	// policy it was spawned with.
 	"safety.sandbox",
@@ -142,7 +142,6 @@ const NEXT_TURN_FIELDS = new Set<string>([
 	// The graphical app applies a change made in its settings to the next turn it admits; a change
 	// written elsewhere applies when the GUI server next starts.
 	"interface.guiTurnCapacity",
-	"integrations.projectResources",
 	"integrations.externalAgents",
 	"integrations.hub",
 	// Session journal writers read the capture before each batch and open a new
@@ -158,7 +157,7 @@ const RESTART_REQUIRED_FIELDS = new Set<string>([
 	"systemOne.use",
 	"interface.mode",
 	"interface.fullscreenScrollbar",
-	"integrations.runtimePlugins",
+	"integrations.providerPackages",
 	// Store paths read the roots once per process, so admission, grants and the write agree for a whole session.
 	"store",
 ]);

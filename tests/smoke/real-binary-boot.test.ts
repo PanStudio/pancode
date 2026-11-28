@@ -13,14 +13,14 @@ import { fileURLToPath } from "node:url";
 const ROOT = fileURLToPath(new URL("../..", import.meta.url));
 const CLI = join(ROOT, "dist", "cli", "index.js");
 const RELEASE_SETTINGS = `version: 2
-targets:
+connections:
   - id: release-local
     runtime: lmstudio
     url: http://127.0.0.1:1234
     defaultModel: release-model
     lifecycle: user-managed
 chat:
-  target: release-local
+  connection: release-local
   model: release-model
   thinkingLevel: high
 safety:
@@ -242,14 +242,14 @@ describe("smoke/real built binary boot", { concurrency: false }, () => {
 			cli = launch([], { ...home.env, PANCODE_INTERACTIVE: "1" });
 			await answer(cli, /Selection \[1\]:/u, "1");
 			await answer(cli, /Selection \(number or runtime id\):/u, "lmstudio");
-			await answer(cli, /Target id \[[^\]]+\]:/u, "fresh-local");
-			await answer(cli, /Target URL \[[^\]]+\]:/u, endpoint);
+			await answer(cli, /Connection id \[[^\]]+\]:/u, "fresh-local");
+			await answer(cli, /Connection URL \[[^\]]+\]:/u, endpoint);
 			await answer(cli, /Credential source .*:/u, "skip");
-			await answer(cli, /Default target model \(number or id\) \[[^\]]+\]:/u);
+			await answer(cli, /Default connection model \(number or id\) \[[^\]]+\]:/u);
 			await answer(cli, /Mark as gateway\? \[y\/N\]:/u);
 			await answer(cli, /use as orchestrator .*\[Y\/n\]:/u);
 			await answer(cli, /use as fleet default\? \[Y\/n\]:/u);
-			await answer(cli, /use as background memory target\? \[y\/N\]:/u);
+			await answer(cli, /use as background memory connection\? \[y\/N\]:/u);
 			await answer(cli, /Orchestrator model \(number or id\) \[[^\]]+\]:/u);
 			await answer(cli, /Fleet model \(number or id\) \[[^\]]+\]:/u);
 			for (;;) {

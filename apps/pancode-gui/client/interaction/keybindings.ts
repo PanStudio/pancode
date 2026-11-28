@@ -95,7 +95,7 @@ export const KEYBINDINGS = {
 		key: "r",
 		modifiers: ["alt"],
 		scope: "global",
-		action: "Reject pending approval",
+		action: "Deny pending approval",
 		where: "Approval waiting · no dialog open",
 	},
 	rejectAndStop: {
@@ -103,7 +103,7 @@ export const KEYBINDINGS = {
 		key: "x",
 		modifiers: ["alt"],
 		scope: "global",
-		action: "Reject pending approval and stop the turn",
+		action: "Deny pending approval and cancel the turn",
 		where: "Approval waiting · when the agent offers it",
 	},
 	modelPicker: {
@@ -143,7 +143,7 @@ export const KEYBINDINGS = {
 		key: "u",
 		modifiers: ["alt"],
 		scope: "global",
-		action: "Show or hide the task overview",
+		action: "Show or hide the session overview",
 		where: "Conversation · no dialog open",
 	},
 	workers: {
@@ -151,7 +151,7 @@ export const KEYBINDINGS = {
 		key: "w",
 		modifiers: ["alt"],
 		scope: "global",
-		action: "Show or hide the live agents",
+		action: "Show or hide fleet workers",
 		where: "Conversation · no dialog open",
 	},
 	escape: {
@@ -200,7 +200,7 @@ export const KEYBINDINGS = {
 		modifiers: [],
 		scope: "list",
 		action: "Next list row",
-		where: "Sidebar task list · j also moves",
+		where: "Sidebar session list · j also moves",
 	},
 	listPrevious: {
 		id: "listPrevious",
@@ -208,7 +208,7 @@ export const KEYBINDINGS = {
 		modifiers: [],
 		scope: "list",
 		action: "Previous list row",
-		where: "Sidebar task list · k also moves",
+		where: "Sidebar session list · k also moves",
 	},
 	palette: {
 		id: "palette",
@@ -239,7 +239,7 @@ export const KEYBINDINGS = {
 		key: "o",
 		modifiers: ["primary", "shift"],
 		scope: "global",
-		action: "New task",
+		action: "New session",
 		where: "Current project · no dialog open",
 	},
 	newWindow: {
@@ -247,7 +247,7 @@ export const KEYBINDINGS = {
 		key: "n",
 		modifiers: ["primary", "shift"],
 		scope: "global",
-		action: "Open task in another window",
+		action: "Open session in another window",
 		where: "Installed app only · no dialog open; reserved by browser tabs",
 	},
 	openWorkspace: {
@@ -255,7 +255,7 @@ export const KEYBINDINGS = {
 		key: "o",
 		modifiers: ["primary"],
 		scope: "global",
-		action: "Open workspace folder",
+		action: "Open project folder",
 		where: "No dialog open",
 	},
 	sessionPanel: {
@@ -263,7 +263,7 @@ export const KEYBINDINGS = {
 		key: "|",
 		modifiers: ["primary", "shift"],
 		scope: "global",
-		action: "Toggle task sidebar",
+		action: "Toggle session sidebar",
 		where: "Conversation · no dialog open",
 	},
 	focusComposer: {
@@ -279,7 +279,7 @@ export const KEYBINDINGS = {
 		key: "a",
 		modifiers: ["primary", "alt"],
 		scope: "global",
-		action: "Show live agents",
+		action: "Show fleet workers",
 		where: "Conversation · no dialog open",
 	},
 	cancelTurn: {
@@ -287,7 +287,7 @@ export const KEYBINDINGS = {
 		key: ".",
 		modifiers: ["primary"],
 		scope: "global",
-		action: "Stop the running turn",
+		action: "Cancel the running turn",
 		where: "While a turn is running",
 	},
 } as const satisfies Readonly<Record<string, Keybinding>>;
