@@ -22,6 +22,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { DEFAULT_SETTINGS } from "../../src/core/defaults.js";
 import { isSameOrDescendant } from "../../src/core/path-containment.js";
 import { sandboxAvailability } from "../../src/core/sandbox/availability.js";
+import { isGrantedEgressOrigin } from "../../src/core/sandbox/egress/policy.js";
 import { AUTONOMY_HELP } from "../../src/core/settings-awareness.js";
 import { ToolNames } from "../../src/core/tool-names.js";
 import { pancodeConfigDir } from "../../src/core/xdg.js";
@@ -1487,4 +1488,108 @@ test("a contained-yolo escape is refused unjudged with one retry account: the sc
 	);
 	match(unscoped.reason, /only when the operator approves it on an approval card/u);
 	deepStrictEqual([yolo.ran, yolo.reviewed], [[], []]);
+});
+
+test("an attended contained shell asks once per origin outside its egress grants and remembers the answer for the session (P3)", async () => {
+	const egress = (mode: "off" | "proxied" | "open") => () => ({
+		main: { mode, allow: ["granted.test:443"], presets: [] },
+		upstreamProxy: null,
+	});
+	let attends = true;
+	const session = defaultSession(
+		workspace("pancode-contained-egress-"),
+		{ sandbox: true, snapshots: false },
+		{ operatorAttends: () => attends, sandboxEgress: egress("proxied") },
+	);
+	const { registry } = session;
+	// The body stands in for the proxy: an origin outside the grants is put to the launch's ask.
+	registry.register({
+		...bashTool,
+		run: async (args, options) => {
+			const plan = options?.shellSandbox?.egress;
+			if (plan === undefined) return { kind: "ok", output: `network:${options?.shellSandbox?.network}` };
+			const [host = "", port = "443"] = String(args.command).split(":");
+			const origin = { host, port: Number(port) };
+			if (isGrantedEgressOrigin(plan.grants, origin)) return { kind: "ok", output: "granted" };
+			return { kind: "ok", output: (await plan.ask?.(origin)) === true ? "approved" : "refused" };
+		},
+	});
+	const cards: Array<{ requestId: string; actionClass: ActionClass; ruleId: string | undefined }> = [];
+	registry.onPermissionRequired((_call, decision, meta) =>
+		cards.push({
+			requestId: meta.requestId,
+			actionClass: decision.classification.actionClass,
+			ruleId: decision.kind === "ask" ? decision.confirmationRuleId : undefined,
+		}),
+	);
+	const reach = async (origin: string, answer: "approve" | "deny", sessionId = "A") => {
+		const before = cards.length;
+		const pending = registry.invoke(bash(origin), { sessionId });
+		await new Promise((resolve) => setTimeout(resolve, 30));
+		const card = cards.length > before ? cards.at(-1) : undefined;
+		if (card !== undefined) {
+			if (answer === "approve") await registry.resumeParkedCalls({ ...card, requestedBy: "contract-operator" });
+			else registry.cancelParkedCall(card.requestId, "contract denial");
+		}
+		const result = await pending;
+		return {
+			asked: card?.ruleId ?? false,
+			output: result.kind === "ok" && result.result.kind === "ok" ? result.result.output : result.kind,
+		};
+	};
+	deepStrictEqual(
+		[
+			await reach("granted.test:443", "deny"),
+			await reach("docs.example.org:443", "approve"),
+			await reach("docs.example.org:443", "deny"),
+			await reach("db.example.org:5432", "deny"),
+			await reach("db.example.org:5432", "approve"),
+			await reach("docs.example.org:443", "deny", "B"),
+		],
+		[
+			{ asked: false, output: "granted" },
+			{ asked: "shell-egress", output: "approved" },
+			{ asked: false, output: "granted" },
+			{ asked: "shell-egress", output: "refused" },
+			{ asked: false, output: "refused" },
+			{ asked: "shell-egress", output: "refused" },
+		],
+	);
+	// A command that gives up before the answer leaves the card up, and the answer holds for the next command.
+	const before = cards.length;
+	const gaveUp = await Promise.race([
+		registry.invoke(bash("slow.example.org:443"), { sessionId: "A" }).then(() => "answered"),
+		new Promise((resolve) => setTimeout(() => resolve("gave up"), 30)),
+	]);
+	const card = cards.at(-1);
+	deepStrictEqual([gaveUp, cards.length - before, registry.parkedCount()], ["gave up", 1, 1]);
+	if (card !== undefined) await registry.resumeParkedCalls({ ...card, requestedBy: "contract-operator" });
+	deepStrictEqual(await reach("slow.example.org:443", "deny"), { asked: false, output: "granted" });
+	// An operator who is away is never asked; the origin is refused and named in the result.
+	attends = false;
+	deepStrictEqual(await reach("away.example.org:443", "approve"), { asked: false, output: "refused" });
+
+	for (const [mode, output] of [
+		["off", "network:false"],
+		["open", "network:true"],
+	] as const) {
+		const other = defaultSession(
+			workspace(`pancode-contained-egress-${mode}-`),
+			{ sandbox: true, snapshots: false },
+			{ sandboxEgress: egress(mode) },
+		);
+		other.registry.register({
+			...bashTool,
+			run: async (_args, options) => ({
+				kind: "ok",
+				output: options?.shellSandbox?.egress === undefined ? `network:${options?.shellSandbox?.network}` : "proxied",
+			}),
+		});
+		const result = await other.registry.invoke(bash("make"));
+		deepStrictEqual(
+			result.kind === "ok" && result.result.kind === "ok" ? result.result.output : result.kind,
+			output,
+			mode,
+		);
+	}
 });

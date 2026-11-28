@@ -6,6 +6,7 @@ import {
 	SESSION_CODE_CONSENT_RULE_ID,
 	SESSION_CODE_CONSENT_TEXT,
 	SESSION_CODE_CONSENT_TIER_LABEL,
+	SHELL_EGRESS_RULE_ID,
 } from "../../core/views/approval-words.js";
 import type { AutonomyExposure } from "../../lib/autonomy/autonomy.js";
 import { ACTION_CLASSES, type ActionClass } from "./action-classifier.js";
@@ -171,6 +172,11 @@ function isSessionCodeConsent(facts: TrustedDecisionFacts): boolean {
 	);
 }
 
+/** The shell-egress ask: approving lets the session's sandboxed commands reach one origin, so its copy cannot say "once". */
+function isShellEgress(facts: TrustedDecisionFacts): boolean {
+	return facts.origin.kind === "main" && facts.axis.kind === "safety-net" && facts.axis.ruleId === SHELL_EGRESS_RULE_ID;
+}
+
 function tierIdentity(
 	tier: DecisionTier,
 	facts: TrustedDecisionFacts,
@@ -268,6 +274,9 @@ function authorizationCopy(facts: TrustedDecisionFacts): string {
 	if (isSessionCodeConsent(facts)) {
 		return `Approval runs this call to ${tool}, which ${effect}, and lets test runners run without asking for the rest of this session. It does not change the autonomy level.`;
 	}
+	if (isShellEgress(facts)) {
+		return `Approval lets this session's sandboxed commands connect to this origin, through PanCode's egress proxy, until the session ends. It does not change the autonomy level.`;
+	}
 	if (tool === "ask_user" && facts.exposure === "outward") {
 		return "Approval opens this one outward-decision interview. It does not publish or send anything by itself.";
 	}
@@ -335,19 +344,22 @@ function requiredActions(facts: TrustedDecisionFacts, tier: DecisionTier): Reado
 		];
 	}
 	const sessionConsent = isSessionCodeConsent(facts);
+	const shellEgress = isShellEgress(facts);
 	const approveLabel = sessionConsent
 		? "Approve test runners for this session"
-		: tier === "system"
-			? "Approve system change once"
-			: tier === "safety-net"
-				? "Approve guarded action once"
-				: tier === "worker"
-					? "Approve this worker call once"
-					: tier === "outward"
-						? "Approve this outward call once"
-						: facts.affectedScope === "workspace"
-							? "Approve workspace action once"
-							: "Approve action once";
+		: shellEgress
+			? "Allow this origin for this session"
+			: tier === "system"
+				? "Approve system change once"
+				: tier === "safety-net"
+					? "Approve guarded action once"
+					: tier === "worker"
+						? "Approve this worker call once"
+						: tier === "outward"
+							? "Approve this outward call once"
+							: facts.affectedScope === "workspace"
+								? "Approve workspace action once"
+								: "Approve action once";
 	const stopConsequence =
 		facts.origin.kind === "worker"
 			? facts.origin.endsWithTurn === true
@@ -363,7 +375,9 @@ function requiredActions(facts: TrustedDecisionFacts, tier: DecisionTier): Reado
 					? "Runs only this request. An identical call in this worker run asks again."
 					: sessionConsent
 						? "Runs the presented request and lets test runners run without asking until this session ends."
-						: "Runs only the presented request and does not change the autonomy level.",
+						: shellEgress
+							? "Lets this session's sandboxed commands connect to this origin until the session ends."
+							: "Runs only the presented request and does not change the autonomy level.",
 		},
 		{
 			id: "deny",
@@ -373,7 +387,9 @@ function requiredActions(facts: TrustedDecisionFacts, tier: DecisionTier): Reado
 					? "Denies this request and refuses identical calls under the same permission conditions in this worker run without asking."
 					: sessionConsent
 						? "Denies only the presented request; the next test runner asks again."
-						: "Denies only this call. PanCode continues the turn without it, and the next waiting request, if any, comes up.",
+						: shellEgress
+							? "Refuses this origin to this session's sandboxed commands without asking again."
+							: "Denies only this call. PanCode continues the turn without it, and the next waiting request, if any, comes up.",
 		},
 		{ id: "stop", label: "Deny and stop", consequence: stopConsequence },
 	];
