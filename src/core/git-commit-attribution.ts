@@ -64,7 +64,6 @@ type RepositoryProbe =
 
 const probeCache = new Map<string, { at: number; probe: RepositoryProbe }>();
 const committerCache = new Map<string, { at: number; human: string | null }>();
-let installedHooksDirectory: string | null = null;
 
 const PER_SPAWN_ENV_NAMES = [
 	ASSISTED_ENV,
@@ -855,10 +854,10 @@ function managedHooksDirectoryIsIntact(directory: string): boolean {
 /** The installed hooks directory, installed on first use. */
 function managedHooksDirectory(): string | null {
 	const directory = join(pancodeStateDir(), "git-hooks", `v${MANAGED_HOOK_VERSION}`);
-	if (installedHooksDirectory === directory && managedHooksDirectoryIsIntact(directory)) return directory;
+	// Intact hooks are used as found: an isolated worker sees them read-only, where even a chmod fails.
+	if (managedHooksDirectoryIsIntact(directory)) return directory;
 	mkdirSync(directory, { recursive: true, mode: 0o700 });
 	for (const name of MANAGED_HOOK_NAMES) installManagedScript(join(directory, name), MANAGED_HOOK_SCRIPT);
-	installedHooksDirectory = directory;
 	return directory;
 }
 
