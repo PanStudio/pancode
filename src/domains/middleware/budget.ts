@@ -24,7 +24,7 @@ import { MIDDLEWARE_HOOKS, type MiddlewareHook } from "../../core/telemetry/sess
  * session reader (~23ms observed), well under the 75ms turn_end budget, so it is
  * not flagged, while the hot-path hooks keep a tight 25ms.
  */
-export const DEFAULT_MIDDLEWARE_HOOK_BUDGETS_MS: Readonly<Record<MiddlewareHook, number>> = {
+const DEFAULT_MIDDLEWARE_HOOK_BUDGETS_MS: Readonly<Record<MiddlewareHook, number>> = {
 	before_tool: 25,
 	after_tool: 25,
 	turn_start: 50,
@@ -33,11 +33,11 @@ export const DEFAULT_MIDDLEWARE_HOOK_BUDGETS_MS: Readonly<Record<MiddlewareHook,
 };
 
 /** First N invocations per (registrationId, hook) never warn: one-time warmup. */
-export const DEFAULT_HOOK_BUDGET_WARMUP_CALLS = 1;
+const DEFAULT_HOOK_BUDGET_WARMUP_CALLS = 1;
 /** Rolling window size M of post-warmup calls examined for steady-state slowness. */
-export const DEFAULT_HOOK_BUDGET_WINDOW = 5;
+const DEFAULT_HOOK_BUDGET_WINDOW = 5;
 /** Warn only when ≥N of the last M post-warmup calls exceeded budget. */
-export const DEFAULT_HOOK_BUDGET_THRESHOLD = 3;
+const DEFAULT_HOOK_BUDGET_THRESHOLD = 3;
 /**
  * A lone overrun of at least this multiple of the budget is a stall (a cold
  * spawn, a blocking read), not jitter, so it is recorded without waiting for

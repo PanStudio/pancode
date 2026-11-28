@@ -9,7 +9,7 @@ import { buildMemoryPromptSection } from "./prompt-section.js";
 import { loadMemoryRecordsSync } from "./store.js";
 import type { MemoryScope } from "./types.js";
 
-export const DISPATCH_MEMORY_SCOPES: ReadonlyArray<MemoryScope> = ["global", "repo", "runtime", "agent"];
+const DISPATCH_MEMORY_SCOPES: ReadonlyArray<MemoryScope> = ["global", "repo", "runtime", "agent"];
 
 /** The request fields that decide which routes a dispatch may take. */
 export interface DispatchMemoryRoute {

@@ -274,7 +274,7 @@ function withoutNonWorkspaceTokens(text: string): string {
 }
 
 /** The words an absolute token naming the run's own working directory becomes. */
-export const WORKING_DIRECTORY_PHRASE = "the working directory";
+const WORKING_DIRECTORY_PHRASE = "the working directory";
 
 /**
  * Prose names the workspace by its absolute path ("/home/me/repo", "/home/me/repo/src/a.ts.")

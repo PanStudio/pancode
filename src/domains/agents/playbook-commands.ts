@@ -31,7 +31,7 @@ import { pancodeProjectRoot } from "../../core/project-root.js";
 /** Upper bound on any single deterministic step, generous enough for a full suite. */
 const PLAYBOOK_COMMAND_MAX_TIMEOUT_MS = 3_600_000;
 const PLAYBOOK_COMMAND_MIN_TIMEOUT_MS = 1_000;
-export const PLAYBOOK_COMMAND_DEFAULT_TIMEOUT_MS = 600_000;
+const PLAYBOOK_COMMAND_DEFAULT_TIMEOUT_MS = 600_000;
 
 /**
  * Variables every registered command receives. Code steps run with a closed

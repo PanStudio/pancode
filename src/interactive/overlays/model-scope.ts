@@ -19,7 +19,7 @@ import { FocusBox, fitHintEntries, showPancodeOverlayFrame } from "../overlay-fr
 import { GLYPH, pancodeTheme } from "../theme/index.js";
 import { type ChoiceItem, ChoiceList } from "./settings-submenus.js";
 
-export const MODEL_SCOPE_OVERLAY_WIDTH = 72;
+const MODEL_SCOPE_OVERLAY_WIDTH = 72;
 
 export type ModelScopeChoice = "session" | "project" | "global";
 

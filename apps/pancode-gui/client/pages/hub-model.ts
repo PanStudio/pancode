@@ -119,7 +119,7 @@ export function skillCard(skill: Resource): SkillCard {
 }
 
 /** Every string a record carries, at any depth, case-folded for the free-text filter. */
-export function searchText(value: unknown, depth = 0): string {
+function searchText(value: unknown, depth = 0): string {
 	if (typeof value === "string") return value.toLocaleLowerCase("en-US");
 	if (!value || typeof value !== "object" || depth > 4) return "";
 	return Object.values(value)
@@ -192,7 +192,7 @@ export const SKILL_ACCESS_LABELS: Record<SkillAccess, string> = {
 	unavailable: "Unavailable",
 	shadowed: "Overridden copies",
 };
-export function skillAccess(skill: Resource): Exclude<SkillAccess, "all"> {
+function skillAccess(skill: Resource): Exclude<SkillAccess, "all"> {
 	if (skill.availability === "shadowed") return "shadowed";
 	if (skillCard(skill).reachable) return "available";
 	if (skill.availability === "available" && skill.trusted && skill.modelInvocable === false) return "operator";

@@ -29,7 +29,7 @@ import { codeInk } from "../renderers/code-ink.js";
 import { GLYPH, markdownTheme, pancodeTheme, rule } from "../theme/index.js";
 import { scrollJump } from "./confirm-once.js";
 
-export const DRAFT_OVERLAY_TITLE = "Drafts";
+const DRAFT_OVERLAY_TITLE = "Drafts";
 
 export type DraftCandidatePhase =
 	| { kind: "streaming"; text: string }

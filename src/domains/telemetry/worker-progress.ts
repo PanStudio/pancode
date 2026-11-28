@@ -51,7 +51,7 @@ import { HOST_VERIFICATION_EVENT, type VerificationSlotState } from "../dispatch
  * body is replaced by the receipt-sealed answer and anchors at the head, which
  * is the same rule the thinking block already follows.
  */
-export const WORKER_LIVE_TAIL_LINES = 40;
+const WORKER_LIVE_TAIL_LINES = 40;
 
 /**
  * Bytes of live tail retained. The line bound alone leaves a worker that emits

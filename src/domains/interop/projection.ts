@@ -14,8 +14,8 @@ import { sha256Hex } from "../../core/hash.js";
 import { parseAgentRecipeSchema } from "../agents/index.js";
 import { inventoryText } from "./inventory.js";
 
-export const DATA_EXTENSIONS: ReadonlySet<string> = new Set([".md", ".txt", ".rst", ".csv", ".bib"]);
-export const FORBIDDEN_PARTS: ReadonlySet<string> = new Set([
+const DATA_EXTENSIONS: ReadonlySet<string> = new Set([".md", ".txt", ".rst", ".csv", ".bib"]);
+const FORBIDDEN_PARTS: ReadonlySet<string> = new Set([
 	"hooks",
 	"output-styles",
 	"scripts",
@@ -26,7 +26,7 @@ export const FORBIDDEN_PARTS: ReadonlySet<string> = new Set([
 	".codex-plugin",
 ]);
 /** Skill frontmatter keys that describe host execution policy, never recipe text. */
-export const HOST_SKILL_KEYS: ReadonlyArray<string> = [
+const HOST_SKILL_KEYS: ReadonlyArray<string> = [
 	"audit",
 	"installed-hash",
 	"source-url",

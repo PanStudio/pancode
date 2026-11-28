@@ -25,7 +25,7 @@ import type { McpResourceRead } from "./resources.js";
 export const MCP_SKILLS_EXTENSION = "io.modelcontextprotocol/skills";
 
 /** The per-skill limits the extension fixes; a host must load a skill up to both. */
-export const MCP_SKILL_LIMITS = Object.freeze({
+const MCP_SKILL_LIMITS = Object.freeze({
 	resources: 512,
 	totalBytes: 16 * 1024 * 1024,
 });

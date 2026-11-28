@@ -52,9 +52,9 @@ import {
  * caller proceeds.
  */
 
-export const SNAPSHOT_REF_PREFIX = "refs/pancode/snapshots";
+const SNAPSHOT_REF_PREFIX = "refs/pancode/snapshots";
 /** Untracked files above this are left out of a snapshot and listed as skipped. */
-export const SNAPSHOT_MAX_UNTRACKED_BYTES = 16 * 1024 * 1024;
+const SNAPSHOT_MAX_UNTRACKED_BYTES = 16 * 1024 * 1024;
 const SNAPSHOT_TIMEOUT_MS = 20_000;
 const SNAPSHOT_KEEP = 50;
 const SNAPSHOT_MAX_AGE_MS = 14 * 24 * 60 * 60 * 1000;

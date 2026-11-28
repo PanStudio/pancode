@@ -30,7 +30,7 @@ import type { CompactionSummaryEntry, SessionEntry } from "../entries.js";
 import { activePath, extendsSnapshot, findLastEntry } from "../tree/active-path.js";
 import { recordPriorFileOperations } from "./exact-facts.js";
 
-export const STALE_EDIT_GUARD_REGISTRATION_ID = "guard.stale-file-edit";
+const STALE_EDIT_GUARD_REGISTRATION_ID = "guard.stale-file-edit";
 
 export interface StaleEditGuardOptions {
 	/** The current session's active-path entries, in ledger order. */

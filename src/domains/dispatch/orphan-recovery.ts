@@ -8,6 +8,7 @@
  */
 
 import { hostname } from "node:os";
+import { processAlive } from "../../core/process-identity.js";
 import type { TelemetryRecord } from "../../core/telemetry/envelope.js";
 import { spendSumsOf, unobservedRunUsageFacts } from "../../core/telemetry/pricing.js";
 import { pancodeStateDir } from "../../core/xdg.js";
@@ -40,16 +41,6 @@ export interface RunRecoveryOptions {
 	stateDir?: string;
 	/** Whether a run's journal exists without its sealed bundle; without it no terminal row is offered. */
 	journalUnsealed?: (runId: string) => boolean;
-}
-
-function isProcessAlive(pid: number | null): boolean {
-	if (pid === null || !Number.isFinite(pid) || pid <= 0) return false;
-	try {
-		process.kill(pid, 0);
-		return true;
-	} catch (err) {
-		return (err as NodeJS.ErrnoException).code === "EPERM";
-	}
 }
 
 const NON_TERMINAL_STATUSES: ReadonlySet<string> = new Set(["queued", "running", "stale", "dead"]);
@@ -142,7 +133,7 @@ export function recoverAbandonedRuns(ledger: Ledger, options: RunRecoveryOptions
 		// adjudicate the wrong process; rows created by another host are left
 		// for that host's own recovery pass.
 		if (row.identity !== undefined && row.identity.host !== localHost) continue;
-		if (isProcessAlive(row.pid)) continue;
+		if (row.pid !== null && processAlive(row.pid)) continue;
 		if (sealRowFromSettledRun(ledger, row.id, stateDir)) {
 			sealed += 1;
 			continue;

@@ -16,8 +16,8 @@ import { evaluatePathPolicy } from "../safety/index.js";
 import { FrameDecoderUnavailable, sampleMediaFrames } from "./frames.js";
 import type { SemanticInput, SemanticLocation, SemanticRecord } from "./types.js";
 
-export const SEMANTIC_EXTRACTION_VERSION = "semantic-v1";
-export const SEMANTIC_FRAME_EXTRACTION_VERSION = "semantic-frames-v1-1s-512px";
+const SEMANTIC_EXTRACTION_VERSION = "semantic-v1";
+const SEMANTIC_FRAME_EXTRACTION_VERSION = "semantic-frames-v1-1s-512px";
 export interface ExtractionLimits {
 	maxFiles: number;
 	maxFileBytes: number;
@@ -27,7 +27,7 @@ export interface ExtractionLimits {
 	maxPages: number;
 	maxMediaSeconds: number;
 }
-export const DEFAULT_EXTRACTION_LIMITS: ExtractionLimits = {
+const DEFAULT_EXTRACTION_LIMITS: ExtractionLimits = {
 	maxFiles: 1000,
 	maxFileBytes: 8 * 1024 * 1024,
 	maxTotalBytes: 32 * 1024 * 1024,

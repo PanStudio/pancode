@@ -15,7 +15,7 @@
  */
 
 /** Longest reminder body, in characters. The prompt asks for "one concise reminder". */
-export const TASK_MEMORY_REMINDER_MAX_CHARS = 500;
+const TASK_MEMORY_REMINDER_MAX_CHARS = 500;
 /** Non-empty lines a reminder may span before it stops being a reminder. */
 const REMINDER_MAX_LINES = 3;
 

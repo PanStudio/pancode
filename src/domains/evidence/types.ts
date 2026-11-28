@@ -14,7 +14,7 @@ export { EVIDENCE_TAGS };
  * Canonical failure-cause subset for run summaries and observability histograms. Quality tags such as
  * `no-validation` remain evidence tags, but they are not failure causes.
  */
-export const FAILURE_CAUSE_TAG_ORDER = [
+const FAILURE_CAUSE_TAG_ORDER = [
 	"timeout",
 	"auth-failure",
 	"missing-dependency",

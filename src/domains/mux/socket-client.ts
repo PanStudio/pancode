@@ -35,6 +35,7 @@
 
 import * as net from "node:net";
 import { performance } from "node:perf_hooks";
+import { asRecord } from "../../core/type-guards.js";
 import {
 	MuxError,
 	type MuxEvent,
@@ -443,10 +444,6 @@ function readJsonLines(
 			newline = buffer.indexOf("\n");
 		}
 	});
-}
-
-function asRecord(value: unknown): Record<string, unknown> | null {
-	return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : null;
 }
 
 function requireString(source: Record<string, unknown>, key: string, context: string): string {

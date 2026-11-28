@@ -10,7 +10,7 @@ import { sha256Hex } from "../../../core/hash.js";
  * audited catalog entry a skill claims to be, travels with the content
  * through installs, and participates in the pinned hash.
  */
-export const PROVENANCE_KEYS = new Set([
+const PROVENANCE_KEYS = new Set([
 	"source-url",
 	"sourceUrl",
 	"install-url",

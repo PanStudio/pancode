@@ -28,7 +28,7 @@ export interface Histogram {
 	omitted: string;
 }
 
-export const HISTOGRAM_KINDS = 8;
+const HISTOGRAM_KINDS = 8;
 
 const TONES: Record<TraceRunStatus, StatusTone> = {
 	queued: "warn",

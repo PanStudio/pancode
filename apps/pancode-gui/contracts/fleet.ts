@@ -82,7 +82,7 @@ const judge = Type.Object(
 	{ runId: text, agentId: text, targetId: text, wireModelId: text, status: text, outcome: nullable },
 	closed,
 );
-export const Council = Type.Object(
+const Council = Type.Object(
 	{
 		group: text,
 		startedAt: text,
@@ -111,7 +111,7 @@ const correlation = Type.Object(
 	},
 	closed,
 );
-export const FleetGate = Type.Object(
+const FleetGate = Type.Object(
 	{
 		id: text,
 		group: text,

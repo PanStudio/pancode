@@ -8,7 +8,7 @@ import { AppProblem } from "./problem.js";
 import type { WorkspaceService } from "./workspaces.js";
 
 /** The setting that bounds how many turns the app runs at once; the supervisor reads it. */
-export const TURN_CAPACITY_SETTING = "interface.guiTurnCapacity";
+const TURN_CAPACITY_SETTING = "interface.guiTurnCapacity";
 /** The effective turn limit in a controls projection, or undefined when the projection does not carry it. */
 export function turnCapacitySetting(controls: SettingsControls): number | undefined {
 	const control = controls.controls.find((entry) => entry.path === TURN_CAPACITY_SETTING);
@@ -72,7 +72,7 @@ export class SettingsService {
  * With no workspace open the graph is read at the installation's own directory, which is not a project, so the
  * project-scoped roots it finds there are dropped rather than counted as a project's (gui-verify 8).
  */
-export function withoutProjectLayers(graph: ConfigGraph): ConfigGraph {
+function withoutProjectLayers(graph: ConfigGraph): ConfigGraph {
 	const entries = graph.entries.filter((entry) => !entry.scope.startsWith("project"));
 	return { ...graph, categories: [...new Set(entries.map((entry) => entry.category))].sort(), entries };
 }

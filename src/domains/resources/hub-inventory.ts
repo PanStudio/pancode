@@ -149,7 +149,7 @@ export interface HubInventory {
 	truncated: { packages: boolean; copies: boolean; resources: boolean };
 }
 
-export const HUB_INVENTORY_LIMITS = {
+const HUB_INVENTORY_LIMITS = {
 	packages: 512,
 	copies: 256,
 	resources: 1024,

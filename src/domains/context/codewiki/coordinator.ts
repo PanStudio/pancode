@@ -1,11 +1,10 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import { existsSync } from "node:fs";
-import { createRequire } from "node:module";
 import { resolve } from "node:path";
-import { pathToFileURL } from "node:url";
 import { Worker } from "node:worker_threads";
 import { withStateFileLock } from "../../../core/state-file-lock.js";
+import { sourceWorkerUrl } from "../source-worker-url.js";
 import { codemapPath, codewikiNeedsBackfill, readCodewiki, writeCodewiki } from "./artifact.js";
 import type {
 	CodewikiArtifactRef,
@@ -25,20 +24,10 @@ const BUILD_TIMEOUT_MS = 120_000;
  */
 const CODEWIKI_FOREIGN_LEASE_MS = 60_000;
 const workspaceTails = new Map<string, Promise<void>>();
-const require = createRequire(import.meta.url);
 
 function buildWorkerUrl(): URL {
 	if (!import.meta.url.endsWith(".ts")) return new URL("./codewiki/build-worker.js", import.meta.url);
-	// Test/source execution changes cwd for hermetic fixtures. A tiny JavaScript
-	// bootstrap imports the absolute TypeScript loader before dynamically loading
-	// the source worker; relying on inherited `--import tsx` would resolve `tsx`
-	// from the fixture and Node 24 would otherwise strip the entry's types without
-	// remapping its internal `.js` specifiers back to `.ts`.
-	const loaderApi = pathToFileURL(require.resolve("tsx/esm/api")).href;
-	const source = new URL("./build-worker.ts", import.meta.url).href;
-	return new URL(
-		`data:text/javascript,${encodeURIComponent(`const { tsImport } = await import(${JSON.stringify(loaderApi)}); await tsImport(${JSON.stringify(source)}, import.meta.url);`)}`,
-	);
+	return sourceWorkerUrl(new URL("./build-worker.ts", import.meta.url));
 }
 
 function artifactRef(current: Codewiki): CodewikiArtifactRef {

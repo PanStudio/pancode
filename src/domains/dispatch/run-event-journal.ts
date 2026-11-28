@@ -29,7 +29,7 @@ import { appendRunFeed } from "./run-feed.js";
 import { runTelemetryJournal } from "./run-telemetry.js";
 
 /** Per-run size cap; crossing it drops display-only lines behind one marker. */
-export const RUN_EVENT_JOURNAL_CAP_BYTES = 2 * 1024 * 1024;
+const RUN_EVENT_JOURNAL_CAP_BYTES = 2 * 1024 * 1024;
 /**
  * Structured facts an `event` line may carry beside its display `detail`, so a
  * viewer can build a live worker card without the event itself. Every field is

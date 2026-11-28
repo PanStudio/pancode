@@ -27,10 +27,10 @@ import {
  * the artifacts the detailed model cites.
  */
 
-export const TRUST_SUMMARY_VERSION = 1 as const;
+const TRUST_SUMMARY_VERSION = 1 as const;
 
 /** Reference cap for the machine projection; the canonical model keeps up to 16 per axis. */
-export const TRUST_SUMMARY_MAX_REFS = 8;
+const TRUST_SUMMARY_MAX_REFS = 8;
 
 /**
  * How much the run's result can be leaned on, read off the axes in a fixed
@@ -63,7 +63,7 @@ type AxisStates = { [Axis in TrustStatusAxis]: (typeof TRUST_STATUS_STATES)[Axis
  * validation claim: the worker said it validated, but nothing was observed
  * to have run.
  */
-export const TRUST_STATE_WORDS: { [Axis in TrustStatusAxis]: Record<AxisStates[Axis], string> } = {
+const TRUST_STATE_WORDS: { [Axis in TrustStatusAxis]: Record<AxisStates[Axis], string> } = {
 	artifactIntegrity: {
 		verified: "sealed",
 		failed: "seal broken",

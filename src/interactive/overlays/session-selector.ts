@@ -30,7 +30,7 @@ import {
 import { emptyState, type Fact, factRows, GLYPH, pancodeTheme, positionRow, selectionRow } from "../theme/index.js";
 import { filterSessions } from "./session-selector-search.js";
 
-export const SESSION_OVERLAY_WIDTH = 110;
+const SESSION_OVERLAY_WIDTH = 110;
 /** Sessions a page shows while each takes two rows (standard, detailed) or one (compact). */
 const VISIBLE_ROWS = 6;
 const COMPACT_VISIBLE_ROWS = 12;
@@ -137,7 +137,7 @@ class SessionSelectList extends SelectList {
  * users do not have to read raw timestamps. The absent case is the picker's
  * own: a session row can carry no activity instant at all.
  */
-export function formatRelativeTime(iso: string | null | undefined, now: number = Date.now()): string {
+function formatRelativeTime(iso: string | null | undefined, now: number = Date.now()): string {
 	return iso ? relative(iso, now) : GLYPH.none;
 }
 

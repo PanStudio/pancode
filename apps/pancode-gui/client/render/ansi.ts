@@ -27,7 +27,7 @@ const COLORS: readonly AnsiColor[] = ["black", "red", "green", "yellow", "blue",
 // biome-ignore lint/suspicious/noControlCharactersInRegex: escape sequences are what this matches.
 const SEQUENCE = /\x1b\[([0-9;:?<=>]*)[ -/]*([@-~])|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)?|\x1b[@-Z\\^_`a-z=>]?/gu;
 
-export function hasTerminalSequences(text: string): boolean {
+function hasTerminalSequences(text: string): boolean {
 	return text.includes("\x1b") || text.includes("\r");
 }
 

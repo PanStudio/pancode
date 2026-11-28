@@ -22,7 +22,7 @@ import type { Codewiki, CodewikiFile } from "../codewiki/schema.js";
 import { isGeneratedWikiFile } from "./layout.js";
 import type { WikiSourceContent } from "./source-content.js";
 
-export const WIKI_DEPTHS = ["auto", "simple", "medium", "detailed"] as const;
+const WIKI_DEPTHS = ["auto", "simple", "medium", "detailed"] as const;
 export type WikiDepth = (typeof WIKI_DEPTHS)[number];
 export type ResolvedWikiDepth = Exclude<WikiDepth, "auto">;
 
@@ -103,7 +103,7 @@ export interface WikiGenerationPlan {
  * repository's shape produces at that granularity, and is never something a
  * writer is told to hit.
  */
-export const WIKI_DEPTH_STRATEGY: Record<ResolvedWikiDepth, DepthStrategy> = {
+const WIKI_DEPTH_STRATEGY: Record<ResolvedWikiDepth, DepthStrategy> = {
 	simple: { areaDepth: 1, areaShare: 0.08, minAreaLines: 400 },
 	medium: { areaDepth: 2, areaShare: 0.03, minAreaLines: 250 },
 	detailed: { areaDepth: 3, areaShare: 0.002, minAreaLines: 150 },

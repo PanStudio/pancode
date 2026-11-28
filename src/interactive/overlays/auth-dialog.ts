@@ -15,7 +15,7 @@ import { buildResponsiveHint, FocusBox, fitRow, showPancodeOverlayFrame } from "
 import { type Fact, factRows, GLYPH, pancodeTheme, selectionRow, statusChip, titleRow } from "../theme/index.js";
 import { skinEpoch } from "../theme/tokens.js";
 
-export const AUTH_DIALOG_WIDTH = 88;
+const AUTH_DIALOG_WIDTH = 88;
 
 export interface AuthDialogHandle {
 	handle: OverlayHandle;

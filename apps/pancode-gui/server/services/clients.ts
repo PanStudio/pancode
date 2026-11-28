@@ -9,14 +9,14 @@ import type { ClientCredential, ClientIdentity } from "../../contracts/auth.js";
  * asks to resume its old id, which it gets back because no live credential holds it.
  */
 export const CREDENTIAL_TTL_MS = 15 * 60_000;
-export const ROTATE_AFTER_MS = CREDENTIAL_TTL_MS / 2;
+const ROTATE_AFTER_MS = CREDENTIAL_TTL_MS / 2;
 /** A request already in flight with the old credential when the window rotated still lands. */
 export const ROTATION_GRACE_MS = 60_000;
 export const TICKET_TTL_MS = 30_000;
 /** A launch ticket rides in the URL handed to a browser opener, so it opens one client, once, briefly. */
-export const LAUNCH_TICKET_TTL_MS = 60_000;
+const LAUNCH_TICKET_TTL_MS = 60_000;
 const MAX_LAUNCH_TICKETS = 64;
-export const LAUNCH_CHALLENGE_TTL_MS = 60_000;
+const LAUNCH_CHALLENGE_TTL_MS = 60_000;
 /** A challenge is 32 bytes, 43 base64url characters: a nonce, its expiry in whole seconds and their truncated MAC. */
 const CHALLENGE_NONCE_BYTES = 12;
 const CHALLENGE_MAC_BYTES = 16;

@@ -3,7 +3,7 @@
 import type { ArtifactList } from "../../contracts/artifacts.js";
 import type { BranchRow } from "./branch-model.js";
 
-export function paneMatches(query: string, values: readonly (string | null | undefined)[]): boolean {
+function paneMatches(query: string, values: readonly (string | null | undefined)[]): boolean {
 	const text = values.filter(Boolean).join(" ").toLocaleLowerCase();
 	return query
 		.trim()

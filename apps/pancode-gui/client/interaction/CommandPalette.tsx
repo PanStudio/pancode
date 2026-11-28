@@ -32,7 +32,7 @@ export interface Command {
  * launcher. Ties break on the order the caller composed, then alphabetically, so the ranking is
  * stable between keystrokes.
  */
-export function rankCommands(commands: readonly Command[], query: string): Command[] {
+function rankCommands(commands: readonly Command[], query: string): Command[] {
 	const needle = query.trim();
 	return commands
 		.filter((command) => command.available)

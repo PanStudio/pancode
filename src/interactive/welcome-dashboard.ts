@@ -817,7 +817,7 @@ interface ProjectContextReading {
 	failingSince: number | null;
 }
 
-export class WelcomeDashboard implements WelcomeDashboardComponent {
+class WelcomeDashboard implements WelcomeDashboardComponent {
 	private cachedRender: { width: number; signature: string; lines: string[] } | null = null;
 	private context: ProjectContextReading | null = null;
 	/** Single-flight latch: a read slower than the TTL must not stack refreshes. */

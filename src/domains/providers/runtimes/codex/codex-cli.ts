@@ -6,7 +6,7 @@ import type { ProbeContext, ProbeResult } from "../../types/runtime-descriptor.j
 import { createExternalCliRuntime } from "../external-cli-descriptor.js";
 
 /** PanCode's configured-model slot; the CLI's own configuration chooses the wire model. */
-export const CODEX_CLI_DEFAULT_MODEL = "codex-cli-default";
+const CODEX_CLI_DEFAULT_MODEL = "codex-cli-default";
 
 async function probeCodexCli(ctx: ProbeContext): Promise<ProbeResult> {
 	const cwd = process.cwd();

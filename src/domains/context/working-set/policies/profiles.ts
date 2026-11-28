@@ -42,7 +42,7 @@ export interface WorkingSetProfile {
 	readonly ageOrder: "ledger" | "bash_first";
 }
 
-export const WORKING_SET_PROFILES: Readonly<Record<WorkingSetProfileId, WorkingSetProfile>> = {
+const WORKING_SET_PROFILES: Readonly<Record<WorkingSetProfileId, WorkingSetProfile>> = {
 	default: { id: "default", ageOrder: "ledger" },
 	"data-analysis": { id: "data-analysis", pinLastNumericBash: 3, ageOrder: "ledger" },
 	"web-design": {

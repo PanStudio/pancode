@@ -4,7 +4,7 @@ import { readFile } from "node:fs/promises";
 
 export const CHANGE_MANIFEST_VERSION = 1;
 
-export const FIRST_EXPLORATORY_ITERATION_ID = "exploratory-1";
+const FIRST_EXPLORATORY_ITERATION_ID = "exploratory-1";
 
 export const MANIFEST_AUTHORITY_LEVELS = [
 	"prompt",
@@ -20,7 +20,7 @@ export const MANIFEST_AUTHORITY_LEVELS = [
 
 export type ManifestAuthorityLevel = (typeof MANIFEST_AUTHORITY_LEVELS)[number];
 
-export const HIGH_AUTHORITY_LEVELS = [
+const HIGH_AUTHORITY_LEVELS = [
 	"tool-implementation",
 	"middleware",
 	"runtime",

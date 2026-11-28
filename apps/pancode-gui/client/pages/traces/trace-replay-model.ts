@@ -5,7 +5,7 @@ import { matchesText } from "../run-inspection-model.js";
 import { entryKey, entryLabel } from "./trace-model.js";
 
 export const REPLAY_SPEEDS = [0.5, 1, 2, 4, 8] as const;
-export const REPLAY_WINDOW = 9;
+const REPLAY_WINDOW = 9;
 
 export interface ReplayEntry {
 	key: string;

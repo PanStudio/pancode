@@ -27,7 +27,7 @@ export type TargetBreakerBlock =
 export type TargetBreakerOutcome = "success" | "failure" | "neutral";
 
 /** Where a breaker stands: counting failures, cooling down, letting one probe through, or ready to probe. */
-export const BREAKER_STATES = ["closed", "open", "probing", "half-open"] as const;
+const BREAKER_STATES = ["closed", "open", "probing", "half-open"] as const;
 export type BreakerState = (typeof BREAKER_STATES)[number];
 
 /**

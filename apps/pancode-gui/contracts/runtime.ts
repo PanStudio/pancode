@@ -48,7 +48,7 @@ export const TURN_FILE_MAX = 4;
 
 export const TURN_FILE_MAX_BYTES = 128 * 1024;
 
-export const TURN_FILE_WEIGHT = 2;
+const TURN_FILE_WEIGHT = 2;
 
 /** What files and images weigh together against one agent line. */
 export function attachmentWeight(images: ReadonlyArray<{ data: string }>, files: ReadonlyArray<{ text: string }>) {

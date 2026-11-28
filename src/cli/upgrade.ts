@@ -523,6 +523,156 @@ async function giveDefaultPacks(presenter: LifecyclePresenter): Promise<void> {
 	await applyDefaultPacks(presenter);
 }
 
+/**
+ * `--rollback`: the native installer switches its launcher back to the previous version it keeps; nothing else in an
+ * upgrade runs.
+ */
+async function runUpgradeRollback(
+	installation: Installation,
+	opts: UpgradeOptions,
+	deps: UpgradeDependencies,
+	presenter: LifecyclePresenter,
+	before: string,
+	stateDir: string,
+): Promise<number> {
+	const method = installation.kind;
+	const backgroundOwner = join(stateDir, "gui/background/owner.json");
+	const record = installation.installer;
+	if (method !== "installer" || !record) {
+		presenter.fail("Rollback works only for native installer installs, made by install.sh or install.ps1");
+		if (method === "npm" || method === "pnpm" || method === "bun") {
+			// The state record keeps the version this home ran before its last version change.
+			const previous = readStateInfo()?.upgradedFrom;
+			const known = previous !== undefined && /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(previous) && previous !== before;
+			presenter.commandAdvice(
+				known
+					? `Install the previous version, ${previous}, with the original package manager:`
+					: "Install the version you want with the original package manager:",
+				installationCommand(installation, "upgrade", known ? previous : "<version>"),
+			);
+		}
+		presenter.finish();
+		return 2;
+	}
+	if (!record.previous) {
+		presenter.fail("No previous version is installed, so there is nothing to roll back to");
+		presenter.finish();
+		return 1;
+	}
+	const previousVersion = installedVersionAt(record.previous) ?? record.previous;
+	// Two builds of one -dev version differ only by their prefix, so the labels name it (finding 3).
+	const sameVersion = installedVersionAt(record.current) === installedVersionAt(record.previous);
+	const fromLabel = sameVersion ? `${before} (${prefixLabel(record.current)})` : before;
+	const toLabel = sameVersion ? `${previousVersion} (${prefixLabel(record.previous)})` : previousVersion;
+	const unwritable = unwritableDir(record.root);
+	if (unwritable !== null) {
+		presenter.fail(
+			`Rollback stopped; nothing changed. ${unwritable} is not writable by this user, and the rollback rewrites the installer manifest there`,
+		);
+		presenter.finish();
+		return 1;
+	}
+	const stop = (message: string, detail?: string): number => {
+		presenter.fail(message, detail);
+		presenter.finish();
+		return 1;
+	};
+	if (opts.dryRun) {
+		presenter.note(`Would switch the launcher from ${fromLabel} to ${toLabel} and turn background updates off.`);
+		presenter.warn("Dry run: no changes made");
+		presenter.done("Done");
+		return 0;
+	}
+	const windows = process.platform === "win32";
+	const args = windows
+		? [
+				"-NoProfile",
+				"-ExecutionPolicy",
+				"Bypass",
+				"-File",
+				join(installation.root, "scripts", "install.ps1"),
+				"-InstallDir",
+				record.root,
+				"-BinDir",
+				dirname(record.launcher),
+				"-Rollback",
+			]
+		: [
+				join(installation.root, "scripts", "install.sh"),
+				"--install-dir",
+				record.root,
+				"--bin-dir",
+				dirname(record.launcher),
+				"--rollback",
+			];
+	let result: Awaited<ReturnType<typeof runCommandVector>>;
+	try {
+		result = await runCommandVector(windows ? "powershell.exe" : "sh", args, {
+			env: Object.fromEntries(
+				Object.entries(process.env).filter((entry): entry is [string, string] => entry[1] !== undefined),
+			),
+			timeoutMs: 60_000,
+		});
+	} catch (err) {
+		return stop("Rollback failed; the active version is unchanged", err instanceof Error ? err.message : String(err));
+	}
+	if (result.exitCode !== 0)
+		return stop("Rollback failed; the active version is unchanged", (result.stderr || result.stdout).trim());
+	// The older binary refuses a home a newer version stamped, so a rollback to one records an accepted downgrade.
+	let downgradeError: string | null = null;
+	if (installedVersionAt(record.previous) !== null) {
+		try {
+			recordHomeDowngrade(previousVersion, { onlyFromNewer: true });
+		} catch (err) {
+			downgradeError = err instanceof Error ? err.message : String(err);
+		}
+	}
+	// The installer's own lines, without its tag, are the record of what changed.
+	for (const line of result.stdout.split(/\r?\n/)) {
+		const text = line.replace(/^\[install\]\s*/, "").trim();
+		if (text) presenter.completedStep(`${text.charAt(0).toUpperCase()}${text.slice(1)}`);
+	}
+	if (downgradeError !== null)
+		presenter.warn(
+			`Could not record ${previousVersion} as this home's version (${downgradeError}); it asks before opening the home, and headless runs need PANCODE_ALLOW_OLDER=1`,
+		);
+	// The background app runs the version it started with until it restarts.
+	const found = defaultBackground(backgroundOwner);
+	const owner = found === "present" ? backgroundPackageRoot(stateDir) : null;
+	if (owner !== null && installIdentity(owner) !== installIdentity(installation.root))
+		presenter.note(`Left the desktop app running from ${shortenPath(owner)}, the installation it belongs to.`);
+	else if (found === "present") {
+		try {
+			presenter.note(await deps.runBackgroundRestart(installation));
+		} catch (error) {
+			presenter.warn(
+				`Rollback succeeded, but the background app was not checked: ${error instanceof Error ? error.message : String(error)}`,
+			);
+			presenter.commandAdvice(`Restart it when you want it on ${toLabel}:`, "pancode gui background restart --if-idle");
+		}
+	}
+	// Only the default location is known here; nothing records an app set up in another directory.
+	else if (found === "absent")
+		presenter.commandAdvice(
+			`No desktop app is set up in the default location. One set up with --directory keeps its version until it restarts; to move it to ${toLabel}:`,
+			"pancode gui background restart --if-idle --directory <dir>",
+		);
+	else {
+		presenter.warn(
+			`Could not look for a desktop app in ${shortenPath(dirname(backgroundOwner))} (${found.error}); one keeps the version it started with until it restarts`,
+		);
+		presenter.commandAdvice(
+			`To move it to ${toLabel}, restart it with --directory <dir> when it was set up elsewhere:`,
+			"pancode gui background restart --if-idle",
+		);
+	}
+	presenter.note(
+		`Sessions already running keep ${fromLabel}; run pancode --resume in this project to pick one up on ${toLabel}.`,
+	);
+	presenter.done("Done");
+	return 0;
+}
+
 export async function runUpgradeCommand(
 	argv: ReadonlyArray<string>,
 	dependencies: Partial<UpgradeDependencies> = {},
@@ -590,142 +740,7 @@ export async function runUpgradeCommand(
 	}
 	const method = installation.kind;
 	const backgroundOwner = join(stateDir, "gui/background/owner.json");
-	if (opts.rollback) {
-		const record = installation.installer;
-		if (method !== "installer" || !record) {
-			presenter.fail("Rollback works only for native installer installs, made by install.sh or install.ps1");
-			if (method === "npm" || method === "pnpm" || method === "bun") {
-				// The state record keeps the version this home ran before its last version change.
-				const previous = readStateInfo()?.upgradedFrom;
-				const known = previous !== undefined && /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(previous) && previous !== before;
-				presenter.commandAdvice(
-					known
-						? `Install the previous version, ${previous}, with the original package manager:`
-						: "Install the version you want with the original package manager:",
-					installationCommand(installation, "upgrade", known ? previous : "<version>"),
-				);
-			}
-			presenter.finish();
-			return 2;
-		}
-		if (!record.previous) {
-			presenter.fail("No previous version is installed, so there is nothing to roll back to");
-			presenter.finish();
-			return 1;
-		}
-		const previousVersion = installedVersionAt(record.previous) ?? record.previous;
-		// Two builds of one -dev version differ only by their prefix, so the labels name it (finding 3).
-		const sameVersion = installedVersionAt(record.current) === installedVersionAt(record.previous);
-		const fromLabel = sameVersion ? `${before} (${prefixLabel(record.current)})` : before;
-		const toLabel = sameVersion ? `${previousVersion} (${prefixLabel(record.previous)})` : previousVersion;
-		const unwritable = unwritableDir(record.root);
-		if (unwritable !== null) {
-			presenter.fail(
-				`Rollback stopped; nothing changed. ${unwritable} is not writable by this user, and the rollback rewrites the installer manifest there`,
-			);
-			presenter.finish();
-			return 1;
-		}
-		const stop = (message: string, detail?: string): number => {
-			presenter.fail(message, detail);
-			presenter.finish();
-			return 1;
-		};
-		if (opts.dryRun) {
-			presenter.note(`Would switch the launcher from ${fromLabel} to ${toLabel} and turn background updates off.`);
-			presenter.warn("Dry run: no changes made");
-			presenter.done("Done");
-			return 0;
-		}
-		const windows = process.platform === "win32";
-		const args = windows
-			? [
-					"-NoProfile",
-					"-ExecutionPolicy",
-					"Bypass",
-					"-File",
-					join(installation.root, "scripts", "install.ps1"),
-					"-InstallDir",
-					record.root,
-					"-BinDir",
-					dirname(record.launcher),
-					"-Rollback",
-				]
-			: [
-					join(installation.root, "scripts", "install.sh"),
-					"--install-dir",
-					record.root,
-					"--bin-dir",
-					dirname(record.launcher),
-					"--rollback",
-				];
-		let result: Awaited<ReturnType<typeof runCommandVector>>;
-		try {
-			result = await runCommandVector(windows ? "powershell.exe" : "sh", args, {
-				env: Object.fromEntries(
-					Object.entries(process.env).filter((entry): entry is [string, string] => entry[1] !== undefined),
-				),
-				timeoutMs: 60_000,
-			});
-		} catch (err) {
-			return stop("Rollback failed; the active version is unchanged", err instanceof Error ? err.message : String(err));
-		}
-		if (result.exitCode !== 0)
-			return stop("Rollback failed; the active version is unchanged", (result.stderr || result.stdout).trim());
-		// The older binary refuses a home a newer version stamped, so a rollback to one records an accepted downgrade.
-		let downgradeError: string | null = null;
-		if (installedVersionAt(record.previous) !== null) {
-			try {
-				recordHomeDowngrade(previousVersion, { onlyFromNewer: true });
-			} catch (err) {
-				downgradeError = err instanceof Error ? err.message : String(err);
-			}
-		}
-		// The installer's own lines, without its tag, are the record of what changed.
-		for (const line of result.stdout.split(/\r?\n/)) {
-			const text = line.replace(/^\[install\]\s*/, "").trim();
-			if (text) presenter.completedStep(`${text.charAt(0).toUpperCase()}${text.slice(1)}`);
-		}
-		if (downgradeError !== null)
-			presenter.warn(
-				`Could not record ${previousVersion} as this home's version (${downgradeError}); it asks before opening the home, and headless runs need PANCODE_ALLOW_OLDER=1`,
-			);
-		// The background app runs the version it started with until it restarts.
-		const found = defaultBackground(backgroundOwner);
-		const owner = found === "present" ? backgroundPackageRoot(stateDir) : null;
-		if (owner !== null && installIdentity(owner) !== installIdentity(installation.root))
-			presenter.note(`Left the desktop app running from ${shortenPath(owner)}, the installation it belongs to.`);
-		else if (found === "present") {
-			try {
-				presenter.note(await deps.runBackgroundRestart(installation));
-			} catch (error) {
-				presenter.warn(
-					`Rollback succeeded, but the background app was not checked: ${error instanceof Error ? error.message : String(error)}`,
-				);
-				presenter.commandAdvice(`Restart it when you want it on ${toLabel}:`, "pancode gui background restart --if-idle");
-			}
-		}
-		// Only the default location is known here; nothing records an app set up in another directory.
-		else if (found === "absent")
-			presenter.commandAdvice(
-				`No desktop app is set up in the default location. One set up with --directory keeps its version until it restarts; to move it to ${toLabel}:`,
-				"pancode gui background restart --if-idle --directory <dir>",
-			);
-		else {
-			presenter.warn(
-				`Could not look for a desktop app in ${shortenPath(dirname(backgroundOwner))} (${found.error}); one keeps the version it started with until it restarts`,
-			);
-			presenter.commandAdvice(
-				`To move it to ${toLabel}, restart it with --directory <dir> when it was set up elsewhere:`,
-				"pancode gui background restart --if-idle",
-			);
-		}
-		presenter.note(
-			`Sessions already running keep ${fromLabel}; run pancode --resume in this project to pick one up on ${toLabel}.`,
-		);
-		presenter.done("Done");
-		return 0;
-	}
+	if (opts.rollback) return runUpgradeRollback(installation, opts, deps, presenter, before, stateDir);
 	const methodLabel =
 		method === "source"
 			? "source checkout"

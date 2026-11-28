@@ -30,7 +30,7 @@ import { admissionDiagnostic } from "./admission-diagnostic.js";
 import { type DispatchIntent, isDispatchIntent } from "./intent.js";
 
 /** The intent shape this build speaks. Bump with the `DispatchIntent` interface. */
-export const DISPATCH_INTENT_VERSION = 2;
+const DISPATCH_INTENT_VERSION = 2;
 
 /**
  * Every intent version this build accepts. Deliberately not a range: a reader
@@ -38,7 +38,7 @@ export const DISPATCH_INTENT_VERSION = 2;
  * that accepts "2 or lower" reads another shape under these rules. Membership in
  * this list is the whole test.
  */
-export const DISPATCH_INTENT_SUPPORTED_VERSIONS: ReadonlyArray<number> = [DISPATCH_INTENT_VERSION];
+const DISPATCH_INTENT_SUPPORTED_VERSIONS: ReadonlyArray<number> = [DISPATCH_INTENT_VERSION];
 
 /**
  * Stable reason codes. These are a contract: they appear in refusal messages,

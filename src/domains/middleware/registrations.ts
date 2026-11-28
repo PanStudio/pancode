@@ -23,7 +23,7 @@
 
 import type { MiddlewareDiagnostic, MiddlewareDiagnosticSink, MiddlewareHookRegistration } from "./runtime.js";
 
-export const MIDDLEWARE_REGISTRATION_OWNERS = ["user-hooks"] as const;
+const MIDDLEWARE_REGISTRATION_OWNERS = ["user-hooks"] as const;
 
 export type MiddlewareRegistrationOwner = (typeof MIDDLEWARE_REGISTRATION_OWNERS)[number];
 

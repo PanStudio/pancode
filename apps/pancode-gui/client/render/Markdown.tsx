@@ -155,7 +155,7 @@ function observeNearViewport(element: Element, rootMargin: string, notify: () =>
 }
 
 /** True once near the viewport. Code and diagrams share one observer per margin. */
-export function useNearViewport(ref: RefObject<HTMLElement | null>, rootMargin = "600px"): boolean {
+function useNearViewport(ref: RefObject<HTMLElement | null>, rootMargin = "600px"): boolean {
 	const [near, setNear] = useState(false);
 	useEffect(() => {
 		const element = ref.current;

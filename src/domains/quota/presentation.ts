@@ -21,7 +21,7 @@ import { anthropicRateLimitSeverity, compareQuotaSeverity, primaryWindow, window
 import type { UsageSnapshot, UsageWindow } from "./types.js";
 
 export type { QuotaSeverity } from "./severity.js";
-export { primaryWindow, QUOTA_SEVERITY_FLOORS, severityForPct, windowAtWarning, windowSeverity } from "./severity.js";
+export { primaryWindow, severityForPct, windowAtWarning, windowSeverity } from "./severity.js";
 
 /** The snapshot's worst severity, which is what a single indicator should show. */
 export function snapshotSeverity(snapshot: UsageSnapshot): QuotaSeverity {

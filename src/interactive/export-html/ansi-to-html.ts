@@ -126,7 +126,7 @@ const TERMINAL_SEQUENCE = new RegExp(
 	"gu",
 );
 
-export function ansiToHtml(text: string): string {
+function ansiToHtml(text: string): string {
 	const style = createEmptyStyle();
 	let result = "";
 	let lastIndex = 0;

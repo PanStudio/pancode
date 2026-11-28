@@ -112,8 +112,8 @@ function truncate(value: string, max: number): string {
 }
 
 export const BOOTSTRAP_INPUT_MAX_CHARS = 48_000;
-export const BOOTSTRAP_SIBLING_MAX_FILES = 12;
-export const BOOTSTRAP_SIBLING_CONTENT_MAX_CHARS = 12_000;
+const BOOTSTRAP_SIBLING_MAX_FILES = 12;
+const BOOTSTRAP_SIBLING_CONTENT_MAX_CHARS = 12_000;
 
 function sourceSummaries(
 	files: ReadonlyArray<SiblingContextFile>,

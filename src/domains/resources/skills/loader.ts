@@ -59,7 +59,7 @@ const MAX_SKILL_BYTES = 1024 * 1024;
  * the activation path's job, but validation says so: an author whose workflow
  * is silently cut in half at runtime has no other way to find out.
  */
-export const SKILL_ACTIVATION_BODY_CAP_BYTES = 50 * 1024;
+const SKILL_ACTIVATION_BODY_CAP_BYTES = 50 * 1024;
 
 /** Frontmatter keys with first-class meaning; everything else lands in metadata. */
 const CORE_FRONTMATTER_KEYS = new Set([

@@ -10,7 +10,7 @@ export type LeaderTarget =
 	| { key: string; id: Keybinding; label?: string; disabledReason?: string; run?: undefined }
 	| { key: string; id?: undefined; label: string; disabledReason?: string; run: () => void };
 export type LeaderKeyState = { status: "idle" } | { status: "pending"; selected: number; notice?: string };
-export const IDLE_LEADER_STATE: LeaderKeyState = { status: "idle" };
+const IDLE_LEADER_STATE: LeaderKeyState = { status: "idle" };
 export interface LeaderKeyRouteDeps {
 	matchesLeader(data: string): boolean;
 	leaderTargets: ReadonlyArray<LeaderTarget>;

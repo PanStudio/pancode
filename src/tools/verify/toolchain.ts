@@ -67,7 +67,7 @@ export interface RawProposal {
 	availability?: VerifierAvailability;
 }
 
-export const DECLARED_FILE_CAP_BYTES = 1024 * 1024;
+const DECLARED_FILE_CAP_BYTES = 1024 * 1024;
 
 export type RegularFileRead =
 	| { ok: true; text: string }

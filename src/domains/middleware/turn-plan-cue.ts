@@ -41,7 +41,7 @@ import {
  * gets no parallel note.
  */
 
-export const TURN_PLAN_CUE_REGISTRATION_ID = "nudge.turn-plan";
+const TURN_PLAN_CUE_REGISTRATION_ID = "nudge.turn-plan";
 const TURN_PLAN_PRIMING_MIN_WORDS = 10;
 const PART_MIN_WORDS = 3;
 const NONE: ReadonlyArray<MiddlewareEffect> = [];

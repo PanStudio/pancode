@@ -184,7 +184,7 @@ export function recordAnswer(
 }
 
 /** Failure causes that are never PanCode's own fault to report: the provider's, the network's, the operator's. */
-export const NEVER_OFFER_CAUSES: ReadonlySet<FailureCause> = new Set<FailureCause>([
+const NEVER_OFFER_CAUSES: ReadonlySet<FailureCause> = new Set<FailureCause>([
 	"auth_rejected",
 	"auth_refresh_failed",
 	"transport_connect",

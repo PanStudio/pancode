@@ -15,7 +15,7 @@ import type { Skill } from "./loader.js";
 /** skill-authoring's sprawl rule, as the number the catalog gate enforces. */
 export const SKILL_BODY_LINE_BUDGET = 120;
 /** How long a recorded `verified-at` stands before a skill's facts are presumed stale. */
-export const SKILL_VERIFICATION_MAX_AGE_DAYS = 180;
+const SKILL_VERIFICATION_MAX_AGE_DAYS = 180;
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const MARKDOWN_LINK = /\[[^\]]*\]\(\s*<?([^)\s>]+)>?(?:\s+"[^"]*")?\s*\)/gu;

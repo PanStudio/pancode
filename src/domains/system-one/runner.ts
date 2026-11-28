@@ -37,7 +37,7 @@ import type {
 /** Consecutive timed-out calls that stop an engine being asked. */
 export const BREAKER_THRESHOLD = 3;
 /** How long a tripped engine is left alone before one call probes it again. */
-export const BREAKER_COOLDOWN_MS = 5 * 60_000;
+const BREAKER_COOLDOWN_MS = 5 * 60_000;
 
 /** One named route: the engine, its configuration's identity and how long one request may take. */
 export interface RunnerRoute {

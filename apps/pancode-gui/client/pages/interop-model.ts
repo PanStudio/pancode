@@ -85,7 +85,7 @@ export function adapterText(adapter: InteropAgent["adapter"]): string {
 }
 
 /** Whether anything about this kind was found on the machine. */
-export const isDetected = (agent: InteropAgent): boolean =>
+const isDetected = (agent: InteropAgent): boolean =>
 	agent.presence === "present" ||
 	agent.installDir !== null ||
 	(agent.skillCount ?? 0) > 0 ||

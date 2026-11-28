@@ -26,7 +26,7 @@ import { type ProjectedResource, projectAgent, projectPrompt, projectSkill, safe
 /** A manifest-bearing vendor plugin. A bare skill has no manifest to normalize and takes its own route. */
 export type ForeignPluginFormat = Exclude<ForeignPackageFormat, "portable" | "agent-skill">;
 
-export const FOREIGN_MANIFESTS: ReadonlyArray<{ format: ForeignPackageFormat; path: string }> = [
+const FOREIGN_MANIFESTS: ReadonlyArray<{ format: ForeignPackageFormat; path: string }> = [
 	{ format: "portable", path: "plugin.json" },
 	{ format: "claude-code", path: ".claude-plugin/plugin.json" },
 	{ format: "codex", path: ".codex-plugin/plugin.json" },

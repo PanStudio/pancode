@@ -54,7 +54,7 @@ import {
 export type MemoryGateVerdict = "approve" | "demote" | "hold";
 
 /** Complete demonstrations of one revision, from distinct non-author sessions, that promote a note. */
-export const MEMORY_GATE_DEMONSTRATIONS = 2;
+const MEMORY_GATE_DEMONSTRATIONS = 2;
 
 /** Where a verdict was observed. Absent fields were not read. */
 export interface MemoryVerdictScope {

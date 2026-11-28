@@ -19,7 +19,7 @@ import {
 import { buildResponsiveHint, showPancodeOverlayFrame } from "../overlay-frame.js";
 import { activityCue, GLYPH, pancodeTheme, rule } from "../theme/index.js";
 
-export const SIDE_QUESTION_OVERLAY_TITLE = "Side question";
+const SIDE_QUESTION_OVERLAY_TITLE = "Side question";
 
 /** What the overlay is showing right now. */
 export type SideQuestionOverlayPhase =

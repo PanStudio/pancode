@@ -7,7 +7,7 @@ import { sisterRepositoryReminder, sisterRepositoryRoot, sisterRepositoryRules }
 import type { MiddlewareHookRegistration } from "./runtime.js";
 import type { MiddlewareEffect } from "./types.js";
 
-export const SISTER_REPOSITORY_REMINDER_REGISTRATION_ID = "observer.sister-repository-rules";
+const SISTER_REPOSITORY_REMINDER_REGISTRATION_ID = "observer.sister-repository-rules";
 
 const NONE: ReadonlyArray<MiddlewareEffect> = [];
 

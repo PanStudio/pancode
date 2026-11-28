@@ -46,7 +46,7 @@ export function messageText(entry: MessageEntry): string {
 }
 
 /** The operator's own words for a user message: `operatorText` when composed text carries reminders. */
-export function operatorMessageText(entry: MessageEntry): string {
+function operatorMessageText(entry: MessageEntry): string {
 	const operator = payloadObject(entry.payload)?.operatorText;
 	return typeof operator === "string" && operator.trim().length > 0 ? operator : messageText(entry);
 }

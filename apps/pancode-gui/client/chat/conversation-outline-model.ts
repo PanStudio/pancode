@@ -26,7 +26,7 @@ export interface ConversationEntry {
 const sources = new WeakMap<ConversationEntry, { turn: ChatTurn; row: Turn | undefined }>();
 const searchText = new WeakMap<ConversationEntry, readonly string[]>();
 
-export function conversationEntry(turn: ChatTurn, row: Turn | undefined, index: number): ConversationEntry {
+function conversationEntry(turn: ChatTurn, row: Turn | undefined, index: number): ConversationEntry {
 	const request = requestView(turn, row);
 	const entry: ConversationEntry = {
 		id: turn.turnId,

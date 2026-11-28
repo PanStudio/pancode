@@ -18,7 +18,7 @@ export function eyebrow(scope: string, ...qualifiers: string[]): string {
 	return [scope, ...qualifiers].map((part) => part.toUpperCase()).join(" · ");
 }
 
-export const READ_ONLY = "read only";
+const READ_ONLY = "read only";
 
 export const PANELS = {
 	evidenceInventory: {

@@ -8,7 +8,7 @@ import { resolveOnPath } from "../domains/interop/detect.js";
 import { loadValidationContract, type ValidationContract } from "../domains/safety/validation-contract.js";
 
 /** Each `--version` spawn gets this long before it is killed and reported as silent. */
-export const HPC_VERSION_TIMEOUT_MS = 2_000;
+const HPC_VERSION_TIMEOUT_MS = 2_000;
 const HPC_VERSION_MAX_OUTPUT_BYTES = 4096;
 
 export interface HpcToolSpec {

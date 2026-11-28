@@ -41,10 +41,10 @@ export const MCP_TOOL_LIST_CAP = 500;
 /** Pages followed before a cursor that never ends is abandoned. */
 export const MCP_TOOL_LIST_PAGE_CAP = 100;
 /** Poll interval for a task whose server suggests none. */
-export const DEFAULT_TASK_POLL_INTERVAL_MS = 1_000;
+const DEFAULT_TASK_POLL_INTERVAL_MS = 1_000;
 /** Bounds on a server-suggested poll interval: a zero cannot spin the server, a huge one cannot stall the call. */
-export const MIN_TASK_POLL_INTERVAL_MS = 250;
-export const MAX_TASK_POLL_INTERVAL_MS = 30_000;
+const MIN_TASK_POLL_INTERVAL_MS = 250;
+const MAX_TASK_POLL_INTERVAL_MS = 30_000;
 
 type McpTaskStatus = "working" | "input_required" | "completed" | "failed" | "cancelled";
 

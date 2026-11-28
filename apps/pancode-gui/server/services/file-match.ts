@@ -9,7 +9,7 @@ import type { FileCompletion } from "../../contracts/sessions.js";
  * that folder's children, narrowed by the rest; anything else is searched across the whole tree.
  */
 
-export const FILE_MATCH_LIMIT = 50;
+const FILE_MATCH_LIMIT = 50;
 
 export interface FileIndex {
 	/** Every file, relative to the root with `/` separators. */
@@ -57,7 +57,7 @@ export function buildFileIndex(files: readonly string[]): FileIndex {
  * it, which beats a path that contains it, which beats letters merely in order; among in-order
  * matches the tighter one wins.
  */
-export function fuzzyRank(query: string, path: string): number | null {
+function fuzzyRank(query: string, path: string): number | null {
 	if (query === "") return 0;
 	const target = path.toLowerCase();
 	const name = target.slice(target.lastIndexOf("/") + 1);

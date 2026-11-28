@@ -57,7 +57,7 @@ const EXTERNAL_PANCODE_CONTROLS = [
 
 export type BudgetAdmissionDenialCode = "ceiling-below-request";
 
-export class BudgetAdmissionError extends Error {
+class BudgetAdmissionError extends Error {
 	readonly code: BudgetAdmissionDenialCode;
 
 	constructor(code: BudgetAdmissionDenialCode, message: string) {

@@ -152,7 +152,7 @@ export function routingIntentRejection(input: {
 	return null;
 }
 
-export const ROUTE_EXPLANATION_MAX_BYTES = 4_096;
+const ROUTE_EXPLANATION_MAX_BYTES = 4_096;
 
 export interface RouteExplanation {
 	mode: RouteDecisionV1["mode"];

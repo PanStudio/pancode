@@ -216,7 +216,7 @@ export type ReasoningClass = "never" | "switchable" | "always";
  * 400-token allowance entirely on reasoning and ended at length. Four thousand
  * leaves the configured 2,000-token content budget after that preamble.
  */
-export const MEMORY_ALWAYS_ON_MODEL_MIN_OUTPUT_TOKENS = 4_000;
+const MEMORY_ALWAYS_ON_MODEL_MIN_OUTPUT_TOKENS = 4_000;
 
 /**
  * Derive the memory step's request budget from the resolved model capability.

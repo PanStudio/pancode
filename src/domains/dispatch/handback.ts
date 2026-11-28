@@ -78,7 +78,7 @@ export function wallHandbackOutcomeDetail(input: {
 /** What a batch shares, and what a lone run gets. */
 export const ANSWER_BUDGET_BYTES = 12_000;
 /** No run's answer budget is smaller than this, however large its batch. */
-export const ANSWER_BUDGET_FLOOR_BYTES = 2_000;
+const ANSWER_BUDGET_FLOOR_BYTES = 2_000;
 
 /** The answer budget of each run in a batch of `runs`: an equal share of the batch budget, never under the floor. */
 export function answerBudgetForBatch(runs: number): number {

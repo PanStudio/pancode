@@ -7,7 +7,7 @@ import type { SessionSnapshot } from "../../contracts/sessions.js";
 export const REWIND_EMPTY =
 	"No workspace snapshots in this task yet. PanCode takes one before it first changes files in a turn and before every destructive command, in a Git work tree with safety snapshots on.";
 export const REWIND_RUNNING = "Panos is working, so nothing restores now. Wait for the turn to finish, or stop it.";
-export const REWIND_APPROVAL = "PanCode is waiting for your approval, so nothing restores now. Answer it first.";
+const REWIND_APPROVAL = "PanCode is waiting for your approval, so nothing restores now. Answer it first.";
 export const REWIND_UNAVAILABLE = "File snapshots are not available for this task.";
 export const REWIND_RESUME = "Resume the task to use this.";
 export const REWIND_MATCHES = "The workspace already matches this snapshot. Nothing would change.";

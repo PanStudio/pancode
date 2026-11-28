@@ -41,7 +41,7 @@ import {
 } from "../overlay-frame.js";
 import { GLYPH, pancodeTheme, positionRow, sectionRule, selectionRow } from "../theme/index.js";
 
-export const REPORT_REVIEW_TITLE = "Report to PanCode's maintainers";
+const REPORT_REVIEW_TITLE = "Report to PanCode's maintainers";
 
 export type ReportReviewStep = "review" | "masks" | "attach" | "bundle" | "send" | "sending" | "duplicates" | "done";
 

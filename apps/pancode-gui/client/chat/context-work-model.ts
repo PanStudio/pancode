@@ -49,7 +49,7 @@ export interface ContextWorkDetails {
 	warnings: readonly string[];
 }
 
-export const CONTEXT_PHASE_LABELS: Readonly<Record<string, string>> = {
+const CONTEXT_PHASE_LABELS: Readonly<Record<string, string>> = {
 	scan: "Read repository",
 	codewiki: "Index source",
 	generate: "Draft context",

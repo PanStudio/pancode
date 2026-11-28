@@ -42,7 +42,7 @@ export const GRANT_DEADLINE_MARGIN_MS = 1_000;
 export const DEFAULT_ACP_STALL_TIMEOUT_MS = 300_000;
 /** How often a delegated agent's question retries a screen another card holds; the merge card waits the same. */
 export const PEER_QUESTION_SCREEN_RETRY_MS = 500;
-export const ADMISSION_INPUT_TOKEN_ESTIMATE = 4096;
+const ADMISSION_INPUT_TOKEN_ESTIMATE = 4096;
 export const ACP_TOOL_SIGNATURE = "acp:unobservable";
 export const ACP_SPEC_FINGERPRINT = "acp:unobservable";
 /**

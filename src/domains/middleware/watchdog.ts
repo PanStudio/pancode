@@ -25,19 +25,19 @@ import { ToolNames } from "../../core/tool-names.js";
 import type { MiddlewareHookRegistration } from "./runtime.js";
 import type { MiddlewareEffect, MiddlewareHookInput } from "./types.js";
 
-export const WATCHDOG_REGISTRATION_ID = "observer.watchdog";
+const WATCHDOG_REGISTRATION_ID = "observer.watchdog";
 
 /**
  * Bound on the coalesced diff a watchdog briefing carries, in UTF-8 bytes. The
  * run is meant to be cheap enough to spend on every mutating turn, so it is
  * given the shape of the change rather than every byte of it.
  */
-export const WATCHDOG_DIFF_MAX_BYTES = 12 * 1024;
+const WATCHDOG_DIFF_MAX_BYTES = 12 * 1024;
 
 /** Bound on how many mutated paths the briefing names before it summarizes the rest. */
-export const WATCHDOG_PATHS_MAX = 40;
+const WATCHDOG_PATHS_MAX = 40;
 
-export const WATCHDOG_TRUNCATION_MARKER = "\n[diff truncated]";
+const WATCHDOG_TRUNCATION_MARKER = "\n[diff truncated]";
 
 /** Tools whose successful results carry a file diff worth coalescing. */
 const MUTATING_TOOL_NAMES = new Set<string>([ToolNames.Write, ToolNames.Edit, ToolNames.Artifact]);
