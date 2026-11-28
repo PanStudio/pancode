@@ -18,6 +18,7 @@ import { countNoun } from "../../../../src/core/views/count-words.js";
 import { formatSize, TOOL_TITLE_MAX_BYTES, toolSubject } from "../../../../src/core/views/tool-words.js";
 import type { TimelineItem } from "../../contracts/sessions.js";
 import { formatDuration } from "../api/clock.js";
+import { finite as num, record, text as str } from "../api/narrow.js";
 import type { StatusTone } from "../design/status.js";
 import { hasStyle, stripAnsi } from "../render/ansi.js";
 import { type DiffPanel, diffCounts, diffPanel, type ProposalBaseline, refusalResult } from "./diff-model.js";
@@ -170,20 +171,6 @@ export function basename(path: string): string {
 	const trimmed = path.replace(/[/\\]+$/, "");
 	const cut = Math.max(trimmed.lastIndexOf("/"), trimmed.lastIndexOf("\\"));
 	return cut < 0 ? trimmed : trimmed.slice(cut + 1);
-}
-
-export function record(value: unknown): Record<string, unknown> | undefined {
-	return typeof value === "object" && value !== null && !Array.isArray(value)
-		? (value as Record<string, unknown>)
-		: undefined;
-}
-
-export function str(value: unknown): string | null {
-	return typeof value === "string" && value.length > 0 ? value : null;
-}
-
-function num(value: unknown): number | null {
-	return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
 
 /* ------------------------------------------------------- wire unwrapping */
