@@ -8,7 +8,6 @@ import { isNarrationSummary } from "../core/narration-summary.js";
 import type { ViewArtifact } from "../domains/session/view-artifacts.js";
 import type { TelemetryView } from "../domains/telemetry/contract.js";
 import { type Component, stripTerminalSequences, truncateToWidth, wrapTextWithAnsi } from "../engine/tui.js";
-import type { AgentMessage } from "../engine/types.js";
 import { sanitizeCallTargetText, sanitizeMultilineDisplayText } from "../lib/call-target/call-target.js";
 import {
 	holdCutOffText,
@@ -17,13 +16,8 @@ import {
 	messageStopCompleted,
 	redactSecretString,
 } from "../lib/secrets/redaction.js";
-import type { ChatLoopEvent, RetryStatusPayload } from "../session-control/chat-loop.js";
-import {
-	classifyTurnEnding,
-	endedOnCancelledInterview,
-	endedWithFailedChange,
-	proseBeforeWrittenCalls,
-} from "../session-control/chat-loop-messages.js";
+import type { ChatLoopEvent } from "../session-control/chat-loop.js";
+import { proseBeforeWrittenCalls } from "../session-control/chat-loop-messages.js";
 import type { WorkerEntryState } from "../session-control/worker-stream.js";
 import {
 	GAP_ROW,
@@ -38,6 +32,7 @@ import { PROSE_GUTTER_WIDTH } from "./chat-ink.js";
 import { renderTextSegmentLines } from "./chat-markdown.js";
 import { createChatCache, RENDERS_PER_ENTRY } from "./chat-panel/cache.js";
 import { createChatReceipts } from "./chat-panel/receipts.js";
+import { createChatRunSettle } from "./chat-panel/run-settle.js";
 import type { ChatPanelScope } from "./chat-panel/scope.js";
 import { createChatSegments } from "./chat-panel/segments.js";
 import { createChatToolEvents } from "./chat-panel/tool-events.js";
@@ -53,12 +48,9 @@ import {
 	extractAssistantThinking,
 	findToolSegmentOwner,
 	type LiveTextRender,
-	lastAssistantIndex,
 	type ReplayBlockRenderer,
 	replaceSegmentText,
 	reportsCall,
-	runCallIds,
-	runStartFallback,
 	scopeTerminalErrorAfterSuccessfulTool,
 	type TranscriptEntry,
 	turnRetryRow,
@@ -66,7 +58,6 @@ import {
 	type WorkerTranscriptEntry,
 	workerGroupKey,
 } from "./chat-transcript-model.js";
-import { turnEndedWithWorkers } from "./chat-turn-receipt.js";
 import { dateLocal } from "./format-time.js";
 import { renderNoticeRow, renderTranscriptNotice } from "./renderers/notice.js";
 import { providerErrorEvidence, readProviderFailureRoute } from "./renderers/provider-error.js";
@@ -77,7 +68,6 @@ import { renderToolExecution, renderToolPreview } from "./renderers/tool-executi
 import { isChangeOrCheckCall } from "./renderers/tool-fold.js";
 import { toolRowTitle } from "./renderers/tool-subline.js";
 import { renderWorkerEntryLines } from "./renderers/worker-entry.js";
-import { isGenerationGuardAbort } from "./status/index.js";
 import { GLYPH } from "./theme/index.js";
 import { modelNickname } from "./theme/labels.js";
 import { type TranscriptDetailPolicy, transcriptDetail } from "./transcript-detail.js";
@@ -319,28 +309,15 @@ export function createChatPanel(options: ChatPanelOptions = {}): ChatPanel {
 	/** Assignment to its placed block, in placement order, so a streaming delta is O(1) to route. */
 	const workerEntries = new Map<string, WorkerTranscriptEntry>();
 	const dispatchGroups = new Map<string, WorkerTranscriptEntry[]>();
-	let runStartedAt: number | undefined;
 	// The prompt that opens the next run: its clock starts here, so a compaction the submit runs before the model
 	// call is inside the turn's duration, as its calls and tokens are.
 	let pendingPrompt: { at: number; status?: () => UserTurnStatus } | undefined;
-	/** Why the current run's prompt cache may be cold, from the chat loop's cache notice. */
-	let runColdReasons: ReadonlyArray<string> = [];
-	/** The run's last attempt failed and recovery will send another, so nothing has settled yet. */
-	let runAwaitingRetry = false;
-	/** Provider attempts this run sent again, kept until its receipt can state them. */
-	let runRetries = 0;
-	let runProviderWaits = 0;
-	let runMovedTo: string | undefined;
-	/** The operator turn the current run's calls journal under, from its start event or a replayed run end. */
-	let runTurnId: string | undefined;
 	/**
 	 * Receipts still reading the read model. A run can end before the writer's batch holding its last call is folded,
 	 * and a worker it started can settle later, so a receipt rereads its turn on every new view until the view holds
 	 * the run's own calls and no run of the turn is still going (#434 §11.3).
 	 */
 	const liveReceipts = new Set<Extract<TranscriptEntry, { role: "assistant" }>>();
-	/** The latest settled receipt eligible for the turn's post-settlement prewarm record. */
-	let lastSettledReceipt: Extract<TranscriptEntry, { role: "assistant" }> | null = null;
 	let cachedWidth: number | undefined;
 	let cachedRegions: ChatPanelRegions = { pieces: [], rows: 0 };
 	/** The last frame concatenated, built on first request; null until someone asks for it. */
@@ -421,8 +398,19 @@ export function createChatPanel(options: ChatPanelOptions = {}): ChatPanel {
 		get segments() {
 			return segments;
 		},
+		runStartedAt: undefined,
+		runColdReasons: [],
+		runAwaitingRetry: false,
+		runRetries: 0,
+		runProviderWaits: 0,
+		runMovedTo: undefined,
+		runTurnId: undefined,
+		lastSettledReceipt: null,
 		get toolEvents() {
 			return toolEvents;
+		},
+		get runSettle() {
+			return runSettle;
 		},
 	};
 	const cache = createChatCache(scope);
@@ -441,7 +429,6 @@ export function createChatPanel(options: ChatPanelOptions = {}): ChatPanel {
 	const segments = createChatSegments(scope);
 	const {
 		startEditPreview,
-		settleUnfinishedToolSegment,
 		insertEntryAt,
 		appendRow,
 		attachModel,
@@ -455,214 +442,8 @@ export function createChatPanel(options: ChatPanelOptions = {}): ChatPanel {
 	} = segments;
 	const toolEvents = createChatToolEvents(scope);
 	const { onToolExecutionStart, onToolApprovalState, onToolExecutionUpdate, onToolExecutionEnd } = toolEvents;
-
-	/** The attempts a retry status says went out again. A live run hears of its recovery after its receipt, a replay before. */
-	const noteRunRetries = (status: RetryStatusPayload): void => {
-		const whole = status.phase === "retrying" || status.phase === "recovered" || status.phase === "exhausted";
-		if (whole || status.phase === "cancelled") {
-			// A cancel stopped one attempt before it went out, and that attempt is a wait or a retry by what it answered.
-			const waits = status.providerWaits ?? 0;
-			const unsentWait = status.phase === "cancelled" && status.onProviderWait === true ? 1 : 0;
-			const unsentRetry = status.phase === "cancelled" && status.onProviderWait !== true ? 1 : 0;
-			runProviderWaits = Math.max(runProviderWaits, waits - unsentWait);
-			runRetries = Math.max(runRetries, status.attempt - waits - unsentRetry);
-		}
-		const receipt = lastSettledReceipt;
-		const usage = receipt?.turnUsage;
-		if (receipt && usage && (runRetries > (usage.retries ?? 0) || runProviderWaits > (usage.providerWaits ?? 0))) {
-			invalidateEntryCache(receipt);
-			receipt.turnUsage = {
-				...usage,
-				...(runRetries > 0 ? { retries: runRetries } : {}),
-				...(runProviderWaits > 0 ? { providerWaits: runProviderWaits } : {}),
-			};
-		}
-	};
-
-	/**
-	 * Nothing the run left open keeps counting: no tool can still be executing anywhere in the transcript, not just in
-	 * the tail entry (a mid-turn notice splits entries). Settle any tool segment whose `tool_execution_end` never arrived
-	 * (blocked at admission, or cut off by an abort) so the ledger never leaves a running line counting past the turn's
-	 * end, and clear `pending` everywhere so no earlier entry keeps rendering live thinking or status.
-	 */
-	const closeRunEntries = (aborted: boolean): void => {
-		for (const entry of transcript) {
-			if (entry.role !== "assistant") continue;
-			for (const seg of entry.segments) {
-				if (seg.kind === "tool" && !seg.finished) {
-					invalidateEntryCache(entry);
-					settleUnfinishedToolSegment(seg, aborted ? "aborted" : "orphaned");
-				}
-			}
-			if (entry.pending) {
-				invalidateEntryCache(entry);
-				// A message that settled closed its own reasoning, so this one never got a stop reason.
-				closeOpenThinking(entry, false);
-				entry.pending = false;
-				entry.messageStartSegmentIndex = undefined;
-			}
-		}
-		// An entry opened for a message that never showed anything renders no rows, yet it would still draw a separator.
-		for (let tail = transcript.at(-1); tail?.role === "assistant"; tail = transcript.at(-1)) {
-			if (tail.turnUsage !== undefined || tail.models?.length) break;
-			if (tail.segments.some((segment) => segment.kind !== "text" || segment.text.trim().length > 0)) break;
-			transcript.pop();
-			entryRenderCache.delete(tail);
-			runs.truncate(transcript.length);
-		}
-	};
-
-	/**
-	 * Give the run its one receipt and close it. It touches many entries, but it names every one it touches: the usage
-	 * caption's target, the later entries whose caption it removes, and any entry it settles or un-pends. Each is
-	 * invalidated at the point of mutation instead of dropping the whole cache and re-rendering settled history.
-	 */
-	const settleRun = (run: {
-		messages: ReadonlyArray<unknown>;
-		turnId: string | undefined;
-		replayed?: ReplayedRunFacts | undefined;
-		/** The outcome when no message states it: the ladder ended between attempts. */
-		outcome?: string;
-		always?: boolean;
-	}): void => {
-		lastSettledReceipt = null;
-		runAwaitingRetry = false;
-		const { messages, turnId, replayed } = run;
-		const ending = run.outcome === undefined ? classifyTurnEnding(messages as ReadonlyArray<AgentMessage>) : null;
-		// A provider that reports no usage still owes the operator the news that nothing answered.
-		if (
-			run.always === true ||
-			messages.some(reportsCall) ||
-			ending?.kind === "no_answer" ||
-			ending?.kind === "call_not_run"
-		) {
-			// The usage line is a caption on rendered output, so it goes on the
-			// last entry that rendered any. A mid-turn notice splits entries, and
-			// a turn that stops after one leaves an empty tail entry behind: the
-			// run total landed there while the entry above kept its own
-			// message_end line, so one turn printed the identical line twice, once
-			// on each side of the notice. Entries after the caption rendered
-			// nothing and must not carry a second copy.
-			// Only this run's rows can carry its receipt. A run cut off before any output has none, and the previous
-			// turn's receipt is not this turn's to overwrite: it closes under its own prompt, after any retry row.
-			const row = turnRetryRow(transcript);
-			const from = Math.max(
-				scope.runStartIndex ?? runStartFallback(transcript, transcript.length),
-				row === null ? 0 : transcript.lastIndexOf(row) + 1,
-			);
-			const found = lastAssistantIndex(transcript, { withOutput: true, from }) ?? lastAssistantIndex(transcript, { from });
-			if (found === null) {
-				transcript.push({ role: "assistant", segments: [], pending: false, isError: false });
-			}
-			const index = found ?? transcript.length - 1;
-			const target = transcript[index];
-			if (target?.role === "assistant") {
-				invalidateEntryCache(target);
-				lastSettledReceipt = target;
-				const stop = messages.filter((message) => (message as { role?: unknown }).role === "assistant").at(-1) as
-					| { stopReason?: string; pancodeAbortReason?: string }
-					| undefined;
-				// A replayed run end brings the duration and cold reasons the
-				// ledger recorded; a live one measures its own.
-				const elapsedMs =
-					replayed !== undefined
-						? replayed.elapsedMs
-						: runStartedAt === undefined
-							? undefined
-							: Math.max(0, now() - runStartedAt);
-				const endedAtMs = replayed !== undefined ? replayed.endedAtMs : now();
-				const coldReasons = replayed !== undefined ? (replayed.coldReasons ?? []) : runColdReasons;
-				const callIds = runCallIds(messages);
-				// Workers a turn detached keep running past its end, so the turn ended but the work is not done. A replay
-				// counts the ones its ledger and their receipts place still running then.
-				const workersRunning =
-					replayed === undefined
-						? [...workerEntries.values()].filter((entry) => entry.state.pending).length
-						: (replayed.workersRunning ?? 0);
-				// Their calls are the workers' own: the receipt's count stays what the turn made by its end (ns:49-50).
-				const detachedRunIds =
-					replayed === undefined
-						? [...workerEntries.values()].flatMap((entry) => (entry.state.pending ? [entry.state.runId] : []))
-						: (replayed.workerRunIdsRunning ?? []);
-				const humanWaitMs = replayed === undefined ? (options.getHumanWaitMs?.() ?? 0) : (replayed.humanWaitMs ?? 0);
-				if (replayed === undefined && elapsedMs !== undefined && turnId !== undefined) {
-					options.recordTurnTiming?.({ turnId, elapsedMs, ...(humanWaitMs > 0 ? { humanWaitMs } : {}) });
-				}
-				target.turnUsage = {
-					...(turnId === undefined ? {} : { turnId }),
-					...(callIds.length > 0 ? { callIds } : {}),
-					...(elapsedMs === undefined ? {} : { elapsedMs }),
-					...(endedAtMs === undefined ? {} : { endedAtMs }),
-					...(replayed !== undefined ? { replayed: true as const } : {}),
-					...(detachedRunIds.length > 0 ? { detachedRunIds } : {}),
-					...(humanWaitMs > 0 ? { humanWaitMs } : {}),
-					...(coldReasons.length > 0 ? { coldReasons: [...coldReasons] } : {}),
-					...(runRetries > 0 ? { retries: runRetries } : {}),
-					...(runProviderWaits > 0 ? { providerWaits: runProviderWaits } : {}),
-					...(runMovedTo !== undefined ? { movedTo: runMovedTo } : {}),
-					...(ending === null ? {} : { ending }),
-					outcome:
-						run.outcome ??
-						(stop?.stopReason === "error"
-							? "Failed"
-							: stop?.stopReason === "aborted"
-								? isGenerationGuardAbort(stop.pancodeAbortReason)
-									? "Generation stopped"
-									: "Cancelled"
-								: stop?.stopReason === "length"
-									? "Output limit"
-									: ending?.kind === "no_answer"
-										? "No answer"
-										: endedOnCancelledInterview(messages)
-											? "Cancelled"
-											: endedWithFailedChange(messages)
-												? "Done, last change failed"
-												: workersRunning > 0
-													? turnEndedWithWorkers(workersRunning)
-													: "Done"),
-				};
-				// Only the newest failure is one ↑ away; a later turn's prompt sits in front of an older one.
-				if (scope.promptRecallReceipt?.turnUsage) {
-					delete scope.promptRecallReceipt.turnUsage.promptRecall;
-					invalidateEntryCache(scope.promptRecallReceipt);
-				}
-				scope.promptRecallReceipt = null;
-				if (replayed === undefined && target.turnUsage.outcome === "Failed") {
-					target.turnUsage.promptRecall = true;
-					scope.promptRecallReceipt = target;
-				}
-				trackReceipt(target);
-			}
-			const firstRunEntry = scope.runStartIndex ?? runStartFallback(transcript, index);
-			for (let other = firstRunEntry; other < transcript.length; other += 1) {
-				if (other === index) continue;
-				const sibling = transcript[other];
-				if (sibling?.role !== "assistant") continue;
-				if (sibling.turnUsage !== undefined) invalidateEntryCache(sibling);
-				delete sibling.turnUsage;
-				liveReceipts.delete(sibling);
-			}
-		}
-		scope.runStartIndex = undefined;
-		runColdReasons = [];
-		runTurnId = undefined;
-		runRetries = 0;
-		runProviderWaits = 0;
-		runMovedTo = undefined;
-		const runWasAborted = messages.some(
-			(message) =>
-				message && typeof message === "object" && (message as { stopReason?: unknown }).stopReason === "aborted",
-		);
-		closeRunEntries(runWasAborted);
-		// An attempt cut off by the cancel leaves its row reading as still underway.
-		const row = turnRetryRow(transcript);
-		if (row && (row.status.phase === "scheduled" || row.status.phase === "waiting" || row.status.phase === "retrying")) {
-			if (runWasAborted) {
-				invalidateEntryCache(row);
-				row.status = { ...row.status, phase: "cancelled" };
-			}
-		}
-	};
+	const runSettle = createChatRunSettle(scope);
+	const { noteRunRetries, closeRunEntries, settleRun } = runSettle;
 
 	/**
 	 * One frame: every row the transcript shows, as row pieces. Each run of settled entries is one piece, handed on
@@ -1088,7 +869,7 @@ export function createChatPanel(options: ChatPanelOptions = {}): ChatPanel {
 		forgetPromptRecall,
 		appendUser(text: string, status?: () => UserTurnStatus, origin?: string): void {
 			// A prompt opens the next turn, whose retries are not the last receipt's.
-			lastSettledReceipt = null;
+			scope.lastSettledReceipt = null;
 			// ↑ now recalls this prompt, so the failed receipt above stops offering its own.
 			forgetPromptRecall();
 			// A prompt typed while a run is open waits its turn; only one between runs starts the next clock.
@@ -1305,19 +1086,19 @@ export function createChatPanel(options: ChatPanelOptions = {}): ChatPanel {
 		},
 		reset(): void {
 			transcript.length = 0;
-			lastSettledReceipt = null;
+			scope.lastSettledReceipt = null;
 			liveReceipts.clear();
 			liveReplayBlocks.clear();
 			scope.receiptView = null;
-			runTurnId = undefined;
-			runStartedAt = undefined;
+			scope.runTurnId = undefined;
+			scope.runStartedAt = undefined;
 			pendingPrompt = undefined;
 			scope.runStartIndex = undefined;
-			runAwaitingRetry = false;
-			runRetries = 0;
-			runProviderWaits = 0;
-			runMovedTo = undefined;
-			runColdReasons = [];
+			scope.runAwaitingRetry = false;
+			scope.runRetries = 0;
+			scope.runProviderWaits = 0;
+			scope.runMovedTo = undefined;
+			scope.runColdReasons = [];
 			workerEntries.clear();
 			dispatchGroups.clear();
 			clearRenderCaches();
@@ -1340,23 +1121,23 @@ export function createChatPanel(options: ChatPanelOptions = {}): ChatPanel {
 		},
 		applyEvent(event: ChatLoopEvent): void {
 			if (event.type === "agent_start") {
-				lastSettledReceipt = null;
+				scope.lastSettledReceipt = null;
 				// A retry's attempt continues the run it retries: same receipt, same clock.
-				if (runAwaitingRetry) {
-					runAwaitingRetry = false;
+				if (scope.runAwaitingRetry) {
+					scope.runAwaitingRetry = false;
 					return;
 				}
-				runRetries = 0;
-				runProviderWaits = 0;
-				runMovedTo = undefined;
+				scope.runRetries = 0;
+				scope.runProviderWaits = 0;
+				scope.runMovedTo = undefined;
 				// The run's cold-cache reasons arrive just before it starts, as the
 				// chat loop consumes them ahead of the prompt, so they are kept here
 				// and cleared once the run's receipt has stated them.
 				const prompt = pendingPrompt;
 				pendingPrompt = undefined;
-				runStartedAt = prompt !== undefined && prompt.status?.() !== "refused" ? prompt.at : now();
+				scope.runStartedAt = prompt !== undefined && prompt.status?.() !== "refused" ? prompt.at : now();
 				scope.runStartIndex = transcript.length;
-				runTurnId = (event as { turnId?: string }).turnId;
+				scope.runTurnId = (event as { turnId?: string }).turnId;
 				return;
 			}
 			if (event.type === "agent_status") {
@@ -1365,7 +1146,7 @@ export function createChatPanel(options: ChatPanelOptions = {}): ChatPanel {
 			if (event.type === "notice") {
 				// The cache notice lives in the footer; the run keeps its reasons
 				// for the Detailed receipt.
-				if (event.coldReasons !== undefined) runColdReasons = [...event.coldReasons];
+				if (event.coldReasons !== undefined) scope.runColdReasons = [...event.coldReasons];
 				// Transcript notices are first-class advisory blocks, not assistant
 				// messages: a level mark in the gutter, the text hanging beside it,
 				// exactly as replay renders the persisted ones.
@@ -1386,7 +1167,7 @@ export function createChatPanel(options: ChatPanelOptions = {}): ChatPanel {
 				// The Esc cancel is reported once. A settled run that already carries the
 				// Cancelled outcome has said so; the row below is only for a hollow abort
 				// that left no receipt to carry it.
-				if (event.operatorCancel === true && lastSettledReceipt?.turnUsage?.outcome === "Cancelled") return;
+				if (event.operatorCancel === true && scope.lastSettledReceipt?.turnUsage?.outcome === "Cancelled") return;
 				const text = event.text;
 				const mark = event.operatorCancel === true ? "cancelled" : event.level;
 				const source = event.source;
@@ -1548,7 +1329,7 @@ export function createChatPanel(options: ChatPanelOptions = {}): ChatPanel {
 				const thinking = extractAssistantThinking(event.message);
 				// A failure recovery will retry is stated once, on the retry row; only the turn's real outcome reads as one.
 				const willRetry = event.retryPending !== undefined;
-				if (willRetry) runAwaitingRetry = true;
+				if (willRetry) scope.runAwaitingRetry = true;
 				const extractedTerminalError = willRetry ? "" : extractAssistantTerminalError(event.message);
 				const terminalError =
 					current?.role === "assistant"
@@ -1577,7 +1358,7 @@ export function createChatPanel(options: ChatPanelOptions = {}): ChatPanel {
 				attachModel(assistant, assistantModelLabel(event.message, messageTarget()));
 				// Until its run ends, an entry's receipt reads the turn so far.
 				if (reports) {
-					assistant.turnUsage = runTurnId === undefined ? {} : { turnId: runTurnId };
+					assistant.turnUsage = scope.runTurnId === undefined ? {} : { turnId: scope.runTurnId };
 					trackReceipt(assistant);
 				}
 				if (terminalError.length > 0) assistant.isError = true;
@@ -1650,9 +1431,9 @@ export function createChatPanel(options: ChatPanelOptions = {}): ChatPanel {
 				const status = event.status;
 				const row = turnRetryRow(transcript);
 				if (status.phase === "moved") {
-					runMovedTo = status.movedTo?.modelId;
+					scope.runMovedTo = status.movedTo?.modelId;
 					// The run goes on, and its next start continues this receipt and clock.
-					runAwaitingRetry = true;
+					scope.runAwaitingRetry = true;
 					if (row) {
 						// An open countdown ends here, so the row that promised the retry becomes the one that says it did not happen.
 						invalidateEntryCache(row);
@@ -1680,11 +1461,11 @@ export function createChatPanel(options: ChatPanelOptions = {}): ChatPanel {
 					transcript.push({ role: "retryStatus", status, at: stamp() });
 				}
 				noteRunRetries(status);
-				if ((status.phase === "cancelled" || status.phase === "exhausted") && runAwaitingRetry) {
+				if ((status.phase === "cancelled" || status.phase === "exhausted") && scope.runAwaitingRetry) {
 					// The ladder ended between attempts, so no agent_end is coming to close the turn.
 					settleRun({
 						messages: [],
-						turnId: runTurnId,
+						turnId: scope.runTurnId,
 						outcome: status.phase === "cancelled" ? "Cancelled" : "Failed",
 						always: true,
 					});
@@ -1694,7 +1475,7 @@ export function createChatPanel(options: ChatPanelOptions = {}): ChatPanel {
 			}
 			if (event.type === "agent_end") {
 				if (event.retryPending !== undefined) {
-					runAwaitingRetry = true;
+					scope.runAwaitingRetry = true;
 					// Closing an earlier round's entry would show its interim receipt as a Done the turn has not reached.
 					for (const entry of transcript) {
 						if (entry.role !== "assistant" || entry.turnUsage === undefined || entry.turnUsage.outcome !== undefined)
@@ -1709,7 +1490,7 @@ export function createChatPanel(options: ChatPanelOptions = {}): ChatPanel {
 				}
 				settleRun({
 					messages: Array.isArray(event.messages) ? event.messages : [],
-					turnId: (event as { turnId?: string }).turnId ?? runTurnId,
+					turnId: (event as { turnId?: string }).turnId ?? scope.runTurnId,
 					replayed: (event as { replayed?: ReplayedRunFacts }).replayed,
 				});
 				markDirty();

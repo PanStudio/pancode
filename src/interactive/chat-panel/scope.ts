@@ -19,6 +19,7 @@ import type { TranscriptDetailPolicy } from "../transcript-detail.js";
 import type { EntryRun, EntryRuns } from "../transcript-runs.js";
 import type { createChatCache } from "./cache.js";
 import type { createChatReceipts } from "./receipts.js";
+import type { createChatRunSettle } from "./run-settle.js";
 import type { createChatSegments } from "./segments.js";
 import type { createChatToolEvents } from "./tool-events.js";
 import type { createChatWorkers } from "./workers.js";
@@ -41,6 +42,19 @@ export interface ChatPanelScope {
 	 * total, so a receipt never lands in the middle of a turn.
 	 */
 	runStartIndex: number | undefined;
+	runStartedAt: number | undefined;
+	/** Why the current run's prompt cache may be cold, from the chat loop's cache notice. */
+	runColdReasons: ReadonlyArray<string>;
+	/** The run's last attempt failed and recovery will send another, so nothing has settled yet. */
+	runAwaitingRetry: boolean;
+	/** Provider attempts this run sent again, kept until its receipt can state them. */
+	runRetries: number;
+	runProviderWaits: number;
+	runMovedTo: string | undefined;
+	/** The operator turn the current run's calls journal under, from its start event or a replayed run end. */
+	runTurnId: string | undefined;
+	/** The latest settled receipt eligible for the turn's post-settlement prewarm record. */
+	lastSettledReceipt: Extract<TranscriptEntry, { role: "assistant" }> | null;
 	dirty: boolean;
 	/**
 	 * A viewport-first re-layout under way (`deferRelayout`): runs laid out at an earlier key stay on screen while
@@ -93,4 +107,5 @@ export interface ChatPanelScope {
 	readonly receipts: ReturnType<typeof createChatReceipts>;
 	readonly segments: ReturnType<typeof createChatSegments>;
 	readonly toolEvents: ReturnType<typeof createChatToolEvents>;
+	readonly runSettle: ReturnType<typeof createChatRunSettle>;
 }
