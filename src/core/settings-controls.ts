@@ -501,7 +501,8 @@ const MENU_ROWS = new Set([
 	"safety.limits.bashIdleSeconds",
 	"fleet.limits.runTimeoutMs",
 	"safety.sandbox",
-	"safety.sandboxNetwork",
+	"safety.egress.main.mode",
+	"safety.egress.workers.mode",
 	"safety.scratchRoots",
 	"safety.sandboxCacheMaxGiB",
 	"safety.snapshots",
@@ -544,6 +545,8 @@ const CHOICES: Record<string, readonly string[]> = {
 	"safety.autonomy": ["default", "yolo"],
 	"safety.yoloConfinement": ["contained", "unconfined"],
 	"safety.sandbox": ["auto", "required", "off"],
+	"safety.egress.main.mode": ["proxied", "off", "open"],
+	"safety.egress.workers.mode": ["off", "proxied", "open"],
 	"safety.sandboxUnixSockets": ["block", "owned", "allow"],
 	"safety.snapshots": ["auto", "off"],
 	"chat.thinkingLevel": THINKING_LEVELS,
@@ -700,11 +703,35 @@ const EXTRA_HELP: Record<string, [string, string]> = {
 	],
 	"safety.sandbox": [
 		"Command sandbox",
-		"Run shell commands in an OS sandbox. At autonomy default your session's commands may write the workspace, scratch roots and package caches, with the network on and credentials hidden, and run without asking; dispatched workers' commands write only the run's writable roots and a private /tmp. auto uses it when available, required refuses worker commands without it, off never sandboxes. Under required, scripts the yolo session runs are sandboxed too, or refused without a backend.",
+		"Run shell commands in an OS sandbox. At autonomy default your session's commands may write the workspace, scratch roots and package caches, with network through PanCode's egress proxy and credentials hidden, and run without asking; dispatched workers' commands write only the run's writable roots and a private /tmp. auto uses it when available, required refuses worker commands without it, off never sandboxes. Under required, scripts the yolo session runs are sandboxed too, or refused without a backend.",
 	],
-	"safety.sandboxNetwork": [
-		"Worker sandbox network",
-		"Let sandboxed worker commands reach the network. Workers that have web_fetch get network either way.",
+	"safety.egress.main.mode": [
+		"Session shell network",
+		"Network for your session's sandboxed commands. proxied gives them only PanCode's proxy: each host and port you have not allowed asks you once for this session, and headless runs deny it. A server a command starts listens only inside the sandbox, so your browser cannot reach it; run it from your own shell. off gives them no network; open leaves them on your network, unmonitored. A project layer may only lower it.",
+	],
+	"safety.egress.main.allow": [
+		"Session shell allowed hosts",
+		"Exact host:port origins your session's proxied commands reach without asking, such as registry.npmjs.org:443. IPv6 in brackets; no wildcards. User settings only.",
+	],
+	"safety.egress.main.presets": [
+		"Session shell host presets",
+		"Named exact host lists your session's proxied commands reach without asking: npm, pypi, github, crates, go. User settings only.",
+	],
+	"safety.egress.workers.mode": [
+		"Worker shell network",
+		"Network for dispatched workers' sandboxed commands. off, the default, gives them none, whatever web tools a worker holds. proxied lets them reach only the hosts allowed below, with no asks. open leaves them on your network, unmonitored. A project layer may only lower it.",
+	],
+	"safety.egress.workers.allow": [
+		"Worker shell allowed hosts",
+		"Exact host:port origins workers' proxied commands may reach. IPv6 in brackets; no wildcards. User settings only.",
+	],
+	"safety.egress.workers.presets": [
+		"Worker shell host presets",
+		"Named exact host lists workers' proxied commands may reach: npm, pypi, github, crates, go. User settings only.",
+	],
+	"safety.egress.upstreamProxy": [
+		"Upstream proxy",
+		"An http:// or https:// proxy PanCode's egress proxy sends allowed traffic through, for a network that reaches the internet only through one. Never read from HTTP_PROXY or a project. Credentials in it are never shown. User settings only.",
 	],
 	"safety.snapshots": [
 		"Workspace snapshots",

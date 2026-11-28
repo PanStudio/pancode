@@ -750,7 +750,9 @@ export function installPermissionBridge(input: {
 										redactUrlCredentials(
 											decision.kind === "ask" && decision.confirmationRuleId === "dispatch-external-read"
 												? `Scout read-only root: ${describeCallTarget(call.tool, call.args)}`
-												: (planTitle ?? permissionTitle(call.tool, clippedCallCommand(call, decision))),
+												: decision.kind === "ask" && decision.confirmationRuleId === "shell-egress"
+													? decision.rejection.short
+													: (planTitle ?? permissionTitle(call.tool, clippedCallCommand(call, decision))),
 										),
 										ACP_MAX_TOOL_TITLE_BYTES,
 									),

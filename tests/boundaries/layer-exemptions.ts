@@ -41,7 +41,7 @@ export const LAYER_EXEMPTIONS: {
 		["src/domains/context -> src/domains/semantic-app", 1],
 		["src/domains/context -> src/domains/session", 29],
 		["src/domains/context -> src/domains/user-tasks", 1],
-		["src/domains/dispatch -> src/domains/agents", 47],
+		["src/domains/dispatch -> src/domains/agents", 46],
 		["src/domains/dispatch -> src/domains/context", 12],
 		["src/domains/dispatch -> src/domains/evidence", 6],
 		["src/domains/dispatch -> src/domains/extensions", 1],

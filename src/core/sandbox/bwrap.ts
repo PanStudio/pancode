@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
 import { isStrictDescendant } from "../path-containment.js";
+import { egressSetupArgv } from "./egress/setup.js";
 import type { SandboxCommand, SandboxInvocation, SandboxInvocationSpec } from "./types.js";
 
 export const DEFAULT_BWRAP_PATH = "/usr/bin/bwrap";
@@ -96,6 +97,10 @@ export function buildBwrapInvocation(
 	if (retry) args.push("--json-status-fd", String(STATUS_FD));
 	args.push("--chdir", spec.cwd, "--");
 	if (retry) args.push("/bin/sh", "-c", STDERR_HANDOFF, "pancode-sandbox");
+	if (spec.egressBridge !== undefined) {
+		if (spec.network) throw new Error("sandbox: an egress bridge needs an isolated network namespace");
+		args.push(...egressSetupArgv(spec.egressBridge));
+	}
 	args.push(...sandboxCommandArgv(spec.command));
 	if (spec.unixSocketFilter === undefined && !retry) return { file: bwrapPath, args };
 	// bwrap takes a seccomp program only as an open descriptor. A shell opens

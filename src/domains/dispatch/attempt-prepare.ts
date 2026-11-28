@@ -104,6 +104,7 @@ export async function prepareAttemptWorker(rt: DispatchRuntime, attempt: Admitte
 					flowRestrictions: options?.getFlowRestrictions?.() ?? null,
 					...(options?.getFlowPolicy !== undefined ? { flowPolicy: options.getFlowPolicy() } : {}),
 					apiKey: claudeLaunch ? launchCredential?.apiKey : lifecycle.apiKey,
+					localPlacement: placement === null || placement.node.kind === "local",
 					...((placement === null || placement.node.kind === "local") && launchAuthProfile
 						? { authProfile: launchAuthProfile }
 						: {}),

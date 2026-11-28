@@ -29,6 +29,7 @@ import {
 	SAFE_EXEC_GROUP_TEARDOWN_BOUND_MS,
 	type SafeCommandResult,
 } from "../core/safe-exec.js";
+import { egressResultNote } from "../core/sandbox/egress/bridge.js";
 import { knownSecretValues } from "../core/sandbox/env-scrub.js";
 import { mainSandboxWriteHint } from "../core/sandbox/main-session.js";
 import { storeReadRoots, validateBlobName, validateTagName } from "../core/store-paths.js";
@@ -787,7 +788,7 @@ const DESCRIPTION =
 	"Declared inputs and outputs are provenance only and do not restrict what the script may touch. " +
 	"An input may be a store blob, as <tag>:<blob> or the path store get returned: the script reads it from the store, never from a copy in the workspace, an args entry equal to a declared <tag>:<blob> is replaced with the blob's readable path, and a store put of an output names the blob it used. " +
 	"No dependency installation, no retries, no hidden environment changes. " +
-	"At autonomy default the script runs in an OS sandbox when the host has one: the workspace, the scratch roots and package caches are writable, the network is on and credentials are hidden. " +
+	"At autonomy default the script runs in an OS sandbox when the host has one: the workspace, the scratch roots and package caches are writable, credentials are hidden, and the network is what safety.egress.main allows: by default only PanCode's egress proxy, which reaches hosts the operator granted or approves when asked. " +
 	`Default timeout ${RUN_SCRIPT_CAPS.defaultTimeoutMs}ms; a nonzero exit, timeout, or cancellation returns an error that still names the logs and any partial outputs.`;
 
 export const runScriptToolSurface: ToolSurface = {
@@ -1169,6 +1170,8 @@ export function createRunScriptTool(deps: RunScriptToolDeps = {}): ToolSpec {
 					? null
 					: mainSandboxWriteHint(`${result.stdout}\n${result.stderr}`, options.shellSandbox);
 			if (sandboxHint !== null) lines.push(sandboxHint);
+			const egressNote = egressResultNote(result.egress);
+			if (egressNote !== null) lines.push(egressNote);
 			if (result.sinkError !== undefined) {
 				lines.push(`log write failed (${result.sinkError}); the script was stopped and the logs are incomplete`);
 			}
@@ -1228,6 +1231,7 @@ export function createRunScriptTool(deps: RunScriptToolDeps = {}): ToolSpec {
 				sweep,
 				...(failure === null ? {} : { failure }),
 				...(manifestError === null ? {} : { manifestError }),
+				...(result.egress === undefined ? {} : { egress: result.egress.receipts }),
 			};
 			if (outcome === "succeeded" && manifestError === null) return { kind: "ok", output: text, details };
 			return { kind: "error", message: text, details };

@@ -46,6 +46,7 @@ import {
 	type FleetNodeConfig,
 	normalizeCycleSet,
 	normalizeModelRefs,
+	validateEgress,
 	validateExternalAgent,
 	validateFleetNode,
 	validateKeybindings,
@@ -958,7 +959,7 @@ export function validateSettings(raw: unknown): SettingsValidationResult {
 				"limits",
 				"review",
 				"sandbox",
-				"sandboxNetwork",
+				"egress",
 				"scratchRoots",
 				"sandboxPassEnv",
 				"liveCheckTargets",
@@ -980,10 +981,7 @@ export function validateSettings(raw: unknown): SettingsValidationResult {
 				const parsed = expectEnum(issues, "safety.sandbox", safety.sandbox, SANDBOX_MODES);
 				if (parsed !== undefined) settings.safety.sandbox = parsed;
 			}
-			if ("sandboxNetwork" in safety) {
-				const parsed = expectBoolean(issues, "safety.sandboxNetwork", safety.sandboxNetwork);
-				if (parsed !== undefined) settings.safety.sandboxNetwork = parsed;
-			}
+			if ("egress" in safety) validateEgress(issues, safety.egress, settings);
 			if ("snapshots" in safety) {
 				const parsed = expectEnum(issues, "safety.snapshots", safety.snapshots, WORKSPACE_SNAPSHOT_MODES);
 				if (parsed !== undefined) settings.safety.snapshots = parsed;

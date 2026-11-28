@@ -3,7 +3,7 @@
 
 import { sha256Hex } from "../../core/hash.js";
 import type { SandboxAvailability } from "../../core/sandbox/types.js";
-import { workerMcpNoNetworkNotice } from "../../core/sandbox/worker-policy.js";
+import { workerEgressMode, workerMcpNoNetworkNotice } from "../../core/sandbox/worker-policy.js";
 import { type ToolName, ToolNames } from "../../core/tool-names.js";
 import { toolPromptHintsForNames } from "../../tools/builtin-tool-catalog.js";
 import { agentHasTrait } from "../agents/spec.js";
@@ -134,7 +134,7 @@ export function createLifecycleResolver(rt: DispatchRuntime) {
 	}
 
 	/**
-	 * The default sandbox (auto, no sandboxNetwork) starts admitted MCP servers
+	 * The default sandbox (auto, worker egress not open) starts admitted MCP servers
 	 * with no network and a masked home, so a server that needs either fails
 	 * only at its first call. The operator hears it at admission instead.
 	 */
@@ -163,7 +163,12 @@ export function createLifecycleResolver(rt: DispatchRuntime) {
 		}).spec;
 		if (sandbox === undefined) return;
 		const message = workerMcpNoNetworkNotice(
-			{ mode: sandbox.mode, network: sandbox.network, available: placedSandbox.available },
+			{
+				mode: sandbox.mode,
+				network: sandbox.network,
+				egress: workerEgressMode(sandbox, placedSandbox),
+				available: placedSandbox.available,
+			},
 			servers,
 			offeredWithheld,
 		);

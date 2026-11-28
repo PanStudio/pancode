@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-PanCode-1.0
 // SPDX-FileCopyrightText: 2026 Anthony Kougkas
+
+import type { EgressCallerSettings } from "../core/defaults.js";
 import type { ModelRunInfo } from "../core/model-tier.js";
 import type { MainSandboxPolicy, YoloScriptSandboxState } from "../core/sandbox/main-session.js";
 import type { SandboxEnvPolicy, UnixSocketMode } from "../core/sandbox/types.js";
@@ -123,6 +125,12 @@ export interface RegistryDeps {
 	sandboxEnv?: () => SandboxEnvPolicy;
 	/** `safety.sandboxUnixSockets`, read per contained call. Absent blocks them. */
 	sandboxUnixSockets?: () => UnixSocketMode;
+	/**
+	 * `safety.egress.main` and `safety.egress.upstreamProxy`, read per contained
+	 * call: how the session's contained commands reach the network. Absent
+	 * keeps the host network, as for a registry that is not the main session's.
+	 */
+	sandboxEgress?: () => { main: EgressCallerSettings; upstreamProxy: string | null };
 	/**
 	 * The loop guard's parent-workspace mutation epoch for a turn. The main
 	 * agent's denial memory keys on it, so a refusal is repeated only while

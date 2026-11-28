@@ -5,6 +5,7 @@ import { THINKING_LEVELS } from "../core/defaults.js";
 import { MODEL_TIERS } from "../core/model-tier.js";
 import type { ProtectedModelRef, ResidencyRole } from "../core/residency-protection.js";
 import { assertValidResponseSchema, runtimeSpeaksResponseSchemaDialect } from "../core/response-schema.js";
+import { originKey, parseEgressAllowEntry, upstreamProxyProblem } from "../core/sandbox/egress/policy.js";
 import { WORKER_SANDBOX_SPEC_VERSION, type WorkerSandboxSpec } from "../core/sandbox/types.js";
 import type { SharedStoreGrant } from "../core/store-shared-grant.js";
 import type { WorkerTelemetryContext } from "../core/telemetry/context.js";
@@ -1216,6 +1217,7 @@ const WORKER_SANDBOX_KEYS = new Set([
 	"unixSockets",
 	"maskSettings",
 	"backendExpected",
+	"egress",
 ]);
 
 function readAbsolutePaths(value: unknown, source: string): void {
@@ -1249,6 +1251,27 @@ function validateWorkerSandbox(value: unknown): void {
 		throw new Error("WorkerSpec.sandbox.maskSettings must be true when present");
 	if (sandbox.backendExpected !== undefined && sandbox.backendExpected !== true)
 		throw new Error("WorkerSpec.sandbox.backendExpected must be true when present");
+	if (sandbox.egress !== undefined) {
+		if (sandbox.network !== true) throw new Error("WorkerSpec.sandbox.egress needs network true");
+		validateWorkerEgress(sandbox.egress);
+	}
+}
+
+/** The proxied worker's grants: canonical host:port origins, and the operator's upstream proxy only from this host. */
+function validateWorkerEgress(value: unknown): void {
+	const source = "WorkerSpec.sandbox.egress";
+	const egress = readRecord(value, source);
+	exactKeys(egress, ["origins", "upstreamProxy"], source);
+	for (const [index, entry] of readStringArray(egress.origins, `${source}.origins`).entries()) {
+		const parsed = parseEgressAllowEntry(entry);
+		if (typeof parsed === "string" || originKey(parsed) !== entry)
+			throw new Error(`${source}.origins[${index}] must be an exact host:port origin`);
+	}
+	if (egress.upstreamProxy !== undefined) {
+		const proxy = egress.upstreamProxy;
+		if (typeof proxy !== "string" || upstreamProxyProblem(proxy) !== null)
+			throw new Error(`${source}.upstreamProxy must be an http(s) proxy URL`);
+	}
 }
 
 function validateWorkerFlowPolicy(value: unknown): void {

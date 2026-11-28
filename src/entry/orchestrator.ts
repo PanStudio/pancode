@@ -44,7 +44,7 @@ import {
 import { sandboxAvailability } from "../core/sandbox/availability.js";
 import { mainSandboxEnvPolicy } from "../core/sandbox/env-scrub.js";
 import { createGitHooksFingerprinter } from "../core/sandbox/git-hooks-fingerprint.js";
-import { mainShellContained, yoloScriptSandboxState } from "../core/sandbox/main-session.js";
+import { mainShellContained, mainShellSandboxSettings, yoloScriptSandboxState } from "../core/sandbox/main-session.js";
 import {
 	resolveMemoryRoute,
 	routingChangeNotices,
@@ -1829,8 +1829,7 @@ export async function bootOrchestrator(options: BootOptions = {}): Promise<BootR
 			};
 		},
 		currentSessionId: () => session?.current()?.id,
-		sandboxEnv: () => mainSandboxEnvPolicy(getCurrentSettings()),
-		sandboxUnixSockets: () => getCurrentSettings().safety.sandboxUnixSockets,
+		...mainShellSandboxSettings(() => getCurrentSettings()),
 		mutationEpoch: (turnId) => loopGuard.mutationEpoch(turnId),
 		flow: {
 			...flowPort,

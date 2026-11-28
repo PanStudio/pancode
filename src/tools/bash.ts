@@ -20,6 +20,7 @@ import {
 	toolResultNote,
 } from "../core/reminder-framing.js";
 import { resolveSafeCwd } from "../core/safe-exec.js";
+import { egressResultNote } from "../core/sandbox/egress/bridge.js";
 import { mainSandboxWriteHint } from "../core/sandbox/main-session.js";
 import { runDeadlineAt } from "../core/termination-phase.js";
 import { ToolNames } from "../core/tool-names.js";
@@ -176,6 +177,7 @@ function bashResultDetails(
 		observedStderrBytes: result.observedStderrBytes,
 		retainedStdoutBytes: result.retainedStdoutBytes,
 		retainedStderrBytes: result.retainedStderrBytes,
+		...(result.egress === undefined ? {} : { egress: result.egress.receipts }),
 	};
 }
 
@@ -427,7 +429,7 @@ function bashSteerAbortStatus(elapsedMs: number): string {
 export const bashTool: ToolSpec = {
 	name: ToolNames.Bash,
 	description:
-		"Run bash in a fresh child at the workspace root (or cwd); shell state does not persist. Not for what verify, grep, find, git, run_script or data cover. Output has a 16 MiB hard cap that stops the child; run_script streams unbounded output. Default timeout 300s; use panes for long-lived processes or an explicit timeout_ms. Networking follows the host and OS isolation; disabling web_fetch does not isolate bash networking. At autonomy default it runs unasked in an OS sandbox when available (workspace and scratch roots writable, secrets hidden); otherwise read-only inspection runs and other commands are reviewed.",
+		"Run bash in a fresh child at the workspace root (or cwd); shell state does not persist. Not for what verify, grep, find, git, run_script or data cover. Output has a 16 MiB hard cap that stops the child; run_script streams unbounded output. Default timeout 300s; use panes for long-lived processes or an explicit timeout_ms. Disabling web_fetch does not isolate bash networking. At autonomy default it runs unasked in an OS sandbox when available (workspace and scratch roots writable, secrets hidden, network as safety.egress.main allows: by default only through PanCode's egress proxy to hosts the operator granted or approves, a refusal named in the result, and a server the command starts unreachable from outside); otherwise read-only inspection runs and other commands are reviewed.",
 	parameters: Type.Object({
 		command: Type.String({ description: "Bash command to execute." }),
 		cwd: Type.Optional(
@@ -521,6 +523,13 @@ export const bashTool: ToolSpec = {
 			const startedAt = performance.now();
 			const captured = await runBashCommand(args.command, runOptions);
 			const elapsedMs = Math.round(performance.now() - startedAt);
+			// The proxy's note on what the command's network did rides after every outcome's text.
+			const egressNote = egressResultNote(captured.egress);
+			const noted = (verdict: ToolResult): ToolResult => {
+				if (egressNote === null) return verdict;
+				if (verdict.kind === "ok") return { ...verdict, output: `${verdict.output}\n\n${egressNote}` };
+				return verdict.kind === "error" ? { ...verdict, message: `${verdict.message}\n\n${egressNote}` } : verdict;
+			};
 			// A command stopped by a signal, its timeout or the byte cap may end inside a credential.
 			const ending = captured.aborted || captured.timedOut || captured.outputCapped ? "cut-off" : "complete";
 			const result = {
@@ -540,11 +549,11 @@ export const bashTool: ToolSpec = {
 			const abortCause = aborted ? (options?.abortCause?.() ?? null) : null;
 			if (aborted && options?.steerInterrupted?.() === true && options.signal?.aborted === true) {
 				const status = bashSteerAbortStatus(elapsedMs);
-				return {
+				return noted({
 					kind: "error",
 					message: output.length > 0 ? `${output}\n\n${status}` : status,
 					details: { ...bashResultDetails(result, rawOutput, "abort", elapsedMs), abortedBy: "steer" },
-				};
+				});
 			}
 			// The run's --timeout shuts the run down at the same instant this command's deadline timer fires, so the run's
 			// abort and the timer race and a result can carry both flags. Whichever landed first, a stop on or past the
@@ -555,11 +564,11 @@ export const bashTool: ToolSpec = {
 			// An abort with no cause on a command its own timer already stopped is that timeout, not an unexplained abort.
 			if (aborted && !deadlineStop && (abortCause !== null || !timedOut)) {
 				const status = bashAbortStatus(elapsedMs, limit.ms, abortCause);
-				return {
+				return noted({
 					kind: "error",
 					message: output.length > 0 ? `${output}\n\n${status}` : status,
 					details: { ...bashResultDetails(result, rawOutput, "abort", elapsedMs), abortCause },
-				};
+				});
 			}
 			if (timedOut || deadlineStop) {
 				const lastActiveTest = lastActivePytestTest(args.command, rawOutput);
@@ -574,7 +583,7 @@ export const bashTool: ToolSpec = {
 					requested,
 					deadlineAt,
 				);
-				return {
+				return noted({
 					kind: "error",
 					message: output.length > 0 ? `${output}\n\n${status}` : status,
 					details: {
@@ -582,9 +591,9 @@ export const bashTool: ToolSpec = {
 						...(stopLimit.by === "idle" ? { timedOutBy: "idle", idleMs: stopLimit.ms } : {}),
 						...(lastActiveTest === null ? {} : { lastActiveTest }),
 					},
-				};
+				});
 			}
-			if (outputCapped) return bashOutputCapResult(result, outputPolicy, options);
+			if (outputCapped) return noted(bashOutputCapResult(result, outputPolicy, options));
 			if (error) {
 				const code = typeof error.code === "number" ? error.code : (error as { code?: string }).code;
 				const sandboxHint =
@@ -592,24 +601,24 @@ export const bashTool: ToolSpec = {
 				const hints = [sandboxHint, noTerminalHint(rawOutput)].filter((hint): hint is string => hint !== null);
 				const status = `bash: command failed (exit ${code ?? "?"})${hints.map((hint) => `\n${hint}`).join("")}`;
 				const message = `${output.length > 0 ? `${output}\n\n${status}` : `${status}: ${error.message}`}${pancodeIssueNudge(args.command)}`;
-				return {
+				return noted({
 					kind: "error",
 					message,
 					details: {
 						...bashResultDetails(result, rawOutput, "nonzero", elapsedMs, receiptCommand),
 						...observedLinesDetail(args.command, rawOutput, outputPolicy, cwd),
 					},
-				};
+				});
 			}
 			const body = shown.length > 0 ? shown : "(no output)";
-			return {
+			return noted({
 				kind: "ok",
 				output: `${body}${observeToolsNudge(args.command, options?.sessionId)}${pancodeIssueNudge(args.command)}`,
 				details: {
 					...bashResultDetails(result, rawOutput, "success", elapsedMs, receiptCommand),
 					...observedLinesDetail(args.command, rawOutput, outputPolicy, cwd),
 				},
-			};
+			});
 		} catch (err) {
 			const msg = err instanceof Error ? err.message : String(err);
 			return { kind: "error", message: `bash: ${msg}` };
